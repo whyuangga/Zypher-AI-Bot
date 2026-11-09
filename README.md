@@ -132,7 +132,8 @@ Klik **Buat Room AI** → channel privat muncul → mulai ngobrol.
 
 ### Ganti provider AI (opsional)
 
-Kode memakai protokol OpenAI-compatible, jadi cukup ubah dua baris:
+Kode memakai protokol OpenAI-compatible, jadi cukup ubah dua baris.
+Daftar lengkap provider **free tier** + contoh `.env` siap tempel ada di **[docs/providers.md](docs/providers.md)**.
 
 ```env
 # OpenAI
@@ -269,6 +270,7 @@ src/
 └── lib/                     # llm, transcript, ratelimit, text, logger, register
 scripts/smoke.ts             # smoke test tanpa Discord
 docs/sample-transcript.html  # contoh hasil transkrip
+docs/providers.md            # provider AI free tier + contoh .env
 ```
 
 ---

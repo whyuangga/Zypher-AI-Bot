@@ -1,0 +1,114 @@
+# 🔑 Provider AI dengan Free Tier (update: November 2026)
+
+Semua provider di bawah punya **API key gratis tanpa kartu kredit** dan bisa dipakai bot ini
+cukup dengan mengubah 2 baris `.env`. Angka limit **selalu berubah** — yang tertera adalah
+kisaran yang beredar saat dokumen ini ditulis; cek halaman resmi masing-masing sebelum dipakai serius.
+
+---
+
+## Ringkasan
+
+| Provider | Gratisnya | Limit kasar (free) | Tool calling¹ | Cocok untuk |
+|---|---|---|---|---|
+| **Groq** | Permanen, tanpa kartu | ±30 req/menit, ribuan req/hari (model besar lebih ketat) | ✅ | **Default repo ini** — tercepat, kualitas 70B |
+| **Google Gemini** | Permanen, tanpa kartu | Model Flash/Flash-Lite puluhan–ratusan req/hari, Pro sangat dibatasi | ✅ | Kuota harian paling longgar untuk chat |
+| **OpenRouter** | Model berlabel `:free` | 20 req/menit; 50 req/hari (jadi 1.000/hari setelah sekali beli kredit $10) | ✅ (tergantung model) | Bereksperimen banyak model |
+| **Cerebras** | Permanen, tanpa kartu | ±1 juta token/hari, ±30 req/menit, konteks free lebih pendek | ⚠️ | Kecepatan ekstrem, beban tinggi |
+| **Mistral** | "Experiment" tier, verifikasi HP | ±1 miliar token/bulan, RPM rendah | ✅ | Volume token besar, data EU |
+| **Cloudflare Workers AI** | Permanen, tanpa kartu | 10.000 neuron/hari (setara ratusan chat) | ⚠️ terbatas | Sudah pakai ekosistem Cloudflare |
+| **Ollama (lokal)** | Gratis total, tanpa key | Terbatas hardware kamu | ✅ | Privasi maksimal / offline |
+
+¹ **Tool calling** dipakai bot ini untuk **memori otomatis** (`simpan_memori`).
+Kalau model tidak mendukung, bot tidak crash — hanya memori otomatis mati, dan `/ingat` manual tetap jalan.
+
+---
+
+## Contoh `.env` siap tempel
+
+### Groq (default — dapat key gratis di <https://console.groq.com/keys>)
+
+```env
+AI_BASE_URL=https://api.groq.com/openai/v1
+AI_MODEL=llama-3.3-70b-versatile
+```
+
+Alternatif model di Groq: `openai/gpt-oss-120b`, `meta-llama/llama-4-scout-17b-16e-instruct`, `qwen/qwen3-32b`.
+
+### Google Gemini (<https://aistudio.google.com/api-keys>)
+
+```env
+AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+AI_MODEL=gemini-2.5-flash
+```
+
+Gunakan `gemini-2.5-flash-lite` kalau butuh limit per menit lebih longgar.
+Karena RPM free tier kecil (±10–15), turunkan juga `RATE_LIMIT_PER_MINUTE=8`.
+
+> ⚠️ Di free tier, Google dapat memakai data untuk peningkatan model. Untuk percakapan member
+> yang sensitif, pertimbangkan Groq/Cerebras atau tier berbayar.
+
+### OpenRouter (<https://openrouter.ai/keys>)
+
+```env
+AI_BASE_URL=https://openrouter.ai/api/v1
+AI_MODEL=google/gemma-4-31b-it:free
+```
+
+Daftar model gratis **cepat berganti** (bisa berubah dalam hitungan minggu) — cek
+<https://openrouter.ai/models?max_price=0> dan selalu pilih yang berakhiran `:free`.
+
+### Cerebras (<https://cloud.cerebras.ai> → API Keys)
+
+```env
+AI_BASE_URL=https://api.cerebras.ai/v1
+AI_MODEL=llama-3.3-70b
+```
+
+Konteks di free tier lebih pendek; kalau transkrip/room panjang, turunkan `AI_HISTORY_LIMIT=10`.
+
+### Mistral (<https://console.mistral.ai> → API Keys)
+
+```env
+AI_BASE_URL=https://api.mistral.ai/v1
+AI_MODEL=mistral-small-latest
+```
+
+Butuh verifikasi nomor HP. Tier gratis untuk evaluasi, bukan produksi.
+
+### Cloudflare Workers AI (<https://dash.cloudflare.com/profile/api-tokens>)
+
+```env
+AI_BASE_URL=https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/ai/v1
+AI_MODEL=@cf/meta/llama-3.1-8b-instruct
+AI_API_KEY=<token Cloudflare>
+```
+
+Butuh `ACCOUNT_ID` di URL. Dukungan tool calling tidak konsisten → memori otomatis mungkin nonaktif.
+
+### Ollama lokal (tanpa API key, tanpa biaya)
+
+```bash
+ollama pull llama3.1
+ollama serve
+```
+
+```env
+AI_BASE_URL=http://localhost:11434/v1
+AI_MODEL=llama3.1
+AI_API_KEY=ollama
+```
+
+---
+
+## Cara menguji setelah ganti provider
+
+1. Jalankan bot: `npm run dev`
+2. Di Discord: `/tanya pertanyaan:Halo, kamu model apa?`
+3. Kalau muncul error, cek log — bot membedakan **401 (key salah)**, **429 (limit)**, dan **404 (nama model salah)** dengan pesan yang jelas.
+
+## Kalau limit terkena (429)
+
+- Turunkan `RATE_LIMIT_PER_MINUTE` (mis. 8 untuk Gemini, 20 untuk Groq).
+- Bot sudah punya retry + backoff otomatis, tapi tidak bisa melewati kuota harian.
+- Untuk komunitas ramai: pakai 2 provider (Groq untuk harian, Gemini sebagai cadangan) dengan
+  mengganti `.env` + restart, atau tambahkan fallback multi-provider di `src/lib/llm.ts`.
