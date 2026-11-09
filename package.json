@@ -1,0 +1,36 @@
+{
+  "name": "zypher-ai-bot",
+  "version": "1.0.0",
+  "description": "Discord AI bot \u2014 private AI rooms, long-term memory, custom keyword answers, and session transcripts.",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.check.json",
+    "smoke": "tsx scripts/smoke.ts"
+  },
+  "keywords": [
+    "discord",
+    "discord-bot",
+    "ai",
+    "groq",
+    "llm"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.7",
+    "openai": "^4.77.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
