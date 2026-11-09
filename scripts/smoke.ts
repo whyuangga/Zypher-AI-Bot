@@ -8,6 +8,8 @@ process.env.DISCORD_TOKEN = 'smoke-test-token-0000000000000000';
 process.env.CLIENT_ID = '123456789012345678';
 process.env.AI_API_KEY = 'smoke-test-key-0000';
 process.env.DATABASE_PATH = ':memory:';
+process.env.AI_FALLBACKS = 'gemini:gemini-2.5-flash,openrouter:google/gemma-4-31b-it:free';
+process.env.GEMINI_API_KEY = 'smoke-gemini-key';
 
 import assert from 'node:assert/strict';
 
@@ -22,6 +24,7 @@ const { buildSystemPrompt } = await import('../src/features/prompt.js');
 const { buildTranscriptHtml, transcriptFileName } = await import('../src/lib/transcript.js');
 const { chunkMessage, truncate, normalize } = await import('../src/lib/text.js');
 const { checkRateLimit } = await import('../src/lib/ratelimit.js');
+const { parseFallbackSpec, providerNameForBaseUrl, buildProviderChain } = await import('../src/lib/providers.js');
 
 let passed = 0;
 function test(name: string, fn: () => void): void {
@@ -214,6 +217,46 @@ test('rate limit memblokir setelah batas', () => {
   const blocked = checkRateLimit(key, 3);
   assert.equal(blocked.allowed, false);
   assert.ok(blocked.retryAfterMs > 0);
+});
+
+console.log('\nProvider & fallback');
+test('mengurai AI_FALLBACKS, termasuk model ber-titik-dua', () => {
+  const { providers, problems } = parseFallbackSpec(
+    'gemini:gemini-2.5-flash, openrouter:google/gemma-4-31b-it:free',
+    { GEMINI_API_KEY: 'key-g', OPENROUTER_API_KEY: 'key-o' },
+  );
+  assert.equal(problems.length, 0);
+  assert.equal(providers.length, 2);
+  assert.equal(providers[0]?.name, 'gemini');
+  assert.equal(providers[0]?.model, 'gemini-2.5-flash');
+  assert.equal(providers[1]?.model, 'google/gemma-4-31b-it:free');
+  assert.match(providers[1]?.baseUrl ?? '', /openrouter\.ai/);
+});
+test('melewati provider yang key-nya kosong', () => {
+  const { providers, problems } = parseFallbackSpec('gemini:gemini-2.5-flash', {});
+  assert.equal(providers.length, 0);
+  assert.match(problems[0] ?? '', /GEMINI_API_KEY/);
+});
+test('menolak provider tak dikenal & format salah', () => {
+  const { providers, problems } = parseFallbackSpec('entah:model-x,formatSalah', { GEMINI_API_KEY: 'k' });
+  assert.equal(providers.length, 0);
+  assert.equal(problems.length, 2);
+});
+test('ollama tidak butuh API key', () => {
+  const { providers } = parseFallbackSpec('ollama:llama3.1', {});
+  assert.equal(providers.length, 1);
+  assert.equal(providers[0]?.baseUrl, 'http://localhost:11434/v1');
+});
+test('mendeteksi nama provider dari base URL', () => {
+  assert.equal(providerNameForBaseUrl('https://api.groq.com/openai/v1'), 'groq');
+  assert.equal(providerNameForBaseUrl('https://generativelanguage.googleapis.com/v1beta/openai/'), 'gemini');
+  assert.equal(providerNameForBaseUrl('http://127.0.0.1:11434/v1'), 'ollama');
+});
+test('rantai provider: utama di depan, fallback hanya yang ada key-nya', () => {
+  const chain = buildProviderChain();
+  assert.equal(chain[0]?.name, 'groq');
+  assert.equal(chain.length, 2, 'openrouter harus dilewati karena OPENROUTER_API_KEY kosong');
+  assert.equal(chain[1]?.name, 'gemini');
 });
 
 console.log(`\n${process.exitCode ? '❌ Ada test gagal' : '🎉 Semua test lulus'} — ${passed} test.\n`);

@@ -36,6 +36,11 @@ const optionalId = z
   .optional()
   .transform((value) => (value && value.trim() !== '' ? value.trim() : undefined));
 
+const optionalSecret = z
+  .string()
+  .optional()
+  .transform((value) => (value && value.trim() !== '' ? value.trim() : undefined));
+
 const schema = z.object({
   DISCORD_TOKEN: z.string().min(20, 'DISCORD_TOKEN tidak valid — salin ulang dari Discord Developer Portal'),
   CLIENT_ID: z.string().regex(/^\d{17,20}$/, 'CLIENT_ID harus berupa angka (Application ID)'),
@@ -46,6 +51,14 @@ const schema = z.object({
   AI_TEMPERATURE: numberish(0.8, 0, 2),
   AI_MAX_TOKENS: numberish(700, 64, 8192),
   AI_HISTORY_LIMIT: numberish(20, 0, 100),
+  // Daftar provider cadangan: "gemini:gemini-2.5-flash,openrouter:google/gemma-4-31b-it:free"
+  AI_FALLBACKS: z.string().optional(),
+  GROQ_API_KEY: optionalSecret,
+  GEMINI_API_KEY: optionalSecret,
+  OPENROUTER_API_KEY: optionalSecret,
+  CEREBRAS_API_KEY: optionalSecret,
+  MISTRAL_API_KEY: optionalSecret,
+  OLLAMA_API_KEY: optionalSecret,
   DATABASE_PATH: z.string().default('./data/zypher.db'),
   AUTO_MEMORY: booleanish(true),
   RATE_LIMIT_PER_MINUTE: numberish(12, 0, 240),
@@ -82,6 +95,15 @@ export const config = {
     temperature: env.AI_TEMPERATURE,
     maxTokens: env.AI_MAX_TOKENS,
     historyLimit: env.AI_HISTORY_LIMIT,
+    fallbacks: env.AI_FALLBACKS?.trim() || undefined,
+    providerKeys: {
+      GROQ_API_KEY: env.GROQ_API_KEY,
+      GEMINI_API_KEY: env.GEMINI_API_KEY,
+      OPENROUTER_API_KEY: env.OPENROUTER_API_KEY,
+      CEREBRAS_API_KEY: env.CEREBRAS_API_KEY,
+      MISTRAL_API_KEY: env.MISTRAL_API_KEY,
+      OLLAMA_API_KEY: env.OLLAMA_API_KEY,
+    },
   },
   database: {
     path: env.DATABASE_PATH,

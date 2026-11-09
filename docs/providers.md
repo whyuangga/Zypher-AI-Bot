@@ -100,6 +100,45 @@ AI_API_KEY=ollama
 
 ---
 
+## 🔁 Fallback otomatis (rekomendasi)
+
+Daripada mengganti `.env` manual saat kena limit, daftarkan provider cadangan. Bot akan mencoba
+**provider utama dulu**, lalu pindah otomatis kalau gagal — tanpa restart, tanpa user sadar.
+
+```env
+# utama (Groq)
+AI_BASE_URL=https://api.groq.com/openai/v1
+AI_MODEL=llama-3.3-70b-versatile
+AI_API_KEY=gsk_xxxxxxxx
+
+# cadangan, dicoba berurutan saat provider utama gagal
+AI_FALLBACKS=gemini:gemini-2.5-flash,openrouter:google/gemma-4-31b-it:free
+
+GEMINI_API_KEY=AIza...
+OPENROUTER_API_KEY=sk-or-v1-...
+```
+
+Perilaku yang sudah diatur di `src/lib/llm.ts`:
+
+| Kondisi | Aksi bot |
+|---|---|
+| Rate limit (429) / gangguan 5xx / timeout | Retry 2–3× dengan backoff, lalu pindah provider |
+| API key ditolak (401/403), model tidak ada (404), kredit habis (402) | **Langsung** pindah provider tanpa buang waktu retry |
+| Percakapan terlalu panjang | Berhenti & minta user `/reset` (fallback tidak akan menolong) |
+| Model tidak mendukung tool calling | Ulang di provider yang sama tanpa tools, memori otomatis nonaktif |
+| Semua provider gagal | Pesan ramah berisi ringkasan penyebab tiap provider |
+
+Urutan dicoba dari kiri ke kanan. Entri yang salah atau key-nya kosong akan dilewati dengan
+peringatan di log, jadi bot tetap jalan.
+
+Verifikasi cepat tanpa API key asli:
+
+```bash
+npm run test:fallback
+```
+
+Skrip ini menyalakan dua server tiruan (satu selalu 429) dan memastikan bot benar-benar berpindah provider.
+
 ## Cara menguji setelah ganti provider
 
 1. Jalankan bot: `npm run dev`

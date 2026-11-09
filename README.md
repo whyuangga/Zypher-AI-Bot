@@ -26,6 +26,7 @@ Chat bebas → AI menjawab, mengingat fakta, memakai keyword admin
 | 🔑 **Keyword kustom** | Admin menulis jawaban acuan; AI memakainya sebagai **fakta** dan menyusun ulang kalimatnya agar **bervariasi setiap kali** (bukan copy-paste). |
 | 🎭 **Persona per server** | Mis. "kamu guru bahasa Inggris yang sabar" — berlaku untuk semua room di server itu. |
 | 📄 **Transkrip sesi** | HTML mandiri (dark mode, rapi, aman dari XSS) berisi percakapan + memori + ringkasan AI. Dikirim ke DM dan/atau channel arsip. |
+| 🔁 **Fallback multi-provider** | Provider utama kena limit/error → otomatis pindah ke provider cadangan (Groq → Gemini → OpenRouter), tanpa restart. |
 | 🛡️ **Rate limit & guard** | Batas pesan per menit, validasi input, penanganan error yang ramah, tanpa membocorkan system prompt. |
 | 🐳 **Siap deploy** | Docker multi-stage, volume SQLite, tanpa dependensi native (pakai `node:sqlite` bawaan Node 22). |
 
@@ -121,6 +122,8 @@ Klik **Buat Room AI** → channel privat muncul → mulai ngobrol.
 | `AI_TEMPERATURE` | `0.8` | Kreativitas (0–2). Naikkan kalau variasi jawaban terasa monoton. |
 | `AI_MAX_TOKENS` | `700` | Panjang maksimal jawaban |
 | `AI_HISTORY_LIMIT` | `20` | Jumlah pesan terakhir sebagai konteks |
+| `AI_FALLBACKS` | kosong | Provider cadangan, mis. `gemini:gemini-2.5-flash,openrouter:...` |
+| `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `CEREBRAS_API_KEY`, `MISTRAL_API_KEY`, `GROQ_API_KEY` | kosong | Key untuk provider cadangan |
 | `DATABASE_PATH` | `./data/zypher.db` | Lokasi file SQLite |
 | `AUTO_MEMORY` | `true` | Simpan memori otomatis lewat tool calling |
 | `RATE_LIMIT_PER_MINUTE` | `12` | Batas request AI per user/menit |
@@ -134,6 +137,14 @@ Klik **Buat Room AI** → channel privat muncul → mulai ngobrol.
 
 Kode memakai protokol OpenAI-compatible, jadi cukup ubah dua baris.
 Daftar lengkap provider **free tier** + contoh `.env` siap tempel ada di **[docs/providers.md](docs/providers.md)**.
+
+**Fallback otomatis:** isi `AI_FALLBACKS` agar bot pindah provider sendiri saat kena limit:
+
+```env
+AI_FALLBACKS=gemini:gemini-2.5-flash,openrouter:google/gemma-4-31b-it:free
+GEMINI_API_KEY=AIza...
+OPENROUTER_API_KEY=sk-or-v1-...
+```
 
 ```env
 # OpenAI
@@ -228,10 +239,16 @@ Railway / Fly.io / Render bisa langsung memakai Dockerfile. Set env var yang sam
 ## 🧪 Uji cepat tanpa Discord
 
 ```bash
-npm run smoke
+npm run smoke          # 27 test logika inti
+npm run test:fallback  # uji rantai fallback provider dengan server tiruan
 ```
 
-Menguji 21 skenario inti: CRUD memori, pencocokan keyword (termasuk kalimat yang dibalik), perakitan prompt, riwayat room, escape XSS pada transkrip, chunking pesan, dan rate limit.
+`npm run smoke` menguji CRUD memori, pencocokan keyword (termasuk kalimat yang dibalik), perakitan prompt,
+riwayat room, escape XSS pada transkrip, chunking pesan, rate limit, dan parsing `AI_FALLBACKS`.
+
+`npm run test:fallback` menyalakan dua server OpenAI-compatible tiruan: provider utama selalu menjawab
+429, lalu memastikan bot benar-benar pindah ke provider fallback, meneruskan payload utuh, dan berhenti
+tanpa retry sia-sia ketika prompt sudah kepanjangan.
 
 ---
 
@@ -245,7 +262,8 @@ Menguji 21 skenario inti: CRUD memori, pencocokan keyword (termasuk kalimat yang
 | `Gagal membuat room AI` + permission | Bot butuh **Manage Channels**; taruh role bot di atas role lain yang relevan. |
 | Transkrip tidak masuk DM | User menutup DM. Set `TRANSCRIPT_CHANNEL_ID` sebagai arsip; bot juga tidak akan menghapus channel agar transkrip tidak hilang. |
 | `API key AI ditolak` | `AI_API_KEY` salah/kedaluwarsa di `.env`. |
-| `Kuota AI sedang penuh` | Rate limit Groq tercapai — turunkan `RATE_LIMIT_PER_MINUTE` atau ganti model. |
+| `Kuota AI sedang penuh` | Rate limit provider tercapai — turunkan `RATE_LIMIT_PER_MINUTE`, atau isi `AI_FALLBACKS` agar otomatis pindah provider. |
+| `Semua provider AI sedang tidak tersedia` | Semua provider (utama + fallback) gagal. Cek log: biasanya kuota habis harian atau key salah. |
 | Jawaban terasa monoton | Naikkan `AI_TEMPERATURE` (mis. `0.9`) dan pastikan keyword punya jawaban acuan yang cukup detail. |
 
 ---
