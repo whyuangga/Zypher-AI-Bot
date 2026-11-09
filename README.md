@@ -148,7 +148,7 @@ Klik **Buat Room AI** → channel privat muncul → mulai ngobrol.
 | `AI_MAX_TOKENS` | `700` | Panjang maksimal jawaban |
 | `AI_HISTORY_LIMIT` | `20` | Jumlah pesan terakhir sebagai konteks |
 | `AI_FALLBACKS` | kosong | Provider cadangan, mis. `gemini:gemini-3.8-flash,openrouter:...` |
-| `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, `CEREBRAS_API_KEY`, `MISTRAL_API_KEY`, `GROQ_API_KEY` | kosong | Key untuk provider cadangan |
+| `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, `GROQ_API_KEY` | kosong | Key untuk provider cadangan |
 | `DATABASE_PATH` | `./data/zypher.db` | Lokasi file SQLite |
 | `AUTO_MEMORY` | `true` | Simpan memori otomatis lewat tool calling |
 | `RATE_LIMIT_PER_MINUTE` | `12` | Batas request AI per user/menit |
@@ -305,7 +305,7 @@ diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai u
 | `Kuota AI sedang penuh` | Rate limit provider tercapai — turunkan `RATE_LIMIT_PER_MINUTE`, atau isi `AI_FALLBACKS` agar otomatis pindah provider. |
 | `Semua provider AI sedang tidak tersedia` | Semua provider (utama + fallback) gagal. Cek log: biasanya kuota habis harian atau key salah. |
 | Model tidak ditemukan / model butuh plan berbayar | Katalog gratis berubah (mis. Llama 3.3 sudah tidak gratis di Groq). Jalankan `npm run models`, lalu pakai ID yang muncul. |
-| Diminta kartu kredit saat membuat API key | Kebijakan provider (Cerebras/Mistral kerap begitu). Lewati saja; Groq, Gemini, OpenRouter, dan NVIDIA NIM tidak meminta kartu. |
+| Mau provider lain di luar daftar | Hanya 5 nama yang dikenali: `groq`, `gemini`, `openrouter`, `nvidia`, `ollama`. Provider yang minta kartu (Cerebras, Mistral) sengaja tidak didukung. |
 | Jawaban muncul sekaligus, bukan streaming | Normal bila provider/model menolak `stream: true` — bot otomatis memakai mode non-streaming di provider tersebut (lihat log). |
 | Jawaban terasa monoton | Naikkan `AI_TEMPERATURE` (mis. `0.9`) dan pastikan keyword punya jawaban acuan yang cukup detail. |
 

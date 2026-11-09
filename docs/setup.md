@@ -72,8 +72,8 @@ butuh sampai **1 jam** untuk tampil.
 | **OpenRouter** | <https://openrouter.ai/keys> | ✅ | cadangan 2 |
 | **NVIDIA NIM** | <https://build.nvidia.com> → Get API Key | ✅ | cadangan 3 |
 
-> Cerebras & Mistral **kadang meminta kartu kredit** saat pembuatan key. Kalau kena, lewati saja —
-> empat provider di atas sudah lebih dari cukup.
+> Keempat provider di atas bisa didaftar **tanpa kartu kredit** — sudah diuji sendiri, bukan cuma
+> klaim dokumentasi. Cerebras dan Mistral tidak dipakai karena keduanya meminta kartu.
 
 Kamu **tidak wajib** mengisi semua cadangan. Yang kosong otomatis dilewati, bot tetap jalan.
 

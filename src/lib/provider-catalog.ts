@@ -39,18 +39,6 @@ export const KNOWN_PROVIDERS: Record<string, ProviderSpec> = {
     suggestedModels: ['openai/gpt-oss-120b', 'meta/llama-3.3-70b-instruct', 'qwen/qwen3-235b-a22b'],
     docsUrl: 'https://build.nvidia.com',
   },
-  cerebras: {
-    baseUrl: 'https://api.cerebras.ai/v1',
-    keyEnv: 'CEREBRAS_API_KEY',
-    suggestedModels: ['gpt-oss-120b', 'llama-3.3-70b', 'qwen-3-32b'],
-    docsUrl: 'https://inference-docs.cerebras.ai/models/overview',
-  },
-  mistral: {
-    baseUrl: 'https://api.mistral.ai/v1',
-    keyEnv: 'MISTRAL_API_KEY',
-    suggestedModels: ['mistral-small-latest', 'open-mistral-nemo'],
-    docsUrl: 'https://docs.mistral.ai/getting-started/models/models_overview/',
-  },
   ollama: {
     baseUrl: 'http://localhost:11434/v1',
     keyEnv: 'OLLAMA_API_KEY',
@@ -72,8 +60,7 @@ export function providerNameForBaseUrl(baseUrl: string): string {
   if (host.includes('groq.com')) return 'groq';
   if (host.includes('generativelanguage.googleapis.com')) return 'gemini';
   if (host.includes('openrouter.ai')) return 'openrouter';
-  if (host.includes('cerebras.ai')) return 'cerebras';
-  if (host.includes('mistral.ai')) return 'mistral';
+  if (host.includes('nvidia.com')) return 'nvidia';
   if (host === 'localhost' || host === '127.0.0.1' || host === 'host.docker.internal') {
     // Hanya port default Ollama yang dianggap Ollama; endpoint lokal lain = custom.
     return baseUrl.includes(':11434') ? 'ollama' : 'custom';

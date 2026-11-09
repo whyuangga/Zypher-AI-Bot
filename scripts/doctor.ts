@@ -50,8 +50,6 @@ function buildChain(): { chain: ProviderTarget[]; problems: string[] } {
     GEMINI_API_KEY: process.env.GEMINI_API_KEY,
     OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
     NVIDIA_API_KEY: process.env.NVIDIA_API_KEY,
-    CEREBRAS_API_KEY: process.env.CEREBRAS_API_KEY,
-    MISTRAL_API_KEY: process.env.MISTRAL_API_KEY,
     OLLAMA_API_KEY: process.env.OLLAMA_API_KEY,
   }, primary);
 

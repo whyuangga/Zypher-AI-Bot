@@ -248,6 +248,16 @@ test('NVIDIA NIM dikenali sebagai provider fallback', () => {
   assert.equal(providers[0]?.baseUrl, 'https://integrate.api.nvidia.com/v1');
   assert.equal(providers[0]?.model, 'openai/gpt-oss-120b');
 });
+test('Cerebras & Mistral tidak lagi didukung (minta kartu kredit)', () => {
+  const { providers, problems } = parseFallbackSpec('cerebras:gpt-oss-120b,mistral:mistral-small-latest', {
+    CEREBRAS_API_KEY: 'x',
+    MISTRAL_API_KEY: 'y',
+  });
+  assert.equal(providers.length, 0);
+  assert.equal(problems.length, 2);
+  assert.match(problems[0] ?? '', /tidak dikenal/);
+  assert.match(problems[0] ?? '', /groq, gemini, openrouter, nvidia, ollama/);
+});
 test('ollama tidak butuh API key', () => {
   const { providers } = parseFallbackSpec('ollama:llama3.1', {});
   assert.equal(providers.length, 1);
@@ -257,6 +267,7 @@ test('mendeteksi nama provider dari base URL', () => {
   assert.equal(providerNameForBaseUrl('https://api.groq.com/openai/v1'), 'groq');
   assert.equal(providerNameForBaseUrl('https://generativelanguage.googleapis.com/v1beta/openai/'), 'gemini');
   assert.equal(providerNameForBaseUrl('http://127.0.0.1:11434/v1'), 'ollama');
+  assert.equal(providerNameForBaseUrl('https://integrate.api.nvidia.com/v1'), 'nvidia');
 });
 test('rantai provider: utama di depan, fallback hanya yang ada key-nya', () => {
   const chain = buildProviderChain();

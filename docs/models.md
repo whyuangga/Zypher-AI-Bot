@@ -6,14 +6,14 @@ Formatnya selalu **`provider:model_id`**:
 AI_FALLBACKS=gemini:gemini-3.8-flash,openrouter:google/gemma-4-31b-it:free,nvidia:openai/gpt-oss-120b
 ```
 
-Nama provider dikenali bot: `groq`, `gemini`, `openrouter`, `nvidia`, `cerebras`, `mistral`, `ollama`.
+Nama provider dikenali bot: `groq`, `gemini`, `openrouter`, `nvidia`, `ollama`.
 Di belakang titik dua adalah **ID model persis** seperti yang dipakai provider tersebut.
 
 > ⚠️ Daftar di bawah **snapshot November 2026**. Katalog gratis berubah cepat — Groq sendiri sudah
 > mencabut Llama 3.3/3.1 dari free tier dan Gemini memindahkan 2.5 ke status legacy.
 > **Selalu verifikasi dengan `npm run models`** (lihat bagian terakhir).
 
-**Provider yang didukung:** [Groq](#groq--groq) · [Gemini](#google-gemini--gemini) · [OpenRouter](#openrouter--openrouter) · [NVIDIA NIM](#nvidia-nim--nvidia) · [Cerebras](#cerebras--cerebras--kadang-butuh-kartu) · [Mistral](#mistral--mistral--kadang-butuh-kartu) · [Ollama](#ollama-lokal--ollama)
+**Provider yang didukung:** [Groq](#groq--groq) · [Gemini](#google-gemini--gemini) · [OpenRouter](#openrouter--openrouter) · [NVIDIA NIM](#nvidia-nim--nvidia) · [Ollama](#ollama-lokal--ollama)
 
 ---
 
@@ -106,33 +106,6 @@ AI_API_KEY=nvapi-...
 > Dukungan tool calling **bervariasi per model**. Kalau model pilihanmu tidak mendukung, memori otomatis
 > nonaktif sementara `/ingat` manual tetap jalan (tercatat di log).
 
-## Cerebras — `cerebras` ⚠️ *kadang butuh kartu*
-
-Endpoint: `https://api.cerebras.ai/v1` · Key: <https://cloud.cerebras.ai> · ±30 RPM, 1 juta token/hari
-
-| Model ID | Tool calling | Catatan |
-|---|---|---|
-| `gpt-oss-120b` | ✅ | Tercepat + pintar, pilihan utama |
-| `llama-3.3-70b` | ❌ | Cepat, tanpa tool (memori otomatis nonaktif) |
-| `llama3.1-8b` | ❌ | Sangat cepat, untuk tugas ringan |
-| `qwen-3-32b` | ✅ | Reasoning + tool |
-| `qwen-3-235b-a22b-instruct-2507` | ⚠️ | Preview |
-
-> Konteks di free tier lebih pendek (sekitar 8K). Turunkan `AI_HISTORY_LIMIT=10` kalau memakai Cerebras.
->
-> **Penting:** beberapa akun diminta menambahkan kartu kredit sebelum key bisa dibuat. Kalau kamu kena
-> syarat itu, lewati provider ini — bukan masalah kode bot.
-
-## Mistral — `mistral` ⚠️ *kadang butuh kartu*
-
-Endpoint: `https://api.mistral.ai/v1` · Key: <https://console.mistral.ai> · free "Experiment" tier (±1 miliar token/bulan, RPM rendah, verifikasi HP)
-
-| Model ID | Catatan |
-|---|---|
-| `mistral-small-latest` | Seimbang, aman untuk chat umum |
-| `open-mistral-nemo` | Ringan & cepat |
-| `mistral-large-latest` | Kualitas tertinggi, kuota cepat habis |
-
 ## Ollama (lokal) — `ollama`
 
 Butuh key: tidak (otomatis `ollama`). Endpoint: `http://localhost:11434/v1`
@@ -165,8 +138,8 @@ AI_MODEL=openai/gpt-oss-120b
 AI_FALLBACKS=gemini:gemini-3.8-flash,openrouter:google/gemma-4-31b-it:free,nvidia:openai/gpt-oss-120b
 ```
 
-**Kalau Cerebras/Mistral menolak tanpa kartu:** jangan dipaksa. Tiga provider di atas sudah cukup
-untuk bot komunitas, dan NVIDIA NIM menambah cadangan keempat yang juga tanpa kartu.
+Keempat provider cloud di atas (Groq, Gemini, OpenRouter, NVIDIA NIM) bisa didaftar **tanpa kartu kredit**,
+jadi kombinasi ini sudah lebih dari cukup untuk bot komunitas.
 
 **Privasi maksimal (tanpa cloud):**
 ```env

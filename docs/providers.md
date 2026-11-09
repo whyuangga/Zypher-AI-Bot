@@ -2,10 +2,9 @@
 
 Semua provider di bawah punya API key gratis dan bisa dipakai bot ini cukup dengan mengubah 2 baris `.env`.
 
-> ⚠️ **Kenyataan di lapangan (November 2026):** **Cerebras** dan **Mistral** kadang meminta kartu kredit
-> saat membuat API key, walaupun dokumentasinya menyebut "no credit card". Ini bervariasi per akun,
-> region, dan sistem anti-fraud mereka. Kalau kamu kena syarat itu, **lewati saja** — pakai Groq + Gemini +
-> OpenRouter + NVIDIA NIM, yang terbukti tidak meminta kartu.
+> ℹ️ **Cerebras dan Mistral sengaja tidak didukung.** Keduanya meminta kartu kredit saat membuat API key,
+> jadi bukan opsi "gratis" yang jujur untuk project ini. Yang tersedia: Groq, Gemini, OpenRouter,
+> NVIDIA NIM (semua tanpa kartu) dan Ollama (lokal, tanpa akun).
 
 Angka limit **selalu berubah** — yang tertera adalah kisaran yang beredar saat dokumen ini ditulis;
 cek halaman resmi (atau `npm run models` untuk daftar model) sebelum dipakai serius.
@@ -20,8 +19,6 @@ cek halaman resmi (atau `npm run models` untuk daftar model) sebelum dipakai ser
 | **Google Gemini** | Permanen, tanpa kartu | Model Flash/Flash-Lite puluhan–ratusan req/hari, Pro sangat dibatasi | ✅ | Kuota harian paling longgar untuk chat |
 | **OpenRouter** | Model berlabel `:free` | 20 req/menit; 50 req/hari (jadi 1.000/hari setelah sekali beli kredit $10) | ✅ (tergantung model) | Bereksperimen banyak model |
 | **NVIDIA NIM** | Kredit gratis (1.000 call), tanpa kartu | ±40 req/menit, 120+ model open-weight | ⚠️ bervariasi | Katalog model terbanyak tanpa kartu |
-| **Cerebras** | ⚠️ **kadang minta kartu** | ±1 juta token/hari, konteks free pendek | ⚠️ | Kecepatan ekstrem, kalau key-nya bisa dibuat |
-| **Mistral** | ⚠️ **kadang minta kartu** | ±1 miliar token/bulan, RPM rendah | ✅ | Data EU, kalau key-nya bisa dibuat |
 | **Cloudflare Workers AI** | Permanen, tanpa kartu | 10.000 neuron/hari (setara ratusan chat) | ⚠️ terbatas | Sudah pakai ekosistem Cloudflare |
 | **Ollama (lokal)** | Gratis total, tanpa key | Terbatas hardware kamu | ✅ | Privasi maksimal / offline |
 
@@ -56,7 +53,7 @@ Gunakan `gemini-3.5-flash-lite` kalau butuh limit lebih longgar. Model `gemini-2
 Karena RPM free tier kecil (±10–15), turunkan juga `RATE_LIMIT_PER_MINUTE=8`.
 
 > ⚠️ Di free tier, Google dapat memakai data untuk peningkatan model. Untuk percakapan member
-> yang sensitif, pertimbangkan Groq/Cerebras atau tier berbayar.
+> yang sensitif, pertimbangkan Groq atau tier berbayar.
 
 ### OpenRouter (<https://openrouter.ai/keys>)
 
@@ -78,24 +75,6 @@ AI_API_KEY=nvapi-...
 
 Atau sebagai fallback: `AI_FALLBACKS=nvidia:openai/gpt-oss-120b` dengan `NVIDIA_API_KEY=nvapi-...`.
 Daftar modelnya sangat banyak (±120) dan berubah-ubah — cek dengan `npm run models`.
-
-### Cerebras (<https://cloud.cerebras.ai> → API Keys) — *bisa meminta kartu*
-
-```env
-AI_BASE_URL=https://api.cerebras.ai/v1
-AI_MODEL=llama-3.3-70b
-```
-
-Konteks di free tier lebih pendek; kalau transkrip/room panjang, turunkan `AI_HISTORY_LIMIT=10`.
-
-### Mistral (<https://console.mistral.ai> → API Keys) — *bisa meminta kartu*
-
-```env
-AI_BASE_URL=https://api.mistral.ai/v1
-AI_MODEL=mistral-small-latest
-```
-
-Butuh verifikasi nomor HP. Tier gratis untuk evaluasi, bukan produksi.
 
 ### Cloudflare Workers AI (<https://dash.cloudflare.com/profile/api-tokens>)
 
