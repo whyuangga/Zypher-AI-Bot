@@ -4,6 +4,9 @@ Bot Discord dengan **AI sebagai fitur utama**: member bisa membuka **room privat
 
 Dibangun dengan **Node.js + TypeScript**, [discord.js v14](https://discord.js.org), dan LLM [Groq](https://console.groq.com) (bisa diganti provider lain tanpa menyentuh kode).
 
+> 📖 **Baru pertama kali? Ikuti panduan langkah-demi-langkah di [docs/setup.md](docs/setup.md)** —
+> dari membuat aplikasi Discord, mengisi `.env`, sampai bot benar-benar menjawab.
+
 ```
 Member klik "Buat Room AI"
         ↓
@@ -88,17 +91,38 @@ git clone https://github.com/whyuangga/Zypher-AI-Bot.git
 cd Zypher-AI-Bot
 npm install
 cp .env.example .env       # lalu isi nilainya
+npm run doctor             # cek semua API key hidup
 npm run dev                # mode development (auto-reload)
 ```
 
-Isi minimal `.env`:
+**Konteks penting:** dengan Groq sebagai provider utama, key Groq ditaruh di **`AI_API_KEY`**
+(bukan `GROQ_API_KEY` — variabel itu hanya dipakai kalau Groq dijadikan cadangan).
+
+Isi minimal `.env` (cukup 3 baris):
 
 ```env
 DISCORD_TOKEN=xxxxx.xxxxx.xxxxx
 CLIENT_ID=123456789012345678
-DEV_GUILD_ID=123456789012345678   # ID server testing (command langsung muncul)
 AI_API_KEY=gsk_xxxxxxxx
 ```
+
+Versi lengkap dengan 3 provider cadangan (disarankan):
+
+```env
+DISCORD_TOKEN=xxxxx.xxxxx.xxxxx
+CLIENT_ID=123456789012345678
+DEV_GUILD_ID=123456789012345678
+
+AI_API_KEY=gsk_xxxxxxxxxxxxxxxx        # ← Groq (utama)
+GEMINI_API_KEY=AIzaSy...               # ← cadangan 1
+OPENROUTER_API_KEY=sk-or-v1-...        # ← cadangan 2
+NVIDIA_API_KEY=nvapi-...               # ← cadangan 3
+
+AI_FALLBACKS=gemini:gemini-3.8-flash,openrouter:google/gemma-4-31b-it:free,nvidia:openai/gpt-oss-120b
+```
+
+Penjelasan tiap variabel (termasuk aturan penulisan seperti komentar inline & tanda kutip) ada di
+**[docs/setup.md](docs/setup.md#langkah-3--isi-env)**.
 
 Saat pertama jalan, bot otomatis mendaftarkan slash command. Lalu di Discord:
 
@@ -276,6 +300,7 @@ diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai u
 | Bot diam saja di room | **Message Content Intent** belum aktif di Developer Portal → Bot. |
 | `Gagal membuat room AI` + permission | Bot butuh **Manage Channels**; taruh role bot di atas role lain yang relevan. |
 | Transkrip tidak masuk DM | User menutup DM. Set `TRANSCRIPT_CHANNEL_ID` sebagai arsip; bot juga tidak akan menghapus channel agar transkrip tidak hilang. |
+| `AI_API_KEY wajib diisi` padahal sudah diisi | Key Groq tertaruh di `GROQ_API_KEY`. Saat Groq utama, taruh di `AI_API_KEY` — lihat [docs/setup.md](docs/setup.md). |
 | `API key AI ditolak` | `AI_API_KEY` salah/kedaluwarsa di `.env`. Jalankan `npm run doctor` untuk memastikan provider mana yang bermasalah. |
 | `Kuota AI sedang penuh` | Rate limit provider tercapai — turunkan `RATE_LIMIT_PER_MINUTE`, atau isi `AI_FALLBACKS` agar otomatis pindah provider. |
 | `Semua provider AI sedang tidak tersedia` | Semua provider (utama + fallback) gagal. Cek log: biasanya kuota habis harian atau key salah. |
@@ -305,6 +330,7 @@ src/
 ├── db/                      # koneksi SQLite, skema, query
 └── lib/                     # llm, transcript, ratelimit, text, logger, register
 scripts/smoke.ts             # smoke test tanpa Discord
+docs/setup.md                # panduan setup langkah-demi-langkah
 docs/sample-transcript.html  # contoh hasil transkrip
 docs/providers.md            # provider AI free tier + contoh .env
 docs/models.md               # ID model gratis per provider + rekomendasi
