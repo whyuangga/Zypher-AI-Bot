@@ -77,7 +77,7 @@ if (!parsed.success) {
     .map((issue) => `  • ${issue.path.join('.') || '(root)'}: ${issue.message}`)
     .join('\n');
   console.error('\n❌ Konfigurasi .env belum lengkap / tidak valid:\n' + issues + '\n');
-  console.error('   Tips: salin .env.example menjadi .env lalu isi nilainya.\n');
+  console.error('   Tips: isi variabel di atas di file .env (contoh lengkap ada di .env.example).\n');
   process.exit(1);
 }
 
