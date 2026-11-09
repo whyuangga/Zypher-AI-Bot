@@ -1,11 +1,14 @@
 # 🤖 Zypher AI Bot
 
-Bot Discord dengan **AI sebagai fitur utama**: member bisa membuka **room privat** dan mengobrol dengan AI seperti layanan tiket, lengkap dengan **memori jangka panjang**, **jawaban keyword kustom yang divariasikan AI**, dan **transkrip sesi** yang bisa diunduh.
+Bot Discord dengan **AI sebagai fitur utama**: member bisa membuka **room privat** dan mengobrol dengan AI seperti layanan tiket, lengkap dengan **memori jangka panjang**, **jawaban keyword kustom yang divariasikan AI**, **dokumen rujukan (RAG)** yang membuat AI tahu isi FAQ server, **transkrip sesi** yang bisa diunduh, dan **dashboard web** untuk mengelola dokumen.
 
 Dibangun dengan **Node.js + TypeScript**, [discord.js v14](https://discord.js.org), dan LLM [Groq](https://console.groq.com) (bisa diganti provider lain tanpa menyentuh kode).
 
 > 📖 **Baru pertama kali? Ikuti panduan langkah-demi-langkah di [docs/setup.md](docs/setup.md)** —
 > dari membuat aplikasi Discord, mengisi `.env`, sampai bot benar-benar menjawab.
+>
+> ☁️ **Mau online 24/7 tanpa bayar?** Lihat [docs/hosting.md](docs/hosting.md) — perbandingan jujur
+> hosting gratis (Oracle Cloud, GCP, panel bot) plus mana yang merusak data SQLite.
 
 ```
 Member klik "Buat Room AI"
@@ -27,6 +30,8 @@ Chat bebas → AI menjawab, mengingat fakta, memakai keyword admin
 | ⚡ **Streaming jawaban** | Jawaban muncul bertahap (edit pesan tiap ±1,4 detik, menghormati rate limit Discord), bukan menunggu jeda panjang. Otomatis jatuh ke mode non-streaming kalau provider menolaknya. |
 | 💬 **Chat AI** | Konteks percakapan (20 pesan terakhir), jawaban panjang otomatis dipecah ke beberapa pesan. |
 | 🧠 **Memori jangka panjang** | AI otomatis menyimpan fakta penting lewat *tool calling*, plus perintah manual `/ingat`. Memori dipakai lagi di sesi berikutnya. |
+| 📚 **Dokumen RAG** | Upload `.txt`/`.md`/`.csv`/`.json` lewat `/dokumen tambah` atau dashboard. AI menjawab dari isi dokumen dan menyebut sumbernya (`📚 Sumber: faq.md`). Pencarian BM25 bawaan — **tanpa API key tambahan**. |
+| 🌐 **Dashboard web** | Ringkasan statistik, upload/hapus dokumen, dan uji pencarian RAG di browser. Aktif hanya kalau `DASHBOARD_TOKEN` diisi. Tanpa framework, satu proses dengan bot. |
 | 🔑 **Keyword kustom** | Admin menulis jawaban acuan; AI memakainya sebagai **fakta** dan menyusun ulang kalimatnya agar **bervariasi setiap kali** (bukan copy-paste). |
 | 🎭 **Persona per server** | Mis. "kamu guru bahasa Inggris yang sabar" — berlaku untuk semua room di server itu. |
 | 📄 **Transkrip sesi** | HTML mandiri (dark mode, rapi, aman dari XSS) berisi percakapan + memori + ringkasan AI. Dikirim ke DM dan/atau channel arsip. |
@@ -149,6 +154,12 @@ Klik **Buat Room AI** → channel privat muncul → mulai ngobrol.
 | `AI_HISTORY_LIMIT` | `20` | Jumlah pesan terakhir sebagai konteks |
 | `AI_FALLBACKS` | kosong | Provider cadangan, mis. `gemini:gemini-3.8-flash,openrouter:...` |
 | `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, `GROQ_API_KEY` | kosong | Key untuk provider cadangan |
+| `RAG_ENABLED` | `true` | Aktifkan dokumen rujukan (RAG) |
+| `RAG_TOP_K` | `5` | Jumlah potongan dokumen yang masuk prompt |
+| `RAG_MAX_CHARS` | `200000` | Batas ukuran satu dokumen |
+| `EMBED_MODEL`, `EMBED_BASE_URL`, `EMBED_API_KEY` | kosong | Embeddings opsional untuk pencarian semantik (lihat [docs/rag.md](docs/rag.md)) |
+| `DASHBOARD_TOKEN` | kosong | Token login dashboard web. **Kosong = dashboard mati** |
+| `DASHBOARD_PORT` | `3000` | Port dashboard |
 | `DATABASE_PATH` | `./data/zypher.db` | Lokasi file SQLite |
 | `AUTO_MEMORY` | `true` | Simpan memori otomatis lewat tool calling |
 | `RATE_LIMIT_PER_MINUTE` | `12` | Batas request AI per user/menit |
@@ -202,6 +213,9 @@ Kalau model tidak mendukung *tool calling*, bot otomatis lanjut tanpa fitur memo
 | `/memori [user]` | Semua / admin | Lihat daftar memori (dengan id) |
 | `/lupakan id:` / `semua:true` | Semua | Hapus satu / semua memori |
 | `/reset` | Pemilik room / staff | Hapus riwayat konteks, memori tetap |
+| `/dokumen tambah file:` | Admin | Upload dokumen teks sebagai pengetahuan AI |
+| `/dokumen daftar\|hapus` | Admin | Kelola dokumen pengetahuan |
+| `/dokumen cari pertanyaan:` | Semua | Uji potongan dokumen yang akan dipakai AI |
 | `/keyword tambah\|daftar\|hapus` | Admin | Kelola jawaban acuan yang divariasikan AI |
 | `/persona set\|lihat\|hapus` | Admin | Atur peran AI untuk seluruh server |
 
@@ -218,14 +232,19 @@ nama bot & server, nama member, tanggal, aturan gaya bahasa, persona server, mem
 
 **3. Keyword bervariasi** — `/keyword tambah` menyimpan *jawaban acuan*. Saat pesan user cocok (bukan harus persis: pencocokan kata kunci + toleransi ≥60% kata), isi acuan masuk ke prompt sebagai **fakta resmi** dengan instruksi: jangan copy-paste, susun ulang bahasanya dengan variasi. Hasilnya: inti jawaban konsisten, kalimatnya selalu segar.
 
-**4. Transkrip** — pesan channel diambil (hingga 600), di-escape, dirender jadi HTML mandiri bertema gelap, ditambah daftar memori dan **ringkasan sesi** dari AI. Dikirim ke DM + channel arsip, lalu channel dihapus.
+**4. Dokumen RAG** (`src/features/rag.ts`) — setiap pertanyaan, bot mencari potongan dokumen server
+paling relevan (BM25, digabung embeddings kalau `EMBED_MODEL` diisi), lalu menyelipkannya ke system prompt
+sebagai **rujukan tertinggi**. Potongan yang berdampingan ikut diambil agar konteks tidak terpotong, dan
+nama dokumen muncul di bawah jawaban. Tidak ada hasil relevan = AI menjawab seperti biasa.
 
-**5. Streaming** — jawaban dikirim lewat SSE dari provider, ditampung, lalu `DiscordStreamer`
+**5. Transkrip** — pesan channel diambil (hingga 600), di-escape, dirender jadi HTML mandiri bertema gelap, ditambah daftar memori dan **ringkasan sesi** dari AI. Dikirim ke DM + channel arsip, lalu channel dihapus.
+
+**6. Streaming** — jawaban dikirim lewat SSE dari provider, ditampung, lalu `DiscordStreamer`
 meng-edit pesan berkala (±1,4 detik, di bawah batas edit Discord) dan menyelesaikan sisanya sebagai
 pesan lanjutan. Kalau koneksi putus setelah teks tampil, jawaban parsial dipertahankan dan diberi catatan —
 bot **tidak** berpindah provider di tengah jalan agar jawaban tidak dobel.
 
-**6. Guardrail** — rate limit sliding-window, potong input, `allowedMentions: parse []` (anti `@everyone`), escape HTML pada transkrip, larangan membocorkan system prompt, dan fallback ke pesan ramah saat AI error/timeout.
+**7. Guardrail** — rate limit sliding-window, potong input, `allowedMentions: parse []` (anti `@everyone`), escape HTML pada transkrip, larangan membocorkan system prompt, dan fallback ke pesan ramah saat AI error/timeout.
 
 ---
 
@@ -261,9 +280,16 @@ pm2 start dist/index.js --name zypher-ai-bot
 pm2 save
 ```
 
+Dashboard web ikut menyala di port 3000 kalau `DASHBOARD_TOKEN` diisi.
+`docker-compose.yml` sudah meneruskan portnya.
+
 ### Platform PaaS
 
-Railway / Fly.io / Render bisa langsung memakai Dockerfile. Set env var yang sama, dan pastikan volume persistent dipasang di `/app/data` agar memori + transcript tidak hilang setiap redeploy.
+Railway / Fly.io / Render bisa langsung memakai Dockerfile, **tapi waspada**: bot Discord harus hidup 24/7
+dan SQLite butuh disk persisten. Render free *sleep* saat idle (bot jadi offline) dan disk-nya sementara
+(data hilang tiap redeploy).
+
+Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](docs/hosting.md)**.
 
 ---
 
@@ -272,8 +298,9 @@ Railway / Fly.io / Render bisa langsung memakai Dockerfile. Set env var yang sam
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke          # 28 test logika inti
+npm run smoke          # 42 test logika inti (termasuk RAG & chunking)
 npm run test:fallback  # uji rantai fallback provider dengan server tiruan
+npm run dashboard      # nyalakan dashboard web saja, tanpa bot Discord
 ```
 
 `npm run doctor` adalah langkah pertama saat ada masalah AI: ia mengirim request sungguhan ke provider
@@ -283,7 +310,8 @@ utama dan setiap fallback, lalu menampilkan latensi, isi balasan, dan dukungan s
 menyaring model non-chat, menandai model yang dipakai bot) — lebih akurat daripada daftar di dokumentasi.
 
 `npm run smoke` menguji CRUD memori, pencocokan keyword (termasuk kalimat yang dibalik), perakitan prompt,
-riwayat room, escape XSS pada transkrip, chunking pesan, rate limit, dan parsing `AI_FALLBACKS`.
+riwayat room, escape XSS pada transkrip, chunking pesan, rate limit, parsing `AI_FALLBACKS`, pemotongan
+dokumen RAG, tokenizer/BM25, serta ingest–cari–hapus dokumen di database sungguhan (in-memory).
 
 `npm run test:fallback` menyalakan dua server OpenAI-compatible tiruan (provider utama selalu 429) dan
 memeriksa 10 hal: pindah provider, payload utuh, berhenti saat prompt kepanjangan, **delta streaming
@@ -307,6 +335,10 @@ diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai u
 | Model tidak ditemukan / model butuh plan berbayar | Katalog gratis berubah (mis. Llama 3.3 sudah tidak gratis di Groq). Jalankan `npm run models`, lalu pakai ID yang muncul. |
 | Mau provider lain di luar daftar | Hanya 5 nama yang dikenali: `groq`, `gemini`, `openrouter`, `nvidia`, `ollama`. Provider yang minta kartu (Cerebras, Mistral) sengaja tidak didukung. |
 | Jawaban muncul sekaligus, bukan streaming | Normal bila provider/model menolak `stream: true` — bot otomatis memakai mode non-streaming di provider tersebut (lihat log). |
+| AI tidak menjawab dari dokumen | Cek `/dokumen cari pertanyaan:...`. Kalau kosong, kata kuncinya tidak ada di dokumen — tambahkan sinonim atau pakai istilah yang dipakai member. |
+| "Format PDF belum didukung" | Konversi dulu ke `.txt`/`.md`. Lihat [docs/rag.md](docs/rag.md). |
+| Dashboard tidak bisa dibuka | `DASHBOARD_TOKEN` kosong atau kurang dari 12 karakter. Cek log: harus ada `🌐 Dashboard: …`. |
+| Data hilang setelah redeploy | Hosting tanpa disk persisten. Lihat [docs/hosting.md](docs/hosting.md) + unduh backup `zypher.db`. |
 | Jawaban terasa monoton | Naikkan `AI_TEMPERATURE` (mis. `0.9`) dan pastikan keyword punya jawaban acuan yang cukup detail. |
 
 ---
@@ -322,27 +354,38 @@ src/
 ├── features/
 │   ├── rooms.ts             # buat/hapus room privat + transkrip
 │   ├── chat.ts              # pipeline jawaban AI + tool calling + chunking
+│   ├── rag.ts               # RAG: ingest dokumen, indeks BM25, pencarian hybrid
+│   ├── rag-embed.ts         # embeddings opsional (endpoint /embeddings)
 │   ├── memory.ts            # tool memori & format untuk prompt
 │   ├── keywords.ts          # pencocokan keyword
 │   ├── prompt.ts            # perakitan system prompt
 │   ├── buttons.ts           # router button interaction
 │   └── ui.ts                # embed & komponen
+├── web/
+│   ├── server.ts            # dashboard: node:http, auth token, API JSON
+│   ├── views.ts             # halaman HTML server-rendered
+│   └── standalone.ts        # npm run dashboard (tanpa bot Discord)
 ├── db/                      # koneksi SQLite, skema, query
-└── lib/                     # llm, transcript, ratelimit, text, logger, register
+└── lib/                     # llm, transcript, ratelimit, text, chunker, lexical, logger, register
 scripts/smoke.ts             # smoke test tanpa Discord
 docs/setup.md                # panduan setup langkah-demi-langkah
 docs/sample-transcript.html  # contoh hasil transkrip
 docs/providers.md            # provider AI free tier + contoh .env
 docs/models.md               # ID model gratis per provider + rekomendasi
+docs/rag.md                  # dokumen pengetahuan AI (RAG)
+docs/dashboard.md            # dashboard web: setup & keamanan
+docs/hosting.md              # hosting bot gratis 24/7 + backup
 ```
 
 ---
 
 ## 🗺️ Roadmap ide berikutnya
 
-- [ ] Web dashboard (statistik sesi, editor keyword/persona)
-- [ ] Streaming jawaban (edit pesan bertahap)
-- [ ] RAG dokumen server (FAQ panjang, PDF, Notion)
+- [x] Streaming jawaban (edit pesan bertahap)
+- [x] RAG dokumen server (`.txt`/`.md`/`.csv`/`.json`, pencarian hybrid)
+- [x] Web dashboard (statistik, kelola dokumen, uji pencarian)
+- [ ] Dukungan PDF/DOCX (butuh library ekstraksi)
+- [ ] Editor keyword & persona di dashboard
 - [ ] Moderasi otomatis + logging
 - [ ] Dukungan gambar (vision) & voice
 - [ ] Postgres untuk multi-shard

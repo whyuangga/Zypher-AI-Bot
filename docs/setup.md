@@ -185,7 +185,7 @@ Kalau berhasil, log akan menampilkan:
 INFO  Database siap: /app/data/zypher.db
 INFO  Provider AI aktif (fallback berurutan): groq/gpt-oss-120b → gemini/gemini-3.8-flash → ...
 INFO  🤖 Login sebagai NamaBot#1234 (1 server)
-INFO  ✅ 9 slash command didaftarkan di guild "Server Kamu".
+INFO  ✅ 10 slash command didaftarkan di guild "Server Kamu".
 ```
 
 Di Discord:
@@ -195,6 +195,62 @@ Di Discord:
 ```
 
 Klik **Buat Room AI** → channel privat muncul → langsung tanya apa saja.
+
+---
+
+## Langkah 6 — (Opsional) Dokumen rujukan & dashboard
+
+Dua fitur ini tidak wajib, tapi membuat bot jauh lebih berguna.
+
+### Dokumen RAG — AI tahu isi FAQ server
+
+```bash
+# buat file contoh
+cat > faq.txt <<'EOF'
+## Jam operasional
+Staff piket setiap hari 09.00–21.00 WIB.
+
+## Aturan giveaway
+Satu akun satu hadiah, pemenang wajib klaim dalam 24 jam.
+EOF
+```
+
+Di Discord (kamu harus admin server):
+
+```
+/dokumen tambah file:faq.txt
+/dokumen cari pertanyaan:jam operasional staff
+```
+
+Kalau pencarian menampilkan potongan yang benar, tanyakan hal yang sama di room AI — jawabannya akan
+menyebut `-# 📚 Sumber: faq.txt`. Format yang didukung: `.txt`, `.md`, `.csv`, `.json`, `.html`, `.log`.
+Panduan lengkap: [rag.md](rag.md).
+
+### Dashboard web — kelola dari browser
+
+```bash
+openssl rand -hex 16        # bikin token acak
+```
+
+Masukkan hasilnya ke `.env`:
+
+```env
+DASHBOARD_TOKEN=hasil-random-tadi
+DASHBOARD_PORT=3000
+```
+
+Jalankan bot (atau `npm run dashboard` untuk dashboard saja), lalu buka <http://localhost:3000>.
+Login memakai token tadi. Di sana ada statistik, upload dokumen, dan uji pencarian. Keamanan &
+reverse proxy: [dashboard.md](dashboard.md).
+
+---
+
+## Langkah 7 — Supaya online 24/7
+
+Bot hanya hidup selama terminalnya menyala. Untuk membuatnya online terus:
+
+👉 **[hosting.md](hosting.md)** — perbandingan gratis (Oracle Cloud Always Free, Google Cloud e2-micro,
+panel bot hosting) plus dua jebakan yang bikin data hilang.
 
 ---
 
@@ -248,6 +304,14 @@ Member menutup DM. Isi `TRANSCRIPT_CHANNEL_ID` supaya transkrip tetap tersimpan 
 **`.env` aman di-commit?**
 Tidak pernah. `.env` sudah ada di `.gitignore` — jangan dihapus dari sana.
 
+**Dashboard tidak bisa dibuka.**
+`DASHBOARD_TOKEN` harus terisi minimal 12 karakter. Cek log: kalau tidak ada baris `🌐 Dashboard: ...`,
+fitur itu belum menyala.
+
+**Data hilang setelah redeploy di hosting.**
+Hosting tanpa disk persisten. Pindah ke VPS/panel dengan storage, atau unduh backup `zypher.db`
+secara berkala — lihat [hosting.md](hosting.md).
+
 ---
 
 ## Setelah semua jalan
@@ -255,6 +319,13 @@ Tidak pernah. `.env` sudah ada di `.gitignore` — jangan dihapus dari sana.
 - Sesuaikan kepribadian AI per server: `/persona set teks:...`
 - Tambah jawaban acuan yang akan divariasikan AI: `/keyword tambah ...`
 - Kirim panel ke channel permanen: `/panel channel:#tanya-ai`
+- Upload FAQ/SOP dengan `/dokumen tambah` supaya jawaban AI tidak mengarang
+- Nyalakan dashboard (`DASHBOARD_TOKEN`) untuk mengelola dokumen tanpa Discord
 
-Panduan fitur lengkap ada di [README](../README.md), daftar model gratis di [models.md](models.md),
-dan provider free tier di [providers.md](providers.md).
+Panduan fitur lengkap ada di [README](../README.md). Dokumen lain:
+
+- [rag.md](rag.md) — dokumen pengetahuan AI
+- [dashboard.md](dashboard.md) — panel web
+- [hosting.md](hosting.md) — hosting gratis 24/7
+- [models.md](models.md) — model gratis per provider
+- [providers.md](providers.md) — provider free tier

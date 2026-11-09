@@ -9,6 +9,7 @@ import { chunkMessage, truncate } from '../lib/text.js';
 import { getMemories, memoryTools, runMemoryTool } from './memory.js';
 import { matchKeywords } from './keywords.js';
 import { buildSystemPrompt } from './prompt.js';
+import { buildKnowledgeBlock, searchKnowledge, summarizeSources, type RetrievedChunk } from './rag.js';
 
 const MAX_TOOL_ROUNDS = 2;
 const SLASH_PREVIEW_LIMIT = 1900;
@@ -32,10 +33,21 @@ interface AnswerContext {
  * Susun prompt + panggil model (streaming bila `onDelta` diberikan),
  * termasuk eksekusi tool memory di antara putaran.
  */
-async function generateAnswer(context: AnswerContext, onDelta?: DeltaHandler): Promise<string> {
+async function generateAnswer(
+  context: AnswerContext,
+  onDelta?: DeltaHandler,
+): Promise<{ text: string; sources: RetrievedChunk[] }> {
   const settings = getGuildSettings(context.guildId);
   const memories = getMemories({ guildId: context.guildId, userId: context.userId });
   const keywords = matchKeywords(context.guildId, context.question);
+
+  // RAG: cari potongan dokumen yang relevan. Gagal mencari tidak boleh menggagalkan jawaban.
+  let sources: RetrievedChunk[] = [];
+  try {
+    sources = await searchKnowledge(context.guildId, context.question);
+  } catch (error) {
+    logger.warn('Pencarian dokumen gagal — jawaban lanjut tanpa rujukan', errorMessage(error));
+  }
 
   const systemPrompt = buildSystemPrompt({
     botName: context.botName,
@@ -44,6 +56,7 @@ async function generateAnswer(context: AnswerContext, onDelta?: DeltaHandler): P
     persona: settings?.persona ?? null,
     memories,
     keywords,
+    knowledgeBlock: buildKnowledgeBlock(sources),
   });
 
   const tools: ChatTool[] | undefined = context.allowTools && config.features.autoMemory ? memoryTools : undefined;
@@ -95,7 +108,10 @@ async function generateAnswer(context: AnswerContext, onDelta?: DeltaHandler): P
   }
 
   const answer = (result.message.content ?? '').trim() || streamed.trim();
-  return answer.length > 0 ? answer : 'Hmm, aku belum bisa menjawab itu. Boleh dijelaskan ulang?';
+  return {
+    text: answer.length > 0 ? answer : 'Hmm, aku belum bisa menjawab itu. Boleh dijelaskan ulang?',
+    sources,
+  };
 }
 
 /** Handler untuk setiap pesan di channel room AI. */
@@ -148,7 +164,7 @@ export async function handleRoomMessage(message: Message): Promise<void> {
     await streamer.start();
     started = true;
 
-    const answer = await generateAnswer(
+    const result = await generateAnswer(
       {
         guildId: message.guildId,
         guildName: message.guild.name,
@@ -164,10 +180,11 @@ export async function handleRoomMessage(message: Message): Promise<void> {
 
     // Simpan ke riwayat hanya setelah jawaban berhasil, agar percakapan gagal tidak mengotori konteks.
     appendMessage(message.channelId, 'user', question);
-    appendMessage(message.channelId, 'assistant', answer);
+    appendMessage(message.channelId, 'assistant', result.text);
     touchRoom(message.channelId);
 
-    await streamer.finish(answer);
+    const sourceNote = summarizeSources(result.sources);
+    await streamer.finish(sourceNote ? `${result.text}\n\n-# ${sourceNote}` : result.text);
   } catch (error) {
     logger.error('Gagal menjawab pesan room AI', errorMessage(error));
     const note = `Maaf, ada gangguan: ${errorMessage(error).slice(0, 200)}\nCoba lagi sebentar lagi ya.`;
@@ -219,7 +236,7 @@ export async function answerSlashQuestion(interaction: ChatInputCommandInteracti
   }, SLASH_EDIT_INTERVAL_MS);
 
   try {
-    const answer = await generateAnswer(
+    const result = await generateAnswer(
       {
         guildId: interaction.guildId,
         guildName: interaction.guild.name,
@@ -239,6 +256,9 @@ export async function answerSlashQuestion(interaction: ChatInputCommandInteracti
     );
 
     clearInterval(timer);
+
+    const sourceNote = summarizeSources(result.sources);
+    const answer = sourceNote ? `${result.text}\n\n-# ${sourceNote}` : result.text;
 
     const chunks = chunkMessage(answer).slice(0, 4);
     await interaction.editReply({ content: chunks[0] ?? 'Tidak ada jawaban.', allowedMentions: { parse: [] } });

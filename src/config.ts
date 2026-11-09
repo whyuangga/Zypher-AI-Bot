@@ -41,6 +41,15 @@ const optionalSecret = z
   .optional()
   .transform((value) => (value && value.trim() !== '' ? value.trim() : undefined));
 
+/** Token dashboard: kosong = fitur mati; kalau diisi harus cukup panjang. */
+const optionalToken = z
+  .string()
+  .optional()
+  .transform((value) => (value && value.trim() !== '' ? value.trim() : undefined))
+  .refine((value) => value === undefined || value.length >= 12, {
+    message: 'DASHBOARD_TOKEN minimal 12 karakter (atau kosongkan untuk mematikan dashboard)',
+  });
+
 const schema = z.object({
   DISCORD_TOKEN: z.string().min(20, 'DISCORD_TOKEN tidak valid — salin ulang dari Discord Developer Portal'),
   CLIENT_ID: z.string().regex(/^\d{17,20}$/, 'CLIENT_ID harus berupa angka (Application ID)'),
@@ -58,6 +67,21 @@ const schema = z.object({
   OPENROUTER_API_KEY: optionalSecret,
   NVIDIA_API_KEY: optionalSecret,
   OLLAMA_API_KEY: optionalSecret,
+  // ---------- RAG dokumen ----------
+  RAG_ENABLED: booleanish(true),
+  RAG_TOP_K: numberish(5, 1, 12),
+  RAG_CHUNK_SIZE: numberish(900, 200, 2000),
+  RAG_CHUNK_OVERLAP: numberish(150, 0, 500),
+  RAG_MAX_CHARS: numberish(200000, 1000, 2000000),
+  // Embeddings opsional (endpoint /embeddings kompatibel OpenAI). Kosong = leksikal (BM25) saja.
+  EMBED_BASE_URL: z.string().url().optional(),
+  EMBED_API_KEY: optionalSecret,
+  EMBED_MODEL: optionalSecret,
+  // ---------- Web dashboard ----------
+  // Kosong = dashboard tidak dijalankan.
+  DASHBOARD_TOKEN: optionalToken,
+  DASHBOARD_PORT: numberish(3000, 1, 65535),
+  DASHBOARD_HOST: z.string().default('0.0.0.0'),
   DATABASE_PATH: z.string().default('./data/zypher.db'),
   AUTO_MEMORY: booleanish(true),
   RATE_LIMIT_PER_MINUTE: numberish(12, 0, 240),
@@ -102,6 +126,21 @@ export const config = {
       NVIDIA_API_KEY: env.NVIDIA_API_KEY,
       OLLAMA_API_KEY: env.OLLAMA_API_KEY,
     },
+  },
+  rag: {
+    enabled: env.RAG_ENABLED,
+    topK: env.RAG_TOP_K,
+    chunkSize: env.RAG_CHUNK_SIZE,
+    chunkOverlap: env.RAG_CHUNK_OVERLAP,
+    maxChars: env.RAG_MAX_CHARS,
+    embedBaseUrl: env.EMBED_BASE_URL,
+    embedApiKey: env.EMBED_API_KEY,
+    embedModel: env.EMBED_MODEL,
+  },
+  dashboard: {
+    token: env.DASHBOARD_TOKEN,
+    port: env.DASHBOARD_PORT,
+    host: env.DASHBOARD_HOST,
   },
   database: {
     path: env.DATABASE_PATH,

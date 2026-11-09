@@ -77,7 +77,7 @@ export function helpEmbed(botName: string): EmbedBuilder {
   return new EmbedBuilder()
     .setColor(BRAND_COLOR)
     .setTitle(`📖 Panduan ${botName}`)
-    .setDescription('Bot AI dengan room privat, memori jangka panjang, dan jawaban kustom dari admin.')
+    .setDescription('Bot AI dengan room privat, memori jangka panjang, dokumen rujukan (RAG), dan jawaban kustom dari admin.')
     .addFields(
       {
         name: '🤖 Room AI',
@@ -101,6 +101,15 @@ export function helpEmbed(botName: string): EmbedBuilder {
         value: [
           '`/reset` — hapus riwayat chat di room ini',
           '`/tanya pertanyaan:<teks>` — tanya AI cepat tanpa room',
+        ].join('\n'),
+      },
+      {
+        name: '📚 Dokumen (RAG)',
+        value: [
+          '`/dokumen tambah file:<lampiran>` — jadikan dokumen sebagai pengetahuan AI *(admin)*',
+          '`/dokumen daftar` · `/dokumen hapus id:<nomor>` *(admin)*',
+          '`/dokumen cari pertanyaan:<teks>` — cek potongan yang akan dipakai AI',
+          'Format: `.txt`, `.md`, `.csv`, `.json`, `.html`. AI menyebut sumbernya saat menjawab.',
         ].join('\n'),
       },
       {

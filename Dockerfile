@@ -28,4 +28,7 @@ RUN mkdir -p /app/data && chown -R node:node /app
 USER node
 VOLUME ["/app/data"]
 
+# Dashboard web (aktif hanya kalau DASHBOARD_TOKEN diisi)
+EXPOSE 3000
+
 CMD ["node", "dist/index.js"]

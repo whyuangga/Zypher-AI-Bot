@@ -49,4 +49,28 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages (channel_id, id);
+
+-- ---------- RAG dokumen ----------
+CREATE TABLE IF NOT EXISTS documents (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id    TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  source      TEXT NOT NULL DEFAULT 'upload',
+  chars       INTEGER NOT NULL DEFAULT 0,
+  chunk_count INTEGER NOT NULL DEFAULT 0,
+  created_by  TEXT,
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_documents_guild ON documents (guild_id);
+
+CREATE TABLE IF NOT EXISTS chunks (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  document_id INTEGER NOT NULL REFERENCES documents (id) ON DELETE CASCADE,
+  guild_id    TEXT NOT NULL,
+  ordinal     INTEGER NOT NULL,
+  content     TEXT NOT NULL,
+  embedding   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_chunks_guild ON chunks (guild_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks (document_id, ordinal);
 `;

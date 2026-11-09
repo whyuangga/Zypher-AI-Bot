@@ -7,6 +7,7 @@ import { onMessageCreate } from './events/messageCreate.js';
 import { errorMessage, logger } from './lib/logger.js';
 import { startRateLimitJanitor } from './lib/ratelimit.js';
 import { registerCommands } from './lib/register.js';
+import { startDashboard, stopDashboard } from './web/server.js';
 
 const client = new Client({
   intents: [
@@ -53,6 +54,7 @@ async function shutdown(signal: string): Promise<void> {
 
   logger.warn(`Menerima ${signal} — mematikan bot…`);
   try {
+    stopDashboard();
     client.destroy();
     closeDatabase();
   } catch (error) {
@@ -66,6 +68,8 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 startRateLimitJanitor();
+// Dashboard dinyalakan sebelum login Discord supaya tetap bisa dipakai memantau bot.
+startDashboard();
 
 async function main(): Promise<void> {
   logger.info(`Menghubungkan ke Discord… (model AI: ${config.ai.model})`);

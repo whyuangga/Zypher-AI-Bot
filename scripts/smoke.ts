@@ -25,8 +25,29 @@ const { buildTranscriptHtml, transcriptFileName } = await import('../src/lib/tra
 const { chunkMessage, truncate, normalize } = await import('../src/lib/text.js');
 const { checkRateLimit } = await import('../src/lib/ratelimit.js');
 const { parseFallbackSpec, providerNameForBaseUrl, buildProviderChain } = await import('../src/lib/providers.js');
+const { chunkText, extractText, htmlToText, DocumentError } = await import('../src/lib/chunker.js');
+const { Bm25Index, tokenize, stem, cosineSimilarity } = await import('../src/lib/lexical.js');
+const {
+  ingestDocument,
+  searchKnowledge,
+  removeDocument,
+  listGuildDocuments,
+  buildKnowledgeBlock,
+  summarizeSources,
+} = await import('../src/features/rag.js');
 
 let passed = 0;
+async function testAsync(name: string, fn: () => Promise<void>): Promise<void> {
+  try {
+    await fn();
+    passed += 1;
+    console.log(`  ✅ ${name}`);
+  } catch (error) {
+    console.error(`  ❌ ${name}`);
+    console.error(error);
+    process.exitCode = 1;
+  }
+}
 function test(name: string, fn: () => void): void {
   try {
     fn();
@@ -217,6 +238,125 @@ test('rate limit memblokir setelah batas', () => {
   const blocked = checkRateLimit(key, 3);
   assert.equal(blocked.allowed, false);
   assert.ok(blocked.retryAfterMs > 0);
+});
+
+console.log('\nRAG dokumen');
+test('memotong dokumen panjang jadi beberapa chunk yang wajar', () => {
+  const paragraph = 'Server ini punya aturan main yang jelas untuk semua member baru agar nyaman. '.repeat(6);
+  const doc = [paragraph, paragraph, paragraph, paragraph, paragraph].join('\n\n');
+  const chunks = chunkText(doc, { size: 900, overlap: 150 });
+  assert.ok(chunks.length > 1, 'dokumen panjang harus dipecah');
+  for (const chunk of chunks) {
+    assert.ok(chunk.length <= 1500, `chunk kebesaran: ${chunk.length}`);
+    assert.ok(chunk.length >= 20);
+  }
+});
+test('chunk pendek tidak dipotong dan teks penting tetap utuh', () => {
+  const chunks = chunkText('Jam operasional server: 09.00 sampai 21.00 WIB setiap hari.');
+  assert.equal(chunks.length, 1);
+  assert.match(chunks[0] ?? '', /09\.00 sampai 21\.00 WIB/);
+});
+test('htmlToText membuang tag & script', () => {
+  const text = htmlToText('<h1>Judul</h1><script>alert(1)</script><p>Isi <b>penting</b>.</p>');
+  assert.match(text, /Judul/);
+  assert.match(text, /Isi penting/);
+  assert.ok(!text.includes('<'));
+  assert.ok(!text.includes('alert'));
+});
+test('extractText menolak PDF dengan pesan yang jelas', () => {
+  assert.throws(() => extractText('brosur.pdf', '%PDF-1.4 ...'), DocumentError);
+  try {
+    extractText('brosur.pdf', '%PDF-1.4');
+  } catch (error) {
+    assert.match((error as Error).message, /PDF/);
+  }
+});
+test('extractText menolak file biner yang bukan UTF-8', () => {
+  const binary = new Uint8Array([0xff, 0xfe, 0x00, 0x01, 0xff, 0xfe, 0x00, 0x41, 0x42, 0x43, 0x44, 0x45]);
+  assert.throws(() => extractText('data.txt', binary), DocumentError);
+});
+test('tokenizer: stopword dibuang, imbuhan dipangkas', () => {
+  const tokens = tokenize('Bagaimana cara mengingat memori saya tentang server ini?');
+  assert.ok(!tokens.includes('saya'));
+  assert.ok(!tokens.includes('ini'));
+  assert.ok(tokens.includes('ingat'), `harusnya "mengingat" jadi "ingat": ${tokens.join(',')}`);
+  assert.equal(stem('memori'), 'memori');
+});
+test('BM25 menempatkan dokumen paling relevan di urutan pertama', () => {
+  const index = new Bm25Index([
+    { id: 1, text: 'Cara membuat room AI privat dengan tombol panel di Discord.' },
+    { id: 2, text: 'Aturan giveaway: satu akun satu hadiah, pemenang diumumkan malam.' },
+    { id: 3, text: 'Cara reset password akun member di website komunitas.' },
+  ]);
+  const hits = index.search('bagaimana reset password akun', 3);
+  assert.equal(hits[0]?.id, 3);
+  assert.ok((hits[0]?.score ?? 0) > 0);
+});
+test('cosineSimilarity benar untuk vektor sederhana', () => {
+  assert.equal(cosineSimilarity([1, 0], [1, 0]), 1);
+  assert.equal(cosineSimilarity([1, 0], [0, 1]), 0);
+  assert.ok(Math.abs(cosineSimilarity([1, 2, 3], [2, 4, 6]) - 1) < 1e-9);
+});
+
+await testAsync('RAG: ingest dokumen lalu temu kembali dengan nama sumber', async () => {
+  const doc = [
+    '# FAQ Komunitas',
+    '',
+    '## Jam operasional',
+    'Server aktif setiap hari pukul 09.00 sampai 21.00 WIB. Di luar jam itu staff sedang istirahat.',
+    '',
+    '## Aturan giveaway',
+    'Giveaway hanya boleh diikuti satu akun per orang. Pemenang diumumkan lewat channel #pengumuman.',
+  ].join('\n');
+
+  const result = await ingestDocument({ guildId: 'g-rag', name: 'faq.md', content: doc, createdBy: 'u-1' });
+  assert.ok(result.chunkCount >= 1);
+  assert.equal(result.document.name, 'faq.md');
+  assert.equal(listGuildDocuments('g-rag').length, 1);
+
+  const hits = await searchKnowledge('g-rag', 'jam operasional server sampai jam berapa?');
+  assert.ok(hits.length >= 1, 'harus ada hasil');
+  assert.equal(hits[0]?.documentName, 'faq.md');
+  assert.match(hits[0]?.content ?? '', /09\.00 sampai 21\.00/);
+
+  const block = buildKnowledgeBlock(hits);
+  assert.match(block, /DOKUMEN RUJUKAN/);
+  assert.match(block, /Sumber: faq\.md/);
+  assert.match(summarizeSources(hits), /faq\.md/);
+});
+
+await testAsync('RAG: upload ulang dengan nama sama menggantikan dokumen lama', async () => {
+  await ingestDocument({
+    guildId: 'g-rag',
+    name: 'faq.md',
+    content: 'Jam operasional server sekarang 24 jam penuh tanpa henti, staff piket bergiliran.',
+  });
+  assert.equal(listGuildDocuments('g-rag').length, 1, 'tidak boleh duplikat');
+
+  const hits = await searchKnowledge('g-rag', 'jam operasional');
+  assert.match(hits[0]?.content ?? '', /24 jam/);
+});
+
+await testAsync('RAG: dokumen yang salah server tidak ikut terpakai', async () => {
+  const hits = await searchKnowledge('g-lain', 'jam operasional');
+  assert.equal(hits.length, 0);
+});
+
+await testAsync('RAG: dokumen bisa dihapus dan hasil pencarian hilang', async () => {
+  const documents = listGuildDocuments('g-rag');
+  assert.equal(removeDocument('g-rag', documents[0]!.id), true);
+  const hits = await searchKnowledge('g-rag', 'jam operasional');
+  assert.equal(hits.length, 0);
+});
+
+await testAsync('RAG: pertanyaan yang tidak berhubungan menghasilkan hasil kosong', async () => {
+  await ingestDocument({
+    guildId: 'g-rag2',
+    name: 'aturan.md',
+    content: 'Dilarang keras mengirim tautan judi, togel, atau promosi slot di seluruh channel server.',
+  });
+  const hits = await searchKnowledge('g-rag2', 'kapan jadwal turnamen valorant dimulai?');
+  assert.equal(hits.length, 0);
 });
 
 console.log('\nProvider & fallback');

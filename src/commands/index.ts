@@ -1,4 +1,5 @@
 import { bantuanCommand } from './bantuan.js';
+import { dokumenCommand } from './dokumen.js';
 import { ingatCommand } from './ingat.js';
 import { keywordCommand } from './keyword.js';
 import { lupakanCommand } from './lupakan.js';
@@ -19,6 +20,7 @@ export const commands: Command[] = [
   resetCommand,
   keywordCommand,
   personaCommand,
+  dokumenCommand,
 ];
 
 export const commandMap = new Map<string, Command>(commands.map((command) => [command.data.name, command]));

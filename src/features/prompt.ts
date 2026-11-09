@@ -8,6 +8,8 @@ export interface PromptContext {
   persona: string | null;
   memories: Memory[];
   keywords: Keyword[];
+  /** Blok dokumen hasil RAG (sudah diformat oleh `src/features/rag.ts`). */
+  knowledgeBlock?: string;
   now?: Date;
 }
 
@@ -82,6 +84,8 @@ export function buildSystemPrompt(context: PromptContext): string {
 
   const knowledge = buildKnowledgeBlock(context.keywords);
   if (knowledge) sections.push('', knowledge);
+
+  if (context.knowledgeBlock?.trim()) sections.push('', context.knowledgeBlock.trim());
 
   return sections.join('\n').trim();
 }
