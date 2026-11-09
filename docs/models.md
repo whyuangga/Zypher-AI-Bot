@@ -61,7 +61,20 @@ Endpoint: `https://openrouter.ai/api/v1` · Key: <https://openrouter.ai/keys> ·
 > Model gratis OpenRouter **paling cepat berganti** (beberapa hilang dalam hitungan minggu).
 > Selalu cek `npm run models`, dan jangan pakai untuk produksi dengan trafik nyata (batas 50 req/hari).
 
-## Cerebras — `cerebras`
+## NVIDIA NIM — `nvidia`
+
+Endpoint: `https://integrate.api.nvidia.com/v1` · Key: <https://build.nvidia.com> (email saja, **tanpa kartu**) · ±40 RPM, kredit gratis ±1.000 call
+
+| Model ID | Catatan |
+|---|---|
+| `openai/gpt-oss-120b` | Andal untuk chat & tool |
+| `meta/llama-3.3-70b-instruct` | Klasik, stabil |
+| `qwen/qwen3-235b-a22b` | Multibahasa kuat |
+
+> Katalognya ±120 model open-weight dan paling cepat berubah. Jalankan `npm run models` untuk melihat
+> ID yang benar-benar aktif di akunmu. Dukungan tool calling **bervariasi per model**.
+
+## Cerebras — `cerebras` ⚠️ *kadang butuh kartu*
 
 Endpoint: `https://api.cerebras.ai/v1` · Key: <https://cloud.cerebras.ai> · ±30 RPM, 1 juta token/hari
 
@@ -74,8 +87,11 @@ Endpoint: `https://api.cerebras.ai/v1` · Key: <https://cloud.cerebras.ai> · ±
 | `qwen-3-235b-a22b-instruct-2507` | ⚠️ | Preview |
 
 > Konteks di free tier lebih pendek (sekitar 8K). Turunkan `AI_HISTORY_LIMIT=10` kalau memakai Cerebras.
+>
+> **Penting:** beberapa akun diminta menambahkan kartu kredit sebelum key bisa dibuat. Kalau kamu kena
+> syarat itu, lewati provider ini — bukan masalah kode bot.
 
-## Mistral — `mistral`
+## Mistral — `mistral` ⚠️ *kadang butuh kartu*
 
 Endpoint: `https://api.mistral.ai/v1` · Key: <https://console.mistral.ai> · free "Experiment" tier (±1 miliar token/bulan, RPM rendah, verifikasi HP)
 
@@ -111,11 +127,14 @@ AI_MODEL=openai/gpt-oss-120b
 AI_FALLBACKS=gemini:gemini-3.8-flash
 ```
 
-**Tahan limit (3 key):**
+**Tahan limit (4 key, semua tanpa kartu):**
 ```env
 AI_MODEL=openai/gpt-oss-120b
-AI_FALLBACKS=gemini:gemini-3.8-flash,openrouter:google/gemma-4-31b-it:free
+AI_FALLBACKS=gemini:gemini-3.8-flash,openrouter:google/gemma-4-31b-it:free,nvidia:openai/gpt-oss-120b
 ```
+
+**Kalau Cerebras/Mistral menolak tanpa kartu:** jangan dipaksa. Tiga provider di atas sudah cukup
+untuk bot komunitas, dan NVIDIA NIM menambah cadangan keempat yang juga tanpa kartu.
 
 **Privasi maksimal (tanpa cloud):**
 ```env

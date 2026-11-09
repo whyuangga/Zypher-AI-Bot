@@ -33,6 +33,12 @@ export const KNOWN_PROVIDERS: Record<string, ProviderSpec> = {
     suggestedModels: ['google/gemma-4-31b-it:free', 'nvidia/nemotron-3-ultra-550b-a55b:free', 'openrouter/free'],
     docsUrl: 'https://openrouter.ai/models?max_price=0',
   },
+  nvidia: {
+    baseUrl: 'https://integrate.api.nvidia.com/v1',
+    keyEnv: 'NVIDIA_API_KEY',
+    suggestedModels: ['openai/gpt-oss-120b', 'meta/llama-3.3-70b-instruct', 'qwen/qwen3-235b-a22b'],
+    docsUrl: 'https://build.nvidia.com',
+  },
   cerebras: {
     baseUrl: 'https://api.cerebras.ai/v1',
     keyEnv: 'CEREBRAS_API_KEY',

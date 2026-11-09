@@ -1,8 +1,14 @@
 # 🔑 Provider AI dengan Free Tier (update: November 2026)
 
-Semua provider di bawah punya **API key gratis tanpa kartu kredit** dan bisa dipakai bot ini
-cukup dengan mengubah 2 baris `.env`. Angka limit **selalu berubah** — yang tertera adalah
-kisaran yang beredar saat dokumen ini ditulis; cek halaman resmi masing-masing sebelum dipakai serius.
+Semua provider di bawah punya API key gratis dan bisa dipakai bot ini cukup dengan mengubah 2 baris `.env`.
+
+> ⚠️ **Kenyataan di lapangan (November 2026):** **Cerebras** dan **Mistral** kadang meminta kartu kredit
+> saat membuat API key, walaupun dokumentasinya menyebut "no credit card". Ini bervariasi per akun,
+> region, dan sistem anti-fraud mereka. Kalau kamu kena syarat itu, **lewati saja** — pakai Groq + Gemini +
+> OpenRouter + NVIDIA NIM, yang terbukti tidak meminta kartu.
+
+Angka limit **selalu berubah** — yang tertera adalah kisaran yang beredar saat dokumen ini ditulis;
+cek halaman resmi (atau `npm run models` untuk daftar model) sebelum dipakai serius.
 
 ---
 
@@ -13,8 +19,9 @@ kisaran yang beredar saat dokumen ini ditulis; cek halaman resmi masing-masing s
 | **Groq** | Permanen, tanpa kartu | ±30 req/menit, ±1.000 req/hari & 8K TPM per model | ✅ | **Default repo ini** — tercepat, GPT-OSS 120B gratis |
 | **Google Gemini** | Permanen, tanpa kartu | Model Flash/Flash-Lite puluhan–ratusan req/hari, Pro sangat dibatasi | ✅ | Kuota harian paling longgar untuk chat |
 | **OpenRouter** | Model berlabel `:free` | 20 req/menit; 50 req/hari (jadi 1.000/hari setelah sekali beli kredit $10) | ✅ (tergantung model) | Bereksperimen banyak model |
-| **Cerebras** | Permanen, tanpa kartu | ±1 juta token/hari, ±30 req/menit, konteks free lebih pendek | ⚠️ | Kecepatan ekstrem, beban tinggi |
-| **Mistral** | "Experiment" tier, verifikasi HP | ±1 miliar token/bulan, RPM rendah | ✅ | Volume token besar, data EU |
+| **NVIDIA NIM** | Kredit gratis (1.000 call), tanpa kartu | ±40 req/menit, 120+ model open-weight | ⚠️ bervariasi | Katalog model terbanyak tanpa kartu |
+| **Cerebras** | ⚠️ **kadang minta kartu** | ±1 juta token/hari, konteks free pendek | ⚠️ | Kecepatan ekstrem, kalau key-nya bisa dibuat |
+| **Mistral** | ⚠️ **kadang minta kartu** | ±1 miliar token/bulan, RPM rendah | ✅ | Data EU, kalau key-nya bisa dibuat |
 | **Cloudflare Workers AI** | Permanen, tanpa kartu | 10.000 neuron/hari (setara ratusan chat) | ⚠️ terbatas | Sudah pakai ekosistem Cloudflare |
 | **Ollama (lokal)** | Gratis total, tanpa key | Terbatas hardware kamu | ✅ | Privasi maksimal / offline |
 
@@ -61,7 +68,18 @@ AI_MODEL=google/gemma-4-31b-it:free
 Daftar model gratis **cepat berganti** (bisa berubah dalam hitungan minggu) — cek
 <https://openrouter.ai/models?max_price=0> dan selalu pilih yang berakhiran `:free`.
 
-### Cerebras (<https://cloud.cerebras.ai> → API Keys)
+### NVIDIA NIM (<https://build.nvidia.com> → Get API Key)
+
+```env
+AI_BASE_URL=https://integrate.api.nvidia.com/v1
+AI_MODEL=openai/gpt-oss-120b
+AI_API_KEY=nvapi-...
+```
+
+Atau sebagai fallback: `AI_FALLBACKS=nvidia:openai/gpt-oss-120b` dengan `NVIDIA_API_KEY=nvapi-...`.
+Daftar modelnya sangat banyak (±120) dan berubah-ubah — cek dengan `npm run models`.
+
+### Cerebras (<https://cloud.cerebras.ai> → API Keys) — *bisa meminta kartu*
 
 ```env
 AI_BASE_URL=https://api.cerebras.ai/v1
@@ -70,7 +88,7 @@ AI_MODEL=llama-3.3-70b
 
 Konteks di free tier lebih pendek; kalau transkrip/room panjang, turunkan `AI_HISTORY_LIMIT=10`.
 
-### Mistral (<https://console.mistral.ai> → API Keys)
+### Mistral (<https://console.mistral.ai> → API Keys) — *bisa meminta kartu*
 
 ```env
 AI_BASE_URL=https://api.mistral.ai/v1
@@ -116,10 +134,11 @@ AI_MODEL=openai/gpt-oss-120b
 AI_API_KEY=gsk_xxxxxxxx
 
 # cadangan, dicoba berurutan saat provider utama gagal
-AI_FALLBACKS=gemini:gemini-3.8-flash,openrouter:google/gemma-4-31b-it:free
+AI_FALLBACKS=gemini:gemini-3.8-flash,openrouter:google/gemma-4-31b-it:free,nvidia:openai/gpt-oss-120b
 
 GEMINI_API_KEY=AIza...
 OPENROUTER_API_KEY=sk-or-v1-...
+NVIDIA_API_KEY=nvapi-...
 ```
 
 Perilaku yang sudah diatur di `src/lib/llm.ts`:
@@ -132,6 +151,7 @@ Perilaku yang sudah diatur di `src/lib/llm.ts`:
 | Model tidak mendukung tool calling | Ulang di provider yang sama tanpa tools, memori otomatis nonaktif |
 | Semua provider gagal | Pesan ramah berisi ringkasan penyebab tiap provider |
 | Provider menolak `stream: true` | Otomatis memakai mode non-streaming di provider itu, jawaban tetap keluar |
+| Provider minta kartu kredit saat signup | Bukan urusan bot — lewati provider itu, pilih yang tanpa kartu (Groq/Gemini/OpenRouter/NVIDIA) |
 
 Urutan dicoba dari kiri ke kanan. Entri yang salah atau key-nya kosong akan dilewati dengan
 peringatan di log, jadi bot tetap jalan.

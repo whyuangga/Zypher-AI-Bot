@@ -242,6 +242,12 @@ test('menolak provider tak dikenal & format salah', () => {
   assert.equal(providers.length, 0);
   assert.equal(problems.length, 2);
 });
+test('NVIDIA NIM dikenali sebagai provider fallback', () => {
+  const { providers } = parseFallbackSpec('nvidia:openai/gpt-oss-120b', { NVIDIA_API_KEY: 'nvapi-test' });
+  assert.equal(providers.length, 1);
+  assert.equal(providers[0]?.baseUrl, 'https://integrate.api.nvidia.com/v1');
+  assert.equal(providers[0]?.model, 'openai/gpt-oss-120b');
+});
 test('ollama tidak butuh API key', () => {
   const { providers } = parseFallbackSpec('ollama:llama3.1', {});
   assert.equal(providers.length, 1);
