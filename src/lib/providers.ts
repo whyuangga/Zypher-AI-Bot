@@ -1,5 +1,6 @@
 import { config } from '../config.js';
 import { logger } from './logger.js';
+import { KNOWN_PROVIDERS, providerNameForBaseUrl, type ProviderSpec } from './provider-catalog.js';
 
 export interface AiProvider {
   name: string;
@@ -8,45 +9,8 @@ export interface AiProvider {
   model: string;
 }
 
-interface KnownProvider {
-  baseUrl: string;
-  keyEnv: string;
-  defaultKey?: string;
-}
-
-/**
- * Provider yang dikenali untuk `AI_FALLBACKS`.
- * Format entri: `nama:model` — contoh `gemini:gemini-2.5-flash`.
- */
-export const KNOWN_PROVIDERS: Record<string, KnownProvider> = {
-  groq: { baseUrl: 'https://api.groq.com/openai/v1', keyEnv: 'GROQ_API_KEY' },
-  gemini: { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/', keyEnv: 'GEMINI_API_KEY' },
-  openrouter: { baseUrl: 'https://openrouter.ai/api/v1', keyEnv: 'OPENROUTER_API_KEY' },
-  cerebras: { baseUrl: 'https://api.cerebras.ai/v1', keyEnv: 'CEREBRAS_API_KEY' },
-  mistral: { baseUrl: 'https://api.mistral.ai/v1', keyEnv: 'MISTRAL_API_KEY' },
-  ollama: { baseUrl: 'http://localhost:11434/v1', keyEnv: 'OLLAMA_API_KEY', defaultKey: 'ollama' },
-};
-
-/** Tebak nama provider dari base URL, untuk label di log. */
-export function providerNameForBaseUrl(baseUrl: string): string {
-  let host = baseUrl;
-  try {
-    host = new URL(baseUrl).hostname;
-  } catch {
-    // biarkan apa adanya kalau URL tidak valid
-  }
-
-  if (host.includes('groq.com')) return 'groq';
-  if (host.includes('generativelanguage.googleapis.com')) return 'gemini';
-  if (host.includes('openrouter.ai')) return 'openrouter';
-  if (host.includes('cerebras.ai')) return 'cerebras';
-  if (host.includes('mistral.ai')) return 'mistral';
-  if (host === 'localhost' || host === '127.0.0.1' || host === 'host.docker.internal') {
-    // Hanya port default Ollama yang dianggap Ollama; endpoint lokal lain = custom.
-    return baseUrl.includes(':11434') ? 'ollama' : 'custom';
-  }
-  return host;
-}
+export { KNOWN_PROVIDERS, providerNameForBaseUrl };
+export type { ProviderSpec };
 
 export interface FallbackParseResult {
   providers: AiProvider[];
@@ -55,6 +19,7 @@ export interface FallbackParseResult {
 
 /**
  * Urai string `AI_FALLBACKS` menjadi daftar provider siap pakai.
+ * Format entri: `nama:model` — contoh `gemini:gemini-3.8-flash`.
  * Entri yang salah / key-nya belum diisi dilewati dengan catatan, bukan membuat bot gagal start.
  */
 export function parseFallbackSpec(

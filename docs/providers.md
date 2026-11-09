@@ -10,7 +10,7 @@ kisaran yang beredar saat dokumen ini ditulis; cek halaman resmi masing-masing s
 
 | Provider | Gratisnya | Limit kasar (free) | Tool calling¹ | Cocok untuk |
 |---|---|---|---|---|
-| **Groq** | Permanen, tanpa kartu | ±30 req/menit, ribuan req/hari (model besar lebih ketat) | ✅ | **Default repo ini** — tercepat, kualitas 70B |
+| **Groq** | Permanen, tanpa kartu | ±30 req/menit, ±1.000 req/hari & 8K TPM per model | ✅ | **Default repo ini** — tercepat, GPT-OSS 120B gratis |
 | **Google Gemini** | Permanen, tanpa kartu | Model Flash/Flash-Lite puluhan–ratusan req/hari, Pro sangat dibatasi | ✅ | Kuota harian paling longgar untuk chat |
 | **OpenRouter** | Model berlabel `:free` | 20 req/menit; 50 req/hari (jadi 1.000/hari setelah sekali beli kredit $10) | ✅ (tergantung model) | Bereksperimen banyak model |
 | **Cerebras** | Permanen, tanpa kartu | ±1 juta token/hari, ±30 req/menit, konteks free lebih pendek | ⚠️ | Kecepatan ekstrem, beban tinggi |
@@ -29,19 +29,23 @@ Kalau model tidak mendukung, bot tidak crash — hanya memori otomatis mati, dan
 
 ```env
 AI_BASE_URL=https://api.groq.com/openai/v1
-AI_MODEL=llama-3.3-70b-versatile
+AI_MODEL=openai/gpt-oss-120b
 ```
 
-Alternatif model di Groq: `openai/gpt-oss-120b`, `meta-llama/llama-4-scout-17b-16e-instruct`, `qwen/qwen3-32b`.
+Alternatif model gratis di Groq: `openai/gpt-oss-20b`, `qwen/qwen3.8-27b`.
+
+> ⚠️ Llama 3.3 70B, Llama 3.1 8B, Llama 4 Scout, dan Qwen3 32B **sudah tidak gratis** per November 2026.
+> Daftar ID lengkap: **[models.md](models.md)**.
 
 ### Google Gemini (<https://aistudio.google.com/api-keys>)
 
 ```env
 AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
-AI_MODEL=gemini-2.5-flash
+AI_MODEL=gemini-3.8-flash
 ```
 
-Gunakan `gemini-2.5-flash-lite` kalau butuh limit per menit lebih longgar.
+Gunakan `gemini-3.5-flash-lite` kalau butuh limit lebih longgar. Model `gemini-2.5-*` sekarang legacy
+(hanya untuk project yang pernah memakainya), dan semua model Pro butuh billing.
 Karena RPM free tier kecil (±10–15), turunkan juga `RATE_LIMIT_PER_MINUTE=8`.
 
 > ⚠️ Di free tier, Google dapat memakai data untuk peningkatan model. Untuk percakapan member
@@ -108,11 +112,11 @@ Daripada mengganti `.env` manual saat kena limit, daftarkan provider cadangan. B
 ```env
 # utama (Groq)
 AI_BASE_URL=https://api.groq.com/openai/v1
-AI_MODEL=llama-3.3-70b-versatile
+AI_MODEL=openai/gpt-oss-120b
 AI_API_KEY=gsk_xxxxxxxx
 
 # cadangan, dicoba berurutan saat provider utama gagal
-AI_FALLBACKS=gemini:gemini-2.5-flash,openrouter:google/gemma-4-31b-it:free
+AI_FALLBACKS=gemini:gemini-3.8-flash,openrouter:google/gemma-4-31b-it:free
 
 GEMINI_API_KEY=AIza...
 OPENROUTER_API_KEY=sk-or-v1-...

@@ -13,7 +13,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.check.json",
     "smoke": "tsx scripts/smoke.ts",
-    "test:fallback": "tsx scripts/fallback-check.ts"
+    "test:fallback": "tsx scripts/fallback-check.ts",
+    "models": "tsx scripts/list-models.ts"
   },
   "keywords": [
     "discord",

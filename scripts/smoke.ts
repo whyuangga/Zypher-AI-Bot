@@ -8,7 +8,7 @@ process.env.DISCORD_TOKEN = 'smoke-test-token-0000000000000000';
 process.env.CLIENT_ID = '123456789012345678';
 process.env.AI_API_KEY = 'smoke-test-key-0000';
 process.env.DATABASE_PATH = ':memory:';
-process.env.AI_FALLBACKS = 'gemini:gemini-2.5-flash,openrouter:google/gemma-4-31b-it:free';
+process.env.AI_FALLBACKS = 'gemini:gemini-3.8-flash,openrouter:google/gemma-4-31b-it:free';
 process.env.GEMINI_API_KEY = 'smoke-gemini-key';
 
 import assert from 'node:assert/strict';
@@ -222,18 +222,18 @@ test('rate limit memblokir setelah batas', () => {
 console.log('\nProvider & fallback');
 test('mengurai AI_FALLBACKS, termasuk model ber-titik-dua', () => {
   const { providers, problems } = parseFallbackSpec(
-    'gemini:gemini-2.5-flash, openrouter:google/gemma-4-31b-it:free',
+    'gemini:gemini-3.8-flash, openrouter:google/gemma-4-31b-it:free',
     { GEMINI_API_KEY: 'key-g', OPENROUTER_API_KEY: 'key-o' },
   );
   assert.equal(problems.length, 0);
   assert.equal(providers.length, 2);
   assert.equal(providers[0]?.name, 'gemini');
-  assert.equal(providers[0]?.model, 'gemini-2.5-flash');
+  assert.equal(providers[0]?.model, 'gemini-3.8-flash');
   assert.equal(providers[1]?.model, 'google/gemma-4-31b-it:free');
   assert.match(providers[1]?.baseUrl ?? '', /openrouter\.ai/);
 });
 test('melewati provider yang key-nya kosong', () => {
-  const { providers, problems } = parseFallbackSpec('gemini:gemini-2.5-flash', {});
+  const { providers, problems } = parseFallbackSpec('gemini:gemini-3.8-flash', {});
   assert.equal(providers.length, 0);
   assert.match(problems[0] ?? '', /GEMINI_API_KEY/);
 });

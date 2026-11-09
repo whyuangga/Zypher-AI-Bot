@@ -47,11 +47,11 @@ const schema = z.object({
   DEV_GUILD_ID: optionalId,
   AI_API_KEY: z.string().min(10, 'AI_API_KEY wajib diisi — ambil di https://console.groq.com/keys'),
   AI_BASE_URL: z.string().url().default('https://api.groq.com/openai/v1'),
-  AI_MODEL: z.string().default('llama-3.3-70b-versatile'),
+  AI_MODEL: z.string().default('openai/gpt-oss-120b'),
   AI_TEMPERATURE: numberish(0.8, 0, 2),
   AI_MAX_TOKENS: numberish(700, 64, 8192),
   AI_HISTORY_LIMIT: numberish(20, 0, 100),
-  // Daftar provider cadangan: "gemini:gemini-2.5-flash,openrouter:google/gemma-4-31b-it:free"
+  // Daftar provider cadangan: "gemini:gemini-3.8-flash,openrouter:google/gemma-4-31b-it:free"
   AI_FALLBACKS: z.string().optional(),
   GROQ_API_KEY: optionalSecret,
   GEMINI_API_KEY: optionalSecret,

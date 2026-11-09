@@ -39,7 +39,7 @@ Chat bebas → AI menjawab, mengingat fakta, memakai keyword admin
 Runtime   Node.js 22 LTS
 Bahasa    TypeScript (strict)
 Discord   discord.js v14
-AI        Groq — llama-3.3-70b-versatile (OpenAI-compatible API)
+AI        Groq — openai/gpt-oss-120b (OpenAI-compatible API)
 Database  node:sqlite (built-in Node 22) — tanpa node-gyp, tanpa build tools
 Validasi  zod + dotenv
 Deploy    Docker multi-stage + docker-compose
@@ -119,11 +119,11 @@ Klik **Buat Room AI** → channel privat muncul → mulai ngobrol.
 | `DEV_GUILD_ID` | kosong | ID server testing. Terisi = command didaftarkan per-guild (instan). Kosong = global (bisa sampai 1 jam). |
 | `AI_API_KEY` | — | API key Groq (**wajib**) |
 | `AI_BASE_URL` | `https://api.groq.com/openai/v1` | Endpoint OpenAI-compatible. Ganti untuk pindah provider. |
-| `AI_MODEL` | `llama-3.3-70b-versatile` | Model yang dipakai |
+| `AI_MODEL` | `openai/gpt-oss-120b` | Model yang dipakai (lihat [docs/models.md](docs/models.md)) |
 | `AI_TEMPERATURE` | `0.8` | Kreativitas (0–2). Naikkan kalau variasi jawaban terasa monoton. |
 | `AI_MAX_TOKENS` | `700` | Panjang maksimal jawaban |
 | `AI_HISTORY_LIMIT` | `20` | Jumlah pesan terakhir sebagai konteks |
-| `AI_FALLBACKS` | kosong | Provider cadangan, mis. `gemini:gemini-2.5-flash,openrouter:...` |
+| `AI_FALLBACKS` | kosong | Provider cadangan, mis. `gemini:gemini-3.8-flash,openrouter:...` |
 | `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `CEREBRAS_API_KEY`, `MISTRAL_API_KEY`, `GROQ_API_KEY` | kosong | Key untuk provider cadangan |
 | `DATABASE_PATH` | `./data/zypher.db` | Lokasi file SQLite |
 | `AUTO_MEMORY` | `true` | Simpan memori otomatis lewat tool calling |
@@ -137,12 +137,13 @@ Klik **Buat Room AI** → channel privat muncul → mulai ngobrol.
 ### Ganti provider AI (opsional)
 
 Kode memakai protokol OpenAI-compatible, jadi cukup ubah dua baris.
-Daftar lengkap provider **free tier** + contoh `.env` siap tempel ada di **[docs/providers.md](docs/providers.md)**.
+Daftar lengkap provider **free tier** + contoh `.env` siap tempel ada di **[docs/providers.md](docs/providers.md)**,
+sedangkan **ID model gratis per provider** ada di **[docs/models.md](docs/models.md)**.
 
 **Fallback otomatis:** isi `AI_FALLBACKS` agar bot pindah provider sendiri saat kena limit:
 
 ```env
-AI_FALLBACKS=gemini:gemini-2.5-flash,openrouter:google/gemma-4-31b-it:free
+AI_FALLBACKS=gemini:gemini-3.8-flash,openrouter:google/gemma-4-31b-it:free
 GEMINI_API_KEY=AIza...
 OPENROUTER_API_KEY=sk-or-v1-...
 ```
@@ -158,7 +159,7 @@ AI_MODEL=meta-llama/llama-3.3-70b-instruct
 
 # Ollama lokal (gratis total)
 AI_BASE_URL=http://localhost:11434/v1
-AI_MODEL=llama3.1
+AI_MODEL=qwen3
 AI_API_KEY=ollama
 ```
 
@@ -249,6 +250,9 @@ npm run smoke          # 27 test logika inti
 npm run test:fallback  # uji rantai fallback provider dengan server tiruan
 ```
 
+`npm run models` menampilkan model yang **benar-benar tersedia** di providermu (memanggil endpoint `/models`,
+menyaring model non-chat, menandai model yang dipakai bot) — lebih akurat daripada daftar di dokumentasi.
+
 `npm run smoke` menguji CRUD memori, pencocokan keyword (termasuk kalimat yang dibalik), perakitan prompt,
 riwayat room, escape XSS pada transkrip, chunking pesan, rate limit, dan parsing `AI_FALLBACKS`.
 
@@ -270,6 +274,7 @@ diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai u
 | `API key AI ditolak` | `AI_API_KEY` salah/kedaluwarsa di `.env`. |
 | `Kuota AI sedang penuh` | Rate limit provider tercapai — turunkan `RATE_LIMIT_PER_MINUTE`, atau isi `AI_FALLBACKS` agar otomatis pindah provider. |
 | `Semua provider AI sedang tidak tersedia` | Semua provider (utama + fallback) gagal. Cek log: biasanya kuota habis harian atau key salah. |
+| Model tidak ditemukan / model butuh plan berbayar | Katalog gratis berubah (mis. Llama 3.3 sudah tidak gratis di Groq). Jalankan `npm run models`, lalu pakai ID yang muncul. |
 | Jawaban muncul sekaligus, bukan streaming | Normal bila provider/model menolak `stream: true` — bot otomatis memakai mode non-streaming di provider tersebut (lihat log). |
 | Jawaban terasa monoton | Naikkan `AI_TEMPERATURE` (mis. `0.9`) dan pastikan keyword punya jawaban acuan yang cukup detail. |
 
@@ -296,6 +301,7 @@ src/
 scripts/smoke.ts             # smoke test tanpa Discord
 docs/sample-transcript.html  # contoh hasil transkrip
 docs/providers.md            # provider AI free tier + contoh .env
+docs/models.md               # ID model gratis per provider + rekomendasi
 ```
 
 ---
