@@ -66,6 +66,13 @@ const FALLBACK_ATTEMPTS = 2;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+function isStreamUnsupported(error: unknown): boolean {
+  if (!(error instanceof OpenAI.APIError)) return false;
+  if (error.status !== 400 && error.status !== 422) return false;
+  const text = `${error.message} ${JSON.stringify(error.error ?? '')}`.toLowerCase();
+  return text.includes('stream') && (text.includes('support') || text.includes('unsupported') || text.includes('not allowed'));
+}
+
 function isToolUnsupported(error: unknown): boolean {
   if (!(error instanceof OpenAI.APIError)) return false;
   if (error.status !== 400) return false;
@@ -225,9 +232,7 @@ export async function chat(request: ChatRequest): Promise<ChatResult> {
 
       return result;
     } catch (error) {
-      const aiError = error instanceof Error && error.name === 'AiError'
-        ? (error as AiError)
-        : classify(error).error;
+      const aiError = error instanceof AiError ? error : classify(error).error;
 
       if (aiError.fatal) throw aiError;
 
@@ -237,6 +242,186 @@ export async function chat(request: ChatRequest): Promise<ChatResult> {
       if (chain.length === 1 || !aiError.tryNextProvider) throw aiError;
 
       logger.warn(`Provider ${provider.name} menyerah — pindah ke provider berikutnya.`);
+    }
+  }
+
+  const detail = failures.join('; ').slice(0, 300);
+  throw new AiError(
+    `Semua provider AI sedang tidak tersedia (${failures.length} dicoba) — ${detail}. Coba lagi beberapa saat lagi ya.`,
+    undefined,
+    false,
+    true,
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Streaming                                                          */
+/* ------------------------------------------------------------------ */
+
+export interface StreamOptions {
+  /** Dipanggil setiap potongan teks baru dari model. */
+  onDelta: (delta: string) => void;
+}
+
+interface AccumulatedToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
+/**
+ * Konsumsi stream dari satu provider.
+ * `emitted` dipakai untuk memutuskan: boleh pindah provider (belum ada teks terkirim)
+ * atau tidak (teks sudah tampil, pindah provider akan menduplikasi jawaban).
+ */
+async function streamOnProvider(
+  provider: AiProvider,
+  request: ChatRequest,
+  attempts: number,
+  allowModelOverride: boolean,
+  onDelta: (delta: string) => void,
+): Promise<ChatResult> {
+  let useTools = Boolean(request.tools?.length);
+  let emitted = false;
+  let lastError: AiError | null = null;
+
+  const emit = (text: string) => {
+    if (!text) return;
+    emitted = true;
+    onDelta(text);
+  };
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const model = allowModelOverride && request.model ? request.model : provider.model;
+      const started = Date.now();
+
+      const stream = await clientFor(provider).chat.completions.create({
+        model,
+        messages: request.messages,
+        temperature: request.temperature ?? config.ai.temperature,
+        max_tokens: request.maxTokens ?? config.ai.maxTokens,
+        ...(useTools && request.tools?.length ? { tools: request.tools, tool_choice: 'auto' as const } : {}),
+        stream: true,
+      });
+
+      let content = '';
+      const toolCalls = new Map<number, AccumulatedToolCall>();
+
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta;
+        if (!delta) continue;
+
+        if (delta.content) {
+          content += delta.content;
+          emit(delta.content);
+        }
+
+        for (const call of delta.tool_calls ?? []) {
+          const index = call.index ?? 0;
+          const entry = toolCalls.get(index) ?? { id: '', name: '', arguments: '' };
+          if (call.id) entry.id = call.id;
+          if (call.function?.name) entry.name += call.function.name;
+          if (call.function?.arguments) entry.arguments += call.function.arguments;
+          toolCalls.set(index, entry);
+        }
+      }
+
+      const message = {
+        role: 'assistant',
+        content: content || null,
+        ...(toolCalls.size > 0
+          ? {
+              tool_calls: [...toolCalls.entries()]
+                .sort(([a], [b]) => a - b)
+                .map(([index, call]) => ({
+                  id: call.id || `call_${index}`,
+                  type: 'function' as const,
+                  function: { name: call.name, arguments: call.arguments },
+                })),
+            }
+          : {}),
+      } as unknown as AssistantMessage;
+
+      logger.debug(`AI ${provider.name}/${model} stream selesai dalam ${Date.now() - started}ms`);
+
+      return { message, model, provider: provider.name };
+    } catch (error) {
+      // Provider menolak streaming: ambil jawaban utuh sekaligus, tetap di provider yang sama.
+      if (isStreamUnsupported(error) && !emitted) {
+        logger.warn(`${provider.name} tidak mendukung streaming — memakai mode non-streaming.`);
+        const fallbackResult = await callOnce(provider, request, useTools, allowModelOverride);
+        emit(fallbackResult.message.content ?? '');
+        return fallbackResult;
+      }
+
+      if (isToolUnsupported(error) && useTools && !emitted) {
+        logger.warn(`Model ${provider.model} tidak mendukung tool calling saat streaming — lanjut tanpa tools.`);
+        useTools = false;
+        continue;
+      }
+
+      const { error: aiError, retryable } = classify(error);
+      lastError = aiError;
+
+      // Sudah ada teks yang tampil: jangan pindah provider / retry, nanti jawaban dobel.
+      if (emitted) {
+        throw new AiError(`${aiError.message} (jawaban terputus)`, aiError.status, false, true);
+      }
+
+      if (!retryable || attempt === attempts) throw aiError;
+
+      const backoff = 400 * 2 ** (attempt - 1);
+      logger.warn(`${provider.name} gagal stream (${attempt}/${attempts}): ${aiError.message} — ulangi dalam ${backoff}ms.`);
+      await sleep(backoff);
+    }
+  }
+
+  throw lastError ?? new AiError('AI tidak merespons.');
+}
+
+/**
+ * Versi streaming dari `chat()`. Potongan teks dikirim lewat `onDelta`,
+ * dan hasil akhir tetap mengembalikan pesan lengkap (termasuk tool_calls) untuk loop memori.
+ */
+export async function streamChat(request: ChatRequest, options: StreamOptions): Promise<ChatResult> {
+  const chain = buildProviderChain();
+  const failures: string[] = [];
+
+  for (let index = 0; index < chain.length; index += 1) {
+    const provider = chain[index];
+    if (!provider) continue;
+
+    let emitted = false;
+
+    try {
+      const result = await streamOnProvider(
+        provider,
+        request,
+        index === 0 ? PRIMARY_ATTEMPTS : FALLBACK_ATTEMPTS,
+        index === 0,
+        (delta) => {
+          emitted = true;
+          options.onDelta(delta);
+        },
+      );
+
+      if (index > 0) {
+        logger.info(`Provider utama gagal — jawaban streaming diberikan oleh fallback ${result.provider}/${result.model}.`);
+      }
+
+      return result;
+    } catch (error) {
+      const aiError = error instanceof AiError ? error : classify(error).error;
+
+      // Teks sudah tampil ke user atau error tidak bisa ditolong provider lain.
+      if (aiError.fatal || emitted) throw aiError;
+
+      failures.push(`${provider.name}: ${aiError.message}`);
+
+      if (chain.length === 1 || !aiError.tryNextProvider) throw aiError;
+
+      logger.warn(`Provider ${provider.name} gagal sebelum mengirim teks — pindah provider.`);
     }
   }
 

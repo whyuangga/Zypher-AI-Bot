@@ -21,7 +21,8 @@ Chat bebas → AI menjawab, mengingat fakta, memakai keyword admin
 | Fitur | Keterangan |
 |---|---|
 | 🎟️ **AI Room (ticket-style)** | Tombol di panel membuat channel privat per member dengan permission overwrite. Satu room aktif per member. |
-| 💬 **Chat AI real-time** | Typing indicator, konteks percakapan (20 pesan terakhir), jawaban panjang otomatis dipecah ke beberapa pesan. |
+| ⚡ **Streaming jawaban** | Jawaban muncul bertahap (edit pesan tiap ±1,4 detik, menghormati rate limit Discord), bukan menunggu jeda panjang. Otomatis jatuh ke mode non-streaming kalau provider menolaknya. |
+| 💬 **Chat AI** | Konteks percakapan (20 pesan terakhir), jawaban panjang otomatis dipecah ke beberapa pesan. |
 | 🧠 **Memori jangka panjang** | AI otomatis menyimpan fakta penting lewat *tool calling*, plus perintah manual `/ingat`. Memori dipakai lagi di sesi berikutnya. |
 | 🔑 **Keyword kustom** | Admin menulis jawaban acuan; AI memakainya sebagai **fakta** dan menyusun ulang kalimatnya agar **bervariasi setiap kali** (bukan copy-paste). |
 | 🎭 **Persona per server** | Mis. "kamu guru bahasa Inggris yang sabar" — berlaku untuk semua room di server itu. |
@@ -194,7 +195,12 @@ nama bot & server, nama member, tanggal, aturan gaya bahasa, persona server, mem
 
 **4. Transkrip** — pesan channel diambil (hingga 600), di-escape, dirender jadi HTML mandiri bertema gelap, ditambah daftar memori dan **ringkasan sesi** dari AI. Dikirim ke DM + channel arsip, lalu channel dihapus.
 
-**5. Guardrail** — rate limit sliding-window, potong input, `allowedMentions: parse []` (anti `@everyone`), escape HTML pada transkrip, larangan membocorkan system prompt, dan fallback ke pesan ramah saat AI error/timeout.
+**5. Streaming** — jawaban dikirim lewat SSE dari provider, ditampung, lalu `DiscordStreamer`
+meng-edit pesan berkala (±1,4 detik, di bawah batas edit Discord) dan menyelesaikan sisanya sebagai
+pesan lanjutan. Kalau koneksi putus setelah teks tampil, jawaban parsial dipertahankan dan diberi catatan —
+bot **tidak** berpindah provider di tengah jalan agar jawaban tidak dobel.
+
+**6. Guardrail** — rate limit sliding-window, potong input, `allowedMentions: parse []` (anti `@everyone`), escape HTML pada transkrip, larangan membocorkan system prompt, dan fallback ke pesan ramah saat AI error/timeout.
 
 ---
 
@@ -246,9 +252,9 @@ npm run test:fallback  # uji rantai fallback provider dengan server tiruan
 `npm run smoke` menguji CRUD memori, pencocokan keyword (termasuk kalimat yang dibalik), perakitan prompt,
 riwayat room, escape XSS pada transkrip, chunking pesan, rate limit, dan parsing `AI_FALLBACKS`.
 
-`npm run test:fallback` menyalakan dua server OpenAI-compatible tiruan: provider utama selalu menjawab
-429, lalu memastikan bot benar-benar pindah ke provider fallback, meneruskan payload utuh, dan berhenti
-tanpa retry sia-sia ketika prompt sudah kepanjangan.
+`npm run test:fallback` menyalakan dua server OpenAI-compatible tiruan (provider utama selalu 429) dan
+memeriksa 10 hal: pindah provider, payload utuh, berhenti saat prompt kepanjangan, **delta streaming
+diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai utuh** (memori tetap jalan).
 
 ---
 
@@ -264,6 +270,7 @@ tanpa retry sia-sia ketika prompt sudah kepanjangan.
 | `API key AI ditolak` | `AI_API_KEY` salah/kedaluwarsa di `.env`. |
 | `Kuota AI sedang penuh` | Rate limit provider tercapai — turunkan `RATE_LIMIT_PER_MINUTE`, atau isi `AI_FALLBACKS` agar otomatis pindah provider. |
 | `Semua provider AI sedang tidak tersedia` | Semua provider (utama + fallback) gagal. Cek log: biasanya kuota habis harian atau key salah. |
+| Jawaban muncul sekaligus, bukan streaming | Normal bila provider/model menolak `stream: true` — bot otomatis memakai mode non-streaming di provider tersebut (lihat log). |
 | Jawaban terasa monoton | Naikkan `AI_TEMPERATURE` (mis. `0.9`) dan pastikan keyword punya jawaban acuan yang cukup detail. |
 
 ---

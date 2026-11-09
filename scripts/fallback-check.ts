@@ -1,10 +1,10 @@
 /**
- * Uji end-to-end rantai fallback provider TANPA API key asli.
+ * Uji end-to-end streaming + rantai fallback TANPA API key asli.
  *
- * Cara kerja: menyalakan dua server HTTP tiruan yang meniru API OpenAI-compatible.
+ * Menyalakan dua server HTTP tiruan yang meniru API OpenAI-compatible:
  *   - Server "utama" (port 4101) selalu menjawab 429 rate limit.
- *   - Server "fallback" (port 11434, dikenali sebagai `ollama`) menjawab normal.
- * Lalu memastikan bot benar-benar pindah ke provider kedua.
+ *   - Server "fallback" (port 11434, dikenali sebagai `ollama`) menjawab normal,
+ *     baik mode JSON biasa maupun mode streaming (SSE).
  *
  * Jalankan: npm run test:fallback
  */
@@ -22,12 +22,30 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 const PRIMARY_PORT = 4101;
 const FALLBACK_PORT = 11434;
 
-type Mode = 'ok' | 'context-too-long';
+type Mode = 'ok' | 'context-too-long' | 'stream' | 'stream-tool';
+
+interface ServerState {
+  mode: Mode;
+  requests: number;
+  lastBody: { stream?: boolean; messages?: Array<{ content: string }>; model?: string } | null;
+}
 
 interface FakeServer {
   server: Server;
-  state: { mode: Mode; requests: number; lastBody: unknown };
+  state: ServerState;
 }
+
+interface StreamChunk {
+  content?: string;
+  tool_calls?: Array<{
+    index: number;
+    id?: string;
+    function?: { name?: string; arguments?: string };
+  }>;
+  finish?: string | null;
+}
+
+type FakeReply = { status: number; body: unknown } | { stream: StreamChunk[] };
 
 const readBody = (request: IncomingMessage): Promise<string> =>
   new Promise((resolve) => {
@@ -36,8 +54,28 @@ const readBody = (request: IncomingMessage): Promise<string> =>
     request.on('end', () => resolve(data));
   });
 
-function startFakeServer(port: number, handler: (state: FakeServer['state']) => { status: number; body: unknown }): Promise<FakeServer> {
-  const state: FakeServer['state'] = { mode: 'ok', requests: 0, lastBody: null };
+const sseChunk = (chunk: StreamChunk): string => {
+  const payload = {
+    id: 'chatcmpl-fake',
+    object: 'chat.completion.chunk',
+    created: Math.floor(Date.now() / 1000),
+    model: 'llama3.1',
+    choices: [
+      {
+        index: 0,
+        delta: {
+          ...(chunk.content ? { content: chunk.content } : {}),
+          ...(chunk.tool_calls ? { tool_calls: chunk.tool_calls } : {}),
+        },
+        finish_reason: chunk.finish ?? null,
+      },
+    ],
+  };
+  return `data: ${JSON.stringify(payload)}\n\n`;
+};
+
+function startFakeServer(port: number, handler: (state: ServerState) => FakeReply): Promise<FakeServer> {
+  const state: ServerState = { mode: 'ok', requests: 0, lastBody: null };
 
   const server = createServer(async (request: IncomingMessage, response: ServerResponse) => {
     state.requests += 1;
@@ -45,12 +83,25 @@ function startFakeServer(port: number, handler: (state: FakeServer['state']) => 
     try {
       state.lastBody = raw ? JSON.parse(raw) : null;
     } catch {
-      state.lastBody = raw;
+      state.lastBody = null;
     }
 
-    const { status, body } = handler(state);
-    response.writeHead(status, { 'content-type': 'application/json' });
-    response.end(JSON.stringify(body));
+    const reply = handler(state);
+
+    if ('stream' in reply) {
+      response.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-cache',
+        connection: 'keep-alive',
+      });
+      for (const chunk of reply.stream) response.write(sseChunk(chunk));
+      response.write('data: [DONE]\n\n');
+      response.end();
+      return;
+    }
+
+    response.writeHead(reply.status, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(reply.body));
   });
 
   return new Promise((resolve) => {
@@ -75,6 +126,38 @@ const contextTooLong = {
   },
 };
 
+function fallbackReply(state: ServerState): FakeReply {
+  switch (state.mode) {
+    case 'context-too-long':
+      return { status: 400, body: contextTooLong };
+    case 'stream':
+      return {
+        stream: [
+          { content: 'Halo' },
+          { content: ' dari' },
+          { content: ' provider' },
+          { content: ' fallback' },
+          { content: ' (stream).' },
+          { finish: 'stop' },
+        ],
+      };
+    case 'stream-tool':
+      return {
+        stream: [
+          {
+            tool_calls: [
+              { index: 0, id: 'call_abc', function: { name: 'simpan_memori', arguments: '{"fakta":"' } },
+            ],
+          },
+          { tool_calls: [{ index: 0, function: { arguments: 'Namanya Bagas."}' } }] },
+          { finish: 'tool_calls' },
+        ],
+      };
+    default:
+      return { status: 200, body: completion('llama3.1', 'Halo! Aku menjawab dari provider fallback.') };
+  }
+}
+
 let passed = 0;
 function check(name: string, fn: () => void): void {
   try {
@@ -89,19 +172,16 @@ function check(name: string, fn: () => void): void {
 }
 
 async function main(): Promise<void> {
-  console.log('\n🔁 Uji fallback provider (server tiruan)\n');
+  console.log('\n🔁 Uji fallback + streaming (server tiruan)\n');
 
   const primary = await startFakeServer(PRIMARY_PORT, () => ({ status: 429, body: rateLimited }));
-  const fallback = await startFakeServer(FALLBACK_PORT, (state) =>
-    state.mode === 'context-too-long'
-      ? { status: 400, body: contextTooLong }
-      : { status: 200, body: completion('llama3.1', 'Halo! Aku menjawab dari provider fallback.') },
-  );
+  const fallback = await startFakeServer(FALLBACK_PORT, fallbackReply);
 
-  const { chat, AiError } = await import('../src/lib/llm.js');
+  const { chat, streamChat, AiError } = await import('../src/lib/llm.js');
 
   try {
-    // ---------- Skenario 1: provider utama 429 -> fallback menjawab ----------
+    /* ---------- 1. Non-streaming: 429 di utama -> fallback ---------- */
+    console.log('Non-streaming');
     const result = await chat({ messages: [{ role: 'user', content: 'Halo, kamu siapa?' }] });
 
     check('provider utama dicoba lebih dulu (dan gagal)', () => {
@@ -113,12 +193,12 @@ async function main(): Promise<void> {
       assert.match(result.message.content ?? '', /fallback/);
     });
     check('payload diteruskan utuh ke fallback', () => {
-      const body = fallback.state.lastBody as { messages?: Array<{ content: string }>; model?: string };
-      assert.equal(body.model, 'llama3.1');
-      assert.equal(body.messages?.[0]?.content, 'Halo, kamu siapa?');
+      assert.equal(fallback.state.lastBody?.model, 'llama3.1');
+      assert.equal(fallback.state.lastBody?.messages?.[0]?.content, 'Halo, kamu siapa?');
     });
 
-    // ---------- Skenario 2: error fatal tidak boleh dicoba ke provider lain ----------
+    /* ---------- 2. Error fatal: jangan retry sia-sia ---------- */
+    console.log('\nError fatal');
     fallback.state.mode = 'context-too-long';
     const requestsBefore = fallback.state.requests;
 
@@ -138,12 +218,65 @@ async function main(): Promise<void> {
     check('tidak retry sia-sia setelah error fatal', () => {
       assert.equal(fallback.state.requests - requestsBefore, 1, 'hanya satu request, tanpa retry');
     });
+
+    /* ---------- 3. Streaming: delta diterima bertahap, tetap fallback ---------- */
+    console.log('\nStreaming');
+    fallback.state.mode = 'stream';
+    const deltas: string[] = [];
+    const streamed = await streamChat(
+      { messages: [{ role: 'user', content: 'Ceritakan sesuatu' }] },
+      { onDelta: (delta) => deltas.push(delta) },
+    );
+
+    check('stream memakai provider fallback', () => {
+      assert.equal(streamed.provider, 'ollama');
+    });
+    check('delta diterima bertahap (bukan sekali kirim)', () => {
+      assert.equal(deltas.length, 5, `harus 5 potongan, dapat ${deltas.length}`);
+      assert.equal(deltas.join(''), 'Halo dari provider fallback (stream).');
+      assert.equal((streamed.message.content ?? '').trim(), 'Halo dari provider fallback (stream).');
+    });
+    check('permintaan streaming benar-benar memakai stream: true', () => {
+      assert.equal(fallback.state.lastBody?.stream, true);
+    });
+
+    /* ---------- 4. Tool call yang datang sebagai delta ---------- */
+    console.log('\nTool calling saat streaming');
+    fallback.state.mode = 'stream-tool';
+    const toolResult = await streamChat(
+      {
+        messages: [{ role: 'user', content: 'Namaku Bagas' }],
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: 'simpan_memori',
+              description: 'simpan fakta',
+              parameters: { type: 'object', properties: { fakta: { type: 'string' } }, required: ['fakta'] },
+            },
+          },
+        ],
+      },
+      { onDelta: () => undefined },
+    );
+
+    check('tool_calls hasil streaming terangkai utuh', () => {
+      const calls = toolResult.message.tool_calls;
+      assert.ok(calls && calls.length === 1, 'harus ada satu tool call');
+      assert.equal(calls[0]?.function.name, 'simpan_memori');
+      assert.equal(calls[0]?.function.arguments, '{"fakta":"Namanya Bagas."}');
+      assert.equal(calls[0]?.id, 'call_abc');
+    });
+    check('argumen tool valid sebagai JSON', () => {
+      const parsed = JSON.parse(toolResult.message.tool_calls?.[0]?.function.arguments ?? '{}') as { fakta?: string };
+      assert.equal(parsed.fakta, 'Namanya Bagas.');
+    });
   } finally {
     primary.server.close();
     fallback.server.close();
   }
 
-  console.log(`\n${process.exitCode ? '❌ Ada skenario gagal' : '🎉 Fallback bekerja'} — ${passed} pemeriksaan.\n`);
+  console.log(`\n${process.exitCode ? '❌ Ada skenario gagal' : '🎉 Fallback & streaming bekerja'} — ${passed} pemeriksaan.\n`);
 }
 
 void main().catch((error) => {

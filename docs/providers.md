@@ -127,6 +127,7 @@ Perilaku yang sudah diatur di `src/lib/llm.ts`:
 | Percakapan terlalu panjang | Berhenti & minta user `/reset` (fallback tidak akan menolong) |
 | Model tidak mendukung tool calling | Ulang di provider yang sama tanpa tools, memori otomatis nonaktif |
 | Semua provider gagal | Pesan ramah berisi ringkasan penyebab tiap provider |
+| Provider menolak `stream: true` | Otomatis memakai mode non-streaming di provider itu, jawaban tetap keluar |
 
 Urutan dicoba dari kiri ke kanan. Entri yang salah atau key-nya kosong akan dilewati dengan
 peringatan di log, jadi bot tetap jalan.
