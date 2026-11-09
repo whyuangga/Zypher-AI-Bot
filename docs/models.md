@@ -3,15 +3,17 @@
 Formatnya selalu **`provider:model_id`**:
 
 ```env
-AI_FALLBACKS=gemini:gemini-3.8-flash,openrouter:google/gemma-4-31b-it:free
+AI_FALLBACKS=gemini:gemini-3.8-flash,openrouter:google/gemma-4-31b-it:free,nvidia:openai/gpt-oss-120b
 ```
 
-Nama provider dikenali bot (`groq`, `gemini`, `openrouter`, `cerebras`, `mistral`, `ollama`), sedangkan
-di belakang titik dua adalah **ID model persis** seperti yang dipakai provider tersebut.
+Nama provider dikenali bot: `groq`, `gemini`, `openrouter`, `nvidia`, `cerebras`, `mistral`, `ollama`.
+Di belakang titik dua adalah **ID model persis** seperti yang dipakai provider tersebut.
 
 > ⚠️ Daftar di bawah **snapshot November 2026**. Katalog gratis berubah cepat — Groq sendiri sudah
 > mencabut Llama 3.3/3.1 dari free tier dan Gemini memindahkan 2.5 ke status legacy.
 > **Selalu verifikasi dengan `npm run models`** (lihat bagian terakhir).
+
+**Provider yang didukung:** [Groq](#groq--groq) · [Gemini](#google-gemini--gemini) · [OpenRouter](#openrouter--openrouter) · [NVIDIA NIM](#nvidia-nim--nvidia) · [Cerebras](#cerebras--cerebras--kadang-butuh-kartu) · [Mistral](#mistral--mistral--kadang-butuh-kartu) · [Ollama](#ollama-lokal--ollama)
 
 ---
 
@@ -63,16 +65,46 @@ Endpoint: `https://openrouter.ai/api/v1` · Key: <https://openrouter.ai/keys> ·
 
 ## NVIDIA NIM — `nvidia`
 
-Endpoint: `https://integrate.api.nvidia.com/v1` · Key: <https://build.nvidia.com> (email saja, **tanpa kartu**) · ±40 RPM, kredit gratis ±1.000 call
+Endpoint: `https://integrate.api.nvidia.com/v1` · Key: <https://build.nvidia.com> → **Get API Key**
+(email saja, **tanpa kartu kredit** · key diawali `nvapi-`) · ±40 req/menit, kredit gratis ±1.000 call
 
-| Model ID | Catatan |
-|---|---|
-| `openai/gpt-oss-120b` | Andal untuk chat & tool |
-| `meta/llama-3.3-70b-instruct` | Klasik, stabil |
-| `qwen/qwen3-235b-a22b` | Multibahasa kuat |
+Katalognya ±120 model open-weight — yang di bawah ini contoh yang paling sering dipakai:
 
-> Katalognya ±120 model open-weight dan paling cepat berubah. Jalankan `npm run models` untuk melihat
-> ID yang benar-benar aktif di akunmu. Dukungan tool calling **bervariasi per model**.
+| Model ID | Tool calling | Catatan |
+|---|---|---|
+| `openai/gpt-oss-120b` | ✅ | **Pilihan utama** — seimbang: cepat, kuat, mendukung tool |
+| `qwen/qwen3-235b-a22b` | ✅ | Multibahasa, bahasa Indonesia bagus |
+| `meta/llama-3.3-70b-instruct` | ⚠️ | Klasik & stabil |
+| `deepseek-ai/deepseek-v4-pro` | ⚠️ | Penalaran kuat |
+| `qwen/qwen3.5-397b-a17b` | ⚠️ | Model besar (MoE), lebih lambat |
+
+Cara memakai:
+
+```env
+AI_FALLBACKS=gemini:gemini-3.8-flash,nvidia:openai/gpt-oss-120b
+NVIDIA_API_KEY=nvapi-...
+```
+
+Atau jadikan provider utama:
+
+```env
+AI_BASE_URL=https://integrate.api.nvidia.com/v1
+AI_MODEL=openai/gpt-oss-120b
+AI_API_KEY=nvapi-...
+```
+
+> **ID di atas hanya contoh.** Katalog NVIDIA berubah paling cepat di antara provider di dokumen ini.
+> Ambil daftar akurat dari akunmu sendiri:
+>
+> ```bash
+> npm run models -- nvidia
+> ```
+>
+> **Kredit, bukan gratis selamanya:** ±1.000 call saat daftar. Setelah habis, request mengembalikan
+> `402`, dan bot otomatis pindah ke provider berikutnya di `AI_FALLBACKS` — tidak ada yang crash.
+>
+> Dukungan tool calling **bervariasi per model**. Kalau model pilihanmu tidak mendukung, memori otomatis
+> nonaktif sementara `/ingat` manual tetap jalan (tercatat di log).
 
 ## Cerebras — `cerebras` ⚠️ *kadang butuh kartu*
 
