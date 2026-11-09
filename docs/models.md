@@ -163,3 +163,9 @@ groq https://api.groq.com/openai/v1
 ```
 
 Kalau muncul error 401/404 di skrip ini, berarti key atau nama modelnya yang salah — bukan kode bot.
+
+Setelah yakin nama model benar, uji end-to-end (chat + streaming) ke provider sungguhan:
+
+```bash
+npm run doctor
+```

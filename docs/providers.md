@@ -156,7 +156,27 @@ Perilaku yang sudah diatur di `src/lib/llm.ts`:
 Urutan dicoba dari kiri ke kanan. Entri yang salah atau key-nya kosong akan dilewati dengan
 peringatan di log, jadi bot tetap jalan.
 
-Verifikasi cepat tanpa API key asli:
+Verifikasi konfigurasi asli (butuh key sungguhan):
+
+```bash
+npm run doctor
+```
+
+Contoh keluaran:
+
+```
+groq (utama) · openai/gpt-oss-120b
+  ✅ chat   412 ms → ok
+  ✅ stream 388 ms → chunk pertama "Halo"
+
+gemini (fallback 1) · gemini-3.8-flash
+  ✅ chat   890 ms → ok
+  ✅ stream 912 ms → chunk pertama "Hai"
+```
+
+Kalau ada yang ❌, `doctor` langsung menyebut penyebabnya (key ditolak, model tidak ada, kuota habis).
+
+Verifikasi rantai fallback tanpa API key asli:
 
 ```bash
 npm run test:fallback

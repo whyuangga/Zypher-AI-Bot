@@ -14,7 +14,8 @@
     "typecheck": "tsc -p tsconfig.check.json",
     "smoke": "tsx scripts/smoke.ts",
     "test:fallback": "tsx scripts/fallback-check.ts",
-    "models": "tsx scripts/list-models.ts"
+    "models": "tsx scripts/list-models.ts",
+    "doctor": "tsx scripts/doctor.ts"
   },
   "keywords": [
     "discord",

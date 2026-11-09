@@ -80,3 +80,72 @@ export function providerNameForBaseUrl(baseUrl: string): string {
   }
   return host;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Rantai provider (tanpa config, bisa dipakai skrip CLI)             */
+/* ------------------------------------------------------------------ */
+
+export interface ProviderTarget {
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+export interface FallbackParseResult {
+  providers: ProviderTarget[];
+  problems: string[];
+}
+
+/**
+ * Urai string `AI_FALLBACKS` menjadi daftar provider siap pakai.
+ * Format entri: `nama:model` — contoh `gemini:gemini-3.8-flash`.
+ * Entri yang salah / key-nya belum diisi dilewati dengan catatan.
+ */
+export function parseFallbackSpec(
+  spec: string | undefined,
+  keys: Record<string, string | undefined>,
+  primary?: ProviderTarget,
+): FallbackParseResult {
+  const providers: ProviderTarget[] = [];
+  const problems: string[] = [];
+
+  if (!spec || !spec.trim()) return { providers, problems };
+
+  const seen = new Set<string>();
+  if (primary) seen.add(`${primary.baseUrl}::${primary.model}`);
+
+  for (const rawEntry of spec.split(',')) {
+    const entry = rawEntry.trim();
+    if (!entry) continue;
+
+    const separator = entry.indexOf(':');
+    if (separator <= 0 || separator === entry.length - 1) {
+      problems.push(`"${entry}" formatnya salah (harus nama:model)`);
+      continue;
+    }
+
+    const providerName = entry.slice(0, separator).trim().toLowerCase();
+    const model = entry.slice(separator + 1).trim();
+    const known = KNOWN_PROVIDERS[providerName];
+
+    if (!known) {
+      problems.push(`"${providerName}" tidak dikenal (pilihan: ${Object.keys(KNOWN_PROVIDERS).join(', ')})`);
+      continue;
+    }
+
+    const apiKey = keys[known.keyEnv] ?? known.defaultKey;
+    if (!apiKey) {
+      problems.push(`${providerName} dilewati — isi ${known.keyEnv} di .env`);
+      continue;
+    }
+
+    const signature = `${known.baseUrl}::${model}`;
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+
+    providers.push({ name: providerName, baseUrl: known.baseUrl, apiKey, model });
+  }
+
+  return { providers, problems };
+}

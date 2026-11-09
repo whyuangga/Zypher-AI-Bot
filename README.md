@@ -246,9 +246,14 @@ Railway / Fly.io / Render bisa langsung memakai Dockerfile. Set env var yang sam
 ## 🧪 Uji cepat tanpa Discord
 
 ```bash
+npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
+npm run models         # daftar model yang benar-benar tersedia di provider kamu
 npm run smoke          # 28 test logika inti
 npm run test:fallback  # uji rantai fallback provider dengan server tiruan
 ```
+
+`npm run doctor` adalah langkah pertama saat ada masalah AI: ia mengirim request sungguhan ke provider
+utama dan setiap fallback, lalu menampilkan latensi, isi balasan, dan dukungan streaming per provider.
 
 `npm run models` menampilkan model yang **benar-benar tersedia** di providermu (memanggil endpoint `/models`,
 menyaring model non-chat, menandai model yang dipakai bot) — lebih akurat daripada daftar di dokumentasi.
@@ -271,7 +276,7 @@ diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai u
 | Bot diam saja di room | **Message Content Intent** belum aktif di Developer Portal → Bot. |
 | `Gagal membuat room AI` + permission | Bot butuh **Manage Channels**; taruh role bot di atas role lain yang relevan. |
 | Transkrip tidak masuk DM | User menutup DM. Set `TRANSCRIPT_CHANNEL_ID` sebagai arsip; bot juga tidak akan menghapus channel agar transkrip tidak hilang. |
-| `API key AI ditolak` | `AI_API_KEY` salah/kedaluwarsa di `.env`. |
+| `API key AI ditolak` | `AI_API_KEY` salah/kedaluwarsa di `.env`. Jalankan `npm run doctor` untuk memastikan provider mana yang bermasalah. |
 | `Kuota AI sedang penuh` | Rate limit provider tercapai — turunkan `RATE_LIMIT_PER_MINUTE`, atau isi `AI_FALLBACKS` agar otomatis pindah provider. |
 | `Semua provider AI sedang tidak tersedia` | Semua provider (utama + fallback) gagal. Cek log: biasanya kuota habis harian atau key salah. |
 | Model tidak ditemukan / model butuh plan berbayar | Katalog gratis berubah (mis. Llama 3.3 sudah tidak gratis di Groq). Jalankan `npm run models`, lalu pakai ID yang muncul. |
