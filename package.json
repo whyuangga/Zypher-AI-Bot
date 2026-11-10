@@ -16,7 +16,8 @@
     "test:fallback": "tsx scripts/fallback-check.ts",
     "models": "tsx scripts/list-models.ts",
     "doctor": "tsx scripts/doctor.ts",
-    "dashboard": "tsx src/web/standalone.ts"
+    "dashboard": "tsx src/web/standalone.ts",
+    "bundle": "tsx scripts/bundle.ts"
   },
   "keywords": [
     "discord",

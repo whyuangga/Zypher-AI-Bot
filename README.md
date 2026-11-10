@@ -283,6 +283,18 @@ pm2 save
 Dashboard web ikut menyala di port 3000 kalau `DASHBOARD_TOKEN` diisi.
 `docker-compose.yml` sudah meneruskan portnya.
 
+### Panel hosting (tanpa VPS, gratis)
+
+Cocok untuk Wispbyte / Bot-Hosting / Pterodactyl. Build dulu di laptop, lalu upload hasilnya:
+
+```bash
+npm run bundle        # menghasilkan zypher-deploy.zip (dist/ + package.json)
+```
+
+Di panel: upload ZIP → extract → startup command
+`npm install --omit=dev && node dist/index.js` → isi env var → Start.
+Panduan per-langkah (termasuk syarat **Node.js 22**): **[docs/hosting.md](docs/hosting.md)**.
+
 ### Platform PaaS
 
 Railway / Fly.io / Render bisa langsung memakai Dockerfile, **tapi waspada**: bot Discord harus hidup 24/7
@@ -301,6 +313,7 @@ npm run models         # daftar model yang benar-benar tersedia di provider kamu
 npm run smoke          # 42 test logika inti (termasuk RAG & chunking)
 npm run test:fallback  # uji rantai fallback provider dengan server tiruan
 npm run dashboard      # nyalakan dashboard web saja, tanpa bot Discord
+npm run bundle         # bikin zypher-deploy.zip untuk panel hosting
 ```
 
 `npm run doctor` adalah langkah pertama saat ada masalah AI: ia mengirim request sungguhan ke provider
@@ -334,6 +347,8 @@ diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai u
 | `Semua provider AI sedang tidak tersedia` | Semua provider (utama + fallback) gagal. Cek log: biasanya kuota habis harian atau key salah. |
 | Model tidak ditemukan / model butuh plan berbayar | Katalog gratis berubah (mis. Llama 3.3 sudah tidak gratis di Groq). Jalankan `npm run models`, lalu pakai ID yang muncul. |
 | Mau provider lain di luar daftar | Hanya 5 nama yang dikenali: `groq`, `gemini`, `openrouter`, `nvidia`, `ollama`. Provider yang minta kartu (Cerebras, Mistral) sengaja tidak didukung. |
+| `Cannot find module 'node:sqlite'` / `ERR_UNKNOWN_BUILTIN_MODULE` | Node.js di server masih v20 ke bawah. Bot butuh **v22+**; di panel hosting ganti Docker image ke Node 22/24, di VPS pasang Node 22 LTS. |
+| Bot mati saat `npm install` di panel hosting | RAM hosting habis. Upload folder `node_modules` dari laptop, atau pakai image/hosting dengan RAM ≥512 MB. |
 | Jawaban muncul sekaligus, bukan streaming | Normal bila provider/model menolak `stream: true` — bot otomatis memakai mode non-streaming di provider tersebut (lihat log). |
 | AI tidak menjawab dari dokumen | Cek `/dokumen cari pertanyaan:...`. Kalau kosong, kata kuncinya tidak ada di dokumen — tambahkan sinonim atau pakai istilah yang dipakai member. |
 | "Format PDF belum didukung" | Konversi dulu ke `.txt`/`.md`. Lihat [docs/rag.md](docs/rag.md). |

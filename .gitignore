@@ -11,3 +11,5 @@ transcripts/
 .DS_Store
 npm-debug.log*
 *.tsbuildinfo
+*.zip
+zypher-deploy.zip

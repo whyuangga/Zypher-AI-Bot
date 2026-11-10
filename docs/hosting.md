@@ -17,21 +17,133 @@ bot mati tiap beberapa menit, atau harus keep-alive hack.
 
 | Opsi | 24/7? | Disk persisten | RAM | Repotnya | Cocok untuk |
 |---|---|---|---|---|---|
-| **Oracle Cloud Always Free** | ✅ | ✅ (block volume) | 1 GB (AMD) atau beberapa GB (ARM) | Perlu kartu saat daftar, setup Linux, stok ARM sering habis | **Pilihan utama** — bot komunitas serius |
+| **Wispbyte (free)** | ✅ | ✅ 1 GB | **512 MB** | Login panel tiap 14 hari, node di Rumania | **Pilihan utama untuk mulai** — tanpa kartu, tanpa perpanjang |
+| **Oracle Cloud Always Free** | ✅ | ✅ (block volume) | 1 GB (AMD) atau beberapa GB (ARM) | Perlu kartu saat daftar, setup Linux, stok ARM sering habis, mesin idle bisa ditarik | Resource paling besar, kontrol penuh |
 | **Google Cloud Free Tier (e2-micro)** | ✅ | ✅ (30 GB) | 1 GB | Perlu billing account, region terbatas (AS) | Alternatif kalau Oracle ditolak |
-| **Bot-Hosting.net (free)** | ✅ | ✅ 512 MB | 256 MB | Perpanjang manual tiap 4 hari | Paling cepat mulai, tanpa kartu |
+| **Bot-Hosting.net (free)** | ✅ | ✅ 512 MB | 256 MB | Perpanjang manual tiap 4 hari | Cadangan cepat |
 | **Discloud (free)** | ✅ | ✅ kecil | 100 MB | Sangat mepet; iklan di status bot | Bot kecil / coba-coba |
 | Ada PC/laptop/Raspberry Pi nganggur | ✅ selama nyala | ✅ | bebas | Listrik & internet rumah, harus restart sendiri kalau mati | Testing jangka panjang tanpa kartu |
 | Render (free web service) | ❌ tidur saat idle | ❌ | 512 MB | Bot offline saat sleep | **Tidak cocok** untuk bot |
 | Railway (free) | ⚠️ kredit $5 habis | ❌ | — | Trial, lalu berbayar | Coba-coba singkat |
 | Fly.io | ⚠️ berubah-ubah | ❌ volume berbayar | 256 MB | Tidak ada free tier permanen yang bisa diandalkan | — |
 
-> Angka di atas cepat berubah. Selalu cek halaman resmi sebelum memutuskan — tapi urutan
-> rekomendasinya (Oracle > GCP > panel bot > laptop sendiri) stabil sejak lama.
+> Angka di atas cepat berubah. Selalu cek halaman resmi sebelum memutuskan.
+> Untuk mulai cepat, panel hosting (Wispbyte) paling praktis; untuk jangka panjang dengan sumber daya
+> paling lega, VPS gratis (Oracle) lebih unggul.
 
 ---
 
-## Rekomendasi #1 — Oracle Cloud Always Free
+## Rekomendasi #1 — Wispbyte (paling cepat, benar-benar gratis)
+
+<https://wispbyte.com/id/> — panel hosting yang memang dibuat untuk bot Discord.
+
+| | Paket gratis |
+|---|---|
+| RAM | **512 MB** |
+| Disk | **1 GB** (persisten, file tidak hilang saat restart) |
+| Harga | €0 — tanpa kartu, tanpa koin, **tanpa tombol perpanjang** |
+| Uptime | 24/7, dengan syarat **login panel minimal sekali setiap 14 hari** |
+| CPU | 1 core penuh di ~90 detik pertama (khusus `npm install`), lalu shared |
+| Runtime | Node.js, Bun, Python, Java, C#, Rust, Lua + image database |
+| Lokasi | Node gratis: Bacău, Rumania |
+| Batas | Satu bot Discord per server, satu akun gratis per orang |
+
+Jujur soal trade-off-nya: 512 MB cukup untuk bot ini (bot ini ±120–200 MB saat jalan), tapi **jangan**
+menjalankan `tsc`/`npm run dev` di sana — build di laptop, upload hasilnya. Node Rumania berarti latensi
+WebSocket ±150 ms; untuk chat teks tidak terasa, tapi bukan tempat untuk bot musik/voice.
+
+Kalau akun tidak login 14 hari server **dimatikan**, dan setelah 30 hari filenya dipindah ke storage
+— tidak dihapus, bisa dipulihkan saat login lagi.
+
+### Langkah deploy
+
+**1. Daftar & buat server**
+
+1. Buka <https://wispbyte.com/client> → register (email/Discord/Google/GitHub).
+2. **Create Server** → pilih paket **Free** → Docker image **Node.js**.
+3. Tunggu server muncul di dashboard.
+
+**2. Pastikan Node.js-nya 22 atau lebih baru** ⚠️
+
+Buka **Console**, jalankan:
+
+```bash
+node -v
+```
+
+Bot ini butuh **v22 atau lebih baru** (memakai `node:sqlite` bawaan Node). Kalau hasilnya v20 atau
+lebih lama: buka **Startup → Docker Image** dan pilih versi Node 22/24. Kalau pilihannya tidak ada,
+tanya di [forum komunitas](https://wispbyte.com/community) — jangan dilanjutkan, bot tidak akan jalan.
+
+**3. Build & bungkus di laptop**
+
+```bash
+npm install
+npm run bundle        # menghasilkan zypher-deploy.zip (±0,1 MB)
+```
+
+ZIP itu berisi `dist/` (JavaScript hasil build) + `package.json` + `package-lock.json` —
+tanpa TypeScript, tanpa `node_modules`, jadi server tidak perlu compile apa pun.
+
+**4. Upload**
+
+**Files → Upload** `zypher-deploy.zip` → **Extract/Unzip**. Pastikan folder `dist/` ada di root server
+(bukan di dalam subfolder), lalu hapus file ZIP-nya supaya disk lega.
+
+**5. Atur startup**
+
+**Startup → Startup command:**
+
+```bash
+npm install --omit=dev && node dist/index.js
+```
+
+Kalau panel menyediakan kolom *Additional Node.js Packages*, isi dengan:
+
+```
+discord.js dotenv openai zod
+```
+
+**6. Isi environment variables**
+
+Di panel (bukan file `.env` — panel menyuntikkan nilainya langsung ke proses):
+
+| Variabel | Nilai |
+|---|---|
+| `DISCORD_TOKEN` | token bot |
+| `CLIENT_ID` | Application ID |
+| `AI_API_KEY` | key Groq (`gsk_...`) |
+| `DEV_GUILD_ID` | *(opsional)* ID server untuk command instan |
+| `AI_FALLBACKS` | *(opsional)* `gemini:gemini-3.8-flash` |
+| `GEMINI_API_KEY` | *(opsional)* |
+
+Biarkan `DATABASE_PATH` tidak diisi — default `./data/zypher.db` sudah tersimpan di disk server-mu.
+
+**7. Start dan verifikasi**
+
+**Console → Start**, lalu tunggu:
+
+```
+🤖 Login sebagai NamaBot#1234 (1 server)
+```
+
+Kalau muncul `❌ Node.js kamu versi 20…`, kembali ke langkah 2. Kalau `Cannot find module 'discord.js'`,
+berarti langkah 5 belum dijalankan atau `npm install` gagal karena RAM — coba lagi, atau upload folder
+`node_modules` dari laptop.
+
+### Dashboard di Wispbyte
+
+Panel bot biasanya tidak meneruskan port HTTP ke internet. Dua pilihan:
+
+1. **Biarkan mati** — kosongkan `DASHBOARD_TOKEN`. Semua fitur bot tetap jalan.
+2. **Coba port publik** kalau panelmu menampilkan alokasi port: isi `DASHBOARD_TOKEN`,
+   `DASHBOARD_HOST=0.0.0.0`, `DASHBOARD_PORT` sesuai port yang diberikan panel.
+
+Kelola dokumen tetap bisa lewat `/dokumen tambah` di Discord, jadi dashboard bukan keharusan.
+
+---
+
+## Rekomendasi #2 — Oracle Cloud Always Free
 
 Yang kamu dapat: VM Linux sungguhan, disk permanen, dan bisa dipakai Docker Compose persis seperti
 di README. Ini satu-satunya opsi gratis yang benar-benar setara VPS kecil.
@@ -105,7 +217,7 @@ journalctl -u zypher -f
 
 ---
 
-## Rekomendasi #2 — Google Cloud e2-micro
+## Rekomendasi #3 — Google Cloud e2-micro
 
 Free tier permanen untuk **satu** `e2-micro` di region AS tertentu (1 GB RAM, 30 GB disk standar).
 Cukup untuk bot ini. Setup mirip Oracle (Ubuntu + Docker Compose), bedanya:
@@ -116,9 +228,10 @@ Kalau Oracle terus menolak signup, ini jalur paling realistis.
 
 ---
 
-## Rekomendasi #3 — panel bot hosting (paling cepat, tanpa kartu)
+## Rekomendasi #4 — panel bot hosting lain (Bot-Hosting.net, Discloud)
 
-Cocok kalau kamu ingin **upload ZIP dan tekan Start**, tanpa menyentuh Linux.
+Kalau Wispbyte penuh atau kamu ingin pembanding, ada opsi panel lain dengan pola yang sama
+(upload ZIP → tekan Start, tanpa menyentuh Linux).
 
 **Bot-Hosting.net** (free): 256 MB RAM, 25% CPU, 512 MB storage, tanpa kartu, tapi harus
 **perpanjang manual tiap 4 hari** dari panel. Cara pakai:
@@ -172,6 +285,7 @@ Kalau tidak pakai Docker, file-nya ada di `./data/zypher.db`. Simpan salinannya 
 
 ## Checklist sebelum dianggap "sudah online"
 
+- [ ] `node -v` di server menunjukkan **v22.x / v24.x** (bukan v20)
 - [ ] `npm run doctor` di server: semua provider di rantai menjawab ✅
 - [ ] Log menunjukkan `🤖 Login sebagai <bot> (N server)`
 - [ ] Slash command muncul di Discord (bisa butuh beberapa menit; restart bot kalau lama)

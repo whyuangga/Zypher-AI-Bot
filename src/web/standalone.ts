@@ -9,6 +9,8 @@
  *
  * Variabel yang belum diisi mendapat nilai contoh supaya config lolos validasi.
  */
+await import('../lib/runtime-check.js');
+
 process.env.DISCORD_TOKEN ??= 'dashboard-standalone-token-000000';
 process.env.CLIENT_ID ??= '123456789012345678';
 process.env.AI_API_KEY ??= 'dashboard-standalone-key';
