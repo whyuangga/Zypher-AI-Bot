@@ -145,8 +145,6 @@ const schema = z.object({
   AUTO_MEMORY: booleanish(true),
   RATE_LIMIT_PER_MINUTE: numberish(12, 0, 240),
   MAX_INPUT_CHARS: numberish(2000, 100, 6000),
-  AI_CATEGORY_ID: optionalId,
-  AI_ROOMS_CHANNEL_ID: optionalId,
   MODLOG_CHANNEL_ID: optionalId,
   STAFF_ROLE_ID: optionalId,
   ADMIN_ONLY_ROOMS: booleanish(false),
@@ -168,7 +166,7 @@ const schema = z.object({
   TTS_MODEL: z.string().default('playai-tts'),
   TTS_VOICE: z.string().default('Fritz-PlayAI'),
   VOICE_MAX_MB: numberish(20, 1, 25),
-  /** Otomatis membalas jawaban room AI dengan suara (TTS). */
+  /** Otomatis membalas jawaban chat AI dengan suara (TTS). */
   TTS_REPLY_IN_ROOM: booleanish(true),
 });
 
@@ -313,8 +311,6 @@ export const config = {
     adminOnlyRooms: env.ADMIN_ONLY_ROOMS,
   },
   ids: {
-    category: env.AI_CATEGORY_ID,
-    roomsChannel: env.AI_ROOMS_CHANNEL_ID,
     modLogChannel: env.MODLOG_CHANNEL_ID,
     staffRole: env.STAFF_ROLE_ID,
   },

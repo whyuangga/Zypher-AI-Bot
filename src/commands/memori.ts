@@ -1,7 +1,7 @@
 import { EmbedBuilder, MessageFlags, PermissionFlagsBits, SlashCommandBuilder, type User } from 'discord.js';
 import { listMemories } from '../db/repo.js';
 import { BRAND_COLOR } from '../features/ui.js';
-import { requireGuild } from './helpers.js';
+import { resolveContextGuild } from './helpers.js';
 import type { Command } from './types.js';
 
 export const memoriCommand: Command = {
@@ -13,7 +13,8 @@ export const memoriCommand: Command = {
     ),
 
   async execute(interaction) {
-    if (!(await requireGuild(interaction)) || !interaction.guildId) return;
+    const guildId = await resolveContextGuild(interaction);
+    if (!guildId) return;
 
     const target: User = interaction.options.getUser('user') ?? interaction.user;
     const isSelf = target.id === interaction.user.id;
@@ -27,7 +28,7 @@ export const memoriCommand: Command = {
       return;
     }
 
-    const memories = await listMemories(interaction.guildId, target.id, 50);
+    const memories = await listMemories(guildId, target.id, 50);
 
     if (memories.length === 0) {
       await interaction.reply({

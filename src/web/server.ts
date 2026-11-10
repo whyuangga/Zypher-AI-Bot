@@ -29,7 +29,7 @@ import {
   listKeywords,
   listMemories,
   listModerationLogs,
-  listRooms,
+  listDmSessions,
   messagesPerDay,
   setGuildModel,
   setGuildTtsReplyInRoom,
@@ -313,7 +313,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       database: await dbLabel(),
       rag: config.rag.enabled,
       documents: await countRows('documents'),
-      rooms: await countRows('rooms'),
+      dmSessions: await countRows('dm_sessions'),
     });
     return;
   }
@@ -419,7 +419,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       : {};
 
   if (path === '/' && method === 'GET') {
-    const rooms = guildId ? (await listRooms(guildId)).slice(0, 8) : [];
+    const sessions = guildId ? (await listDmSessions(guildId)).slice(0, 8) : [];
     const documents = guildId ? (await listDocuments(guildId)).slice(0, 6) : [];
 
     sendHtml(
@@ -433,18 +433,17 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         // di bawahnya kosong — dua bagian halaman seolah saling bertentangan.
         stats: guildId
           ? {
-              rooms: await countGuildRows(guildId, 'rooms'),
+              rooms: await countGuildRows(guildId, 'dm_sessions'),
               documents: await countGuildRows(guildId, 'documents'),
               chunks: await countGuildRows(guildId, 'chunks'),
               keywords: (await listKeywords(guildId)).length,
               messages: await countGuildMessages(guildId),
             }
           : { rooms: 0, documents: 0, chunks: 0, keywords: 0, messages: 0 },
-        rooms: rooms.map((room) => ({
-          channelId: room.channelId,
-          userId: room.userId,
-          messageCount: room.messageCount,
-          lastActiveAt: room.lastActiveAt,
+        rooms: sessions.map((session) => ({
+          userId: session.userId,
+          messageCount: session.messageCount,
+          lastActiveAt: session.lastActiveAt,
         })),
         documents: documents.map((document) => ({
           id: document.id,
@@ -590,7 +589,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         adminOnlyRoomsSetting: settings?.adminOnlyRooms ?? null,
         adminOnlyRoomsDefault: config.features.adminOnlyRooms,
         stats: {
-          rooms: guildId ? await countGuildRows(guildId, 'rooms') : 0,
+          rooms: guildId ? await countGuildRows(guildId, 'dm_sessions') : 0,
           messages: guildId ? await countGuildMessages(guildId) : 0,
           documents: guildId ? await countGuildRows(guildId, 'documents') : 0,
         },
@@ -658,7 +657,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
   }
 
   if (path === '/api/rooms' && method === 'GET') {
-    sendJson(response, 200, { rooms: guildId ? await listRooms(guildId) : [] });
+    sendJson(response, 200, { sessions: guildId ? await listDmSessions(guildId) : [] });
     return;
   }
 

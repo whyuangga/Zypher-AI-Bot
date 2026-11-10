@@ -1,6 +1,6 @@
 # 🤖 Zypher AI Bot
 
-Bot Discord dengan **AI sebagai fitur utama**: member bisa membuka **room privat** dan mengobrol dengan AI seperti layanan tiket, lengkap dengan **memori jangka panjang**, **jawaban keyword kustom yang divariasikan AI**, **dokumen rujukan (RAG)** yang membuat AI tahu isi FAQ server, **transkrip sesi** yang bisa diunduh, dan **dashboard web** untuk mengelola dokumen.
+Bot Discord dengan **AI sebagai fitur utama**: member mengobrol dengan AI lewat **DM yang benar-benar privat** — tidak bisa dibaca admin, staff, maupun pemilik server. Lengkap dengan **memori jangka panjang**, **jawaban keyword kustom yang divariasikan AI**, **dokumen rujukan (RAG)** yang membuat AI tahu isi FAQ server, **transkrip sesi** yang dikirim ke DM, dan **dashboard web** untuk mengelola dokumen.
 
 Dibangun dengan **Node.js + TypeScript**, [discord.js v14](https://discord.js.org), dan LLM [Groq](https://console.groq.com) (bisa diganti provider lain tanpa menyentuh kode).
 
@@ -11,14 +11,18 @@ Dibangun dengan **Node.js + TypeScript**, [discord.js v14](https://discord.js.or
 > hosting gratis (Oracle Cloud, GCP, panel bot) plus mana yang merusak data SQLite.
 
 ```
-Member klik "Buat Room AI"
+Member klik "Chat via DM" di panel
         ↓
-Channel privat dibuat (hanya member + staff + bot)
+Bot mengirim DM (tidak ada channel yang dibuat)
         ↓
 Chat bebas → AI menjawab, mengingat fakta, memakai keyword admin
         ↓
-"Akhiri Sesi" → transkrip HTML dikirim ke DM → channel dihapus
+"/akhiri" → transkrip HTML dikirim ke DM → riwayat dihapus
 ```
+
+> **Kenapa DM?** Channel dan private thread di Discord tetap bisa dibaca pemilik server,
+> role dengan izin Administrator, dan siapa pun yang punya `Manage Threads`. DM tidak bisa
+> dibaca siapa pun selain member dan bot. Itu satu-satunya cara benar-benar privat di Discord.
 
 ---
 
@@ -26,18 +30,18 @@ Chat bebas → AI menjawab, mengingat fakta, memakai keyword admin
 
 | Fitur | Keterangan |
 |---|---|
-| 🎟️ **AI Room (ticket-style)** | Tombol di panel membuat **private thread** per member (1 channel induk `#ai-rooms` = N room, tidak membanjiri sidebar). Satu room aktif per member. |
+| 💬 **Chat privat via DM** | Tombol **Chat via DM** di panel mengirim DM ke member. **Tidak ada channel/thread yang dibuat**, jadi tidak ada yang bisa dibaca admin server. Konteks server (persona, dokumen, memori) dipilih lewat `/server`. Sesi ditutup dengan `/akhiri`. |
 | ⚡ **Streaming jawaban** | Jawaban muncul bertahap (edit pesan tiap ±1,4 detik, menghormati rate limit Discord), bukan menunggu jeda panjang. Otomatis jatuh ke mode non-streaming kalau provider menolaknya. |
 | 💬 **Chat AI** | Konteks percakapan (20 pesan terakhir), jawaban panjang otomatis dipecah ke beberapa pesan. **Multilingual** — otomatis mengikuti bahasa user (Indonesia/Inggris). |
 | 🧠 **Memori jangka panjang** | AI otomatis menyimpan fakta penting lewat *tool calling*, plus perintah manual `/ingat`. Memori dipakai lagi di sesi berikutnya; `/konsolidasi` menggabungkan memori yang berulang. |
-| 🖥️ **Dashboard web** | `/`, `/panel`, `/dokumen`, `/keyword`, `/memori`, `/transkrip`, `/moderasi`, `/pengaturan` — gaya editorial gelap, **toggle fitur AI per server** (RAG, Vision, Auto Memory, Admin Only Rooms, Suara di room), konsolidasi memori | (latar `#0D0D0F`, teks Wafer `#E2D1CC`, aksen Kimberly, tombol solid tanpa gradient): sidebar kiri, grafik aktivitas 7 hari, kartu statistik per server. Dropdown memakai **nama server** (bukan ID), dan panel "Buat Room AI" bisa dikirim, dipindah, atau dimatikan dari halaman `/panel`. Aktif kalau `DASHBOARD_TOKEN` diisi; tanpa framework, satu proses dengan bot. |
+| 🖥️ **Dashboard web** | `/`, `/panel`, `/dokumen`, `/keyword`, `/moderasi`, `/pengaturan` — gaya editorial gelap, **toggle fitur AI per server** (RAG, Vision, Auto Memory, Admin Only Rooms, Suara di chat). Sidebar kiri, grafik aktivitas 7 hari, kartu statistik per server. Dropdown memakai **nama server** (bukan ID), dan panel "Chat via DM" bisa dikirim, dipindah, atau dimatikan dari `/panel`. **Dashboard tidak menyimpan isi percakapan maupun memori member.** |
 | 📚 **Dokumen RAG** | Upload `.txt`/`.md`/`.csv`/`.json`/`.pdf`/`.docx` (maks 8 MB) lewat `/dokumen tambah` atau dashboard. AI menjawab dari isi dokumen dan menyebut sumbernya (`📚 Sumber: faq.md — bagian 3`). Pencarian BM25 bawaan — **tanpa API key tambahan**. |
 | 🔑 **Keyword kustom** | Admin menulis jawaban acuan; AI memakainya sebagai **fakta** dan menyusun ulang kalimatnya agar **bervariasi setiap kali** (bukan copy-paste). |
-| 🎭 **Persona per server** | Mis. "kamu guru bahasa Inggris yang sabar" — berlaku untuk semua room di server itu. |
+| 🎭 **Persona per server** | Mis. "kamu guru bahasa Inggris yang sabar" — berlaku untuk semua chat yang memakai server itu sebagai konteks. |
 | 📄 **Transkrip sesi** | HTML mandiri (dark mode, rapi, aman dari XSS) berisi percakapan + memori + ringkasan AI. **Hanya dikirim ke DM member** — tidak diarsipkan di dashboard. |
 | 🛡️ **Moderasi otomatis** | Filter kata terlarang di semua channel teks: hapus pesan / tegur / timeout. Pola `k0nt0l` tetap tertangkap, staff dikecualikan, semua pelanggaran tercatat di dashboard `/moderasi`. Lihat [docs/moderation.md](docs/moderation.md). |
-| 🖼️ **Vision (gambar)** | Member kirim gambar di room AI → AI membacanya dengan model multimodal. Gambar dikirim sebagai data URI (tanpa storage). Lihat [docs/vision-voice.md](docs/vision-voice.md). |
-| 🎙️ **Voice (STT/TTS)** | Voice note ditranskrip jadi pertanyaan, dan bot bisa membalas dengan pesan suara. Ada `/ucap` untuk mengubah teks jadi audio. **RAG suara di room** — jawaban AI di room otomatis dibacakan (TTS) bila `TTS_REPLY_IN_ROOM=true`. |
+| 🖼️ **Vision (gambar)** | Member kirim gambar di DM → AI membacanya dengan model multimodal. Gambar dikirim sebagai data URI (tanpa storage). Lihat [docs/vision-voice.md](docs/vision-voice.md). |
+| 🎙️ **Voice (STT/TTS)** | Voice note ditranskrip jadi pertanyaan, dan bot bisa membalas dengan pesan suara. Ada `/ucap` untuk mengubah teks jadi audio. **Suara otomatis** — jawaban AI dibacakan (TTS) bila `TTS_REPLY_IN_ROOM=true`. |
 | 🔁 **Fallback multi-provider** | Provider utama kena limit/error → otomatis pindah ke provider cadangan (Groq → Gemini → OpenRouter), tanpa restart. |
 | 🛡️ **Rate limit & guard** | Batas pesan per menit, validasi input, penanganan error yang ramah, tanpa membocorkan system prompt. |
 | 🐳 **Siap deploy** | Docker multi-stage, volume SQLite, tanpa dependensi native (pakai `node:sqlite` bawaan Node 22). |
@@ -139,7 +143,7 @@ Saat pertama jalan, bot otomatis mendaftarkan slash command. Lalu di Discord:
 /panel            → kirim panel tombol ke channel ini
 ```
 
-Klik **Buat Room AI** → **private thread** muncul → mulai ngobrol.
+Klik **Chat via DM** → bot mengirim DM ke kamu → mulai ngobrol di DM.
 
 ---
 
@@ -175,7 +179,6 @@ Klik **Buat Room AI** → **private thread** muncul → mulai ngobrol.
 | `RATE_LIMIT_PER_MINUTE` | `12` | Batas request AI per user/menit |
 | `MAX_INPUT_CHARS` | `2000` | Panjang pesan user yang diproses |
 | `AI_CATEGORY_ID` | kosong | Kategori tempat channel induk `#ai-rooms` dibuat (kosong = bot buat "AI Lounge") |
-| `AI_ROOMS_CHANNEL_ID` | kosong | Channel induk private thread room AI (kosong = bot buat `#ai-rooms`) |
 | `MODLOG_CHANNEL_ID` | kosong | Channel log moderasi (opsional). Transkrip tidak diarsipkan ke sini. |
 | `STAFF_ROLE_ID` | kosong | Role staff yang boleh melihat/menutup room member |
 | `ADMIN_ONLY_ROOMS` | `false` | `true` = hanya admin yang bisa membuat room |
@@ -183,7 +186,7 @@ Klik **Buat Room AI** → **private thread** muncul → mulai ngobrol.
 | `MODERATION_WORDS` | kosong | Daftar kata terlarang, dipisah koma |
 | `MODERATION_ACTION` | `delete` | `delete` · `warn` (hapus + tegur) · `timeout` (hapus + bisukan) |
 | `MODERATION_TIMEOUT_MINUTES` | `10` | Durasi timeout moderasi (1–10080 menit) |
-| `VISION_ENABLED` | `false` | AI membaca gambar di room AI — [docs](docs/vision-voice.md) |
+| `VISION_ENABLED` | `false` | AI membaca gambar di DM — [docs](docs/vision-voice.md) |
 | `VISION_MODEL` | `meta-llama/llama-4-scout-17b-16e-instruct` | Model multimodal yang dipakai saat ada gambar |
 | `VISION_MAX_MB` | `5` | Batas ukuran gambar yang diunduh bot |
 | `VOICE_ENABLED` | `false` | Transkrip voice note jadi pertanyaan — [docs](docs/vision-voice.md) |
@@ -229,24 +232,26 @@ Kalau model tidak mendukung *tool calling*, bot otomatis lanjut tanpa fitur memo
 
 | Perintah | Akses | Fungsi |
 |---|---|---|
-| `/panel [channel]` | Admin | Kirim panel tombol pembuat room AI (alternatif: dashboard → **Panel**) |
+| `/panel [channel]` | Admin | Kirim panel tombol **Chat via DM** (alternatif: dashboard → **Panel**) |
 | `/bantuan` | Semua | Panduan singkat (ephemeral) |
-| `/tanya pertanyaan:` | Semua | Tanya AI cepat tanpa room, jawaban hanya terlihat oleh penanya |
 | `/ucap teks:` | Semua | Ubah teks jadi pesan suara (butuh `VOICE_ENABLED` + `TTS_ENABLED`) |
 | `/ingat fakta:` | Semua | Simpan memori manual tentang diri sendiri |
-| `/memori [user]` | Semua / admin | Lihat daftar memori (dengan id) |
+| `/memori [user]` | Semua / admin | Lihat daftar memori (dengan id) — admin bisa lihat memori member lain |
 | `/lupakan id:` / `semua:true` | Semua | Hapus satu / semua memori |
-| `/reset` | Pemilik room / staff | Hapus riwayat konteks, memori tetap |
+| `/server [nama]` | Semua | Pilih server konteks untuk chat DM (persona, dokumen, memori) |
+| `/akhiri` | Semua | Tutup sesi DM → transkrip HTML dikirim ke DM → riwayat dihapus |
+| `/reset` | Semua | Hapus riwayat konteks DM, memori tetap |
 | `/dokumen tambah file:` | Admin | Upload dokumen teks sebagai pengetahuan AI |
 | `/dokumen daftar\|hapus` | Admin | Kelola dokumen pengetahuan |
 | `/dokumen cari pertanyaan:` | Semua | Uji potongan dokumen yang akan dipakai AI |
 | `/keyword tambah\|daftar\|hapus` | Admin | Kelola jawaban acuan yang divariasikan AI |
 | `/persona set\|lihat\|hapus` | Admin | Atur peran AI untuk seluruh server |
 
-Lampiran di room AI: **gambar** (JPG/PNG/WebP) dibaca AI bila `VISION_ENABLED=true`,
+Lampiran di DM: **gambar** (JPG/PNG/WebP) dibaca AI bila `VISION_ENABLED=true`,
 **voice note** ditranskrip bila `VOICE_ENABLED=true`.
 
-Tombol di room: **Akhiri Sesi** (konfirmasi → transkrip → channel dihapus) dan **Bantuan**.
+Tombol di panel server: **Chat via DM** (mengirim DM pembuka) dan **Cara Kerja**.
+Tidak ada channel/thread yang dibuat — tidak ada yang bisa dibaca admin.
 
 ---
 
@@ -374,7 +379,7 @@ diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai u
 | `ExperimentalWarning: SQLite is an experimental feature` | Normal di Node 22. Bisa diabaikan, atau jalankan dengan `NODE_OPTIONS=--disable-warning=ExperimentalWarning` (sudah di-set di Dockerfile). |
 | Slash command tidak muncul | Isi `DEV_GUILD_ID` (instan), atau tunggu hingga 1 jam untuk command global. Pastikan undangan memakai scope `applications.commands`. |
 | Bot diam saja di room | **Message Content Intent** belum aktif di Developer Portal → Bot. |
-| `Gagal membuat room AI` + permission | Bot butuh **Manage Channels**, **Create Private Threads**, dan **Manage Threads** di channel `#ai-rooms`. |
+| Tombol **Chat via DM** bilang DM tertutup | Member perlu mengaktifkan **Privasi & Keamanan → Izinkan pesan langsung dari server** untuk server itu. |
 | Transkrip tidak masuk DM | User menutup DM. Bot **tidak** mengarsipkan transkrip di mana pun — file dilampirkan di room, lalu channel dihapus **60 detik** kemudian agar member sempat mengunduh. |
 | `AI_API_KEY wajib diisi` padahal sudah diisi | Key Groq tertaruh di `GROQ_API_KEY`. Saat Groq utama, taruh di `AI_API_KEY` — lihat [docs/setup.md](docs/setup.md). |
 | `API key AI ditolak` | `AI_API_KEY` salah/kedaluwarsa di `.env`. Jalankan `npm run doctor` untuk memastikan provider mana yang bermasalah. |
@@ -391,7 +396,7 @@ diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai u
 | Error `model ... does not support image input` | `VISION_MODEL` bukan model vision, atau provider tidak mendukung `image_url`. Ganti model atau matikan `VISION_ENABLED`. |
 | Voice note tidak ditranskrip | `VOICE_ENABLED` belum aktif, file > `VOICE_MAX_MB`, atau provider menolak endpoint `/audio/transcriptions`. Cek log: nama provider ikut dicatat. |
 | Balasan suara tidak muncul | `TTS_ENABLED=false`, kuota TTS habis, atau model suara tidak ada di provider. Jawaban teks tetap dikirim — tidak ada yang hilang. |
-| Panel "Buat Room AI" masih muncul padahal fitur room mau dimatikan | Dashboard → **Panel** → *Hapus panel* (menghapus pesannya) atau matikan centang *Izinkan member membuat room* (pesan tetap ada, tombol ditolak). Tanpa dashboard: hapus pesan panelnya di Discord — tombolnya ikut hilang. |
+| Panel "Chat via DM" masih muncul padahal ingin dimatikan | Dashboard → **Panel** → *Hapus panel* (menghapus pesannya) atau matikan centang *Izinkan member chat* (pesan tetap ada, tombol ditolak). Tanpa dashboard: hapus pesan panelnya di Discord — tombolnya ikut hilang. |
 | Panel tidak bisa dikirim dari dashboard | Halaman Panel butuh bot hidup; mode dashboard-saja (`npm run dashboard`) hanya bisa menyimpan tombol aktif/nonaktif. Cek juga izin bot: View Channel, Send Messages, Embed Links, Manage Messages. |
 | Dropdown server menampilkan `Server 577090` | Nama server diambil dari Discord saat bot login. Jalankan bot sekali; setelah itu nama (dan rename berikutnya) tersimpan otomatis. |
 | Moderasi tidak bereaksi | Pastikan dulu: moderasi aktif di `/moderasi` (menang atas `.env`), daftar kata tidak kosong, dan pengirimnya bukan staff/Manage Messages. Bot juga perlu izin **Manage Messages** untuk menghapus dan **Moderate Members** untuk timeout. |
@@ -412,7 +417,7 @@ src/
 ├── commands/                # slash command (panel, ingat, memori, keyword, persona, dll)
 ├── events/                  # interactionCreate, messageCreate, channelDelete
 ├── features/
-│   ├── rooms.ts             # buat/hapus private thread room AI + transkrip
+│   ├── dm.ts                # percakapan AI via DM (pengganti room) + transkrip
 │   ├── chat.ts              # pipeline jawaban AI + tool calling + chunking
 │   ├── rag.ts               # RAG: ingest dokumen, indeks BM25, pencarian hybrid
 │   ├── rag-embed.ts         # embeddings opsional (endpoint /embeddings)
@@ -422,7 +427,7 @@ src/
 │   ├── buttons.ts           # router button interaction
 │   ├── moderation.ts        # filter kata terlarang + log pelanggaran
 │   ├── vision.ts            # lampiran gambar → data URI untuk model multimodal
-│   ├── panel.ts             # kirim/hapus panel room AI (dipakai /panel & dashboard)
+│   ├── panel.ts             # kirim/hapus panel "Chat via DM" (dipakai /panel & dashboard)
 │   └── ui.ts                # embed & komponen
 ├── web/
 │   ├── server.ts            # dashboard: node:http, auth token, API JSON

@@ -1,3 +1,4 @@
+import { akhiriCommand } from './akhiri.js';
 import { bantuanCommand } from './bantuan.js';
 import { dokumenCommand } from './dokumen.js';
 import { ingatCommand } from './ingat.js';
@@ -8,13 +9,14 @@ import { memoriCommand } from './memori.js';
 import { panelCommand } from './panel.js';
 import { personaCommand } from './persona.js';
 import { resetCommand } from './reset.js';
-import { tanyaCommand } from './tanya.js';
+import { serverCommand } from './server.js';
 import { ucapCommand } from './ucap.js';
 import type { Command } from './types.js';
 
 export const commands: Command[] = [
   panelCommand,
-  tanyaCommand,
+  serverCommand,
+  akhiriCommand,
   ucapCommand,
   bantuanCommand,
   ingatCommand,

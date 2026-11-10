@@ -64,6 +64,17 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
   } catch {
     // Tabel memang belum ada — tidak apa-apa.
   }
+
+  // Room AI (channel/thread) sudah diganti percakapan DM. Tabel `rooms` tidak
+  // dipakai lagi, dan riwayat `messages` milik room lama ikut dibersihkan
+  // supaya percakapan member tidak tertinggal di database.
+  try {
+    await driver.exec("DELETE FROM messages WHERE channel_id NOT LIKE 'dm:%'");
+    await driver.exec('DROP TABLE IF EXISTS rooms');
+    await driver.exec('DROP INDEX IF EXISTS idx_rooms_user');
+  } catch {
+    // Tabel memang belum ada — tidak apa-apa.
+  }
 }
 
 async function initDriver(): Promise<Driver> {

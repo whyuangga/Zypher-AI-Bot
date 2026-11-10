@@ -19,7 +19,7 @@ import { readFile } from 'node:fs/promises';
 const { addMemory, listMemories, deleteMemory, clearMemories, addKeyword, listKeywords, deleteKeyword } = await import(
   '../src/db/repo.js'
 );
-const { createRoom, getRoomByChannel, getRoomByUser, appendMessage, getHistory, clearHistory, deleteRoom, touchRoom } =
+const { setDmSession, getDmSession, listDmSessions, deleteDmSession, touchDmSession, appendMessage, getHistory, clearHistory } =
   await import('../src/db/repo.js');
 const { setPersona, getGuildSettings } = await import('../src/db/repo.js');
 const { listGuilds, countGuildRows, countGuildMessages, messagesPerDay } = await import('../src/db/repo.js');
@@ -201,32 +201,42 @@ test('parseConsolidatedMemories: teks bebas jadi satu baris', () => {
   assert.equal(result[0], 'ini bukan JSON juga bukan bullet');
 });
 
-console.log('\nRoom & riwayat');
-await testAsync('membuat room dan menemukannya kembali', async () => {
-  await createRoom(CHANNEL, GUILD, USER);
-  assert.equal((await getRoomByChannel(CHANNEL))?.userId, USER);
-  assert.equal((await getRoomByUser(GUILD, USER))?.channelId, CHANNEL);
+console.log('\nSesi DM & riwayat');
+await testAsync('membuat sesi DM dan menemukannya kembali', async () => {
+  await setDmSession(USER, GUILD);
+  const session = await getDmSession(USER);
+  assert.equal(session?.userId, USER);
+  assert.equal(session?.guildId, GUILD);
+  assert.equal((await listDmSessions(GUILD)).length, 1);
+});
+await testAsync('ganti server konteks memperbarui sesi, bukan menambah baris', async () => {
+  await setDmSession(USER, '777777777777777777');
+  const session = await getDmSession(USER);
+  assert.equal(session?.guildId, '777777777777777777');
+  assert.equal((await listDmSessions(GUILD)).length, 0, 'server lama tidak boleh punya sesi lagi');
+  await setDmSession(USER, GUILD);
 });
 await testAsync('menyimpan & mengambil riwayat berurutan', async () => {
-  await appendMessage(CHANNEL, 'user', 'Halo');
-  await appendMessage(CHANNEL, 'assistant', 'Hai! Ada yang bisa dibantu?');
-  await appendMessage(CHANNEL, 'user', 'Ajarin Inggris dong');
-  await touchRoom(CHANNEL, 3);
+  const key = `dm:${USER}`;
+  await appendMessage(key, 'user', 'Halo');
+  await appendMessage(key, 'assistant', 'Hai! Ada yang bisa dibantu?');
+  await appendMessage(key, 'user', 'Ajarin Inggris dong');
+  await touchDmSession(USER, 3);
 
-  const history = await getHistory(CHANNEL, 2);
+  const history = await getHistory(key, 2);
   assert.equal(history.length, 2);
   assert.equal(history[0]?.content, 'Hai! Ada yang bisa dibantu?');
   assert.equal(history[1]?.role, 'user');
-  assert.equal((await getRoomByChannel(CHANNEL))?.messageCount, 3);
+  assert.equal((await getDmSession(USER))?.messageCount, 3);
 });
 await testAsync('reset tidak menghapus memori', async () => {
-  await clearHistory(CHANNEL);
-  assert.equal((await getHistory(CHANNEL, 10)).length, 0);
+  await clearHistory(`dm:${USER}`);
+  assert.equal((await getHistory(`dm:${USER}`, 10)).length, 0);
   assert.equal((await listMemories(GUILD, USER)).length, 1);
 });
-await testAsync('hapus room membersihkan data', async () => {
-  await deleteRoom(CHANNEL);
-  assert.equal(await getRoomByChannel(CHANNEL), null);
+await testAsync('hapus sesi DM membersihkan data', async () => {
+  await deleteDmSession(USER);
+  assert.equal(await getDmSession(USER), null);
 });
 
 console.log('\nTranskrip');
@@ -285,11 +295,12 @@ await testAsync('server yang hanya punya data tetap muncul di daftar server', as
     'guild dengan data harus ikut terdaftar',
   );
 });
-await testAsync('createRoom mendaftarkan server ke tabel guilds', async () => {
+await testAsync('setDmSession mendaftarkan server ke tabel guilds', async () => {
   const freshGuild = '555555555555555555';
   assert.equal(await getGuildSettings(freshGuild), null);
-  await createRoom('666666666666666666', freshGuild, USER);
-  assert.ok(await getGuildSettings(freshGuild), 'server harus punya baris guilds setelah room dibuat');
+  await setDmSession(USER, freshGuild);
+  assert.ok(await getGuildSettings(freshGuild), 'server harus punya baris guilds setelah sesi DM dibuat');
+  await deleteDmSession(USER);
 });
 await testAsync('nama server tersimpan dan dipakai daftar server dashboard', async () => {
   const named = '1567780679515770900';
@@ -340,21 +351,21 @@ await testAsync('statistik dashboard dipisah per server', async () => {
   const guildB = '888888888888888888';
   const channelA = '999999999999999991';
 
-  await createRoom(channelA, guildA, USER);
-  await appendMessage(channelA, 'user', 'Halo dari server A');
+  await setDmSession(USER, guildA);
+  await appendMessage(`dm:${USER}`, 'user', 'Halo dari server A');
 
-  assert.equal(await countGuildRows(guildA, 'rooms'), 1);
-  assert.equal(await countGuildRows(guildB, 'rooms'), 0, 'server B tidak boleh ikut menghitung room A');
+  assert.equal(await countGuildRows(guildA, 'dm_sessions'), 1);
+  assert.equal(await countGuildRows(guildB, 'dm_sessions'), 0, 'server B tidak boleh ikut menghitung sesi A');
   assert.equal(await countGuildMessages(guildA), 1);
   assert.equal(await countGuildMessages(guildB), 0);
 });
 
 await testAsync('grafik aktivitas menghitung pesan 7 hari terakhir', async () => {
   const guildId = '121212121212121212';
-  const channelId = '131313131313131313';
-  await createRoom(channelId, guildId, USER);
-  await appendMessage(channelId, 'user', 'Halo');
-  await appendMessage(channelId, 'assistant', 'Hai');
+  const dmKey = 'dm:131313131313131313';
+  await setDmSession('131313131313131313', guildId);
+  await appendMessage(dmKey, 'user', 'Halo');
+  await appendMessage(dmKey, 'assistant', 'Hai');
 
   const series = await messagesPerDay(guildId, 7);
   assert.equal(series.length, 7, 'harus tepat 7 batang');
@@ -403,7 +414,7 @@ await testAsync('ringkasan merender sidebar, kartu statistik, dan grafik', async
   const html = ringkasanPage({
     ...pageContext,
     stats: { rooms: 3, documents: 2, chunks: 9, keywords: 4, messages: 84 },
-    rooms: [{ channelId: '1400000000000000001', userId: USER, messageCount: 12, lastActiveAt: Date.now() }],
+    rooms: [{ userId: USER, messageCount: 12, lastActiveAt: Date.now() }],
     documents: [{ id: 1, name: 'faq.md', chunkCount: 6, chars: 4200, createdAt: Date.now() }],
     series: await messagesPerDay('1569424777750257766', 7),
     ragEnabled: true,
@@ -417,7 +428,7 @@ await testAsync('ringkasan merender sidebar, kartu statistik, dan grafik', async
   assert.equal((html.match(/class="stat-value"/g) ?? []).length, 3, 'Room AI, Dokumen RAG, Keyword');
   assert.equal((html.match(/class="bar-col/g) ?? []).length, 7);
   assert.match(html, /openai\/gpt-oss-120b/);
-  assert.match(html, /Room AI terbaru/);
+  assert.match(html, /Sesi DM terbaru/);
 });
 test('halaman keyword meng-escape input user', () => {
   const html = keywordPage({
@@ -757,73 +768,77 @@ test('halaman dashboard tidak menyebut channel arsip transkrip', async () => {
   assert.ok(html.includes('MODLOG_CHANNEL_ID'), 'nama env log moderasi yang baru harus dipakai');
 });
 
-test('channel room tetap dihapus walau DM tertutup (jeda lebih panjang)', async () => {
-  const { roomDeleteDelayMs } = await import('../src/features/rooms.js');
-  assert.equal(roomDeleteDelayMs(true), 3000, 'DM terkirim → jeda pendek');
-  assert.equal(roomDeleteDelayMs(false), 60_000, 'DM gagal → 60 detik untuk mengunduh');
-  assert.ok(roomDeleteDelayMs(false) > roomDeleteDelayMs(true), 'jeda DM gagal harus lebih panjang');
+console.log('\nPrivasi: chat hanya lewat DM, tidak ada channel');
+
+test('DM menggantikan room: tidak ada channel/thread yang dibuat', async () => {
+  const source = await readFile(new URL('../src/features/dm.ts', import.meta.url), 'utf8');
+  assert.ok(source.length > 0, 'modul dm.ts harus ada');
+  assert.ok(!/channels\.create\(/.test(source), 'DM tidak boleh membuat channel');
+  assert.ok(!/threads\.create\(/.test(source), 'DM tidak boleh membuat thread');
+  assert.ok(!/permissionOverwrites/.test(source), 'DM tidak butuh permission channel');
 });
 
-test('endAiRoom tidak lagi menyisakan channel saat DM tertutup', async () => {
-  const source = await readFile(new URL('../src/features/rooms.ts', import.meta.url), 'utf8');
-  assert.ok(!source.includes('Channel ini sengaja belum dihapus'), 'masih ada jalur yang menahan channel');
-  // penghapusan channel harus terjadi di luar cabang dmSent
-  const idx = source.indexOf('setTimeout(() => {');
-  assert.ok(idx > 0, 'tidak ada setTimeout penghapus channel');
-  const after = source.slice(idx);
-  assert.ok(after.includes('channel'), 'setTimeout harus menghapus channel');
-  assert.ok(source.includes('roomDeleteDelayMs(dmSent)'), 'jeda harus mengikuti hasil DM');
+test('rooms.ts sudah dihapus — tidak ada konsep room/channel lagi', async () => {
+  let exists = true;
+  try {
+    await readFile(new URL('../src/features/rooms.ts', import.meta.url), 'utf8');
+  } catch {
+    exists = false;
+  }
+  assert.equal(exists, false, 'rooms.ts harus sudah dihapus');
 });
 
-console.log('\nRoom AI berupa private thread (Opsi 2)');
-
-test('isAiRoomChannel menerima private thread DAN channel teks lama', async () => {
-  const { isAiRoomChannel } = await import('../src/features/rooms.js');
-  const { ChannelType } = await import('discord.js');
-  assert.equal(isAiRoomChannel({ type: ChannelType.PrivateThread }), true, 'private thread = room baru');
-  assert.equal(isAiRoomChannel({ type: ChannelType.GuildText }), true, 'channel teks = room lama, tetap dilayani');
-  assert.equal(isAiRoomChannel({ type: ChannelType.PublicThread }), false, 'public thread bukan room AI');
-  assert.equal(isAiRoomChannel({ type: ChannelType.GuildVoice }), false, 'voice bukan room AI');
-  assert.equal(isAiRoomChannel({ type: ChannelType.GuildCategory }), false, 'kategori bukan room AI');
+test('bot menjawab DM member (messageCreate merutekan DM)', async () => {
+  const source = await readFile(new URL('../src/events/messageCreate.ts', import.meta.url), 'utf8');
+  assert.match(source, /if \(!message\.inGuild\(\)\)/, 'harus mendeteksi DM');
+  assert.match(source, /handleDmMessage\(message\)/, 'DM harus diarahkan ke handler DM');
+  assert.ok(!/handleRoomMessage/.test(source), 'tidak boleh lagi memanggil handleRoomMessage');
 });
 
-test('createAiRoom memakai private thread, bukan channel privat', async () => {
-  const source = await readFile(new URL('../src/features/rooms.ts', import.meta.url), 'utf8');
-  assert.match(source, /type:\s*ChannelType\.PrivateThread/, 'thread harus dibuat sebagai PrivateThread');
-  assert.ok(!/guild\.channels\.create\(\{[^}]*type:\s*ChannelType\.GuildText,\s*parent:\s*category\.id/ms.test(source),
-    'tidak boleh lagi membuat channel teks privat untuk room');
-  assert.match(source, /thread\.members\.add\(member\.id\)/, 'pemilik room harus di-invite ke thread');
-  assert.match(source, /invitable:\s*false/, 'member tidak boleh mengundang orang lain');
+test('chat.ts tidak lagi menangani pesan server (hanya DM)', async () => {
+  const source = await readFile(new URL('../src/features/chat.ts', import.meta.url), 'utf8');
+  assert.ok(!source.includes('handleRoomMessage'), 'handleRoomMessage harus dihapus');
+  assert.match(source, /export async function generateAnswer/, 'generateAnswer harus diekspor untuk dm.ts');
 });
 
-test('staff TIDAK diberi izin di channel induk room AI', async () => {
-  const source = await readFile(new URL('../src/features/rooms.ts', import.meta.url), 'utf8');
-
-  // Ambil blok resolveRoomsChannel (pembuatan channel induk).
-  const start = source.indexOf('async function resolveRoomsChannel');
-  const end = source.indexOf('async function resolveCategory');
-  const block = source.slice(start, end);
-
-  assert.ok(block.length > 0, 'resolveRoomsChannel harus ada');
-  assert.ok(!block.includes('staffRole'), 'channel induk tidak boleh memberi akses ke STAFF_ROLE_ID');
-  assert.ok(!block.includes('STAFF_ROLE_ID'), 'channel induk tidak boleh menyebut STAFF_ROLE_ID');
-  assert.match(block, /deny:\s*\[PermissionFlagsBits\.ViewChannel\]/, '@everyone harus di-deny ViewChannel');
-  assert.match(block, /CreatePrivateThreads/, 'bot butuh izin membuat private thread');
-  assert.match(block, /ManageThreads/, 'bot butuh izin mengelola thread');
+test('schema tidak punya tabel rooms, tapi punya dm_sessions', async () => {
+  const { SCHEMA_SQLITE } = await import('../src/db/schema.js');
+  assert.ok(!/CREATE TABLE[^;]*\brooms\b/i.test(SCHEMA_SQLITE), 'tabel rooms harus dihapus');
+  assert.match(SCHEMA_SQLITE, /CREATE TABLE IF NOT EXISTS dm_sessions/, 'tabel dm_sessions harus ada');
 });
 
-test('moderasi tetap berjalan di thread (bukan hanya channel teks)', async () => {
-  const source = await readFile(new URL('../src/features/moderation.ts', import.meta.url), 'utf8');
-  assert.ok(source.includes('isModeratableChannel'), 'harus ada helper channel yang bisa dimoderasi');
-  assert.match(source, /channel\.isThread\(\)/, 'thread harus dianggap channel yang bisa dimoderasi');
-  assert.ok(!/message\.channel\.type !== ChannelType\.GuildText\) return false/.test(source),
-    'moderasi tidak boleh lagi menolak semua thread');
+test('migrasi membersihkan riwayat pesan room lama', async () => {
+  const source = await readFile(new URL('../src/db/index.ts', import.meta.url), 'utf8');
+  assert.match(source, /DROP TABLE IF EXISTS rooms/, 'tabel rooms lama harus di-drop');
+  assert.match(source, /DELETE FROM messages WHERE channel_id NOT LIKE 'dm:%'/,
+    'riwayat pesan room lama harus dibersihkan');
 });
 
-test('event ThreadDelete ikut membersihkan data room', async () => {
-  const botSource = await readFile(new URL('../src/bot.ts', import.meta.url), 'utf8');
-  assert.match(botSource, /Events\.ThreadDelete/, 'harus ada listener ThreadDelete');
-  assert.match(botSource, /onChannelDelete\(thread\)/, 'thread yang dihapus harus dibersihkan');
+test('dm_sessions menyimpan server konteks, bukan channel', async () => {
+  const sed = `SELECT * FROM dm_sessions WHERE user_id = ?`;
+  const { getDmSession, setDmSession, deleteDmSession } = await import('../src/db/repo.js');
+
+  await setDmSession('555000555000555000', '999000999000999000');
+  const session = await getDmSession('555000555000555000');
+  assert.equal(session?.guildId, '999000999000999000');
+  assert.equal((session as unknown as { channelId?: string }).channelId, undefined,
+    'sesi DM tidak boleh punya channelId');
+  assert.ok(sed.includes('user_id'));
+  await deleteDmSession('555000555000555000');
+});
+
+test('panel menyebut DM, bukan room/thread', async () => {
+  const { panelEmbed, panelRow } = await import('../src/features/ui.js');
+  const embed = panelEmbed('Zypher AI').toJSON();
+  const text = JSON.stringify(embed);
+  assert.match(text, /Chat via DM|DM/, 'panel harus menyebut DM');
+  assert.ok(!/Buat Room AI/.test(text), 'panel tidak boleh lagi menawarkan room');
+  assert.ok(!/private thread/i.test(text), 'panel tidak boleh menyebut private thread');
+
+  const row = panelRow().toJSON();
+  const ids = JSON.stringify(row);
+  assert.match(ids, /dm:start/, 'tombol harus memakai customId dm:start');
+  assert.ok(!ids.includes('room:create'), 'tombol room:create harus hilang');
 });
 
 console.log('\nModerasi otomatis');

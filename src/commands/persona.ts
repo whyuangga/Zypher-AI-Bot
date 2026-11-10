@@ -52,7 +52,7 @@ export const personaCommand: Command = {
       const teks = interaction.options.getString('teks', true).trim();
       await setPersona(interaction.guildId, teks);
       await interaction.reply({
-        content: ['✅ Persona disimpan.', `> ${truncate(teks, 600).replace(/\n/g, '\n> ')}`, '', 'Berlaku untuk semua room AI di server ini.'].join(
+        content: ['✅ Persona disimpan.', `> ${truncate(teks, 600).replace(/\n/g, '\n> ')}`, '', 'Berlaku untuk semua chat AI yang memakai server ini sebagai konteks.'].join(
           '\n',
         ),
         flags: MessageFlags.Ephemeral,

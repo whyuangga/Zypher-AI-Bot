@@ -38,8 +38,8 @@ const TABLES: TablePlan[] = [
     identity: true,
   },
   {
-    name: 'rooms',
-    columns: ['channel_id', 'guild_id', 'user_id', 'created_at', 'last_active_at', 'message_count'],
+    name: 'dm_sessions',
+    columns: ['user_id', 'guild_id', 'created_at', 'last_active_at', 'message_count'],
   },
   {
     name: 'messages',

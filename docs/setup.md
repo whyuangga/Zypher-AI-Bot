@@ -195,7 +195,8 @@ Di Discord:
 /panel            → kirim panel tombol
 ```
 
-Klik **Buat Room AI** → **private thread** muncul di channel `#ai-rooms` → langsung tanya apa saja.
+Klik **Chat via DM** → bot mengirim DM ke kamu → langsung tanya apa saja di DM.
+Tidak ada channel yang dibuat, jadi percakapanmu tidak bisa dibaca admin server.
 
 ---
 
@@ -223,7 +224,7 @@ Di Discord (kamu harus admin server):
 /dokumen cari pertanyaan:jam operasional staff
 ```
 
-Kalau pencarian menampilkan potongan yang benar, tanyakan hal yang sama di room AI — jawabannya akan
+Kalau pencarian menampilkan potongan yang benar, tanyakan hal yang sama lewat chat DM — jawabannya akan
 menyebut `-# 📚 Sumber: faq.txt`. Format yang didukung: `.txt`, `.md`, `.csv`, `.json`, `.html`, `.log`, `.pdf`, `.docx`
 (maks **8 MB**; PDF harus berisi teks — hasil scan perlu OCR dulu).
 Panduan lengkap: [rag.md](rag.md).
@@ -245,9 +246,9 @@ Jalankan bot (atau `npm run dashboard` untuk dashboard saja), lalu buka <http://
 Login memakai token tadi. Di sana ada statistik, upload dokumen, dan uji pencarian. Keamanan &
 reverse proxy: [dashboard.md](dashboard.md).
 
-Panel "Buat Room AI" juga dikelola dari dashboard (**Panel**): pilih channel, klik *Kirim panel*,
-dan panel lama otomatis dihapus. Mau mematikan fitur room? Hapus panelnya, atau matikan centang
-*Izinkan member membuat room* — tombolnya tetap terlihat tapi menolak dengan sopan.
+Panel "Chat via DM" juga dikelola dari dashboard (**Panel**): pilih channel, klik *Kirim panel*,
+dan panel lama otomatis dihapus. Mau mematikan fitur chat? Hapus panelnya, atau matikan centang
+*Izinkan member chat* — tombolnya tetap terlihat tapi menolak dengan sopan.
 
 ### Moderasi, vision, dan voice (opsional)
 
@@ -261,7 +262,7 @@ MODERATION_WORDS=kata1,kata2,frasa tiga kata
 MODERATION_ACTION=delete          # delete | warn | timeout
 MODERATION_TIMEOUT_MINUTES=10
 
-# Vision — AI membaca gambar yang dikirim di room AI (butuh model multimodal)
+# Vision — AI membaca gambar yang dikirim di DM (butuh model multimodal)
 VISION_ENABLED=true
 VISION_MODEL=meta-llama/llama-4-scout-17b-16e-instruct
 
@@ -334,7 +335,7 @@ AI_FALLBACKS=
 
 ## FAQ
 
-**Bot diam saja saat ditanya di room AI.**
+**Bot diam saja saat ditanya di channel server.**
 Message Content Intent belum aktif → Developer Portal → Bot → Privileged Gateway Intents.
 
 **`AI_API_KEY wajib diisi` padahal sudah diisi.**
@@ -343,11 +344,11 @@ Key-nya ada di variabel yang salah. Saat Groq utama, key Groq harus di `AI_API_K
 **Slash command tidak muncul.**
 Isi `DEV_GUILD_ID`, lalu restart bot. Pastikan undangan memakai scope `applications.commands`.
 
-**Bot tidak bisa membuat room AI.**
-Bot butuh izin **Manage Channels**, **Create Private Threads**, dan **Manage Threads** (dicek di channel `#ai-rooms`). Kalau `#ai-rooms` belum ada, bot membuatnya otomatis — pastikan bot punya `Manage Channels` di kategori.
+**Tombol Chat via DM bilang DM tertutup.**
+Member perlu mengaktifkan **Privasi & Keamanan → Izinkan pesan langsung dari server** untuk server itu. Bot tidak butuh izin channel apa pun karena tidak membuat channel.
 
 **Transkrip tidak masuk DM.**
-Member menutup DM. Bot **tidak** mengarsipkan transkrip di mana pun — file dilampirkan langsung di room AI, dan channel dihapus **60 detik** kemudian (bukan 3 detik) supaya member sempat mengunduhnya. Transkrip tidak pernah masuk dashboard admin. Saran untuk member: buka **Privasi & Keamanan → Izinkan pesan langsung dari server** agar transkrip terkirim lewat DM.
+Tidak relevan lagi — percakapan sudah berjalan di DM, jadi transkrip langsung dikirim ke sana saat `/akhiri`. Bot tidak mengarsipkan transkrip di mana pun dan tidak pernah menyimpannya di dashboard.
 
 **`.env` aman di-commit?**
 Tidak pernah. `.env` sudah ada di `.gitignore` — jangan dihapus dari sana.

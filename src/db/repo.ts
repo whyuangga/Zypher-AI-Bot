@@ -16,7 +16,7 @@ export interface GuildSettings {
   name: string | null;
   persona: string | null;
   model: string | null;
-  /** Otomatis membalas jawaban room dengan suara (TTS). `null` = memakai default `.env`. */
+  /** Otomatis membalas jawaban chat dengan suara (TTS). `null` = memakai default `.env`. */
   ttsReplyInRoom: boolean | null;
   /** AI boleh jawab dari dokumen. `null` = memakai RAG_ENABLED dari .env. */
   ragEnabled: boolean | null;
@@ -24,7 +24,7 @@ export interface GuildSettings {
   visionEnabled: boolean | null;
   /** AI boleh ingat otomatis. `null` = memakai AUTO_MEMORY dari .env. */
   autoMemory: boolean | null;
-  /** Hanya admin yang boleh buat room. `null` = memakai ADMIN_ONLY_ROOMS dari .env. */
+  /** Hanya admin yang boleh memulai chat AI. `null` = memakai ADMIN_ONLY_ROOMS dari .env. */
   adminOnlyRooms: boolean | null;
   createdAt: number;
 }
@@ -53,10 +53,15 @@ export interface Keyword {
   createdAt: number;
 }
 
-export interface Room {
-  channelId: string;
-  guildId: string;
+/**
+ * Sesi chat DM milik member.
+ *
+ * Menggantikan konsep "room" (channel/thread) yang sudah dihapus: percakapan
+ * berjalan di DM, `guildId` hanya menyimpan konteks server mana yang dipakai.
+ */
+export interface DmSession {
   userId: string;
+  guildId: string;
   createdAt: number;
   lastActiveAt: number;
   messageCount: number;
@@ -128,14 +133,6 @@ interface KeywordRow {
   created_by: string | null;
   created_at: number;
 }
-interface RoomRow {
-  channel_id: string;
-  guild_id: string;
-  user_id: string;
-  created_at: number;
-  last_active_at: number;
-  message_count: number;
-}
 interface DocumentRow {
   id: number;
   guild_id: string;
@@ -198,15 +195,6 @@ const toKeyword = (row: KeywordRow): Keyword => ({
   answer: row.answer,
   createdBy: row.created_by,
   createdAt: Number(row.created_at),
-});
-
-const toRoom = (row: RoomRow): Room => ({
-  channelId: row.channel_id,
-  guildId: row.guild_id,
-  userId: row.user_id,
-  createdAt: Number(row.created_at),
-  lastActiveAt: Number(row.last_active_at),
-  messageCount: Number(row.message_count),
 });
 
 const toDocument = (row: DocumentRow): DocumentRecord => ({
@@ -290,7 +278,7 @@ export async function setGuildAutoMemory(guildId: string, enabled: boolean | nul
   await run('UPDATE guilds SET auto_memory = ? WHERE guild_id = ?', [enabled === null ? null : enabled ? 1 : 0, guildId]);
 }
 
-/** Hanya admin yang boleh buat room. `null` = pakai ADMIN_ONLY_ROOMS dari .env. */
+/** Hanya admin yang boleh memulai chat AI. `null` = pakai ADMIN_ONLY_ROOMS dari .env. */
 export async function setGuildAdminOnlyRooms(guildId: string, enabled: boolean | null): Promise<void> {
   await ensureGuild(guildId);
   await run('UPDATE guilds SET admin_only_rooms = ? WHERE guild_id = ?', [enabled === null ? null : enabled ? 1 : 0, guildId]);
@@ -395,47 +383,65 @@ export async function deleteKeyword(guildId: string, id: number): Promise<boolea
 }
 
 /* ------------------------------------------------------------------ */
-/*  Rooms                                                              */
+/*  Sesi chat DM                                                       */
 /* ------------------------------------------------------------------ */
 
-export async function createRoom(channelId: string, guildId: string, userId: string): Promise<void> {
+interface DmSessionRow {
+  user_id: string;
+  guild_id: string;
+  created_at: number;
+  last_active_at: number;
+  message_count: number;
+}
+
+const toDmSession = (row: DmSessionRow): DmSession => ({
+  userId: row.user_id,
+  guildId: row.guild_id,
+  createdAt: Number(row.created_at),
+  lastActiveAt: Number(row.last_active_at),
+  messageCount: Number(row.message_count),
+});
+
+/**
+ * Simpan sesi DM member. Kalau sudah ada, perbarui server konteksnya.
+ *
+ * `ensureGuild` dipanggil supaya server baru tetap muncul di dropdown dashboard
+ * walau belum pernah punya dokumen atau keyword.
+ */
+export async function setDmSession(userId: string, guildId: string, _ignored?: string): Promise<void> {
   const now = Date.now();
-  // Setiap room menyiratkan server: pastikan baris `guilds` ada supaya server
-  // muncul di dropdown dashboard (kalau tidak, dashboard tampak kosong).
   await ensureGuild(guildId);
   await run(
-    `INSERT INTO rooms (channel_id, guild_id, user_id, created_at, last_active_at)
-     VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT (channel_id) DO UPDATE SET guild_id = excluded.guild_id, user_id = excluded.user_id`,
-    [channelId, guildId, userId, now, now],
+    `INSERT INTO dm_sessions (user_id, guild_id, created_at, last_active_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT (user_id) DO UPDATE SET guild_id = excluded.guild_id, last_active_at = excluded.last_active_at`,
+    [userId, guildId, now, now],
   );
 }
 
-export async function getRoomByChannel(channelId: string): Promise<Room | null> {
-  const row = await get<RoomRow>('SELECT * FROM rooms WHERE channel_id = ?', [channelId]);
-  return row ? toRoom(row) : null;
+export async function getDmSession(userId: string): Promise<DmSession | null> {
+  const row = await get<DmSessionRow>('SELECT * FROM dm_sessions WHERE user_id = ?', [userId]);
+  return row ? toDmSession(row) : null;
 }
 
-export async function getRoomByUser(guildId: string, userId: string): Promise<Room | null> {
-  const row = await get<RoomRow>('SELECT * FROM rooms WHERE guild_id = ? AND user_id = ?', [guildId, userId]);
-  return row ? toRoom(row) : null;
+export async function listDmSessions(guildId: string): Promise<DmSession[]> {
+  const rows = await all<DmSessionRow>(
+    'SELECT * FROM dm_sessions WHERE guild_id = ? ORDER BY last_active_at DESC',
+    [guildId],
+  );
+  return rows.map(toDmSession);
 }
 
-export async function listRooms(guildId: string): Promise<Room[]> {
-  const rows = await all<RoomRow>('SELECT * FROM rooms WHERE guild_id = ? ORDER BY last_active_at DESC', [guildId]);
-  return rows.map(toRoom);
-}
-
-export async function touchRoom(channelId: string, messagesAdded = 1): Promise<void> {
-  await run('UPDATE rooms SET last_active_at = ?, message_count = message_count + ? WHERE channel_id = ?', [
+export async function touchDmSession(userId: string, messagesAdded = 2): Promise<void> {
+  await run('UPDATE dm_sessions SET last_active_at = ?, message_count = message_count + ? WHERE user_id = ?', [
     Date.now(),
     messagesAdded,
-    channelId,
+    userId,
   ]);
 }
 
-export async function deleteRoom(channelId: string): Promise<void> {
-  await run('DELETE FROM rooms WHERE channel_id = ?', [channelId]);
+export async function deleteDmSession(userId: string): Promise<void> {
+  await run('DELETE FROM dm_sessions WHERE user_id = ?', [userId]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -580,7 +586,7 @@ export async function listGuilds(): Promise<GuildChoice[]> {
     `SELECT ids.guild_id AS guild_id, guilds.name AS name
      FROM (
        SELECT guild_id FROM guilds
-       UNION SELECT guild_id FROM rooms
+       UNION SELECT guild_id FROM dm_sessions
        UNION SELECT guild_id FROM documents
        UNION SELECT guild_id FROM keywords
        UNION SELECT guild_id FROM memories
@@ -592,7 +598,7 @@ export async function listGuilds(): Promise<GuildChoice[]> {
 }
 
 export async function countRows(
-  table: 'memories' | 'keywords' | 'rooms' | 'messages' | 'documents' | 'chunks',
+  table: 'memories' | 'keywords' | 'dm_sessions' | 'messages' | 'documents' | 'chunks',
 ): Promise<number> {
   const row = await get<{ total: number }>(`SELECT COUNT(*) AS total FROM ${table}`);
   return Number(row?.total ?? 0);
@@ -601,18 +607,24 @@ export async function countRows(
 /** Jumlah baris milik satu server — dipakai dashboard agar angka cocok dengan daftar di bawahnya. */
 export async function countGuildRows(
   guildId: string,
-  table: 'memories' | 'keywords' | 'rooms' | 'documents' | 'chunks',
+  table: 'memories' | 'keywords' | 'dm_sessions' | 'documents' | 'chunks',
 ): Promise<number> {
   const row = await get<{ total: number }>(`SELECT COUNT(*) AS total FROM ${table} WHERE guild_id = ?`, [guildId]);
   return Number(row?.total ?? 0);
 }
 
-/** Tabel `messages` tidak menyimpan `guild_id` — hitung lewat room milik server itu. */
+/**
+ * Tabel `messages` tidak menyimpan `guild_id` — hitung lewat sesi DM yang
+ * memakai server itu sebagai konteks.
+ *
+ * Catatan privasi: angka ini hanya jumlah pesan, bukan isinya. Isi percakapan
+ * DM member tidak pernah dibaca dashboard.
+ */
 export async function countGuildMessages(guildId: string): Promise<number> {
   const row = await get<{ total: number }>(
     `SELECT COUNT(*) AS total FROM messages m
-     JOIN rooms r ON r.channel_id = m.channel_id
-     WHERE r.guild_id = ?`,
+     JOIN dm_sessions d ON m.channel_id = 'dm:' || d.user_id
+     WHERE d.guild_id = ?`,
     [guildId],
   );
   return Number(row?.total ?? 0);
@@ -655,8 +667,8 @@ export async function messagesPerDay(
   const since = Date.now() - (days + 1) * 24 * 60 * 60 * 1000;
   const rows = await all<{ created_at: number }>(
     `SELECT m.created_at AS created_at FROM messages m
-     JOIN rooms r ON r.channel_id = m.channel_id
-     WHERE r.guild_id = ? AND m.created_at >= ?`,
+     JOIN dm_sessions d ON m.channel_id = 'dm:' || d.user_id
+     WHERE d.guild_id = ? AND m.created_at >= ?`,
     [guildId, since],
   );
 
@@ -815,7 +827,7 @@ export async function countModerationLogs(guildId: string): Promise<number> {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Panel room AI (satu channel per server)                            */
+/*  Panel chat AI (satu channel per server)                            */
 /* ------------------------------------------------------------------ */
 
 export interface PanelState {
@@ -824,7 +836,7 @@ export interface PanelState {
   channelId: string | null;
   /** ID pesan panel, dipakai untuk menghapus/mengganti panel lama. */
   messageId: string | null;
-  /** `false` = tombol "Buat Room AI" ditolak walau pesan panelnya masih ada. */
+  /** `false` = tombol "Chat via DM" ditolak walau pesan panelnya masih ada. */
   enabled: boolean;
   updatedAt: number | null;
 }
@@ -866,7 +878,7 @@ export async function setPanelMessage(
   );
 }
 
-/** Nyalakan/matikan tombol pembuat room tanpa menghapus pesan panelnya. */
+/** Nyalakan/matikan tombol "Chat via DM" tanpa menghapus pesan panelnya. */
 export async function setPanelEnabled(guildId: string, enabled: boolean): Promise<PanelState> {
   const now = Date.now();
   await run(

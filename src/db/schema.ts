@@ -37,15 +37,16 @@ CREATE TABLE IF NOT EXISTS keywords (
 );
 CREATE INDEX IF NOT EXISTS idx_keywords_guild ON keywords (guild_id);
 
-CREATE TABLE IF NOT EXISTS rooms (
-  channel_id     TEXT PRIMARY KEY,
+-- ---------- sesi chat DM per member ----------
+-- Konteks server (persona, dokumen, memori) dipilih member lewat /server.
+-- Tidak ada channel: percakapan berjalan di DM yang tidak bisa dibaca admin.
+CREATE TABLE IF NOT EXISTS dm_sessions (
+  user_id        TEXT PRIMARY KEY,
   guild_id       TEXT NOT NULL,
-  user_id        TEXT NOT NULL,
-  created_at     INTEGER NOT NULL,
-  last_active_at INTEGER NOT NULL,
+  created_at     BIGINT NOT NULL,
+  last_active_at BIGINT NOT NULL,
   message_count  INTEGER NOT NULL DEFAULT 0
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_rooms_user ON rooms (guild_id, user_id);
 
 CREATE TABLE IF NOT EXISTS messages (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,7 +81,7 @@ CREATE TABLE IF NOT EXISTS chunks (
 CREATE INDEX IF NOT EXISTS idx_chunks_guild ON chunks (guild_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks (document_id, ordinal);
 
--- ---------- arsip transkrip room AI ----------
+-- ---------- (tabel transcripts sudah dihapus; transkrip hanya ke DM) ----------
 -- ---------- moderasi otomatis ----------
 CREATE TABLE IF NOT EXISTS moderation (
   guild_id        TEXT PRIMARY KEY,
@@ -156,15 +157,16 @@ CREATE TABLE IF NOT EXISTS keywords (
 );
 CREATE INDEX IF NOT EXISTS idx_keywords_guild ON keywords (guild_id);
 
-CREATE TABLE IF NOT EXISTS rooms (
-  channel_id     TEXT PRIMARY KEY,
+-- ---------- sesi chat DM per member ----------
+-- Konteks server (persona, dokumen, memori) dipilih member lewat /server.
+-- Tidak ada channel: percakapan berjalan di DM yang tidak bisa dibaca admin.
+CREATE TABLE IF NOT EXISTS dm_sessions (
+  user_id        TEXT PRIMARY KEY,
   guild_id       TEXT NOT NULL,
-  user_id        TEXT NOT NULL,
   created_at     BIGINT NOT NULL,
   last_active_at BIGINT NOT NULL,
   message_count  INTEGER NOT NULL DEFAULT 0
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_rooms_user ON rooms (guild_id, user_id);
 
 CREATE TABLE IF NOT EXISTS messages (
   id          SERIAL PRIMARY KEY,

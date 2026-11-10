@@ -6,7 +6,7 @@ import {
   type Message,
 } from 'discord.js';
 import { config } from '../config.js';
-import { appendMessage, getGuildSettings, getHistory, getRoomByChannel, touchRoom } from '../db/repo.js';
+import { appendMessage, getGuildSettings, getHistory } from '../db/repo.js';
 import { DiscordStreamer } from '../lib/discord-stream.js';
 import { chat, streamChat, type ChatMessage, type ChatTool } from '../lib/llm.js';
 import { logger, errorMessage } from '../lib/logger.js';
@@ -16,7 +16,6 @@ import { detectLanguage } from '../lib/language.js';
 import { getMemories, memoryTools, runMemoryTool } from './memory.js';
 import { matchKeywords } from './keywords.js';
 import { buildSystemPrompt } from './prompt.js';
-import { isAiRoomChannel } from './rooms.js';
 import { buildKnowledgeBlock, searchKnowledge, summarizeSources, type RetrievedChunk } from './rag.js';
 import { collectImages, visionUserContent } from './vision.js';
 import { isAudioAttachment, synthesizeSpeech, transcribeAudio } from '../lib/audio.js';
@@ -45,7 +44,7 @@ interface AnswerContext {
  * Susun prompt + panggil model (streaming bila `onDelta` diberikan),
  * termasuk eksekusi tool memory di antara putaran.
  */
-async function generateAnswer(
+export async function generateAnswer(
   context: AnswerContext,
   onDelta?: DeltaHandler,
 ): Promise<{ text: string; sources: RetrievedChunk[] }> {
@@ -205,110 +204,6 @@ async function replyWithSpeech(message: Message, text: string): Promise<void> {
   }
 }
 
-/** Handler untuk setiap pesan di channel room AI. */
-export async function handleRoomMessage(message: Message): Promise<void> {
-  if (message.author.bot) return;
-  if (!message.inGuild()) return;
-  if (!isAiRoomChannel(message.channel)) return;
-
-  const room = await getRoomByChannel(message.channelId);
-  if (!room) return;
-  const settings = await getGuildSettings(message.guildId);
-
-  // Hanya pesan pemilik room yang dibalas. Staff boleh membaca, tidak memicu AI.
-  if (message.author.id !== room.userId) return;
-
-  const raw = message.content.replace(/<@!?\d+>/g, ' ').trim();
-  if (!raw && message.attachments.size === 0) return;
-
-  const rate = checkRateLimit(`chat:${message.guildId}:${message.author.id}`, config.features.rateLimitPerMinute);
-  if (!rate.allowed) {
-    const seconds = Math.max(1, Math.ceil(rate.retryAfterMs / 1000));
-    await message
-      .reply({
-        content: `⏳ Pelan-pelan ya, kamu sudah mencapai batas ${config.features.rateLimitPerMinute} pesan/menit. Coba lagi dalam ${seconds} detik.`,
-        allowedMentions: { repliedUser: false },
-      })
-      .catch(() => undefined);
-    return;
-  }
-
-  // ---- lampiran: gambar (vision) & suara (STT) ----
-  const images = await collectImages(message);
-  const voice = await readVoiceNote(message);
-
-  // Pertanyaan: teks user → transkrip suara → deskripsi bawaan untuk gambar.
-  const question = truncate(
-    raw || voice.text || (images.dataUris.length > 0 ? 'Jelaskan isi gambar ini secara detail.' : ''),
-    config.features.maxInputChars,
-  );
-
-  if (!question) {
-    const notes = [voice.error, ...images.skipped.map((item) => `${item.name}: ${item.reason}`)].filter(Boolean);
-    await message
-      .reply({
-        content:
-          `Aku belum bisa membaca lampiran itu 🙏 Kirim gambar (JPG/PNG/WebP) atau voice note, ` +
-          `atau tulis pertanyaannya dalam teks ya.${notes.length > 0 ? `\n-# ${truncate(notes.join(' · '), 400)}` : ''}`,
-        allowedMentions: { repliedUser: false },
-      })
-      .catch(() => undefined);
-    return;
-  }
-
-  const streamer = new DiscordStreamer(message);
-  let started = false;
-
-  try {
-    // Riwayat diambil SEBELUM pesan ini disimpan, supaya tidak dobel dengan `question`.
-    const history = config.ai.historyLimit > 0 ? await getHistory(message.channelId, config.ai.historyLimit) : [];
-
-    await streamer.start();
-    started = true;
-
-    const result = await generateAnswer(
-      {
-        guildId: message.guildId,
-        guildName: message.guild.name,
-        botName: message.client.user?.username ?? 'Zypher AI',
-        userId: message.author.id,
-        userName: message.member?.displayName ?? message.author.username,
-        question,
-        history: history.map((entry) => ({ role: entry.role, content: truncate(entry.content, 2000) })),
-        allowTools: true,
-        images: images.dataUris,
-      },
-      (delta) => streamer.push(delta),
-    );
-
-    // Simpan ke riwayat hanya setelah jawaban berhasil, agar percakapan gagal tidak mengotori konteks.
-    await appendMessage(message.channelId, 'user', question);
-    await appendMessage(message.channelId, 'assistant', result.text);
-    await touchRoom(message.channelId);
-
-    const sourceNote = summarizeSources(result.sources);
-    await streamer.finish(sourceNote ? `${result.text}\n\n-# ${sourceNote}` : result.text);
-
-    // Balas dengan suara juga: voice note (selalu) atau semua jawaban room
-    // (TTS_REPLY_IN_ROOM=true di .env, atau toggle per server di dashboard).
-    // Gagal TTS tidak boleh menghapus jawaban teks.
-    const ttsSetting = settings?.ttsReplyInRoom ?? config.voice.ttsReplyInRoom;
-    if (voice.text || ttsSetting) await replyWithSpeech(message, result.text);
-  } catch (error) {
-    logger.error('Gagal menjawab pesan room AI', errorMessage(error));
-    const note = `Maaf, ada gangguan: ${errorMessage(error).slice(0, 200)}\nCoba lagi sebentar lagi ya.`;
-
-    if (started) {
-      await streamer.fail(note);
-    } else {
-      await message
-        .reply({ content: `⚠️ ${note}`, allowedMentions: { repliedUser: false } })
-        .catch(() => undefined);
-    }
-  }
-}
-
-/** `/tanya` — tanya cepat tanpa membuat room, jawaban hanya terlihat oleh penanya. */
 export async function answerSlashQuestion(interaction: ChatInputCommandInteraction, question: string): Promise<void> {
   if (!interaction.inGuild() || !interaction.guild) {
     await interaction.reply({ content: 'Perintah ini hanya bisa dipakai di dalam server.', flags: MessageFlags.Ephemeral });

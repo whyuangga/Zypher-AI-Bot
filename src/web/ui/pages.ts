@@ -98,7 +98,7 @@ document.getElementById('pwToggle').addEventListener('click', function () {
 
 export interface DashboardData extends PageContext {
   stats: { rooms: number; documents: number; chunks: number; keywords: number; messages: number };
-  rooms: Array<{ channelId: string; userId: string; messageCount: number; lastActiveAt: number }>;
+  rooms: Array<{ userId: string; messageCount: number; lastActiveAt: number }>;
   documents: Array<{ id: number; name: string; chunkCount: number; chars: number; createdAt: number }>;
   series: Array<{ day: string; count: number }>;
   ragEnabled: boolean;
@@ -110,7 +110,7 @@ export interface DashboardData extends PageContext {
 
 export function ringkasanPage(data: DashboardData): string {
   const stats = `<div class="grid stats">
-  ${statCard({ label: 'Room AI', value: data.stats.rooms, icon: 'message', foot: 'privat per member' })}
+  ${statCard({ label: 'Sesi DM', value: data.stats.rooms, icon: 'message', foot: 'pribadi per member' })}
   ${statCard({ label: 'Dokumen RAG', value: data.stats.documents, icon: 'book', foot: `<b>${formatNumber(data.stats.chunks)}</b> potongan teks` })}
   ${statCard({ label: 'Keyword', value: data.stats.keywords, icon: 'tag', foot: 'template owner' })}
 </div>`;
@@ -138,25 +138,25 @@ export function ringkasanPage(data: DashboardData): string {
     ? data.rooms
         .slice(0, 6)
         .map(
-          (room) => `<tr>
+          (session) => `<tr>
     <td>
       <div class="cell-main">
-        <span class="avatar-sm">${esc(initials(room.userId))}</span>
+        <span class="avatar-sm">${esc(initials(session.userId))}</span>
         <span>
-          <div class="cell-title">Room <span class="mono">…${esc(room.channelId.slice(-4))}</span></div>
-          <div class="cell-sub mono" title="Pemilik: ${esc(room.userId)}">pemilik …${esc(room.userId.slice(-4))}</div>
+          <div class="cell-title">DM <span class="mono">…${esc(session.userId.slice(-4))}</span></div>
+          <div class="cell-sub mono" title="Member: ${esc(session.userId)}">member …${esc(session.userId.slice(-4))}</div>
         </span>
       </div>
     </td>
-    <td class="num">${formatNumber(room.messageCount)}</td>
-    <td><span class="badge">${icon('activity', 13)} ${esc(relativeTime(room.lastActiveAt))}</span></td>
+    <td class="num">${formatNumber(session.messageCount)}</td>
+    <td><span class="badge">${icon('activity', 13)} ${esc(relativeTime(session.lastActiveAt))}</span></td>
   </tr>`,
         )
         .join('')
     : '';
 
   const roomsCard = card({
-    title: 'Room AI terbaru',
+    title: 'Sesi DM terbaru',
     right: `<a class="btn-ghost btn-sm" href="/panel">Kelola panel ${icon('chevron', 13)}</a>`,
     body: roomRows
       ? `<div class="table-wrap"><table>
@@ -165,8 +165,8 @@ export function ringkasanPage(data: DashboardData): string {
 </table></div>`
       : emptyState({
           icon: 'message',
-          title: 'Belum ada room aktif',
-          text: 'Buat room lewat tombol "Buat Room AI" di panel Discord — private thread member akan muncul di sini.',
+          title: 'Belum ada sesi DM',
+          text: 'Member memulai chat lewat tombol "Chat via DM" di panel Discord — sesinya akan muncul di sini (tanpa isi percakapan).',
         }),
   });
 

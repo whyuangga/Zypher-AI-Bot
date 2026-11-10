@@ -6,7 +6,7 @@ import type { Command } from './types.js';
 export const panelCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('panel')
-    .setDescription('Kirim panel pembuat room AI ke sebuah channel (admin)')
+    .setDescription('Kirim panel "Chat via DM" ke sebuah channel (admin)')
     .addChannelOption((option) =>
       option
         .setName('channel')

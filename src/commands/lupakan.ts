@@ -1,6 +1,6 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { clearMemories, deleteMemory, listMemories } from '../db/repo.js';
-import { replyEphemeral, requireGuild } from './helpers.js';
+import { replyEphemeral, resolveContextGuild } from './helpers.js';
 import type { Command } from './types.js';
 
 export const lupakanCommand: Command = {
@@ -15,13 +15,14 @@ export const lupakanCommand: Command = {
     ),
 
   async execute(interaction) {
-    if (!(await requireGuild(interaction)) || !interaction.guildId) return;
+    const guildId = await resolveContextGuild(interaction);
+    if (!guildId) return;
 
     const id = interaction.options.getInteger('id');
     const all = interaction.options.getBoolean('semua') ?? false;
 
     if (!id && !all) {
-      const memories = await listMemories(interaction.guildId, interaction.user.id, 50);
+      const memories = await listMemories(guildId, interaction.user.id, 50);
       if (memories.length === 0) {
         await replyEphemeral(interaction, 'Tidak ada memori yang tersimpan.');
         return;
@@ -38,12 +39,12 @@ export const lupakanCommand: Command = {
     }
 
     if (all) {
-      const removed = await clearMemories(interaction.guildId, interaction.user.id);
+      const removed = await clearMemories(guildId, interaction.user.id);
       await replyEphemeral(interaction, `🗑️ ${removed} memori dihapus. Aku mulai dari nol tentang kamu.`);
       return;
     }
 
-    const removed = await deleteMemory(interaction.guildId, interaction.user.id, id as number);
+    const removed = await deleteMemory(guildId, interaction.user.id, id as number);
     await replyEphemeral(
       interaction,
       removed ? `🗑️ Memori #${id} dihapus.` : `Tidak ada memori #${id} milikmu. Cek daftarnya di \`/memori\`.`,

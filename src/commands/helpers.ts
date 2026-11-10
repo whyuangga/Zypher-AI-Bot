@@ -26,3 +26,35 @@ export async function replyEphemeral(interaction: ChatInputCommandInteraction, c
     await interaction.reply({ content, flags: MessageFlags.Ephemeral });
   }
 }
+
+/**
+ * Tentukan server konteks untuk perintah yang bisa dipakai di server maupun DM.
+ *
+ * - Di server: pakai server tempat perintah dijalankan.
+ * - Di DM: pakai server yang tersimpan di sesi DM member (dipilih lewat `/server`).
+ *
+ * Mengembalikan `null` (setelah membalas) bila konteks tidak bisa ditentukan.
+ */
+export async function resolveContextGuild(
+  interaction: ChatInputCommandInteraction,
+): Promise<string | null> {
+  if (interaction.guildId) return interaction.guildId;
+
+  const { getDmSession } = await import('../db/repo.js');
+  const session = await getDmSession(interaction.user.id);
+  if (session) return session.guildId;
+
+  await interaction.reply({
+    content: [
+      'Kamu belum punya sesi chat aktif.',
+      'Buka DM ke bot lalu kirim pesan, atau jalankan `/server` untuk memilih server konteks.',
+    ].join('\n'),
+    flags: MessageFlags.Ephemeral,
+  });
+  return null;
+}
+
+/** Apakah perintah sedang dijalankan di DM (bukan di server). */
+export function isDirectMessage(interaction: ChatInputCommandInteraction): boolean {
+  return !interaction.inGuild();
+}

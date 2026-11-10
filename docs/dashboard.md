@@ -8,12 +8,12 @@ Yang bisa dilakukan:
 
 | Halaman | Isi |
 |---|---|
-| `/` | 3 kartu statistik, **grafik aktivitas 7 hari**, status sistem, room terbaru, dokumen terbaru |
-| `/panel` | Kelola panel "Buat Room AI": kirim ke satu channel, ganti channel, hapus, atau matikan tombolnya |
+| `/` | 3 kartu statistik, **grafik aktivitas 7 hari**, status sistem, sesi DM terbaru, dokumen terbaru |
+| `/panel` | Kelola panel "Chat via DM": kirim ke satu channel, ganti channel, hapus, atau matikan tombolnya |
 | `/dokumen` | Upload dokumen RAG (file atau tempel teks), daftar dokumen, hapus dokumen, **uji pencarian** |
 | `/keyword` | Tambah & hapus template jawaban owner (FAQ, harga, aturan) |
 | `/moderasi` | Filter kata terlarang per server, tindakan (hapus/tegur/timeout), log pelanggaran |
-| `/pengaturan` | Persona AI & model per server, **toggle fitur AI** (RAG, Vision, Auto Memory, Admin Only Rooms, Suara di room), info server + salin Server ID |
+| `/pengaturan` | Persona AI & model per server, **toggle fitur AI** (RAG, Vision, Auto Memory, Admin Only Rooms, Suara otomatis), info server + salin Server ID |
 | `/healthz` | JSON status untuk monitoring (tanpa login) — termasuk engine database |
 
 Tampilan memakai gaya **editorial gelap** (hangat, bukan hitam-putih murni) dengan palet pemilik proyek:
@@ -150,11 +150,11 @@ atas, atau **tempel Server ID** di kotak sebelahnya — berguna untuk bot yang b
 **Daftar server di dropdown datang dari dua sumber:**
 
 1. server yang di-join bot (didaftarkan otomatis saat login, tiap kali bot masuk server baru, dan saat
-   room AI pertama dibuat di server itu);
-2. server yang sudah punya data di SQLite — room, dokumen, keyword, atau memori.
+   sesi DM pertama memakai server itu sebagai konteks);
+2. server yang sudah punya data di SQLite — sesi DM, dokumen, keyword, atau memori.
 
 Jadi database lama tetap tampil walau tabel `guilds`-nya belum pernah terisi. Semua angka di halaman
-Ringkasan (Room AI, Dokumen, Keyword, Pesan) juga **dihitung per server yang dipilih**, supaya
+Ringkasan (Sesi DM, Dokumen, Keyword, Pesan) juga **dihitung per server yang dipilih**, supaya
 cocok dengan tabel di bawahnya.
 
 **Nama server:** bot menyimpan nama server Discord ke tabel `guilds` saat login, saat masuk server baru,
@@ -190,21 +190,23 @@ Demi privasi member, dashboard **tidak** menyimpan dan **tidak** menampilkan:
 
 - **Transkrip percakapan** — tidak ada tabel `transcripts`, tidak ada halaman `/transkrip`,
   tidak ada endpoint unduhan. Saat member menekan **Akhiri Sesi**, transkrip HTML hanya dikirim
-  ke **DM member**. Kalau DM tertutup, file dilampirkan di room AI dan channel dihapus
-  **60 detik** kemudian (bukan 3 detik) supaya member sempat mengunduhnya sendiri.
+  ke **DM member** — dan karena percakapan sudah berjalan di DM, transkrip tidak butuh
+  jalur cadangan apa pun.
 - **Memori member** — tidak ada halaman `/memori`, tidak ada API baca/hapus memori, dan tidak ada
   kartu statistik memori di Ringkasan. Memori tetap berfungsi penuh di Discord (`/ingat`,
   `/lupakan`, `/memori`, `/konsolidasi`) dan tetap dipakai AI untuk menjawab.
 
 Admin server tidak bisa membaca isi percakapan atau fakta pribadi member lewat dashboard.
-Database dari versi lama akan otomatis **menghapus tabel `transcripts`** saat bot dijalankan ulang.
+Database dari versi lama akan otomatis **menghapus tabel `transcripts` dan `rooms`** saat bot
+dijalankan ulang, termasuk menghapus riwayat `messages` milik room lama.
 
-> Catatan: isi percakapan tetap dibaca AI untuk menjawab, dan tetap disimpan sementara di tabel
-> `messages` per channel room selama sesi berjalan — baris itu dihapus saat sesi berakhir.
+> Catatan: isi percakapan DM tetap dibaca AI untuk menjawab, dan disimpan sementara di tabel
+> `messages` dengan kunci `dm:<user_id>` selama sesi berjalan — baris itu dihapus saat member
+> menjalankan `/akhiri` atau `/reset`.
 
 ---
 
-## Panel room AI (`/panel`)
+## Panel chat AI (`/panel`)
 
 Halaman ini menggantikan ketikan `/panel` di Discord untuk urusan sehari-hari.
 
@@ -212,8 +214,8 @@ Halaman ini menggantikan ketikan `/panel` di Discord untuk urusan sehari-hari.
 |---|---|
 | Pilih channel → **Kirim panel** | Panel dikirim ke channel itu; panel lama (kalau ada) dihapus otomatis |
 | **Kirim ulang panel** | Panel di channel yang sama dikirim baru, pesan lama dihapus |
-| **Hapus panel** | Pesan panel dihapus dari Discord, jadi tombol "Buat Room AI" tidak bisa diklik lagi |
-| Centang "Izinkan member membuat room" | Tombol tetap terlihat, tapi kalau dimatikan member mendapat balasan *"sedang dinonaktifkan admin"* |
+| **Hapus panel** | Pesan panel dihapus dari Discord, jadi tombol "Chat via DM" tidak bisa diklik lagi |
+| Centang "Izinkan member chat" | Tombol tetap terlihat, tapi kalau dimatikan member mendapat balasan *"sedang dinonaktifkan admin"* |
 
 Aturannya **satu panel per server**. Database hanya menyimpan satu baris di tabel `panels`
 (`channel_id` + `message_id`), jadi tidak mungkin ada dua panel aktif tanpa sengaja.
@@ -253,7 +255,7 @@ Endpoint halaman Panel:
 |---|---|
 | `POST /api/panel` `{action:'send',channelId}` | Kirim/kirim ulang panel ke channel itu (panel lama dihapus) |
 | `POST /api/panel` `{action:'remove'}` | Hapus pesan panel dari Discord |
-| `POST /api/panel` `{action:'toggle',enabled}` | Nyalakan/matikan tombol "Buat Room AI" tanpa menyentuh pesannya |
+| `POST /api/panel` `{action:'toggle',enabled}` | Nyalakan/matikan tombol "Chat via DM" tanpa menyentuh pesannya |
 
 Penjelasan cara pencocokan kata, pengecualian staff, dan pengiriman log ke channel ada di
 [docs/moderation.md](moderation.md). Perubahan dari dashboard langsung dipakai pada pesan
@@ -261,33 +263,32 @@ berikutnya (cache pengaturan hanya 15 detik dan di-reset saat menyimpan).
 
 ---
 
-## Room AI = private thread
+## Chat AI = DM (tidak ada channel)
 
-Room member dibuat sebagai **private thread** di satu channel induk `#ai-rooms`, bukan channel privat
-per member. Alasannya:
+Percakapan AI berjalan lewat **DM antara member dan bot**. Bot **tidak** membuat channel, kategori,
+atau private thread apa pun. Konsekuensinya, tidak ada objek di server yang bisa dibuka admin.
 
-| Alasan | Channel privat | Private thread |
-|---|---|---|
-| Jumlah channel di sidebar | 1 channel per member | 1 channel induk untuk semua |
-| Batas Discord | ~500 channel/server | 50 thread aktif per channel |
-| Kebocoran visual | Room member terlihat di daftar channel | Tidak ada di sidebar |
-
-**Siapa yang bisa melihat room:**
-
-| Pihak | Bisa lihat? |
+| Pihak | Bisa baca percakapan? |
 |---|---|
-| Pemilik room | ✅ diundang eksplisit, `invitable: false` |
-| Bot | ✅ perlu untuk menjawab |
-| Staff (`STAFF_ROLE_ID`) | ❌ **tidak** diberi izin di channel induk |
-| Administrator / server owner | ⚠️ **ya** — batas platform Discord |
-| Member dengan `Manage Threads` | ⚠️ **ya** — batas platform Discord |
+| Member pemilik chat | ✅ |
+| Bot | ✅ |
+| Staff (`STAFF_ROLE_ID`) | ❌ |
+| Administrator / server owner | ❌ |
+| Member lain | ❌ |
 
-> Ini penting dipahami: private thread menyembunyikan room dari staff biasa dan member lain, tapi
-> **tidak** dari Administrator dan pemilik server. Tidak ada konfigurasi Discord yang bisa
-> menyembunyikan thread dari mereka.
+> Ini berbeda dari channel privat maupun private thread. Keduanya **tetap bisa dibaca** pemilik
+> server, role dengan izin Administrator, dan siapa pun yang punya `Manage Threads` — batas itu
+> tidak bisa dilewati bot. DM satu-satunya tempat di Discord yang tidak bisa dibaca mereka.
 
-Room lama berbentuk channel teks privat **tetap dilayani** sampai sesinya ditutup, jadi member yang
-sedang mengobrol tidak kehilangan percakapan saat upgrade.
+Yang **tetap** terlihat admin di dashboard: **jumlah sesi DM** dan **jumlah pesan** per server
+(angka saja). Isi percakapan dan isi memori member tidak pernah ditampilkan.
+
+Karena tidak ada channel, dashboard juga menampilkan kolom **Member** (ID member) alih-alih
+ID channel. Riwayat percakapan dihapus dari database saat member menjalankan `/akhiri`.
+
+**Konteks server.** Karena DM tidak terikat satu server, konteks (persona, dokumen RAG, memori)
+dipilih lewat `/server`. Pilihannya disimpan di tabel `dm_sessions`. Kalau member hanya ada di
+satu server, konteks dipilih otomatis saat ia mengetik pesan pertama.
 
 ---
 
@@ -300,7 +301,7 @@ Semua fitur AI bisa di-toggle per server dari dashboard `/pengaturan` — tidak 
 | **Dokumen RAG** | AI boleh jawab dari dokumen yang di-upload | `RAG_ENABLED=true` |
 | **Vision (Gambar)** | AI boleh baca gambar yang dikirim member | `VISION_ENABLED=false` |
 | **Auto Memory** | AI boleh ingat fakta otomatis dari percakapan | `AUTO_MEMORY=true` |
-| **Admin Only Rooms** | Hanya admin yang boleh buat room AI | `ADMIN_ONLY_ROOMS=false` |
+| **Admin Only Rooms** | Hanya admin yang boleh memulai chat AI | `ADMIN_ONLY_ROOMS=false` |
 | **Suara di room** | Jawaban AI di room otomatis dibacakan (TTS) | `TTS_REPLY_IN_ROOM=true` |
 
 Bila belum di-set (default), memakai nilai dari `.env`. Setelah di-set, nilai di database dipakai — overriding `.env`.
@@ -311,7 +312,7 @@ Bila belum di-set (default), memakai nilai dari `.env`. Setelah di-set, nilai di
 
 AI bisa meninjau memori user secara periodik: menggabungkan fakta yang berulang
 ("Namaku Bagas" × 3 → satu fakta), dan menghapus obrolan basi yang tidak berguna untuk
-percakapan nanti. Di ruang privat (room AI), AI otomatis memanggil ini setelah 40 memori
+percakapan nanti. Di chat DM, AI otomatis memanggil ini setelah 40 memori
 terkumpul; admin juga bisa menjalankannya dari dashboard atau slash command:
 
 **Discord**: `/konsolidasi [user]` — bisa dipakai member untuk dirinya sendiri, atau admin untuk member lain.
