@@ -12,15 +12,16 @@ export function panelEmbed(): EmbedBuilder {
         'Butuh ngobrol sama AI tanpa dilihat orang lain? Klik tombol di bawah.',
         '',
         '**Cara kerjanya**',
-        '> 1. Klik **Buat Room AI** — bot membuat channel privat khusus kamu.',
-        '> 2. Tanya apa saja di channel itu, AI langsung menjawab.',
+        '> 1. Klik **Buat Room AI** — bot membuat **private thread** khusus kamu.',
+        '> 2. Tanya apa saja di thread itu, AI langsung menjawab.',
         '> 3. AI mengingat hal penting tentang kamu (`/ingat` untuk menambah manual).',
-        '> 4. Klik **Akhiri Sesi** — transkrip percakapan dikirim ke kamu, channel dihapus.',
+        '> 4. Klik **Akhiri Sesi** — transkrip percakapan dikirim ke DM kamu, thread dihapus.',
         '',
-        'Room hanya bisa dilihat oleh kamu dan staff server.',
+        'Room hanya bisa dilihat oleh kamu. Staff server tidak otomatis bisa membacanya.',
+        '-# Pemilik server dan admin dengan izin Administrator tetap bisa melihat semua private thread — itu batas Discord.',
       ].join('\n'),
     )
-    .setFooter({ text: 'Satu room per member • Privat & aman' });
+    .setFooter({ text: 'Satu room per member • Hanya kamu yang diundang' });
 }
 
 export function panelRow(): ActionRowBuilder<ButtonBuilder> {
@@ -52,7 +53,7 @@ export function roomWelcomeEmbed(userId: string): EmbedBuilder {
         'Kalau sudah selesai, klik tombol **Akhiri Sesi** di bawah. Transkrip akan dikirim ke DM kamu.',
       ].join('\n'),
     )
-    .setFooter({ text: 'Zypher AI • room privat' });
+    .setFooter({ text: 'Zypher AI • private thread' });
 }
 
 export function roomControlsRow(): ActionRowBuilder<ButtonBuilder> {
@@ -83,8 +84,8 @@ export function helpEmbed(botName: string): EmbedBuilder {
         name: '🤖 Room AI',
         value: [
           '`/panel` — kirim panel tombol pembuat room *(admin)*',
-          'Klik **Buat Room AI** di panel → channel privat dibuat',
-          'Klik **Akhiri Sesi** → transkrip HTML dikirim ke DM, channel dihapus',
+          'Klik **Buat Room AI** di panel → private thread dibuat',
+          'Klik **Akhiri Sesi** → transkrip HTML dikirim ke DM, thread dihapus',
         ].join('\n'),
       },
       {

@@ -16,6 +16,7 @@ import { detectLanguage } from '../lib/language.js';
 import { getMemories, memoryTools, runMemoryTool } from './memory.js';
 import { matchKeywords } from './keywords.js';
 import { buildSystemPrompt } from './prompt.js';
+import { isAiRoomChannel } from './rooms.js';
 import { buildKnowledgeBlock, searchKnowledge, summarizeSources, type RetrievedChunk } from './rag.js';
 import { collectImages, visionUserContent } from './vision.js';
 import { isAudioAttachment, synthesizeSpeech, transcribeAudio } from '../lib/audio.js';
@@ -208,7 +209,7 @@ async function replyWithSpeech(message: Message, text: string): Promise<void> {
 export async function handleRoomMessage(message: Message): Promise<void> {
   if (message.author.bot) return;
   if (!message.inGuild()) return;
-  if (message.channel.type !== ChannelType.GuildText) return;
+  if (!isAiRoomChannel(message.channel)) return;
 
   const room = await getRoomByChannel(message.channelId);
   if (!room) return;

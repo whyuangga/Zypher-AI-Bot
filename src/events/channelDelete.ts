@@ -1,9 +1,16 @@
-import type { DMChannel, GuildBasedChannel, NonThreadGuildBasedChannel } from 'discord.js';
+import type { AnyThreadChannel, DMChannel, GuildBasedChannel, NonThreadGuildBasedChannel } from 'discord.js';
 import { clearHistory, deleteRoom, getRoomByChannel } from '../db/repo.js';
 import { logger } from '../lib/logger.js';
 
-/** Bersihkan data room ketika channel dihapus manual (bukan lewat tombol). */
-export async function onChannelDelete(channel: DMChannel | NonThreadGuildBasedChannel): Promise<void> {
+/**
+ * Bersihkan data room ketika channel/thread dihapus manual (bukan lewat tombol).
+ *
+ * Room AI sekarang berupa private thread, jadi fungsi ini dipakai untuk dua
+ * event sekaligus: `ChannelDelete` dan `ThreadDelete`.
+ */
+export async function onChannelDelete(
+  channel: DMChannel | NonThreadGuildBasedChannel | AnyThreadChannel,
+): Promise<void> {
   if (channel.isDMBased()) return;
 
   const guildChannel = channel as GuildBasedChannel;

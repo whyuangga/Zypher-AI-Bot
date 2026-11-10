@@ -56,6 +56,11 @@ client.on(Events.ChannelDelete, (channel) => {
   void onChannelDelete(channel);
 });
 
+// Room AI berupa private thread — bersihkan data room saat thread dihapus.
+client.on(Events.ThreadDelete, (thread) => {
+  void onChannelDelete(thread);
+});
+
 // Bot baru diundang ke server → langsung masuk daftar dashboard.
 client.on(Events.GuildCreate, (guild) => {
   logger.info(`Bergabung ke server baru: ${guild.name} (${guild.id})`);

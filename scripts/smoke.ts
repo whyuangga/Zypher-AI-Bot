@@ -775,6 +775,57 @@ test('endAiRoom tidak lagi menyisakan channel saat DM tertutup', async () => {
   assert.ok(source.includes('roomDeleteDelayMs(dmSent)'), 'jeda harus mengikuti hasil DM');
 });
 
+console.log('\nRoom AI berupa private thread (Opsi 2)');
+
+test('isAiRoomChannel menerima private thread DAN channel teks lama', async () => {
+  const { isAiRoomChannel } = await import('../src/features/rooms.js');
+  const { ChannelType } = await import('discord.js');
+  assert.equal(isAiRoomChannel({ type: ChannelType.PrivateThread }), true, 'private thread = room baru');
+  assert.equal(isAiRoomChannel({ type: ChannelType.GuildText }), true, 'channel teks = room lama, tetap dilayani');
+  assert.equal(isAiRoomChannel({ type: ChannelType.PublicThread }), false, 'public thread bukan room AI');
+  assert.equal(isAiRoomChannel({ type: ChannelType.GuildVoice }), false, 'voice bukan room AI');
+  assert.equal(isAiRoomChannel({ type: ChannelType.GuildCategory }), false, 'kategori bukan room AI');
+});
+
+test('createAiRoom memakai private thread, bukan channel privat', async () => {
+  const source = await readFile(new URL('../src/features/rooms.ts', import.meta.url), 'utf8');
+  assert.match(source, /type:\s*ChannelType\.PrivateThread/, 'thread harus dibuat sebagai PrivateThread');
+  assert.ok(!/guild\.channels\.create\(\{[^}]*type:\s*ChannelType\.GuildText,\s*parent:\s*category\.id/ms.test(source),
+    'tidak boleh lagi membuat channel teks privat untuk room');
+  assert.match(source, /thread\.members\.add\(member\.id\)/, 'pemilik room harus di-invite ke thread');
+  assert.match(source, /invitable:\s*false/, 'member tidak boleh mengundang orang lain');
+});
+
+test('staff TIDAK diberi izin di channel induk room AI', async () => {
+  const source = await readFile(new URL('../src/features/rooms.ts', import.meta.url), 'utf8');
+
+  // Ambil blok resolveRoomsChannel (pembuatan channel induk).
+  const start = source.indexOf('async function resolveRoomsChannel');
+  const end = source.indexOf('async function resolveCategory');
+  const block = source.slice(start, end);
+
+  assert.ok(block.length > 0, 'resolveRoomsChannel harus ada');
+  assert.ok(!block.includes('staffRole'), 'channel induk tidak boleh memberi akses ke STAFF_ROLE_ID');
+  assert.ok(!block.includes('STAFF_ROLE_ID'), 'channel induk tidak boleh menyebut STAFF_ROLE_ID');
+  assert.match(block, /deny:\s*\[PermissionFlagsBits\.ViewChannel\]/, '@everyone harus di-deny ViewChannel');
+  assert.match(block, /CreatePrivateThreads/, 'bot butuh izin membuat private thread');
+  assert.match(block, /ManageThreads/, 'bot butuh izin mengelola thread');
+});
+
+test('moderasi tetap berjalan di thread (bukan hanya channel teks)', async () => {
+  const source = await readFile(new URL('../src/features/moderation.ts', import.meta.url), 'utf8');
+  assert.ok(source.includes('isModeratableChannel'), 'harus ada helper channel yang bisa dimoderasi');
+  assert.match(source, /channel\.isThread\(\)/, 'thread harus dianggap channel yang bisa dimoderasi');
+  assert.ok(!/message\.channel\.type !== ChannelType\.GuildText\) return false/.test(source),
+    'moderasi tidak boleh lagi menolak semua thread');
+});
+
+test('event ThreadDelete ikut membersihkan data room', async () => {
+  const botSource = await readFile(new URL('../src/bot.ts', import.meta.url), 'utf8');
+  assert.match(botSource, /Events\.ThreadDelete/, 'harus ada listener ThreadDelete');
+  assert.match(botSource, /onChannelDelete\(thread\)/, 'thread yang dihapus harus dibersihkan');
+});
+
 console.log('\nModerasi otomatis');
 test('moderasi: mencocokkan kata walau beda huruf besar/kecil & tanda baca', () => {
   assert.deepEqual(findBannedWords('Dasar ANJING banget', ['anjing']), ['anjing']);

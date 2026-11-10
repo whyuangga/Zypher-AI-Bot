@@ -9,7 +9,7 @@ import { config } from '../config.js';
 import { getGuildSettings } from '../db/repo.js';
 import { getPanel, getRoomByChannel } from '../db/repo.js';
 import { errorMessage, logger } from '../lib/logger.js';
-import { canManageRoom, createAiRoom, endAiRoom, replyRoomHelp } from './rooms.js';
+import { canManageRoom, createAiRoom, endAiRoom, isAiRoomChannel, replyRoomHelp, type AiRoomChannel } from './rooms.js';
 import { endConfirmRow } from './ui.js';
 
 async function resolveMember(interaction: ButtonInteraction): Promise<GuildMember | null> {
@@ -74,7 +74,7 @@ async function handleCreate(interaction: ButtonInteraction): Promise<void> {
 
 async function handleEndRequest(interaction: ButtonInteraction): Promise<void> {
   const channel = interaction.channel;
-  if (!channel || channel.type !== ChannelType.GuildText) {
+  if (!channel || !isAiRoomChannel(channel)) {
     await interaction.reply({ content: 'Tombol ini hanya berlaku di room AI.', flags: MessageFlags.Ephemeral });
     return;
   }
@@ -111,7 +111,7 @@ async function handleEndRequest(interaction: ButtonInteraction): Promise<void> {
 
 async function handleEndConfirm(interaction: ButtonInteraction): Promise<void> {
   const channel = interaction.channel;
-  if (!channel || channel.type !== ChannelType.GuildText) {
+  if (!channel || !isAiRoomChannel(channel)) {
     await interaction.update({ content: 'Channel tidak valid.', components: [] });
     return;
   }
@@ -128,7 +128,7 @@ async function handleEndConfirm(interaction: ButtonInteraction): Promise<void> {
     return;
   }
 
-  await endAiRoom(interaction, channel, room);
+  await endAiRoom(interaction, channel as AiRoomChannel, room);
 }
 
 /** Router semua button interaction milik bot. */

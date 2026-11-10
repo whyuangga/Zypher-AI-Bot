@@ -48,7 +48,7 @@ yang benar (`https://api.groq.com/openai/v1` dan `openai/gpt-oss-120b`).
    - ✅ **Server Members Intent** *(opsional)*
 5. Tab **OAuth2 → URL Generator**:
    - Scopes: `bot`, `applications.commands`
-   - Bot Permissions: `Manage Channels`, `View Channels`, `Send Messages`, `Manage Messages`,
+   - Bot Permissions: `Manage Channels`, `Manage Threads`, `Create Private Threads`, `View Channels`, `Send Messages`, `Manage Messages`,
      `Embed Links`, `Attach Files`, `Read Message History`, `Add Reactions`, `Use External Emojis`,
      `Moderate Members` *(hanya perlu kalau memakai `MODERATION_ACTION=timeout`)*
    - Buka URL yang muncul → pilih server → **Authorize**
@@ -195,7 +195,7 @@ Di Discord:
 /panel            → kirim panel tombol
 ```
 
-Klik **Buat Room AI** → channel privat muncul → langsung tanya apa saja.
+Klik **Buat Room AI** → **private thread** muncul di channel `#ai-rooms` → langsung tanya apa saja.
 
 ---
 
@@ -344,7 +344,7 @@ Key-nya ada di variabel yang salah. Saat Groq utama, key Groq harus di `AI_API_K
 Isi `DEV_GUILD_ID`, lalu restart bot. Pastikan undangan memakai scope `applications.commands`.
 
 **Bot tidak bisa membuat room AI.**
-Bot butuh izin **Manage Channels**. Cek juga role bot berada di atas role channel terkait.
+Bot butuh izin **Manage Channels**, **Create Private Threads**, dan **Manage Threads** (dicek di channel `#ai-rooms`). Kalau `#ai-rooms` belum ada, bot membuatnya otomatis — pastikan bot punya `Manage Channels` di kategori.
 
 **Transkrip tidak masuk DM.**
 Member menutup DM. Bot **tidak** mengarsipkan transkrip di mana pun — file dilampirkan langsung di room AI, dan channel dihapus **60 detik** kemudian (bukan 3 detik) supaya member sempat mengunduhnya. Transkrip tidak pernah masuk dashboard admin. Saran untuk member: buka **Privasi & Keamanan → Izinkan pesan langsung dari server** agar transkrip terkirim lewat DM.

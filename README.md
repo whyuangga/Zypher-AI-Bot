@@ -26,7 +26,7 @@ Chat bebas → AI menjawab, mengingat fakta, memakai keyword admin
 
 | Fitur | Keterangan |
 |---|---|
-| 🎟️ **AI Room (ticket-style)** | Tombol di panel membuat channel privat per member dengan permission overwrite. Satu room aktif per member. |
+| 🎟️ **AI Room (ticket-style)** | Tombol di panel membuat **private thread** per member (1 channel induk `#ai-rooms` = N room, tidak membanjiri sidebar). Satu room aktif per member. |
 | ⚡ **Streaming jawaban** | Jawaban muncul bertahap (edit pesan tiap ±1,4 detik, menghormati rate limit Discord), bukan menunggu jeda panjang. Otomatis jatuh ke mode non-streaming kalau provider menolaknya. |
 | 💬 **Chat AI** | Konteks percakapan (20 pesan terakhir), jawaban panjang otomatis dipecah ke beberapa pesan. **Multilingual** — otomatis mengikuti bahasa user (Indonesia/Inggris). |
 | 🧠 **Memori jangka panjang** | AI otomatis menyimpan fakta penting lewat *tool calling*, plus perintah manual `/ingat`. Memori dipakai lagi di sesi berikutnya; `/konsolidasi` menggabungkan memori yang berulang. |
@@ -83,7 +83,7 @@ Deploy    Docker multi-stage + docker-compose
    - ✅ **Message Content Intent** ← *wajib*, tanpa ini bot tidak bisa membaca isi chat
    - ✅ Server Members Intent *(opsional, untuk menampilkan nama tampilan member)*
 5. **OAuth2 → URL Generator**, centang `bot` + `applications.commands`, izin yang dibutuhkan:
-   `Manage Channels`, `View Channels`, `Send Messages`, `Manage Messages`, `Embed Links`, `Attach Files`, `Read Message History`, `Add Reactions`, `Use External Emojis`, `Moderate Members` *(untuk timeout moderasi — kalau tidak ada, timeout gagal dan hanya tercatat di log)*.
+   `Manage Channels`, `Manage Threads`, `Create Private Threads`, `View Channels`, `Send Messages`, `Manage Messages`, `Embed Links`, `Attach Files`, `Read Message History`, `Add Reactions`, `Use External Emojis`, `Moderate Members` *(untuk timeout moderasi — kalau tidak ada, timeout gagal dan hanya tercatat di log)*.
 6. Buka URL hasil generate, pilih server, authorize.
 
 > URL siap pakai (ganti `YOUR_CLIENT_ID`):
@@ -139,7 +139,7 @@ Saat pertama jalan, bot otomatis mendaftarkan slash command. Lalu di Discord:
 /panel            → kirim panel tombol ke channel ini
 ```
 
-Klik **Buat Room AI** → channel privat muncul → mulai ngobrol.
+Klik **Buat Room AI** → **private thread** muncul → mulai ngobrol.
 
 ---
 
@@ -174,7 +174,8 @@ Klik **Buat Room AI** → channel privat muncul → mulai ngobrol.
 | `AUTO_MEMORY` | `true` | Simpan memori otomatis lewat tool calling |
 | `RATE_LIMIT_PER_MINUTE` | `12` | Batas request AI per user/menit |
 | `MAX_INPUT_CHARS` | `2000` | Panjang pesan user yang diproses |
-| `AI_CATEGORY_ID` | kosong | Kategori tempat room dibuat (kosong = bot buat "AI Lounge") |
+| `AI_CATEGORY_ID` | kosong | Kategori tempat channel induk `#ai-rooms` dibuat (kosong = bot buat "AI Lounge") |
+| `AI_ROOMS_CHANNEL_ID` | kosong | Channel induk private thread room AI (kosong = bot buat `#ai-rooms`) |
 | `MODLOG_CHANNEL_ID` | kosong | Channel log moderasi (opsional). Transkrip tidak diarsipkan ke sini. |
 | `STAFF_ROLE_ID` | kosong | Role staff yang boleh melihat/menutup room member |
 | `ADMIN_ONLY_ROOMS` | `false` | `true` = hanya admin yang bisa membuat room |
@@ -373,7 +374,7 @@ diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai u
 | `ExperimentalWarning: SQLite is an experimental feature` | Normal di Node 22. Bisa diabaikan, atau jalankan dengan `NODE_OPTIONS=--disable-warning=ExperimentalWarning` (sudah di-set di Dockerfile). |
 | Slash command tidak muncul | Isi `DEV_GUILD_ID` (instan), atau tunggu hingga 1 jam untuk command global. Pastikan undangan memakai scope `applications.commands`. |
 | Bot diam saja di room | **Message Content Intent** belum aktif di Developer Portal → Bot. |
-| `Gagal membuat room AI` + permission | Bot butuh **Manage Channels**; taruh role bot di atas role lain yang relevan. |
+| `Gagal membuat room AI` + permission | Bot butuh **Manage Channels**, **Create Private Threads**, dan **Manage Threads** di channel `#ai-rooms`. |
 | Transkrip tidak masuk DM | User menutup DM. Bot **tidak** mengarsipkan transkrip di mana pun — file dilampirkan di room, lalu channel dihapus **60 detik** kemudian agar member sempat mengunduh. |
 | `AI_API_KEY wajib diisi` padahal sudah diisi | Key Groq tertaruh di `GROQ_API_KEY`. Saat Groq utama, taruh di `AI_API_KEY` — lihat [docs/setup.md](docs/setup.md). |
 | `API key AI ditolak` | `AI_API_KEY` salah/kedaluwarsa di `.env`. Jalankan `npm run doctor` untuk memastikan provider mana yang bermasalah. |
@@ -411,7 +412,7 @@ src/
 ├── commands/                # slash command (panel, ingat, memori, keyword, persona, dll)
 ├── events/                  # interactionCreate, messageCreate, channelDelete
 ├── features/
-│   ├── rooms.ts             # buat/hapus room privat + transkrip
+│   ├── rooms.ts             # buat/hapus private thread room AI + transkrip
 │   ├── chat.ts              # pipeline jawaban AI + tool calling + chunking
 │   ├── rag.ts               # RAG: ingest dokumen, indeks BM25, pencarian hybrid
 │   ├── rag-embed.ts         # embeddings opsional (endpoint /embeddings)

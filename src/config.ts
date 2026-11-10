@@ -146,6 +146,7 @@ const schema = z.object({
   RATE_LIMIT_PER_MINUTE: numberish(12, 0, 240),
   MAX_INPUT_CHARS: numberish(2000, 100, 6000),
   AI_CATEGORY_ID: optionalId,
+  AI_ROOMS_CHANNEL_ID: optionalId,
   MODLOG_CHANNEL_ID: optionalId,
   STAFF_ROLE_ID: optionalId,
   ADMIN_ONLY_ROOMS: booleanish(false),
@@ -313,6 +314,7 @@ export const config = {
   },
   ids: {
     category: env.AI_CATEGORY_ID,
+    roomsChannel: env.AI_ROOMS_CHANNEL_ID,
     modLogChannel: env.MODLOG_CHANNEL_ID,
     staffRole: env.STAFF_ROLE_ID,
   },

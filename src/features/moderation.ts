@@ -103,6 +103,18 @@ export async function resolveModeration(guildId: string): Promise<EffectiveModer
   return value;
 }
 
+/**
+ * Channel yang ikut moderasi: channel teks biasa dan thread (room AI berupa
+ * private thread, jadi tanpa ini moderasi tidak jalan di room member).
+ */
+function isModeratableChannel(channel: {
+  type: ChannelType;
+  isThread?: () => boolean;
+}): boolean {
+  if (channel.type === ChannelType.GuildText) return true;
+  return typeof channel.isThread === 'function' && channel.isThread();
+}
+
 function isStaff(message: Message): boolean {
   const member = message.member;
   if (!member) return false;
@@ -123,7 +135,8 @@ const ACTION_LABEL: Record<ModerationAction, string> = {
 export async function moderateMessage(message: Message): Promise<boolean> {
   if (message.author.bot || message.system) return false;
   if (!message.inGuild()) return false;
-  if (message.channel.type !== ChannelType.GuildText) return false;
+  // Room AI sekarang berupa private thread; moderasi harus tetap jalan di sana.
+  if (!isModeratableChannel(message.channel)) return false;
   if (isStaff(message)) return false;
 
   const guildId = message.guildId;
@@ -183,8 +196,9 @@ async function notify(message: Message, content: string): Promise<void> {
   try {
     await message.reply({ content, allowedMentions: { repliedUser: false, parse: [] } });
   } catch {
-    if (message.channel.type !== ChannelType.GuildText) return;
-    await message.channel.send({ content, allowedMentions: { repliedUser: false, parse: [] } }).catch(() => undefined);
+    const channel = message.channel;
+    if (!isModeratableChannel(channel) || !('send' in channel)) return;
+    await channel.send({ content, allowedMentions: { repliedUser: false, parse: [] } }).catch(() => undefined);
   }
 }
 

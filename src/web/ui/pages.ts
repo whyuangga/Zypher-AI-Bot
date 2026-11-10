@@ -166,7 +166,7 @@ export function ringkasanPage(data: DashboardData): string {
       : emptyState({
           icon: 'message',
           title: 'Belum ada room aktif',
-          text: 'Buat room lewat tombol "Buat Room AI" di panel Discord — channel privat akan muncul di sini.',
+          text: 'Buat room lewat tombol "Buat Room AI" di panel Discord — private thread member akan muncul di sini.',
         }),
   });
 

@@ -261,6 +261,36 @@ berikutnya (cache pengaturan hanya 15 detik dan di-reset saat menyimpan).
 
 ---
 
+## Room AI = private thread
+
+Room member dibuat sebagai **private thread** di satu channel induk `#ai-rooms`, bukan channel privat
+per member. Alasannya:
+
+| Alasan | Channel privat | Private thread |
+|---|---|---|
+| Jumlah channel di sidebar | 1 channel per member | 1 channel induk untuk semua |
+| Batas Discord | ~500 channel/server | 50 thread aktif per channel |
+| Kebocoran visual | Room member terlihat di daftar channel | Tidak ada di sidebar |
+
+**Siapa yang bisa melihat room:**
+
+| Pihak | Bisa lihat? |
+|---|---|
+| Pemilik room | ✅ diundang eksplisit, `invitable: false` |
+| Bot | ✅ perlu untuk menjawab |
+| Staff (`STAFF_ROLE_ID`) | ❌ **tidak** diberi izin di channel induk |
+| Administrator / server owner | ⚠️ **ya** — batas platform Discord |
+| Member dengan `Manage Threads` | ⚠️ **ya** — batas platform Discord |
+
+> Ini penting dipahami: private thread menyembunyikan room dari staff biasa dan member lain, tapi
+> **tidak** dari Administrator dan pemilik server. Tidak ada konfigurasi Discord yang bisa
+> menyembunyikan thread dari mereka.
+
+Room lama berbentuk channel teks privat **tetap dilayani** sampai sesinya ditutup, jadi member yang
+sedang mengobrol tidak kehilangan percakapan saat upgrade.
+
+---
+
 ## Toggle fitur AI per server
 
 Semua fitur AI bisa di-toggle per server dari dashboard `/pengaturan` — tidak perlu edit `.env`:

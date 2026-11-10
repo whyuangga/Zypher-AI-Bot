@@ -7,8 +7,8 @@ import {
   type Guild,
   type GuildMember,
   type Message,
-  type OverwriteResolvable,
   type TextChannel,
+  type ThreadChannel,
 } from 'discord.js';
 import { config } from '../config.js';
 import { createRoom, deleteRoom, getRoomByUser, listMemories, clearHistory, type Room } from '../db/repo.js';
@@ -19,6 +19,14 @@ import { roomControlsRow, roomWelcomeEmbed } from './ui.js';
 
 const ROOM_TOPIC_MARKER = 'zypher-room:';
 const MAX_TRANSCRIPT_MESSAGES = 600;
+
+/**
+ * Channel tempat room AI berjalan.
+ *
+ * Format baru: **private thread** di satu channel induk `#ai-rooms`.
+ * Format lama (masih didukung sampai sesinya ditutup): channel teks privat.
+ */
+export type AiRoomChannel = TextChannel | ThreadChannel;
 
 export const roomTopic = (userId: string): string => `Room AI privat • ${ROOM_TOPIC_MARKER}${userId}`;
 
@@ -31,21 +39,102 @@ const sanitizeChannelName = (name: string): string =>
     .replace(/^-|-$/g, '')
     .slice(0, 80) || 'member';
 
-/** Cari room lama milik user (kalau bot restart dan DB masih ada). */
-async function findExistingRoom(guild: Guild, userId: string): Promise<TextChannel | null> {
+/** Apakah channel ini thread privat (room AI baru) atau channel teks (room lama). */
+export function isAiRoomChannel(channel: { type: ChannelType }): boolean {
+  return channel.type === ChannelType.PrivateThread || channel.type === ChannelType.GuildText;
+}
+
+/**
+ * Cari room lama milik user (kalau bot restart dan DB masih ada).
+ *
+ * Room bisa berupa private thread (format baru) atau channel teks privat
+ * (format lama, sebelum migrasi). Keduanya masih dilayani sampai sesinya
+ * ditutup, supaya member yang sedang mengobrol tidak kehilangan room.
+ */
+async function findExistingRoom(guild: Guild, userId: string): Promise<AiRoomChannel | null> {
   const stored = await getRoomByUser(guild.id, userId);
   if (stored) {
     const channel = await guild.channels.fetch(stored.channelId).catch(() => null);
-    if (channel && channel.type === ChannelType.GuildText) return channel;
+    if (channel && isAiRoomChannel(channel)) return channel as AiRoomChannel;
+    if (channel?.type === ChannelType.PublicThread) return channel as unknown as AiRoomChannel;
     await deleteRoom(stored.channelId);
   }
 
-  // Pemulihan: cari channel dengan marker di topic (kalau database ter-reset).
+  // Pemulihan: cari thread aktif yang dibuat bot untuk user ini.
+  const marker = `${ROOM_TOPIC_MARKER}${userId}`;
+  for (const thread of guild.channels.cache.values()) {
+    if (thread.type !== ChannelType.PrivateThread) continue;
+    if (thread.ownerId === userId) return thread as unknown as AiRoomChannel;
+  }
+
+  // Room lama berbasis channel teks: topic menyimpan marker.
   const marked = guild.channels.cache.find(
-    (channel) =>
-      channel.type === ChannelType.GuildText && typeof channel.topic === 'string' && channel.topic.includes(`${ROOM_TOPIC_MARKER}${userId}`),
+    (channel) => channel.type === ChannelType.GuildText && typeof channel.topic === 'string' && channel.topic.includes(marker),
   );
-  return marked && marked.type === ChannelType.GuildText ? marked : null;
+  return marked && marked.type === ChannelType.GuildText ? (marked as unknown as AiRoomChannel) : null;
+}
+
+/**
+ * Channel induk tempat semua private thread room AI dibuat.
+ *
+ * Urutan: `AI_ROOMS_CHANNEL_ID` dari `.env` → channel `#ai-rooms` yang sudah ada
+ * → buat baru kalau belum ada.
+ *
+ * Channel ini disembunyikan dari `@everyone` (`ViewChannel` deny) dan diberi
+ * akses hanya untuk bot. Member tetap bisa membuka thread-nya sendiri karena
+ * Discord memberi `ViewChannel` implisit kepada member thread.
+ */
+async function resolveRoomsChannel(guild: Guild): Promise<TextChannel> {
+  if (config.ids.roomsChannel) {
+    const configured = await guild.channels.fetch(config.ids.roomsChannel).catch(() => null);
+    if (configured?.type === ChannelType.GuildText) return configured;
+    logger.warn(`AI_ROOMS_CHANNEL_ID (${config.ids.roomsChannel}) tidak ditemukan — mencari/membuat #ai-rooms.`);
+  }
+
+  const existing = guild.channels.cache.find(
+    (channel) =>
+      channel.type === ChannelType.GuildText &&
+      channel.name.toLowerCase() === 'ai-rooms' &&
+      guild.members.me?.permissionsIn(channel).has(PermissionFlagsBits.ManageThreads),
+  );
+  if (existing && existing.type === ChannelType.GuildText) return existing;
+
+  const me = guild.members.me;
+  if (!me) throw new Error('Bot belum siap (guild member cache kosong). Coba lagi sebentar.');
+
+  const category = await resolveCategory(guild);
+
+  // Channel induk: @everyone tidak bisa melihat, bot bisa membuat & mengelola thread.
+  // STAFF_ROLE_ID sengaja TIDAK diberi izin di sini — itulah inti privasi room AI.
+  const created = await guild.channels.create({
+    name: 'ai-rooms',
+    type: ChannelType.GuildText,
+    parent: category.id,
+    topic: 'Room AI member dibuat sebagai private thread di channel ini.',
+    permissionOverwrites: [
+      {
+        id: guild.roles.everyone.id,
+        deny: [PermissionFlagsBits.ViewChannel],
+      },
+      {
+        id: me.id,
+        allow: [
+          PermissionFlagsBits.ViewChannel,
+          PermissionFlagsBits.SendMessages,
+          PermissionFlagsBits.ReadMessageHistory,
+          PermissionFlagsBits.ManageMessages,
+          PermissionFlagsBits.ManageThreads,
+          PermissionFlagsBits.CreatePrivateThreads,
+          PermissionFlagsBits.EmbedLinks,
+          PermissionFlagsBits.AttachFiles,
+        ],
+      },
+    ],
+    reason: 'Channel induk untuk private thread room AI member',
+  });
+
+  logger.info(`Channel induk room AI dibuat: #${created.name} (${guild.name})`);
+  return created;
 }
 
 async function resolveCategory(guild: Guild) {
@@ -68,79 +157,50 @@ async function resolveCategory(guild: Guild) {
 }
 
 /**
- * Buat (atau ambil kembali) room AI privat milik member.
+ * Buat (atau ambil kembali) room AI milik member sebagai **private thread**.
+ *
+ * Kenapa private thread, bukan channel privat:
+ * - tidak menambah jumlah channel di sidebar (1 channel induk = N room),
+ * - batas Discord jauh lebih longgar,
+ * - hanya member yang di-invite + bot yang bisa melihat.
+ *
+ * STAFF_ROLE_ID **tidak** diberi izin apa pun di channel induk, jadi staff
+ * tidak otomatis bisa membaca room member. Yang tetap bisa melihat hanyalah
+ * pemilik server dan member dengan izin Administrator / ManageThreads —
+ * batas platform Discord yang tidak bisa dilewati bot.
  */
 export async function createAiRoom(
   guild: Guild,
   member: GuildMember,
-): Promise<{ channel: TextChannel; reused: boolean }> {
+): Promise<{ channel: AiRoomChannel; reused: boolean }> {
   const existing = await findExistingRoom(guild, member.id);
   if (existing) return { channel: existing, reused: true };
 
   const me = guild.members.me;
   if (!me) throw new Error('Bot belum siap (guild member cache kosong). Coba lagi sebentar.');
 
-  const category = await resolveCategory(guild);
+  const parent = await resolveRoomsChannel(guild);
   const baseName = `ai-${sanitizeChannelName(member.user.username)}`;
   const nameTaken = guild.channels.cache.some((channel) => channel.name === baseName);
-  const name = nameTaken ? `${baseName}-${member.id.slice(-4)}` : baseName;
+  const name = (nameTaken ? `${baseName}-${member.id.slice(-4)}` : baseName).slice(0, 100);
 
-  const overwrites: OverwriteResolvable[] = [
-    {
-      id: guild.roles.everyone.id,
-      deny: [PermissionFlagsBits.ViewChannel],
-    },
-    {
-      id: member.id,
-      allow: [
-        PermissionFlagsBits.ViewChannel,
-        PermissionFlagsBits.SendMessages,
-        PermissionFlagsBits.ReadMessageHistory,
-        PermissionFlagsBits.AttachFiles,
-        PermissionFlagsBits.AddReactions,
-        PermissionFlagsBits.UseExternalEmojis,
-      ],
-    },
-    {
-      id: me.id,
-      allow: [
-        PermissionFlagsBits.ViewChannel,
-        PermissionFlagsBits.SendMessages,
-        PermissionFlagsBits.ReadMessageHistory,
-        PermissionFlagsBits.ManageMessages,
-        PermissionFlagsBits.EmbedLinks,
-        PermissionFlagsBits.AttachFiles,
-        PermissionFlagsBits.ManageChannels,
-      ],
-    },
-  ];
-
-  if (config.ids.staffRole) {
-    const staffRole = guild.roles.cache.get(config.ids.staffRole);
-    if (staffRole) {
-      overwrites.push({
-        id: staffRole.id,
-        allow: [
-          PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.ReadMessageHistory,
-          PermissionFlagsBits.SendMessages,
-          PermissionFlagsBits.ManageMessages,
-        ],
-      });
-    } else {
-      logger.warn(`STAFF_ROLE_ID (${config.ids.staffRole}) tidak ditemukan di server ${guild.name}.`);
-    }
-  }
-
-  const channel = await guild.channels.create({
+  const thread = await parent.threads.create({
     name,
-    type: ChannelType.GuildText,
-    parent: category.id,
-    topic: roomTopic(member.id),
-    permissionOverwrites: overwrites,
-    reason: `Room AI privat untuk ${member.user.username}`,
+    type: ChannelType.PrivateThread,
+    invitable: false,
+    autoArchiveDuration: 1440,
+    reason: `Room AI untuk ${member.user.username}`,
   });
 
+  // Tambahkan pemilik room sebagai anggota thread. Ini yang membuat thread
+  // terlihat olehnya, tanpa memberi akses ke room member lain.
+  await thread.members.add(member.id).catch(async (error: unknown) => {
+    logger.error(`Gagal menambahkan ${member.user.username} ke thread room AI`, errorMessage(error));
+    await thread.delete('Gagal menambahkan pemilik room').catch(() => undefined);
+    throw error;
+  });
+
+  const channel = thread;
   await createRoom(channel.id, guild.id, member.id);
 
   const welcome = await channel.send({
@@ -159,7 +219,7 @@ export async function createAiRoom(
 /*  Akhiri sesi + transkrip                                            */
 /* ------------------------------------------------------------------ */
 
-async function fetchAllMessages(channel: TextChannel, max = MAX_TRANSCRIPT_MESSAGES): Promise<Message[]> {
+async function fetchAllMessages(channel: AiRoomChannel, max = MAX_TRANSCRIPT_MESSAGES): Promise<Message[]> {
   const collected: Message[] = [];
   let before: string | undefined;
 
@@ -217,7 +277,7 @@ async function summarize(messages: Message[], userName: string): Promise<string 
   }
 }
 
-async function deliverFile(channel: TextChannel, fileName: string, html: string) {
+async function deliverFile(channel: AiRoomChannel, fileName: string, html: string) {
   return channel.send({
     files: [new AttachmentBuilder(Buffer.from(html, 'utf8'), { name: fileName })],
   });
@@ -240,7 +300,7 @@ export function roomDeleteDelayMs(dmSent: boolean): number {
  * dengan jeda lebih panjang agar member sempat mengunduhnya.
  * Dipanggil setelah user menekan tombol konfirmasi.
  */
-export async function endAiRoom(interaction: ButtonInteraction, channel: TextChannel, room: Room): Promise<void> {
+export async function endAiRoom(interaction: ButtonInteraction, channel: AiRoomChannel, room: Room): Promise<void> {
   await interaction.update({
     content: '⏳ Menyiapkan transkrip percakapan kamu…',
     embeds: [],
@@ -287,7 +347,7 @@ export async function endAiRoom(interaction: ButtonInteraction, channel: TextCha
           stats,
           summary ? `\n> ${summary.replace(/\n/g, '\n> ')}` : '',
           '',
-          'Channel room AI kamu akan dihapus sebentar lagi. Buka file di bawah untuk arsip lengkap.',
+          'Thread room AI kamu akan dihapus sebentar lagi. Buka file di bawah untuk arsip lengkap.',
         ]
           .filter(Boolean)
           .join('\n'),
@@ -307,7 +367,7 @@ export async function endAiRoom(interaction: ButtonInteraction, channel: TextCha
       .send({
         content: [
           '⚠️ Aku tidak bisa mengirim DM ke kamu (DM tertutup).',
-          'Transkrip aku lampirkan di atas — **unduh sekarang**, karena channel ini akan dihapus 60 detik lagi.',
+          'Transkrip aku lampirkan di atas — **unduh sekarang**, karena thread ini akan dihapus 60 detik lagi.',
           'Kalau ingin transkrip dikirim lewat DM, buka **Privasi & Keamanan → Izinkan pesan langsung dari server** lalu buat room baru.',
         ].join('\n'),
         allowedMentions: { parse: [] },
@@ -321,7 +381,7 @@ export async function endAiRoom(interaction: ButtonInteraction, channel: TextCha
   if (dmSent) {
     await channel
       .send({
-        content: '✅ Sesi diakhiri. Channel ini akan dihapus dalam beberapa detik.',
+        content: '✅ Sesi diakhiri. Room ini akan dihapus dalam beberapa detik.',
         allowedMentions: { parse: [] },
       })
       .catch(() => undefined);
@@ -341,6 +401,7 @@ export function canManageRoom(member: GuildMember | null, room: Room): boolean {
   if (!member) return false;
   if (member.id === room.userId) return true;
   if (member.permissions.has(PermissionFlagsBits.ManageChannels)) return true;
+  if (member.permissions.has(PermissionFlagsBits.ManageThreads)) return true;
   if (config.ids.staffRole && member.roles.cache.has(config.ids.staffRole)) return true;
   return false;
 }
