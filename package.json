@@ -14,9 +14,11 @@
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.check.json",
     "typecheck:strict": "tsc -p tsconfig.check.json --noUnusedLocals --noUnusedParameters",
-    "verify": "npm run typecheck:strict && npm run smoke && npm run test:fallback",
+    "verify": "npm run typecheck:strict && npm run smoke && npm run test:fallback && npm run test:ui",
     "smoke": "tsx scripts/smoke.ts",
     "test:fallback": "tsx scripts/fallback-check.ts",
+    "test:ui": "tsx scripts/ui-check.mts",
+    "test:browser": "tsx scripts/ui-test.mts",
     "models": "tsx scripts/list-models.ts",
     "doctor": "tsx scripts/doctor.ts",
     "dashboard": "tsx src/web/standalone.ts",
@@ -48,6 +50,7 @@
     "@types/node": "^22.10.5",
     "@types/pg": "^8.23.1",
     "pg-mem": "^3.0.14",
+    "puppeteer-core": "23.11.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }

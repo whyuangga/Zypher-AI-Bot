@@ -467,7 +467,9 @@ npm run models         # daftar model yang benar-benar tersedia di provider kamu
 npm run smoke          # 233 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
 npm run smoke:pg       # 14 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # uji rantai fallback provider dengan server tiruan
-npm run verify         # semuanya sekaligus: typecheck ketat + smoke + test:fallback
+npm run test:ui        # pengaman UI: jalankan JS dashboard di DOM tiruan (tanpa browser)
+npm run test:browser   # uji klik sungguhan di Chromium (butuh dashboard hidup)
+npm run verify         # semuanya sekaligus: typecheck ketat + smoke + fallback + UI
 npm run dashboard      # nyalakan dashboard web saja, tanpa bot Discord
 npm run migrate:pg     # pindahkan data SQLite → Postgres
 npm run bundle         # bikin zypher-deploy.zip untuk panel hosting
@@ -494,8 +496,21 @@ terangkai utuh**, **plafon `max_tokens` yang ditolak diulang di provider yang sa
 lompat fallback) lalu diingat, serta **balasan kosong** yang memicu provider berikutnya sampai error
 yang jelas kalau semua provider kosong.
 
+`npm run test:ui` adalah pengaman untuk bagian dashboard yang **tidak bisa dilihat `tsc`**:
+hampir semua logika interaktifnya ada di dalam template literal. Skrip ini merender setiap
+halaman, menjalankan setiap `<script>` di `node:vm` dengan DOM tiruan, lalu **mengklik tombol
+simpan/tes** dan memeriksa permintaan yang terkirim. Tanpa browser, tanpa jaringan — jadi ikut
+berjalan di CI. Yang diperiksa: JSON di HTML valid, JS jalan tanpa error, setiap
+`getElementById` punya elemennya (juga yang baru disentuh setelah tombol diklik), setiap
+fungsi `onclick` ada, helper bersama (`postJson`, `toast`) tersedia, dan setiap endpoint yang
+dipanggil UI benar-benar ditangani server.
+
+`npm run test:browser` memeriksa sisanya di Chromium sungguhan: login, klik tombol tes,
+unggah banner, dan error di console browser. Tidak masuk CI karena butuh Chromium ~150 MB —
+pasang sekali dengan `npx playwright install chromium`.
+
 **CI otomatis** (`.github/workflows/ci.yml`) menjalankan typecheck ketat (`--noUnusedLocals`),
-`smoke`, `test:fallback`, dan `build` untuk setiap pull request — jadi regresi seperti import mati
+`smoke`, `test:fallback`, `test:ui`, dan `build` untuk setiap pull request — jadi regresi seperti import mati
 atau rantai fallback yang rusak ketahuan sebelum di-merge, bukan setelah bot diam di server.
 
 ---

@@ -521,6 +521,56 @@ dan kosongkan `DASHBOARD_TOKEN`.
 
 ---
 
+## Pengaman otomatis UI
+
+Logika interaktif dashboard **tidak ditulis di TypeScript**, melainkan di dalam
+template literal (string). Artinya `tsc` tidak bisa memeriksanya sama sekali, dan
+`npm run smoke` hanya menguji sisi server. Tiga bug yang pernah lolos ke produksi
+karena celah ini:
+
+1. tombol Simpan memanggil `postJson()` yang tidak pernah didefinisikan —
+   semua tombol simpan di semua halaman mati;
+2. `document.getElementById('x').checked` padahal `#x` tidak ada — error `null`
+   hanya muncul saat tombolnya diklik;
+3. UI memanggil `/api/...` yang tidak ditangani server.
+
+Sekarang ada dua lapis pengaman.
+
+### Lapis 1 — `npm run test:ui` (ikut CI, tanpa browser)
+
+Merender setiap halaman dengan fungsi yang sama dengan server, menjalankan setiap
+`<script>` di `node:vm` dengan DOM tiruan, lalu **mengklik tombol simpan/tes** seperti
+user. Yang diperiksa:
+
+- semua blob JSON di HTML bisa di-parse;
+- setiap `<script>` lolos parse dan jalan tanpa error saat halaman dimuat;
+- setiap `getElementById` punya elemennya — termasuk id yang baru disentuh
+  **setelah** tombol diklik (di sinilah bug no. 2 bersembunyi);
+- setiap fungsi yang dipanggil lewat atribut `onclick` benar-benar ada;
+- helper bersama (`postJson`, `toast`, `api`, `copyText`, `askConfirm`) tersedia;
+- setiap endpoint `/api/...` yang dipanggil UI ditangani `src/web/server.ts`.
+
+Skrip ini juga menguji dirinya sendiri: ia menyuntikkan bug tiruan (id salah ketik,
+fungsi hilang, syntax error) dan **gagal kalau bug itu tidak terdeteksi**.
+
+### Lapis 2 — `npm run test:browser` (Chromium sungguhan)
+
+Untuk hal yang hanya terlihat di browser: login, klik tombol tes, unggah banner,
+dan error di console. Butuh dashboard yang hidup dan Chromium (~150 MB), jadi tidak
+masuk CI.
+
+```bash
+npx playwright install chromium          # sekali saja
+
+DASHBOARD_TOKEN=rahasia DASHBOARD_PORT=8899 npm run dashboard   # terminal 1
+DASHBOARD_TOKEN=rahasia npm run test:browser                    # terminal 2
+```
+
+Kalau Chromium tidak ditemukan, skrip memberi tahu cara memasangnya — bukan gagal
+dengan pesan `ERR_MODULE_NOT_FOUND` seperti sebelumnya.
+
+---
+
 Bagian dari panduan Zypher AI:
 
 - [setup.md](setup.md) — dari nol sampai bot jalan

@@ -48,5 +48,10 @@ jobs:
       - name: Uji rantai fallback AI
         run: npm run test:fallback
 
+      # Menjalankan JavaScript dashboard sungguhan di node:vm dengan DOM tiruan:
+      # menangkap postJson yang hilang, id yang tidak ada, dan endpoint salah.
+      - name: Pengaman UI dashboard
+        run: npm run test:ui
+
       - name: Build produksi
         run: npm run build
