@@ -1274,6 +1274,53 @@ test('endDmSession melaporkan kegagalan kirim transkrip', async () => {
   );
 });
 
+console.log('\nAlignment UI');
+
+test('card-head: teks di samping judul tidak turun (margin .hint direset)', async () => {
+  const { STYLE } = await import('../src/web/ui/theme.js');
+  // .hint global punya margin-top 8px. Di dalam .card-head itu membuat teks
+  // di samping judul kartu turun ~4px dari judulnya.
+  const block = STYLE.slice(STYLE.indexOf('.card-head .hint'), STYLE.indexOf('.card-head .hint') + 220);
+  assert.ok(block.includes('margin: 0'), '.card-head .hint harus margin:0');
+});
+
+test('select-shell: chevron menempel ke ujung <select>, bukan tepi shell', async () => {
+  const { STYLE } = await import('../src/web/ui/theme.js');
+  const shell = STYLE.slice(STYLE.indexOf('.select-shell {'), STYLE.indexOf('.select-shell select'));
+  assert.ok(shell.includes('max-width: 100%'), 'shell dibatasi supaya tidak lebih lebar dari select');
+  const select = STYLE.slice(STYLE.indexOf('.select-shell select {'), STYLE.indexOf('.select-shell select:hover'));
+  assert.ok(select.includes('width: 100%'), 'select mengisi lebar shell');
+});
+
+test('tabel Sesi DM: kolom Pesan punya kelas sendiri, bukan .num rata kanan', async () => {
+  const source = await readFile('src/web/ui/pages.ts', 'utf8');
+  const card = source.slice(source.indexOf('Sesi DM terbaru'), source.indexOf('Sesi DM terbaru') + 700);
+  assert.ok(card.includes('col-count'), 'header Pesan memakai col-count');
+  assert.equal(
+    /<th class="num">Pesan<\/th>/.test(card),
+    false,
+    'header Pesan tidak lagi memakai .num (yang rata kanan dan mengambang)',
+  );
+
+  const { STYLE } = await import('../src/web/ui/theme.js');
+  const rule = STYLE.slice(STYLE.indexOf('.col-count {'), STYLE.indexOf('.col-count {') + 200);
+  assert.ok(rule.includes('text-align: left'), 'kolom angka rata kiri, sejajar judulnya');
+  assert.ok(rule.includes('width: 92px'), 'lebar kolom dipatok supaya angka tidak di tengah sel');
+});
+
+test('Moderasi: badge status hanya muncul sekali', async () => {
+  const source = await readFile('src/web/ui/pages.ts', 'utf8');
+  const start = source.indexOf("title: 'Moderasi'");
+  const section = source.slice(start, start + 4000);
+  // Badge dulu dipasang di pageHead.actions DAN card right -> terbaca 2x.
+  assert.equal(
+    /kicker: '08 — Keamanan'[\s\S]{0,400}?actions: status/.test(source),
+    false,
+    'badge tidak lagi dipasang di judul halaman Moderasi',
+  );
+  assert.ok(section.includes('right: status') || section.includes('right: status,'), 'badge tetap ada di header kartu');
+});
+
 console.log('\nScreenshot dokumentasi');
 test('screenshot: tidak ada file yang membocorkan halaman privasi', async () => {
   const { readdir } = await import('node:fs/promises');

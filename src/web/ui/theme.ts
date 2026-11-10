@@ -155,10 +155,14 @@ code {
   background: rgba(13, 13, 15, .94); backdrop-filter: blur(10px);
 }
 .guild-picker { display: flex; align-items: center; gap: 8px; }
-.select-shell { position: relative; display: inline-flex; align-items: center; }
+/* Shell mengikuti lebar <select>, bukan sebaliknya.
+   Dulu shell bisa width:100% sementara select dibatasi max-width:260px,
+   jadi chevron (position:absolute; right:10px) menempel ke tepi shell —
+   jauh di kanan garis bawah select. Sekarang shell menyusut selebar select. */
+.select-shell { position: relative; display: inline-flex; align-items: center; max-width: 100%; }
 .select-shell svg { position: absolute; right: 10px; pointer-events: none; color: var(--text-3); }
 .select-shell select {
-  appearance: none; padding: 8px 32px 8px 0; min-width: 190px; max-width: 260px;
+  appearance: none; padding: 8px 32px 8px 0; min-width: 190px; max-width: 260px; width: 100%;
   background: transparent; border: 0; border-bottom: 1px solid var(--line-strong); border-radius: 0;
   color: var(--text); font-family: var(--font-mono); font-size: 12.5px; letter-spacing: .02em;
 }
@@ -218,7 +222,12 @@ code {
   font-size: 10px; font-weight: 500; letter-spacing: .18em;
   text-transform: uppercase; color: var(--text);
 }
-.card-head .hint { color: var(--text-3); font-size: 12px; letter-spacing: -.005em; }
+.card-head .hint {
+  /* margin-top: 8px global milik .hint membuat teks di samping judul kartu
+     turun ~4px. Di dalam card-head teks harus sebaris rata dengan judul. */
+  color: var(--text-3); font-size: 12px; letter-spacing: -.005em;
+  margin: 0; line-height: 1.2;
+}
 .card-head .right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
 .grid { display: grid; gap: 14px; }
@@ -316,6 +325,16 @@ tbody tr:hover { background: rgba(226, 209, 204, .04); }
 }
 .date-short { display: none; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Kolom angka di tabel (mis. "Pesan" pada Sesi DM).
+   Dulu memakai .num (rata kanan) dengan padding 24px di dua sisi, jadi satu
+   digit angka mengambang jauh dari judul kolomnya. Lebar dipatok supaya angka
+   duduk tepat di bawah judulnya, bukan di tengah sel. */
+.col-count {
+  width: 92px; text-align: left;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.col-activity { width: 1%; white-space: nowrap; }
 .row-actions { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
 
 /* ---------------- badges, chips, buttons ---------------- */

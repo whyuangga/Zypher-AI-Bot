@@ -148,8 +148,8 @@ export function ringkasanPage(data: DashboardData): string {
         </span>
       </div>
     </td>
-    <td class="num">${formatNumber(session.messageCount)}</td>
-    <td><span class="badge">${icon('activity', 13)} ${esc(relativeTime(session.lastActiveAt))}</span></td>
+    <td class="col-count">${formatNumber(session.messageCount)}</td>
+    <td class="col-activity"><span class="badge">${icon('activity', 13)} ${esc(relativeTime(session.lastActiveAt))}</span></td>
   </tr>`,
         )
         .join('')
@@ -160,7 +160,7 @@ export function ringkasanPage(data: DashboardData): string {
     right: `<a class="btn-ghost btn-sm" href="/panel">Kelola panel ${icon('chevron', 13)}</a>`,
     body: roomRows
       ? `<div class="table-wrap"><table>
-  <thead><tr><th>Pemilik</th><th class="num">Pesan</th><th>Aktivitas</th></tr></thead>
+  <thead><tr><th>Pemilik</th><th class="col-count">Pesan</th><th class="col-activity">Aktivitas</th></tr></thead>
   <tbody>${roomRows}</tbody>
 </table></div>`
       : emptyState({
@@ -232,8 +232,8 @@ export function panelPage(options: PanelOptions): string {
   const hasPanel = Boolean(options.messageId);
 
   const channelField = options.channels.length
-    ? `<span class="select-shell" style="width:100%">
-    <select id="panelChannel" style="width:100%">
+    ? `<span class="select-shell" style="display:flex;width:100%">
+    <select id="panelChannel" style="width:100%;max-width:none">
       <option value="">— pilih channel —</option>
       ${options.channels
         .map(
@@ -1041,11 +1041,13 @@ export function moderasiPage(options: ModerasiOptions): string {
         }),
   });
 
+  // Badge status hanya dipakai SEKALI, di header kartu "Filter kata".
+  // Dulu badge yang sama juga ditempel di judul halaman, jadi terbaca dua kali
+  // ("NONAKTIF" di atas dan "NONAKTIF" lagi di kartu) dengan jarak lega.
   const body = `${pageHead({
     kicker: '08 — Keamanan',
     title: 'Moderasi',
     subtitle: 'Saring kata terlarang otomatis tanpa perlu bot moderasi tambahan. Pengaturan disimpan per server.',
-    actions: status,
   })}
 <div class="grid cols-2-even">${settingsCard}${statsCard}</div>
 <div class="mt">${logsCard}</div>
