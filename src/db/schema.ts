@@ -91,4 +91,27 @@ CREATE TABLE IF NOT EXISTS transcripts (
   created_at    INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_transcripts_guild ON transcripts (guild_id, created_at DESC);
+
+-- ---------- moderasi otomatis ----------
+CREATE TABLE IF NOT EXISTS moderation (
+  guild_id        TEXT PRIMARY KEY,
+  enabled         INTEGER NOT NULL DEFAULT 0,
+  words           TEXT NOT NULL DEFAULT '',
+  action          TEXT NOT NULL DEFAULT 'delete',
+  timeout_minutes INTEGER NOT NULL DEFAULT 10,
+  updated_at      INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS mod_logs (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id   TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  user_id    TEXT NOT NULL,
+  user_name  TEXT NOT NULL,
+  content    TEXT NOT NULL,
+  matched    TEXT NOT NULL,
+  action     TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mod_logs_guild ON mod_logs (guild_id, created_at DESC);
 `;

@@ -24,7 +24,21 @@ const { listGuildIds, countGuildRows, countGuildMessages, listMemoryOwners, list
 const { insertTranscript, listTranscripts, getTranscript, deleteTranscript, countTranscripts } = await import(
   '../src/db/repo.js'
 );
-const { ringkasanPage, keywordPage, memoriPage, transkripPage } = await import('../src/web/ui/pages.js');
+const { ringkasanPage, keywordPage, memoriPage, transkripPage, moderasiPage } = await import('../src/web/ui/pages.js');
+const {
+  setModerationSettings,
+  getModerationSettings,
+  addModerationLog,
+  listModerationLogs,
+  deleteModerationLog,
+  clearModerationLogs,
+  countModerationLogs,
+} = await import('../src/db/repo.js');
+const { findBannedWords } = await import('../src/features/moderation.js');
+const { isImageAttachment, mimeForAttachment, toDataUri, visionUserContent } = await import(
+  '../src/features/vision.js'
+);
+const { isAudioAttachment } = await import('../src/lib/audio.js');
 const { zipSync, strToU8 } = await import('fflate');
 const { parseLoginLink } = await import('../src/web/login-link.js');
 const { matchKeywords } = await import('../src/features/keywords.js');
@@ -628,6 +642,151 @@ test('halaman transkrip merender arsip + tombol unduh', () => {
   assert.match(html, /\/api\/transkrip\/7/);
   assert.match(html, /Unduh/);
   assert.match(html, /23 KB/);
+});
+
+console.log('\nModerasi otomatis');
+test('moderasi: mencocokkan kata walau beda huruf besar/kecil & tanda baca', () => {
+  assert.deepEqual(findBannedWords('Dasar ANJING banget', ['anjing']), ['anjing']);
+  assert.deepEqual(findBannedWords('Dasar!!! anjing??', ['anjing']), ['anjing']);
+  assert.deepEqual(findBannedWords('pesan biasa saja', ['anjing']), []);
+});
+
+test('moderasi: menangkap variasi leetspeak dan frasa', () => {
+  assert.deepEqual(findBannedWords('k0nt0l banget', ['kontol']), ['kontol']);
+  assert.deepEqual(findBannedWords('dasar b4ngs4t kamu', ['bangsat']), ['bangsat']);
+  assert.deepEqual(findBannedWords('ini info penipuan online ya', ['penipuan online']), ['penipuan online']);
+});
+
+test('moderasi: tidak salah tangkap potongan kata lain', () => {
+  assert.deepEqual(findBannedWords('saya pakai asuransi kesehatan', ['asu']), []);
+  assert.deepEqual(findBannedWords('kelas musik tadi seru', ['asu']), []);
+});
+
+test('moderasi: pengaturan tersimpan per server', () => {
+  assert.equal(getModerationSettings('g-mod'), null);
+  setModerationSettings({ guildId: 'g-mod', enabled: true, words: ['Anjing', 'Bangsat'], action: 'timeout', timeoutMinutes: 30 });
+  const saved = getModerationSettings('g-mod');
+  assert.ok(saved);
+  assert.equal(saved.enabled, true);
+  assert.deepEqual(saved.words, ['anjing', 'bangsat']);
+  assert.equal(saved.action, 'timeout');
+  assert.equal(saved.timeoutMinutes, 30);
+  assert.equal(getModerationSettings('g-mod-lain'), null, 'server lain harus tetap bersih');
+});
+
+test('moderasi: durasi timeout dijepit ke rentang wajar', () => {
+  setModerationSettings({ guildId: 'g-mod', enabled: true, words: ['x'], action: 'delete', timeoutMinutes: 0 });
+  assert.equal(getModerationSettings('g-mod')?.timeoutMinutes, 1);
+  setModerationSettings({ guildId: 'g-mod', enabled: true, words: ['x'], action: 'delete', timeoutMinutes: 99_999 });
+  assert.equal(getModerationSettings('g-mod')?.timeoutMinutes, 10080);
+});
+
+test('moderasi: log pelanggaran tercatat, terisolasi per server, bisa dihapus', () => {
+  clearModerationLogs('g-mod');
+  const first = addModerationLog({
+    guildId: 'g-mod',
+    channelId: 'c-1',
+    userId: USER,
+    userName: 'Bagas',
+    content: 'dasar anjing',
+    matched: 'anjing',
+    action: 'delete',
+  });
+  const second = addModerationLog({
+    guildId: 'g-mod',
+    channelId: 'c-2',
+    userId: '999',
+    userName: 'Rina',
+    content: 'bangsat banget',
+    matched: 'bangsat',
+    action: 'warn',
+  });
+
+  assert.equal(countModerationLogs('g-mod'), 2);
+  assert.equal(countModerationLogs('g-mod-lain'), 0);
+
+  const logs = listModerationLogs('g-mod', 10);
+  assert.equal(logs.length, 2);
+  assert.equal(logs[0]?.id, second, 'log terbaru muncul duluan');
+  assert.equal(logs[1]?.id, first);
+  assert.equal(logs[1]?.userName, 'Bagas');
+
+  assert.equal(deleteModerationLog('g-mod-lain', first), false);
+  assert.equal(deleteModerationLog('g-mod', first), true);
+  assert.equal(countModerationLogs('g-mod'), 1);
+  assert.equal(clearModerationLogs('g-mod'), 1);
+  assert.equal(countModerationLogs('g-mod'), 0);
+});
+
+test('halaman moderasi merender pengaturan + log', () => {
+  const html = moderasiPage({
+    guildId: 'g-mod',
+    guilds: ['g-mod'],
+    enabled: true,
+    words: ['anjing', 'bangsat'],
+    action: 'timeout',
+    timeoutMinutes: 30,
+    fromEnv: false,
+    logs: [
+      {
+        id: 4,
+        userId: USER,
+        userName: 'Bagas',
+        channelId: 'c-1',
+        content: 'dasar anjing',
+        matched: 'anjing',
+        action: 'timeout',
+        createdAt: 1_700_000_000_000,
+      },
+    ],
+    status: { online: false, mode: 'standalone', uptimeSeconds: 90 },
+  });
+
+  assert.match(html, /Moderasi/);
+  assert.match(html, /anjing, bangsat/);
+  assert.match(html, /id="modEnabled" checked/);
+  assert.match(html, /value="timeout" selected/);
+  assert.match(html, /Bagas/);
+  assert.match(html, /\/api\/moderasi/);
+});
+
+console.log('\nVision & voice');
+test('vision: mengenali lampiran gambar dari nama file atau content-type', () => {
+  assert.equal(isImageAttachment('foto.PNG'), true);
+  assert.equal(isImageAttachment('foto.jpeg'), true);
+  assert.equal(isImageAttachment('screenshot', 'image/webp'), true);
+  assert.equal(isImageAttachment('laporan.pdf', 'application/pdf'), false);
+  assert.equal(isImageAttachment('catatan.txt', 'text/plain'), false);
+});
+
+test('vision: MIME mengikuti content-type lalu ekstensi', () => {
+  assert.equal(mimeForAttachment('x.png', 'image/png'), 'image/png');
+  assert.equal(mimeForAttachment('x.jpg'), 'image/jpeg');
+  assert.equal(mimeForAttachment('x.unknown'), 'image/png');
+});
+
+test('vision: data URI bisa dibalik jadi byte asli', () => {
+  const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]);
+  const uri = toDataUri(bytes, 'image/png');
+  assert.ok(uri.startsWith('data:image/png;base64,'));
+  const decoded = Buffer.from(uri.split(',')[1] ?? '', 'base64');
+  assert.deepEqual([...decoded], [...bytes]);
+});
+
+test('vision: pesan multimodal berisi teks lalu semua gambar', () => {
+  const content = visionUserContent('Apa isi gambar ini?', ['data:image/png;base64,AAA', 'data:image/png;base64,BBB']);
+  assert.equal(content.length, 3);
+  assert.deepEqual(content[0], { type: 'text', text: 'Apa isi gambar ini?' });
+  assert.deepEqual(content[1], { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } });
+  assert.equal(content[2]?.type, 'image_url');
+});
+
+test('voice: mengenali voice note Discord (.ogg) dan file audio lain', () => {
+  assert.equal(isAudioAttachment('voice-message.ogg', 'audio/ogg'), true);
+  assert.equal(isAudioAttachment('rekaman.m4a'), true);
+  assert.equal(isAudioAttachment('lagu.mp3', 'audio/mpeg'), true);
+  assert.equal(isAudioAttachment('foto.png', 'image/png'), false);
+  assert.equal(isAudioAttachment('dokumen.pdf'), false);
 });
 
 console.log('\nProvider & fallback');

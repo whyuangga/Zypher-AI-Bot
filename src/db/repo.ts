@@ -723,3 +723,157 @@ export function messagesPerDay(guildId: string, days = 7, timeZone = 'Asia/Jakar
 
   return buckets;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Moderasi otomatis                                                  */
+/* ------------------------------------------------------------------ */
+
+export type ModerationAction = 'delete' | 'warn' | 'timeout';
+
+export interface ModerationSettings {
+  guildId: string;
+  enabled: boolean;
+  words: string[];
+  action: ModerationAction;
+  timeoutMinutes: number;
+  updatedAt: number;
+}
+
+export interface ModerationLog {
+  id: number;
+  guildId: string;
+  channelId: string;
+  userId: string;
+  userName: string;
+  content: string;
+  matched: string;
+  action: ModerationAction;
+  createdAt: number;
+}
+
+interface ModerationRow {
+  guild_id: string;
+  enabled: number;
+  words: string;
+  action: string;
+  timeout_minutes: number;
+  updated_at: number;
+}
+
+const splitWords = (raw: string): string[] =>
+  raw
+    .split(',')
+    .map((word) => word.trim().toLowerCase())
+    .filter(Boolean);
+
+/** Pengaturan moderasi tersimpan per server; `null` = belum pernah diatur dari dashboard. */
+export function getModerationSettings(guildId: string): ModerationSettings | null {
+  const row = db.prepare('SELECT * FROM moderation WHERE guild_id = ?').get(guildId) as unknown as
+    | ModerationRow
+    | undefined;
+  if (!row) return null;
+
+  return {
+    guildId: row.guild_id,
+    enabled: Boolean(row.enabled),
+    words: splitWords(row.words),
+    action: (row.action === 'warn' || row.action === 'timeout' ? row.action : 'delete') as ModerationAction,
+    timeoutMinutes: Number(row.timeout_minutes),
+    updatedAt: Number(row.updated_at),
+  };
+}
+
+export function setModerationSettings(input: {
+  guildId: string;
+  enabled: boolean;
+  words: string[] | string;
+  action: ModerationAction;
+  timeoutMinutes: number;
+}): void {
+  const words = Array.isArray(input.words) ? input.words : splitWords(input.words);
+  const timeout = Math.min(10080, Math.max(1, Math.round(input.timeoutMinutes)));
+
+  db.prepare(
+    `INSERT INTO moderation (guild_id, enabled, words, action, timeout_minutes, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (guild_id) DO UPDATE SET
+       enabled = excluded.enabled,
+       words = excluded.words,
+       action = excluded.action,
+       timeout_minutes = excluded.timeout_minutes,
+       updated_at = excluded.updated_at`,
+  ).run(input.guildId, input.enabled ? 1 : 0, words.join(','), input.action, timeout, Date.now());
+}
+
+export function addModerationLog(input: {
+  guildId: string;
+  channelId: string;
+  userId: string;
+  userName: string;
+  content: string;
+  matched: string;
+  action: ModerationAction;
+}): number {
+  const result = db
+    .prepare(
+      `INSERT INTO mod_logs (guild_id, channel_id, user_id, user_name, content, matched, action, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      input.guildId,
+      input.channelId,
+      input.userId,
+      input.userName,
+      input.content.slice(0, 500),
+      input.matched,
+      input.action,
+      Date.now(),
+    );
+  return Number(result.lastInsertRowid);
+}
+
+export function listModerationLogs(guildId: string, limit = 50): ModerationLog[] {
+  const rows = db
+    .prepare('SELECT * FROM mod_logs WHERE guild_id = ? ORDER BY created_at DESC, id DESC LIMIT ?')
+    .all(guildId, limit) as unknown as Array<{
+    id: number;
+    guild_id: string;
+    channel_id: string;
+    user_id: string;
+    user_name: string;
+    content: string;
+    matched: string;
+    action: string;
+    created_at: number;
+  }>;
+
+  return rows.map((row) => ({
+    id: Number(row.id),
+    guildId: row.guild_id,
+    channelId: row.channel_id,
+    userId: row.user_id,
+    userName: row.user_name,
+    content: row.content,
+    matched: row.matched,
+    action: (row.action as ModerationAction) ?? 'delete',
+    createdAt: Number(row.created_at),
+  }));
+}
+
+export function deleteModerationLog(guildId: string, id: number): boolean {
+  const result = db.prepare('DELETE FROM mod_logs WHERE guild_id = ? AND id = ?').run(guildId, id);
+  return result.changes > 0;
+}
+
+export function clearModerationLogs(guildId: string): number {
+  const result = db.prepare('DELETE FROM mod_logs WHERE guild_id = ?').run(guildId);
+  return Number(result.changes);
+}
+
+export function countModerationLogs(guildId: string): number {
+  const row = db.prepare('SELECT COUNT(*) AS total FROM mod_logs WHERE guild_id = ?').get(guildId) as {
+    total: number;
+  };
+  return row.total;
+}
+

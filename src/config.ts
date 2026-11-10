@@ -139,6 +139,24 @@ const schema = z.object({
   TRANSCRIPT_CHANNEL_ID: optionalId,
   STAFF_ROLE_ID: optionalId,
   ADMIN_ONLY_ROOMS: booleanish(false),
+  // ---------- Moderasi otomatis ----------
+  MODERATION_ENABLED: booleanish(false),
+  // Daftar kata dipisah koma. Boleh juga diatur per server dari dashboard.
+  MODERATION_WORDS: z.string().optional(),
+  // delete = hapus pesan, warn = tegur saja, timeout = hapus + bisukan member
+  MODERATION_ACTION: z.enum(['delete', 'warn', 'timeout']).default('delete'),
+  MODERATION_TIMEOUT_MINUTES: numberish(10, 1, 10080),
+  // ---------- Vision (gambar) ----------
+  VISION_ENABLED: booleanish(false),
+  VISION_MODEL: z.string().default('meta-llama/llama-4-scout-17b-16e-instruct'),
+  VISION_MAX_MB: numberish(5, 1, 20),
+  // ---------- Suara (STT/TTS, endpoint OpenAI-compatible mis. Groq) ----------
+  VOICE_ENABLED: booleanish(false),
+  STT_MODEL: z.string().default('whisper-large-v3'),
+  TTS_ENABLED: booleanish(true),
+  TTS_MODEL: z.string().default('playai-tts'),
+  TTS_VOICE: z.string().default('Fritz-PlayAI'),
+  VOICE_MAX_MB: numberish(20, 1, 25),
 });
 
 const schemaWithAliases = schema
@@ -248,6 +266,28 @@ export const config = {
   })(),
   database: {
     path: env.DATABASE_PATH,
+  },
+  moderation: {
+    enabled: env.MODERATION_ENABLED,
+    words: (env.MODERATION_WORDS ?? '')
+      .split(',')
+      .map((word) => word.trim().toLowerCase())
+      .filter(Boolean),
+    action: env.MODERATION_ACTION,
+    timeoutMinutes: env.MODERATION_TIMEOUT_MINUTES,
+  },
+  vision: {
+    enabled: env.VISION_ENABLED,
+    model: env.VISION_MODEL,
+    maxBytes: env.VISION_MAX_MB * 1024 * 1024,
+  },
+  voice: {
+    enabled: env.VOICE_ENABLED,
+    sttModel: env.STT_MODEL,
+    ttsEnabled: env.TTS_ENABLED,
+    ttsModel: env.TTS_MODEL,
+    ttsVoice: env.TTS_VOICE,
+    maxBytes: env.VOICE_MAX_MB * 1024 * 1024,
   },
   features: {
     autoMemory: env.AUTO_MEMORY,

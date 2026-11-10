@@ -547,6 +547,8 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   .list-row, .kv, details.user-group > summary { padding-left: 16px; padding-right: 16px; }
   .cols-2-even { grid-template-columns: minmax(0, 1fr); }
   .toast { left: 16px; right: 16px; max-width: none; bottom: 16px; }
+  /* Judul kartu + hint + aksi sering tidak muat satu baris di HP. */
+  .card-head { flex-wrap: wrap; row-gap: 4px; }
 }
 @media (max-width: 520px) {
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
@@ -591,6 +593,10 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   .table-stack td.cell-date { flex: 0 0 auto; margin-left: auto; }
   .table-stack td.cell-aksi { flex: 1 1 100%; }
   .table-stack .row-actions { justify-content: flex-start; }
+  /* Tabel log moderasi: cuplikan pesan dapat satu baris penuh, tombol hapus
+     menempel di baris terakhir bersama waktu. */
+  .table-mod td[data-label="Pesan"] { flex: 1 1 100%; }
+  .table-mod td.cell-aksi { flex: 0 0 auto; margin-left: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {

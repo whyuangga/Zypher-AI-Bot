@@ -13,6 +13,7 @@ Yang bisa dilakukan:
 | `/keyword` | Tambah & hapus template jawaban owner (FAQ, harga, aturan) |
 | `/memori` | Fakta yang diingat AI per user, dikelompokkan per member, bisa dihapus |
 | `/transkrip` | Arsip HTML tiap sesi AI yang sudah ditutup — unduh, lihat ringkasan, hapus |
+| `/moderasi` | Filter kata terlarang per server, tindakan (hapus/tegur/timeout), log pelanggaran |
 | `/pengaturan` | Persona AI & model per server, info server + salin Server ID |
 | `/healthz` | JSON status untuk monitoring (tanpa login) |
 
@@ -199,6 +200,29 @@ member tidak pernah dieksekusi di origin dashboard.
 
 > Ukuran penyimpanan: transkrip ~30–100 KB per sesi. Seribu sesi kira-kira 50 MB, masih aman di
 > disk 1 GB Wispbyte. Hapus arsip lama dari halaman ini kalau mulai menumpuk.
+
+---
+
+## Moderasi (`/moderasi`)
+
+Semua yang bisa diatur lewat `.env` juga bisa diatur di sini — dan nilai dashboard **menang**
+atas `.env` karena tersimpan per server. Halaman ini berisi:
+
+- **Filter kata**: status aktif/nonaktif, daftar kata (koma atau baris baru), tindakan
+  (`delete`/`warn`/`timeout`), durasi timeout 1–10080 menit.
+- **Ringkasan**: jumlah kata terdaftar, tindakan aktif, jumlah log.
+- **Log pelanggaran**: pelaku, kata yang cocok, cuplikan pesan, tindakan, waktu —
+  bisa dihapus satu per satu atau dibersihkan sekaligus.
+
+| Endpoint | Fungsi |
+|---|---|
+| `POST /api/moderasi` | Simpan pengaturan (JSON: `enabled`, `words[]`, `action`, `timeoutMinutes`) |
+| `DELETE /api/moderasi/logs/<id>` | Hapus satu catatan pelanggaran |
+| `DELETE /api/moderasi/logs` | Bersihkan semua catatan pelanggaran server ini |
+
+Penjelasan cara pencocokan kata, pengecualian staff, dan pengiriman log ke channel ada di
+[docs/moderation.md](moderation.md). Perubahan dari dashboard langsung dipakai pada pesan
+berikutnya (cache pengaturan hanya 15 detik dan di-reset saat menyimpan).
 
 ---
 

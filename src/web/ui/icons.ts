@@ -26,7 +26,9 @@ export type IconName =
   | 'eye-off'
   | 'alert'
   | 'upload'
-  | 'external';
+  | 'external'
+  | 'shield'
+  | 'mic';
 
 const PATHS: Record<IconName, string> = {
   home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.8V21h14V9.8"/>',
@@ -53,6 +55,8 @@ const PATHS: Record<IconName, string> = {
   alert: '<path d="M12 3 2.6 19h18.8L12 3Z"/><path d="M12 9v5"/><circle cx="12" cy="17.2" r=".8" fill="currentColor" stroke="none"/>',
   upload: '<path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>',
   external: '<path d="M14 4h6v6"/><path d="M20 4 11 13"/><path d="M18 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5"/>',
+  shield: '<path d="M12 3 5 6v6c0 4.2 2.9 7.6 7 9 4.1-1.4 7-4.8 7-9V6l-7-3Z"/><path d="m9.2 12.2 2 2 3.6-3.9"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"/><path d="M12 18v3"/>',
 };
 
 export function icon(name: IconName, size = 18): string {

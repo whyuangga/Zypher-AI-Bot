@@ -30,11 +30,14 @@ Chat bebas → AI menjawab, mengingat fakta, memakai keyword admin
 | ⚡ **Streaming jawaban** | Jawaban muncul bertahap (edit pesan tiap ±1,4 detik, menghormati rate limit Discord), bukan menunggu jeda panjang. Otomatis jatuh ke mode non-streaming kalau provider menolaknya. |
 | 💬 **Chat AI** | Konteks percakapan (20 pesan terakhir), jawaban panjang otomatis dipecah ke beberapa pesan. |
 | 🧠 **Memori jangka panjang** | AI otomatis menyimpan fakta penting lewat *tool calling*, plus perintah manual `/ingat`. Memori dipakai lagi di sesi berikutnya. |
-| 🖥️ **Dashboard web** | `/`, `/dokumen`, `/keyword`, `/memori`, `/transkrip`, `/pengaturan` — gaya editorial monokrom (latar `#0D0D0F`, teks putih, tombol solid tanpa gradient): sidebar kiri, grafik aktivitas 7 hari, kartu statistik per server. Aktif kalau `DASHBOARD_TOKEN` diisi; tanpa framework, satu proses dengan bot. |
+| 🖥️ **Dashboard web** | `/`, `/dokumen`, `/keyword`, `/memori`, `/transkrip`, `/moderasi`, `/pengaturan` — gaya editorial monokrom (latar `#0D0D0F`, teks putih, tombol solid tanpa gradient): sidebar kiri, grafik aktivitas 7 hari, kartu statistik per server. Aktif kalau `DASHBOARD_TOKEN` diisi; tanpa framework, satu proses dengan bot. |
 | 📚 **Dokumen RAG** | Upload `.txt`/`.md`/`.csv`/`.json` lewat `/dokumen tambah` atau dashboard. AI menjawab dari isi dokumen dan menyebut sumbernya (`📚 Sumber: faq.md`). Pencarian BM25 bawaan — **tanpa API key tambahan**. |
 | 🔑 **Keyword kustom** | Admin menulis jawaban acuan; AI memakainya sebagai **fakta** dan menyusun ulang kalimatnya agar **bervariasi setiap kali** (bukan copy-paste). |
 | 🎭 **Persona per server** | Mis. "kamu guru bahasa Inggris yang sabar" — berlaku untuk semua room di server itu. |
 | 📄 **Transkrip sesi** | HTML mandiri (dark mode, rapi, aman dari XSS) berisi percakapan + memori + ringkasan AI. Dikirim ke DM dan/atau channel arsip. |
+| 🛡️ **Moderasi otomatis** | Filter kata terlarang di semua channel teks: hapus pesan / tegur / timeout. Pola `k0nt0l` tetap tertangkap, staff dikecualikan, semua pelanggaran tercatat di dashboard `/moderasi`. Lihat [docs/moderation.md](docs/moderation.md). |
+| 🖼️ **Vision (gambar)** | Member kirim gambar di room AI → AI membacanya dengan model multimodal. Gambar dikirim sebagai data URI (tanpa storage). Lihat [docs/vision-voice.md](docs/vision-voice.md). |
+| 🎙️ **Voice (STT/TTS)** | Voice note ditranskrip jadi pertanyaan, dan bot bisa membalas dengan pesan suara. Ada `/ucap` untuk mengubah teks jadi audio. |
 | 🔁 **Fallback multi-provider** | Provider utama kena limit/error → otomatis pindah ke provider cadangan (Groq → Gemini → OpenRouter), tanpa restart. |
 | 🛡️ **Rate limit & guard** | Batas pesan per menit, validasi input, penanganan error yang ramah, tanpa membocorkan system prompt. |
 | 🐳 **Siap deploy** | Docker multi-stage, volume SQLite, tanpa dependensi native (pakai `node:sqlite` bawaan Node 22). |
@@ -171,6 +174,18 @@ Klik **Buat Room AI** → channel privat muncul → mulai ngobrol.
 | `TRANSCRIPT_CHANNEL_ID` | kosong | Channel arsip transkrip & ringkasan sesi |
 | `STAFF_ROLE_ID` | kosong | Role staff yang boleh melihat/menutup room member |
 | `ADMIN_ONLY_ROOMS` | `false` | `true` = hanya admin yang bisa membuat room |
+| `MODERATION_ENABLED` | `false` | Aktifkan filter kata terlarang (bisa juga dari `/moderasi`) |
+| `MODERATION_WORDS` | kosong | Daftar kata terlarang, dipisah koma |
+| `MODERATION_ACTION` | `delete` | `delete` · `warn` (hapus + tegur) · `timeout` (hapus + bisukan) |
+| `MODERATION_TIMEOUT_MINUTES` | `10` | Durasi timeout moderasi (1–10080 menit) |
+| `VISION_ENABLED` | `false` | AI membaca gambar di room AI |
+| `VISION_MODEL` | `meta-llama/llama-4-scout-17b-16e-instruct` | Model multimodal yang dipakai saat ada gambar |
+| `VISION_MAX_MB` | `5` | Batas ukuran gambar yang diunduh bot |
+| `VOICE_ENABLED` | `false` | Transkrip voice note jadi pertanyaan |
+| `STT_MODEL` | `whisper-large-v3` | Model transkrip |
+| `TTS_ENABLED` | `true` | Balas voice note dengan pesan suara |
+| `TTS_MODEL` / `TTS_VOICE` | `playai-tts` / `Fritz-PlayAI` | Model & suara TTS |
+| `VOICE_MAX_MB` | `20` | Batas ukuran audio yang ditranskrip |
 
 ### Ganti provider AI (opsional)
 
@@ -212,6 +227,7 @@ Kalau model tidak mendukung *tool calling*, bot otomatis lanjut tanpa fitur memo
 | `/panel [channel]` | Admin | Kirim panel tombol pembuat room AI |
 | `/bantuan` | Semua | Panduan singkat (ephemeral) |
 | `/tanya pertanyaan:` | Semua | Tanya AI cepat tanpa room, jawaban hanya terlihat oleh penanya |
+| `/ucap teks:` | Semua | Ubah teks jadi pesan suara (butuh `VOICE_ENABLED` + `TTS_ENABLED`) |
 | `/ingat fakta:` | Semua | Simpan memori manual tentang diri sendiri |
 | `/memori [user]` | Semua / admin | Lihat daftar memori (dengan id) |
 | `/lupakan id:` / `semua:true` | Semua | Hapus satu / semua memori |
@@ -221,6 +237,9 @@ Kalau model tidak mendukung *tool calling*, bot otomatis lanjut tanpa fitur memo
 | `/dokumen cari pertanyaan:` | Semua | Uji potongan dokumen yang akan dipakai AI |
 | `/keyword tambah\|daftar\|hapus` | Admin | Kelola jawaban acuan yang divariasikan AI |
 | `/persona set\|lihat\|hapus` | Admin | Atur peran AI untuk seluruh server |
+
+Lampiran di room AI: **gambar** (JPG/PNG/WebP) dibaca AI bila `VISION_ENABLED=true`,
+**voice note** ditranskrip bila `VOICE_ENABLED=true`.
 
 Tombol di room: **Akhiri Sesi** (konfirmasi → transkrip → channel dihapus) dan **Bantuan**.
 
@@ -411,8 +430,8 @@ docs/hosting.md              # hosting bot gratis 24/7 + backup
 - [x] Web dashboard (statistik, grafik aktivitas, kelola dokumen/keyword/memori/persona, uji pencarian)
 - [x] Dukungan PDF/DOCX (ekstraksi teks via `unpdf` + `fflate`, tanpa dependency native)
 - [x] Riwayat transkrip dari dashboard (arsip di SQLite, unduh & hapus dari web)
-- [ ] Moderasi otomatis + logging
-- [ ] Dukungan gambar (vision) & voice
+- [x] Moderasi otomatis + logging (filter kata terlarang, halaman `/moderasi`, audit log)
+- [x] Dukungan gambar (vision) & voice (STT Whisper + TTS PlayAI, `/ucap`)
 - [ ] Postgres untuk multi-shard
 
 ---

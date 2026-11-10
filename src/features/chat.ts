@@ -1,4 +1,10 @@
-import { ChannelType, MessageFlags, type ChatInputCommandInteraction, type Message } from 'discord.js';
+import {
+  AttachmentBuilder,
+  ChannelType,
+  MessageFlags,
+  type ChatInputCommandInteraction,
+  type Message,
+} from 'discord.js';
 import { config } from '../config.js';
 import { appendMessage, getGuildSettings, getHistory, getRoomByChannel, touchRoom } from '../db/repo.js';
 import { DiscordStreamer } from '../lib/discord-stream.js';
@@ -10,6 +16,8 @@ import { getMemories, memoryTools, runMemoryTool } from './memory.js';
 import { matchKeywords } from './keywords.js';
 import { buildSystemPrompt } from './prompt.js';
 import { buildKnowledgeBlock, searchKnowledge, summarizeSources, type RetrievedChunk } from './rag.js';
+import { collectImages, visionUserContent } from './vision.js';
+import { isAudioAttachment, synthesizeSpeech, transcribeAudio } from '../lib/audio.js';
 
 const MAX_TOOL_ROUNDS = 2;
 const SLASH_PREVIEW_LIMIT = 1900;
@@ -27,6 +35,10 @@ interface AnswerContext {
   history: Array<{ role: 'user' | 'assistant'; content: string }>;
   allowTools: boolean;
   model?: string | null;
+  /** data URI gambar (sudah lolos batas ukuran) — memicu mode multimodal */
+  images?: string[];
+  /** transkrip suara; bila ada, bot ikut membalas dengan audio */
+  fromVoice?: boolean;
 }
 
 /**
@@ -59,13 +71,21 @@ async function generateAnswer(
     knowledgeBlock: buildKnowledgeBlock(sources),
   });
 
-  const tools: ChatTool[] | undefined = context.allowTools && config.features.autoMemory ? memoryTools : undefined;
-  const model = settings?.model ?? context.model ?? undefined;
+  // Model vision umumnya belum mendukung function calling, jadi tool dimatikan
+  // saat ada gambar dan modelnya dipaksa ke `VISION_MODEL`.
+  const hasImages = (context.images?.length ?? 0) > 0;
+  const tools: ChatTool[] | undefined =
+    !hasImages && context.allowTools && config.features.autoMemory ? memoryTools : undefined;
+  const model = hasImages ? config.vision.model : (settings?.model ?? context.model ?? undefined);
+
+  const userMessage: ChatMessage = hasImages
+    ? { role: 'user', content: visionUserContent(context.question, context.images ?? []) }
+    : { role: 'user', content: context.question };
 
   const messages: ChatMessage[] = [
     { role: 'system', content: systemPrompt },
     ...context.history.map((entry) => ({ role: entry.role, content: entry.content }) as ChatMessage),
-    { role: 'user', content: context.question },
+    userMessage,
   ];
 
   let streamed = '';
@@ -114,6 +134,73 @@ async function generateAnswer(
   };
 }
 
+interface VoiceNote {
+  text: string | null;
+  error: string | null;
+}
+
+const DOWNLOAD_TIMEOUT_MS = 15_000;
+
+/** Unduh voice note / audio dari pesan lalu transkrip jadi teks. */
+async function readVoiceNote(message: Message): Promise<VoiceNote> {
+  if (!config.voice.enabled || message.attachments.size === 0) return { text: null, error: null };
+
+  const attachment = [...message.attachments.values()].find((item) =>
+    isAudioAttachment(item.name, item.contentType),
+  );
+  if (!attachment) return { text: null, error: null };
+
+  if (attachment.size > config.voice.maxBytes) {
+    const maxMb = Math.round(config.voice.maxBytes / (1024 * 1024));
+    return { text: null, error: `Voice note lebih dari ${maxMb} MB` };
+  }
+
+  try {
+    const response = await fetch(attachment.url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength === 0) throw new Error('file kosong');
+
+    const result = await transcribeAudio({
+      bytes,
+      filename: attachment.name || 'voice.ogg',
+      contentType: attachment.contentType,
+    });
+
+    logger.info(`Voice note ditranskrip oleh ${result.provider}/${result.model}`);
+
+    // Voice note Discord biasanya tanpa durasi jelas; batasi panjang teks supaya
+    // prompt tidak membengkak.
+    return { text: truncate(result.text, 1500), error: null };
+  } catch (error) {
+    logger.warn('Gagal transkrip voice note', errorMessage(error));
+    return { text: null, error: `Gagal transkrip voice note (${errorMessage(error).slice(0, 160)})` };
+  }
+}
+
+/** Kirim jawaban sebagai file audio; best-effort, tidak pernah melempar error. */
+async function replyWithSpeech(message: Message, text: string): Promise<void> {
+  if (!config.voice.ttsEnabled || !text.trim()) return;
+
+  try {
+    const speech = await synthesizeSpeech(text);
+    const fileName = speech.mime === 'audio/wav' ? 'jawaban.wav' : 'jawaban.mp3';
+    const file = new AttachmentBuilder(Buffer.from(speech.bytes), {
+      name: fileName,
+      description: 'Jawaban suara dari Zypher AI',
+    });
+
+    await message.reply({
+      content: '🔊 Versi suara jawabannya:',
+      files: [file],
+      allowedMentions: { repliedUser: false },
+    });
+  } catch (error) {
+    logger.warn('Gagal membuat balasan suara (TTS)', errorMessage(error));
+  }
+}
+
 /** Handler untuk setiap pesan di channel room AI. */
 export async function handleRoomMessage(message: Message): Promise<void> {
   if (message.author.bot) return;
@@ -127,20 +214,7 @@ export async function handleRoomMessage(message: Message): Promise<void> {
   if (message.author.id !== room.userId) return;
 
   const raw = message.content.replace(/<@!?\d+>/g, ' ').trim();
-
-  if (!raw) {
-    if (message.attachments.size > 0) {
-      await message
-        .reply({
-          content: 'Aku belum bisa membaca gambar/file ya — coba tulis pertanyaannya dalam teks 🙏',
-          allowedMentions: { repliedUser: false },
-        })
-        .catch(() => undefined);
-    }
-    return;
-  }
-
-  const question = truncate(raw, config.features.maxInputChars);
+  if (!raw && message.attachments.size === 0) return;
 
   const rate = checkRateLimit(`chat:${message.guildId}:${message.author.id}`, config.features.rateLimitPerMinute);
   if (!rate.allowed) {
@@ -148,6 +222,29 @@ export async function handleRoomMessage(message: Message): Promise<void> {
     await message
       .reply({
         content: `⏳ Pelan-pelan ya, kamu sudah mencapai batas ${config.features.rateLimitPerMinute} pesan/menit. Coba lagi dalam ${seconds} detik.`,
+        allowedMentions: { repliedUser: false },
+      })
+      .catch(() => undefined);
+    return;
+  }
+
+  // ---- lampiran: gambar (vision) & suara (STT) ----
+  const images = await collectImages(message);
+  const voice = await readVoiceNote(message);
+
+  // Pertanyaan: teks user → transkrip suara → deskripsi bawaan untuk gambar.
+  const question = truncate(
+    raw || voice.text || (images.dataUris.length > 0 ? 'Jelaskan isi gambar ini secara detail.' : ''),
+    config.features.maxInputChars,
+  );
+
+  if (!question) {
+    const notes = [voice.error, ...images.skipped.map((item) => `${item.name}: ${item.reason}`)].filter(Boolean);
+    await message
+      .reply({
+        content:
+          `Aku belum bisa membaca lampiran itu 🙏 Kirim gambar (JPG/PNG/WebP) atau voice note, ` +
+          `atau tulis pertanyaannya dalam teks ya.${notes.length > 0 ? `\n-# ${truncate(notes.join(' · '), 400)}` : ''}`,
         allowedMentions: { repliedUser: false },
       })
       .catch(() => undefined);
@@ -174,6 +271,8 @@ export async function handleRoomMessage(message: Message): Promise<void> {
         question,
         history: history.map((entry) => ({ role: entry.role, content: truncate(entry.content, 2000) })),
         allowTools: true,
+        images: images.dataUris,
+        fromVoice: Boolean(voice.text),
       },
       (delta) => streamer.push(delta),
     );
@@ -185,6 +284,10 @@ export async function handleRoomMessage(message: Message): Promise<void> {
 
     const sourceNote = summarizeSources(result.sources);
     await streamer.finish(sourceNote ? `${result.text}\n\n-# ${sourceNote}` : result.text);
+
+    // Balas voice note dengan suara juga, kalau TTS aktif. Gagal TTS tidak boleh
+    // menghapus jawaban teks yang sudah terkirim.
+    if (voice.text) await replyWithSpeech(message, result.text);
   } catch (error) {
     logger.error('Gagal menjawab pesan room AI', errorMessage(error));
     const note = `Maaf, ada gangguan: ${errorMessage(error).slice(0, 200)}\nCoba lagi sebentar lagi ya.`;

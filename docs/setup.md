@@ -243,6 +243,35 @@ Jalankan bot (atau `npm run dashboard` untuk dashboard saja), lalu buka <http://
 Login memakai token tadi. Di sana ada statistik, upload dokumen, dan uji pencarian. Keamanan &
 reverse proxy: [dashboard.md](dashboard.md).
 
+### Moderasi, vision, dan voice (opsional)
+
+Tiga fitur ini mati secara default supaya bot tetap ringan dan hemat kuota. Nyalakan
+kalau perlu:
+
+```env
+# Moderasi — bisa juga diatur per server dari dashboard /moderasi
+MODERATION_ENABLED=true
+MODERATION_WORDS=kata1,kata2,frasa tiga kata
+MODERATION_ACTION=delete          # delete | warn | timeout
+MODERATION_TIMEOUT_MINUTES=10
+
+# Vision — AI membaca gambar yang dikirim di room AI (butuh model multimodal)
+VISION_ENABLED=true
+VISION_MODEL=meta-llama/llama-4-scout-17b-16e-instruct
+
+# Voice — transkrip voice note + balasan suara
+VOICE_ENABLED=true
+STT_MODEL=whisper-large-v3
+TTS_ENABLED=true
+TTS_MODEL=playai-tts
+TTS_VOICE=Fritz-PlayAI
+```
+
+Detail: [docs/moderation.md](moderation.md) dan [docs/vision-voice.md](vision-voice.md).
+
+> Ingat: model teks biasa **tidak bisa** melihat gambar. Kalau `VISION_MODEL` salah,
+> balasan akan berupa error dari provider — matikan `VISION_ENABLED` atau ganti modelnya.
+
 ---
 
 ## Langkah 7 — Supaya online 24/7

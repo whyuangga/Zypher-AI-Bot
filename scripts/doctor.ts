@@ -170,6 +170,7 @@ async function main(): Promise<void> {
   }
 
   console.log(`${GREEN}✓ ${working} dari ${chain.length} provider merespons.${RESET}`);
+  printFeatureStatus();
   if (!primaryOk) {
     console.log(`${YELLOW}Provider utama gagal — bot masih bisa jalan lewat fallback, tapi perbaiki key utamanya.${RESET}`);
 
@@ -181,6 +182,44 @@ async function main(): Promise<void> {
     for (const hint of hints) console.log(`${DIM}  • ${hint}${RESET}`);
   }
   console.log('');
+}
+
+/** Ringkasan fitur opsional — tidak memanggil API, jadi aman walau kuota habis. */
+function printFeatureStatus(): void {
+  const on = (key: string, fallback = false): boolean => {
+    const raw = process.env[key]?.trim().toLowerCase();
+    if (!raw) return fallback;
+    return ['1', 'true', 'yes', 'on', 'ya'].includes(raw);
+  };
+  const text = (key: string, fallback: string): string => process.env[key]?.trim() || fallback;
+
+  const rows: Array<[string, string, string]> = [
+    [
+      'Moderasi',
+      `${on('MODERATION_ENABLED') ? `${GREEN}aktif${RESET}` : `${DIM}mati${RESET}`} ${DIM}(dashboard: /moderasi)${RESET}`,
+      on('MODERATION_ENABLED')
+        ? `${DIM}${text('MODERATION_WORDS', '(daftar kosong — isi dulu!)')} · ${text('MODERATION_ACTION', 'delete')}${RESET}`
+        : `${DIM}MODERATION_ENABLED=false${RESET}`,
+    ],
+    [
+      'Vision',
+      `${on('VISION_ENABLED') ? `${GREEN}aktif${RESET}` : `${DIM}mati${RESET}`}`,
+      `${DIM}model ${text('VISION_MODEL', 'meta-llama/llama-4-scout-17b-16e-instruct')}${RESET}`,
+    ],
+    [
+      'Voice',
+      `${on('VOICE_ENABLED') ? `${GREEN}STT aktif${RESET}` : `${DIM}STT mati${RESET}`} ${DIM}·${RESET} ${
+        on('TTS_ENABLED', true) ? `${GREEN}TTS aktif${RESET}` : `${DIM}TTS mati${RESET}`
+      }`,
+      `${DIM}${text('STT_MODEL', 'whisper-large-v3')} · ${text('TTS_MODEL', 'playai-tts')} / ${text('TTS_VOICE', 'Fritz-PlayAI')}${RESET}`,
+    ],
+  ];
+
+  console.log(`\n${BOLD}🧩 Fitur opsional${RESET}`);
+  for (const [label, status, detail] of rows) {
+    console.log(`  ${label.padEnd(9)} ${status}  ${detail}`);
+  }
+  console.log(`${DIM}  STT/TTS memakai endpoint audio provider utama; pastikan modelnya ada di provider itu.${RESET}`);
 }
 
 void main().catch((error) => {

@@ -873,3 +873,219 @@ async function removeTranscript(id, name) {
     status: options.status,
   });
 }
+
+/* ------------------------------------------------------------------ */
+/*  Moderasi                                                           */
+/* ------------------------------------------------------------------ */
+
+export interface ModerationLogItem {
+  id: number;
+  userId: string;
+  userName: string;
+  channelId: string;
+  content: string;
+  matched: string;
+  action: string;
+  createdAt: number;
+}
+
+export interface ModerasiOptions extends PageContext {
+  enabled: boolean;
+  words: string[];
+  action: string;
+  timeoutMinutes: number;
+  /** true = nilai berasal dari `.env`, belum pernah disimpan dari dashboard */
+  fromEnv: boolean;
+  logs: ModerationLogItem[];
+}
+
+const ACTION_TEXT: Record<string, string> = {
+  delete: 'Hapus pesan',
+  warn: 'Hapus + peringatan',
+  timeout: 'Hapus + timeout',
+};
+
+export function moderasiPage(options: ModerasiOptions): string {
+  const status = options.enabled ? badge('Aktif', 'ok') : badge('Nonaktif', 'warn');
+  const totalWords = options.words.length;
+
+  const settingsCard = card({
+    title: 'Filter kata',
+    hint: 'berlaku untuk semua channel teks',
+    right: status,
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+  <label class="check-row" style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-2)">
+    <input type="checkbox" id="modEnabled" ${options.enabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Aktifkan moderasi otomatis di server ini</span>
+  </label>
+  <div>
+    <label class="field" for="modWords">Kata terlarang</label>
+    <textarea id="modWords" rows="4" placeholder="kata1, kata2, frasa tiga kata">${esc(options.words.join(', '))}</textarea>
+    <p class="hint">Pisahkan dengan koma atau baris baru. Pencocokan tidak peduli huruf besar/kecil dan mengabaikan tanda baca (mis. <code>k0nt0l</code> tetap tertangkap).</p>
+  </div>
+  <div class="grid cols-2-even" style="gap:14px">
+    <div>
+      <label class="field" for="modAction">Tindakan</label>
+      <span class="select-shell" style="width:100%">
+        <select id="modAction" style="width:100%">
+          <option value="delete" ${options.action === 'delete' ? 'selected' : ''}>Hapus pesan</option>
+          <option value="warn" ${options.action === 'warn' ? 'selected' : ''}>Hapus + peringatan</option>
+          <option value="timeout" ${options.action === 'timeout' ? 'selected' : ''}>Hapus + timeout member</option>
+        </select>
+        ${icon('chevron', 15)}
+      </span>
+    </div>
+    <div>
+      <label class="field" for="modTimeout">Durasi timeout (menit)</label>
+      <input type="text" id="modTimeout" class="mono" inputmode="numeric" value="${options.timeoutMinutes}" ${options.action === 'timeout' ? '' : 'disabled'}>
+      <p class="hint">1–10080 menit (maks 7 hari).</p>
+    </div>
+  </div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <button class="btn-primary" type="button" id="saveModeration" onclick="saveModeration()">${icon('check', 16)} Simpan pengaturan</button>
+    <span class="hint" style="margin:0">${options.fromEnv ? 'Belum pernah disimpan — nilai awal diambil dari <code>.env</code>.' : 'Tersimpan di dashboard.'}</span>
+  </div>
+</div>`,
+  });
+
+  const statsCard = card({
+    title: 'Ringkasan',
+    body: `<div class="list">
+  <div class="kv"><span>Status</span><b>${options.enabled ? 'Menangkap kata terlarang' : 'Mati — pesan tidak diperiksa'}</b></div>
+  <div class="kv"><span>Kata terdaftar</span><b>${formatNumber(totalWords)}</b></div>
+  <div class="kv"><span>Tindakan</span><b>${esc(ACTION_TEXT[options.action] ?? options.action)}</b></div>
+  <div class="kv"><span>Durasi timeout</span><b>${formatNumber(options.timeoutMinutes)} menit</b></div>
+  <div class="kv"><span>Log tercatat</span><b>${formatNumber(options.logs.length)}</b></div>
+</div>
+<div class="card-pad"><p class="hint" style="margin:0">Staff (role <code>STAFF_ROLE_ID</code> atau izin <b>Manage Messages</b>) tidak terkena filter. Setiap tindakan dikirim juga ke channel log <code>TRANSCRIPT_CHANNEL_ID</code> bila diisi.</p></div>`,
+  });
+
+  const logRows = options.logs
+    .map(
+      (log) => `<tr>
+  <td class="cell-main-cell">
+    <div class="cell-main">
+      <span class="avatar-sm">${esc(initials(log.userId))}</span>
+      <span style="min-width:0">
+        <div class="cell-title">${esc(log.userName)}</div>
+        <div class="cell-sub">#${esc(log.channelId)}</div>
+      </span>
+    </div>
+  </td>
+  <td data-label="Kata"><span class="badge danger"><span class="dot"></span>${esc(log.matched)}</span></td>
+  <td class="col-hide-sm" data-label="Pesan"><div class="list-text" style="margin-top:0;max-width:360px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(log.content || '—')}</div></td>
+  <td class="col-hide-sm" data-label="Tindakan"><span class="cell-sub">${esc(ACTION_TEXT[log.action] ?? log.action)}</span></td>
+  <td class="cell-date"><span class="cell-sub"><span class="date-long">${esc(formatDate(log.createdAt))}</span><span class="date-short">${esc(
+    new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', timeZone: 'Asia/Jakarta' }).format(new Date(log.createdAt)),
+  )}</span></span></td>
+  <td class="num cell-aksi">
+    <button class="btn-danger btn-sm btn-icon" type="button" onclick="removeModLog(${log.id})"
+      title="Hapus log" aria-label="Hapus log ${log.id}">${icon('trash', 15)}</button>
+  </td>
+</tr>`,
+    )
+    .join('');
+
+  const logsCard = card({
+    title: 'Log pelanggaran',
+    hint: options.logs.length > 0 ? `${options.logs.length} terakhir` : undefined,
+    right:
+      options.logs.length > 0
+        ? `<button class="btn-ghost btn-sm" type="button" onclick="clearModLogs()">${icon('trash', 14)} Bersihkan</button>`
+        : undefined,
+    body: logRows
+      ? `<div class="table-wrap"><table class="table-stack table-mod">
+  <thead><tr><th>Pelanggar</th><th>Kata</th><th class="col-hide-sm">Pesan</th><th class="col-hide-sm">Tindakan</th><th>Waktu</th><th></th></tr></thead>
+  <tbody>${logRows}</tbody>
+</table></div>`
+      : emptyState({
+          icon: 'alert',
+          title: 'Belum ada pelanggaran',
+          text: 'Begitu moderasi menangkap kata terlarang, kejadiannya muncul di sini — lengkap dengan pelaku, kata yang cocok, dan tindakan yang diambil.',
+        }),
+  });
+
+  const body = `${pageHead({
+    kicker: '07 — Keamanan',
+    title: 'Moderasi',
+    subtitle: 'Saring kata terlarang otomatis tanpa perlu bot moderasi tambahan. Pengaturan disimpan per server.',
+    actions: status,
+  })}
+<div class="grid cols-2-even">${settingsCard}${statsCard}</div>
+<div class="mt">${logsCard}</div>
+<script>
+function modTimeoutSync() {
+  var action = document.getElementById('modAction').value;
+  var input = document.getElementById('modTimeout');
+  input.disabled = action !== 'timeout';
+}
+document.getElementById('modAction').addEventListener('change', modTimeoutSync);
+
+async function saveModeration() {
+  var words = document.getElementById('modWords').value
+    .split(/[,\\n]/)
+    .map(function (word) { return word.trim(); })
+    .filter(Boolean);
+  var minutes = parseInt(document.getElementById('modTimeout').value, 10);
+  if (isNaN(minutes) || minutes < 1 || minutes > 10080) {
+    toast('Durasi timeout harus 1–10080 menit', true);
+    return;
+  }
+  var button = document.getElementById('saveModeration');
+  button.disabled = true;
+  try {
+    await api('/api/moderasi', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        guild: ${JSON.stringify(options.guildId)},
+        enabled: document.getElementById('modEnabled').checked,
+        words: words,
+        action: document.getElementById('modAction').value,
+        timeoutMinutes: minutes,
+      }),
+    });
+    toast('Pengaturan moderasi disimpan');
+    setTimeout(function () { location.reload(); }, 400);
+  } catch (error) {
+    toast('Gagal menyimpan: ' + error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function removeModLog(id) {
+  var ok = await askConfirm('Hapus log ini?', 'Catatan pelanggaran akan dihapus dari dashboard. Tindakan yang sudah diambil di Discord tidak dibatalkan.');
+  if (!ok) return;
+  try {
+    await api('/api/moderasi/logs/' + id + '?guild=' + encodeURIComponent(${JSON.stringify(options.guildId)}), { method: 'DELETE' });
+    toast('Log dihapus');
+    setTimeout(function () { location.reload(); }, 350);
+  } catch (error) {
+    toast('Gagal menghapus: ' + error.message, true);
+  }
+}
+
+async function clearModLogs() {
+  var ok = await askConfirm('Bersihkan semua log?', 'Seluruh catatan pelanggaran server ini akan dihapus. Pengaturan kata tetap disimpan.');
+  if (!ok) return;
+  try {
+    await api('/api/moderasi/logs?guild=' + encodeURIComponent(${JSON.stringify(options.guildId)}), { method: 'DELETE' });
+    toast('Semua log dibersihkan');
+    setTimeout(function () { location.reload(); }, 350);
+  } catch (error) {
+    toast('Gagal membersihkan: ' + error.message, true);
+  }
+}
+</script>`;
+
+  return appShell({
+    title: 'Moderasi',
+    guildId: options.guildId,
+    guilds: options.guilds,
+    active: 'moderasi',
+    body,
+    counts: options.counts,
+    status: options.status,
+  });
+}

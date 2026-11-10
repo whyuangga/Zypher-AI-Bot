@@ -12,7 +12,10 @@ import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 import {
   addKeyword,
+  clearModerationLogs,
   countChunks,
+  countModerationLogs,
+  deleteModerationLog,
   countGuildMessages,
   countGuildRows,
   countRows,
@@ -22,18 +25,22 @@ import {
   deleteTranscript,
   getTranscript,
   getGuildSettings,
+  getModerationSettings,
   listDocuments,
   listGuildIds,
   listGuildMemories,
   listKeywords,
   listMemoryOwners,
   listMemories,
+  listModerationLogs,
   listRooms,
   listTranscripts,
   messagesPerDay,
   setGuildModel,
+  setModerationSettings,
   setPersona,
 } from '../db/repo.js';
+import { invalidateModerationCache } from '../features/moderation.js';
 import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
 import { MAX_BINARY_BYTES } from '../lib/chunker.js';
 import { embeddingModelName } from '../features/rag-embed.js';
@@ -44,6 +51,7 @@ import {
   keywordPage,
   loginPage,
   memoriPage,
+  moderasiPage,
   pengaturanPage,
   ringkasanPage,
   transkripPage,
@@ -398,6 +406,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
           keyword: countGuildRows(id, 'keywords'),
           memori: countGuildRows(id, 'memories'),
           transkrip: countTranscripts(id),
+          moderasi: countModerationLogs(id),
         }
       : {};
 
@@ -533,6 +542,27 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         guildId,
         guilds: listGuildIds(),
         items,
+        status: dashboardStatus(),
+        counts: navCounts(guildId),
+      }),
+    );
+    return;
+  }
+
+  if (path === '/moderasi' && method === 'GET') {
+    const stored = guildId ? getModerationSettings(guildId) : null;
+    sendHtml(
+      response,
+      200,
+      moderasiPage({
+        guildId,
+        guilds: listGuildIds(),
+        enabled: stored ? stored.enabled : config.moderation.enabled,
+        words: stored ? stored.words : config.moderation.words,
+        action: stored ? stored.action : config.moderation.action,
+        timeoutMinutes: stored ? stored.timeoutMinutes : config.moderation.timeoutMinutes,
+        fromEnv: !stored,
+        logs: guildId ? listModerationLogs(guildId, 100) : [],
         status: dashboardStatus(),
         counts: navCounts(guildId),
       }),
@@ -766,6 +796,73 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
 
     const settings = getGuildSettings(guildId);
     sendJson(response, 200, { ok: true, persona: settings?.persona ?? null, model: settings?.model ?? null });
+    return;
+  }
+
+  if (path === '/api/moderasi' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+
+    const raw = await readBody(request, 32 * 1024);
+    let payload: {
+      enabled?: unknown;
+      words?: unknown;
+      action?: unknown;
+      timeoutMinutes?: unknown;
+    };
+    try {
+      payload = JSON.parse(raw) as typeof payload;
+    } catch {
+      sendJson(response, 400, { error: 'Format JSON tidak valid.' });
+      return;
+    }
+
+    const action = payload.action === 'warn' || payload.action === 'timeout' ? payload.action : 'delete';
+    const timeoutMinutes = Math.min(10080, Math.max(1, Math.round(Number(payload.timeoutMinutes) || 10)));
+
+    // Kata boleh dikirim sebagai array atau string berkoma/baris baru.
+    const rawWords = Array.isArray(payload.words)
+      ? payload.words.map((word) => String(word))
+      : typeof payload.words === 'string'
+        ? payload.words.split(/[,\n]/)
+        : [];
+    const words = [...new Set(rawWords.map((word) => word.trim().toLowerCase()).filter(Boolean))];
+    if (words.length > 200) {
+      sendJson(response, 400, { error: 'Terlalu banyak kata (maks 200).' });
+      return;
+    }
+    if (words.some((word) => word.length > 60)) {
+      sendJson(response, 400, { error: 'Satu kata/frasa maksimal 60 karakter.' });
+      return;
+    }
+
+    setModerationSettings({
+      guildId,
+      enabled: Boolean(payload.enabled),
+      words,
+      action,
+      timeoutMinutes,
+    });
+    invalidateModerationCache(guildId);
+
+    const saved = getModerationSettings(guildId);
+    sendJson(response, 200, { ok: true, moderation: saved });
+    return;
+  }
+
+  if (path === '/api/moderasi/logs' && method === 'DELETE') {
+    const removed = guildId ? clearModerationLogs(guildId) : 0;
+    sendJson(response, 200, { ok: true, removed });
+    return;
+  }
+
+  const modLogMatch = /^\/api\/moderasi\/logs\/(\d+)$/.exec(path);
+  if (modLogMatch && method === 'DELETE') {
+    const id = Number(modLogMatch[1]);
+    const removed = guildId ? deleteModerationLog(guildId, id) : false;
+    sendJson(response, removed ? 200 : 404, removed ? { ok: true } : { error: 'Log tidak ditemukan.' });
     return;
   }
 

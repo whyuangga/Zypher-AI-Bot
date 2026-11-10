@@ -1,0 +1,230 @@
+import { ChannelType, PermissionFlagsBits, type Message } from 'discord.js';
+import { config } from '../config.js';
+import { addModerationLog, getModerationSettings, type ModerationAction } from '../db/repo.js';
+import { errorMessage, logger } from '../lib/logger.js';
+import { normalize } from '../lib/text.js';
+
+/**
+ * Moderasi otomatis sederhana: daftar kata terlarang per server.
+ *
+ * - Pengaturan diambil dari dashboard (tabel `moderation`); bila server belum
+ *   pernah mengaturnya, dipakai nilai dari `.env` sebagai cadangan.
+ * - Staff (role `STAFF_ROLE_ID` atau izin Manage Messages) tidak terkena filter.
+ * - Setiap tindakan dicatat ke tabel `mod_logs` dan dikirim ke channel log
+ *   (`TRANSCRIPT_CHANNEL_ID`) bila tersedia.
+ */
+
+export interface EffectiveModeration {
+  enabled: boolean;
+  words: string[];
+  action: ModerationAction;
+  timeoutMinutes: number;
+  /** true = pengaturan berasal dari dashboard, bukan `.env` */
+  stored: boolean;
+}
+
+const LEET: Record<string, string> = {
+  '0': 'o',
+  '1': 'i',
+  '3': 'e',
+  '4': 'a',
+  '5': 's',
+  '7': 't',
+  '8': 'b',
+  '9': 'g',
+  '@': 'a',
+  $: 's',
+  '!': 'i',
+};
+
+/** Variasi teks yang dipakai untuk pencocokan: apa adanya + versi bebas leetspeak. */
+function variants(text: string): string[] {
+  const plain = normalize(text);
+  const deleet = normalize(
+    text
+      .toLowerCase()
+      .split('')
+      .map((char) => LEET[char] ?? char)
+      .join(''),
+  );
+
+  return plain === deleet ? [plain] : [plain, deleet];
+}
+
+/** Kata terlarang yang muncul di `text` (sudah dinormalisasi, cocok per kata/frasa). */
+export function findBannedWords(text: string, words: string[]): string[] {
+  const targets = words.map((word) => normalize(word)).filter(Boolean);
+  if (targets.length === 0) return [];
+
+  const haystacks = variants(text).map((value) => ` ${value} `);
+  const matched: string[] = [];
+
+  for (const target of targets) {
+    const needle = ` ${target} `;
+    if (haystacks.some((haystack) => haystack.includes(needle)) && !matched.includes(target)) {
+      matched.push(target);
+    }
+  }
+
+  return matched;
+}
+
+// Cache singkat supaya tidak query DB untuk setiap pesan.
+const CACHE_TTL_MS = 15_000;
+const cache = new Map<string, { value: EffectiveModeration; expiresAt: number }>();
+
+export function invalidateModerationCache(guildId?: string): void {
+  if (guildId) cache.delete(guildId);
+  else cache.clear();
+}
+
+export function resolveModeration(guildId: string): EffectiveModeration {
+  const cached = cache.get(guildId);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const stored = getModerationSettings(guildId);
+  const value: EffectiveModeration = stored
+    ? {
+        enabled: stored.enabled,
+        words: stored.words,
+        action: stored.action,
+        timeoutMinutes: stored.timeoutMinutes,
+        stored: true,
+      }
+    : {
+        enabled: config.moderation.enabled,
+        words: config.moderation.words,
+        action: config.moderation.action,
+        timeoutMinutes: config.moderation.timeoutMinutes,
+        stored: false,
+      };
+
+  cache.set(guildId, { value, expiresAt: Date.now() + CACHE_TTL_MS });
+  return value;
+}
+
+function isStaff(message: Message): boolean {
+  const member = message.member;
+  if (!member) return false;
+  if (config.ids.staffRole && member.roles.cache.has(config.ids.staffRole)) return true;
+  return member.permissions.has(PermissionFlagsBits.ManageMessages) || member.permissions.has(PermissionFlagsBits.Administrator);
+}
+
+const ACTION_LABEL: Record<ModerationAction, string> = {
+  delete: 'hapus pesan',
+  warn: 'peringatan',
+  timeout: 'timeout',
+};
+
+/**
+ * Periksa satu pesan. Mengembalikan `true` bila pesan diblokir
+ * (pemanggil harus berhenti dan tidak memproses pesan itu lebih jauh).
+ */
+export async function moderateMessage(message: Message): Promise<boolean> {
+  if (message.author.bot || message.system) return false;
+  if (!message.inGuild()) return false;
+  if (message.channel.type !== ChannelType.GuildText) return false;
+  if (isStaff(message)) return false;
+
+  const guildId = message.guildId;
+  const settings = resolveModeration(guildId);
+  if (!settings.enabled || settings.words.length === 0) return false;
+
+  // Pesan tanpa teks (hanya lampiran/stiker) tidak bisa dicocokkan.
+  const matched = findBannedWords(message.content, settings.words);
+  if (matched.length === 0) return false;
+
+  const action = settings.action;
+  const summary = matched.join(', ');
+
+  // Hapus pesan lebih dulu: kalau gagal (izin kurang), tetap lanjut memberi tahu.
+  let deleted = false;
+  if (action !== 'warn') {
+    try {
+      await message.delete();
+      deleted = true;
+    } catch (error) {
+      logger.warn('Moderasi: gagal menghapus pesan', errorMessage(error));
+    }
+  }
+
+  if (action === 'warn' || (action === 'timeout' && !deleted)) {
+    await message
+      .reply({
+        content:
+          action === 'warn'
+            ? `⚠️ <@${message.author.id}> pesanmu mengandung kata terlarang (${summary}). Mohon jangan diulang ya.`
+            : `⚠️ <@${message.author.id}> pesanmu mengandung kata terlarang dan tidak bisa dihapus otomatis (izin bot kurang). Tolong hapus sendiri ya.`,
+        allowedMentions: { repliedUser: false, parse: [] },
+      })
+      .catch(() => undefined);
+  }
+
+  if (action === 'timeout') {
+    try {
+      await message.member?.timeout(settings.timeoutMinutes * 60_000, `Kata terlarang: ${summary}`);
+    } catch (error) {
+      logger.warn('Moderasi: gagal memberi timeout', errorMessage(error));
+    }
+  }
+
+  logAction(message, {
+    matched: summary,
+    action,
+    timeoutMinutes: settings.timeoutMinutes,
+  });
+
+  return true;
+}
+
+function logAction(
+  message: Message,
+  detail: { matched: string; action: ModerationAction; timeoutMinutes: number },
+): void {
+  const guildId = message.guild?.id ?? message.guildId ?? '';
+  const userName = message.member?.displayName ?? message.author.username;
+  const content = message.content.replace(/\s+/g, ' ').trim();
+
+  try {
+    const id = addModerationLog({
+      guildId,
+      channelId: message.channelId,
+      userId: message.author.id,
+      userName,
+      content,
+      matched: detail.matched,
+      action: detail.action,
+    });
+    logger.info('Moderasi: pesan diblokir', {
+      id,
+      guildId,
+      userId: message.author.id,
+      action: detail.action,
+      matched: detail.matched,
+    });
+  } catch (error) {
+    logger.error('Moderasi: gagal menyimpan log', errorMessage(error));
+  }
+
+  const logChannelId = config.ids.transcriptChannel;
+  if (!logChannelId) return;
+
+  const channel = message.guild?.channels.cache.get(logChannelId);
+  if (!channel || channel.type !== ChannelType.GuildText) return;
+
+  const timeoutNote = detail.action === 'timeout' ? ` · timeout ${detail.timeoutMinutes} menit` : '';
+  const excerpt = content.length > 400 ? `${content.slice(0, 400)}…` : content;
+
+  channel
+    .send({
+      content: [
+        `🛡️ **Moderasi · ${ACTION_LABEL[detail.action]}**${timeoutNote}`,
+        `• Pelanggar: <@${message.author.id}> (${userName})`,
+        `• Channel: <#${message.channelId}>`,
+        `• Kata: \`${detail.matched}\``,
+        `• Pesan: ${excerpt || '*(kosong)*'}`,
+      ].join('\n'),
+      allowedMentions: { parse: [] },
+    })
+    .catch((error: unknown) => logger.warn('Moderasi: gagal kirim log ke channel', errorMessage(error)));
+}

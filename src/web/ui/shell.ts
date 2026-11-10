@@ -7,7 +7,7 @@ import { icon, type IconName } from './icons.js';
 import { esc, initials } from './base.js';
 import { STYLE } from './theme.js';
 
-export type PageKey = 'ringkasan' | 'dokumen' | 'keyword' | 'memori' | 'transkrip' | 'pengaturan';
+export type PageKey = 'ringkasan' | 'dokumen' | 'keyword' | 'memori' | 'transkrip' | 'moderasi' | 'pengaturan';
 
 export interface ShellOptions {
   title: string;
@@ -26,6 +26,7 @@ const NAV: Array<{ key: PageKey; label: string; href: string; icon: IconName }> 
   { key: 'keyword', label: 'Keyword', href: '/keyword', icon: 'tag' },
   { key: 'memori', label: 'Memori', href: '/memori', icon: 'brain' },
   { key: 'transkrip', label: 'Transkrip', href: '/transkrip', icon: 'file' },
+  { key: 'moderasi', label: 'Moderasi', href: '/moderasi', icon: 'shield' },
   { key: 'pengaturan', label: 'Pengaturan', href: '/pengaturan', icon: 'sliders' },
 ];
 

@@ -101,6 +101,9 @@ export function helpEmbed(botName: string): EmbedBuilder {
         value: [
           '`/reset` — hapus riwayat chat di room ini',
           '`/tanya pertanyaan:<teks>` — tanya AI cepat tanpa room',
+          'Kirim gambar di room AI → AI membacanya *(butuh vision aktif)*',
+          'Kirim voice note di room AI → AI transkrip & jawab dengan suara',
+          '`/ucap teks:<teks>` — ubah teks jadi pesan suara',
         ].join('\n'),
       },
       {

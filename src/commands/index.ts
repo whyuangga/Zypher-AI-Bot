@@ -8,11 +8,13 @@ import { panelCommand } from './panel.js';
 import { personaCommand } from './persona.js';
 import { resetCommand } from './reset.js';
 import { tanyaCommand } from './tanya.js';
+import { ucapCommand } from './ucap.js';
 import type { Command } from './types.js';
 
 export const commands: Command[] = [
   panelCommand,
   tanyaCommand,
+  ucapCommand,
   bantuanCommand,
   ingatCommand,
   memoriCommand,
