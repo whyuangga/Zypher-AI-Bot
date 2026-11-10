@@ -200,6 +200,11 @@ code {
   display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: var(--r-sm);
   border: 1px solid var(--line); background: transparent; color: var(--text-2); cursor: pointer;
   transition: color .15s, border-color .15s, background .15s;
+  /* Aturan button global memberi padding 12px 18px. Di kotak 34px itu
+     menyisakan ruang isi hanya 8px, lebih kecil dari ikon 18px, sehingga
+     ikon menempel ke atas (turun 5px dari tengah). Nolkan padding dan
+     jangan biarkan flex mengecilkannya. */
+  padding: 0; flex: 0 0 auto; line-height: 0;
 }
 .icon-btn:hover { color: var(--text); border-color: var(--line-strong); background: rgba(226, 209, 204, .05); }
 .burger { display: none; }
@@ -593,8 +598,19 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   .list-row, .kv, details.user-group > summary { padding-left: 16px; padding-right: 16px; }
   .cols-2-even { grid-template-columns: minmax(0, 1fr); }
   .toast { left: 16px; right: 16px; max-width: none; bottom: 16px; }
-  /* Judul kartu + hint + aksi sering tidak muat satu baris di HP. */
-  .card-head { flex-wrap: wrap; row-gap: 4px; }
+  /* Judul kartu + hint + aksi sering tidak muat satu baris di HP. Dulu
+     flex-wrap menaruh badge di baris kedua dan hasilnya terlihat melorot
+     (38px dari tepi atas, 19px dari bawah). Grid dua kolom membuat
+     judul+hint menumpuk di kiri sementara badge tetap di tengah tinggi. */
+  .card-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 12px;
+    row-gap: 3px;
+  }
+  .card-head h2, .card-head .hint { grid-column: 1; }
+  .card-head .right { grid-column: 2; grid-row: 1 / span 2; margin-left: 0; }
 }
 @media (max-width: 520px) {
   .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }

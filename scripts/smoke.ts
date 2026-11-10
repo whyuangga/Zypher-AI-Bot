@@ -2628,6 +2628,25 @@ await testAsync('dashboard: tombol kirim tes ada di kedua halaman', async () => 
   assert.ok(pages.includes('Kirim tes ke channel'), 'tombol agent & perpisahan');
 });
 
+await testAsync('css: ikon di tombol kotak tepat di tengah & badge sejajar judul', async () => {
+  const theme = await readFile('src/web/ui/theme.ts', 'utf8');
+
+  // Aturan global `button { padding: 12px 18px }` menyisakan ruang isi 8px di
+  // kotak 34px, sehingga ikon 18px menempel ke atas (turun 5px dari tengah).
+  const iconStart = theme.indexOf('.icon-btn {');
+  const iconBtn = theme.slice(iconStart, theme.indexOf('}', iconStart) + 1);
+  assert.ok(/padding:\s*0/.test(iconBtn), '.icon-btn menolkan padding dari aturan button');
+
+  // Di HP, flex-wrap dulu menaruh badge di baris kedua (38px dari atas, 19px
+  // dari bawah → terlihat melorot). Sekarang card-head memakai grid 2 kolom.
+  const mobile = theme.slice(theme.indexOf('@media (max-width: 860px)'));
+  const headStart = mobile.indexOf('.card-head {');
+  const head = mobile.slice(headStart, mobile.indexOf('}', headStart) + 1);
+  assert.ok(/display:\s*grid/.test(head), 'card-head di HP memakai grid');
+  assert.ok(/grid-row:\s*1\s*\/\s*span\s*2/.test(mobile), 'badge membentang dua baris judul+hint');
+  assert.equal(/\.card-head\s*\{\s*flex-wrap:\s*wrap/.test(theme), false, 'flex-wrap lama sudah dibuang');
+});
+
 await testAsync('css: baris toggle tidak melebar keluar kartu', async () => {
   // Bug nyata di HP: .toggle-row adalah grid item, sehingga min-width:auto
   // membuatnya selebar teks penjelasan (730px di layar 390px) dan kartu

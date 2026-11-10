@@ -455,7 +455,7 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke          # 219 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
+npm run smoke          # 220 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
 npm run smoke:pg       # 14 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # uji rantai fallback provider dengan server tiruan
 npm run dashboard      # nyalakan dashboard web saja, tanpa bot Discord
