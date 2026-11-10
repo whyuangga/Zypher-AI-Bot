@@ -1,39 +1,28 @@
-import { EmbedBuilder, MessageFlags, PermissionFlagsBits, SlashCommandBuilder, type User } from 'discord.js';
+import { EmbedBuilder, MessageFlags, SlashCommandBuilder, type User } from 'discord.js';
 import { listMemories } from '../db/repo.js';
 import { BRAND_COLOR } from '../features/ui.js';
-import { requireGuild } from './helpers.js';
+import { resolveContextGuild } from './helpers.js';
 import type { Command } from './types.js';
 
 export const memoriCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('memori')
-    .setDescription('Lihat daftar hal yang AI ingat tentang kamu')
-    .addUserOption((option) =>
-      option.setName('user').setDescription('Lihat memori member lain (khusus admin)').setRequired(false),
-    ),
+    .setDescription('Lihat daftar hal yang AI ingat tentang kamu'),
 
   async execute(interaction) {
-    if (!(await requireGuild(interaction)) || !interaction.guildId) return;
+    const guildId = await resolveContextGuild(interaction);
+    if (!guildId) return;
 
-    const target: User = interaction.options.getUser('user') ?? interaction.user;
-    const isSelf = target.id === interaction.user.id;
-    const isAdmin = Boolean(interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild));
+    // Memori bersifat pribadi: siapa pun (termasuk admin) hanya bisa melihat
+    // memori miliknya sendiri. Admin server tidak boleh membaca fakta pribadi member.
+    const target: User = interaction.user;
 
-    if (!isSelf && !isAdmin) {
-      await interaction.reply({
-        content: 'Kamu hanya bisa melihat memori milikmu sendiri.',
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
-
-    const memories = await listMemories(interaction.guildId, target.id, 50);
+    const memories = await listMemories(guildId, target.id, 50);
 
     if (memories.length === 0) {
       await interaction.reply({
-        content: isSelf
-          ? 'Belum ada yang aku ingat tentang kamu. Tambahkan dengan `/ingat fakta:...`, atau biarkan aku menyimpannya otomatis saat mengobrol.'
-          : `Belum ada memori tersimpan untuk **${target.username}**.`,
+        content:
+          'Belum ada yang aku ingat tentang kamu. Tambahkan dengan `/ingat fakta:...`, atau biarkan aku menyimpannya otomatis saat mengobrol.',
         flags: MessageFlags.Ephemeral,
       });
       return;

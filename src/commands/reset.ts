@@ -1,34 +1,27 @@
 import { SlashCommandBuilder } from 'discord.js';
-import { clearHistory, countHistory, getRoomByChannel } from '../db/repo.js';
-import { canManageRoom } from '../features/rooms.js';
+import { clearHistory, countHistory, getDmSession } from '../db/repo.js';
 import { replyEphemeral, requireGuild } from './helpers.js';
 import type { Command } from './types.js';
 
 export const resetCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('reset')
-    .setDescription('Hapus riwayat percakapan di room AI ini (memori jangka panjang tetap disimpan)'),
+    .setDescription('Hapus riwayat percakapan DM ini (memori jangka panjang tetap disimpan)'),
 
   async execute(interaction) {
     if (!(await requireGuild(interaction))) return;
 
-    const room = interaction.channelId ? await getRoomByChannel(interaction.channelId) : null;
-    if (!room) {
+    const session = await getDmSession(interaction.user.id);
+    if (!session) {
       await replyEphemeral(
         interaction,
-        'Perintah ini hanya bisa dipakai di dalam room AI. Buat room dulu lewat panel, atau pakai `/tanya` untuk pertanyaan singkat.',
+        'Belum ada sesi chat aktif. Buka DM ke bot lalu kirim pesan, atau pakai `/tanya` untuk pertanyaan singkat.',
       );
       return;
     }
 
-    const member = interaction.guild?.members.cache.get(interaction.user.id) ?? null;
-    if (!canManageRoom(member, room)) {
-      await replyEphemeral(interaction, 'Hanya pemilik room atau staff yang bisa mereset percakapan.');
-      return;
-    }
-
-    const before = await countHistory(room.channelId);
-    await clearHistory(room.channelId);
+    const before = await countHistory(`dm:${interaction.user.id}`);
+    await clearHistory(`dm:${interaction.user.id}`);
 
     await replyEphemeral(
       interaction,

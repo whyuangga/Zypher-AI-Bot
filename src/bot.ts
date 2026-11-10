@@ -2,7 +2,6 @@ import { ActivityType, Client, Events, GatewayIntentBits } from 'discord.js';
 import { config } from './config.js';
 import { closeDatabase } from './db/index.js';
 import { ensureGuild, setGuildName } from './db/repo.js';
-import { onChannelDelete } from './events/channelDelete.js';
 import { onInteractionCreate } from './events/interactionCreate.js';
 import { onMessageCreate } from './events/messageCreate.js';
 import { errorMessage, logger } from './lib/logger.js';
@@ -25,7 +24,7 @@ client.once(Events.ClientReady, async (ready) => {
   markBotOnline(true);
 
   // Daftarkan semua server ke tabel `guilds` supaya dashboard langsung punya
-  // daftar server yang bisa dipilih, bahkan sebelum ada room/dokumen dibuat.
+  // daftar server yang bisa dipilih, bahkan sebelum ada sesi DM/dokumen.
   // Nama server ikut disimpan agar dropdown dashboard tidak menampilkan ID mentah.
   for (const guild of ready.guilds.cache.values()) {
     try {
@@ -37,7 +36,7 @@ client.once(Events.ClientReady, async (ready) => {
   }
 
   ready.user.setPresence({
-    activities: [{ name: '/panel • room AI privat', type: ActivityType.Listening }],
+    activities: [{ name: '/panel • chat AI via DM', type: ActivityType.Listening }],
     status: 'online',
   });
 
@@ -50,10 +49,6 @@ client.on(Events.InteractionCreate, (interaction) => {
 
 client.on(Events.MessageCreate, (message) => {
   void onMessageCreate(message);
-});
-
-client.on(Events.ChannelDelete, (channel) => {
-  void onChannelDelete(channel);
 });
 
 // Bot baru diundang ke server → langsung masuk daftar dashboard.

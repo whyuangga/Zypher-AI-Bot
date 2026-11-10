@@ -20,23 +20,16 @@ import {
   countGuildMessages,
   countGuildRows,
   countRows,
-  countTranscripts,
   deleteKeyword,
-  deleteMemory,
-  deleteTranscript,
-  getTranscript,
   getGuildSettings,
   getModerationSettings,
   getPanel,
   listDocuments,
   listGuilds,
-  listGuildMemories,
   listKeywords,
-  listMemoryOwners,
   listMemories,
   listModerationLogs,
-  listRooms,
-  listTranscripts,
+  listDmSessions,
   messagesPerDay,
   setGuildModel,
   setGuildTtsReplyInRoom,
@@ -49,7 +42,6 @@ import {
   setPersona,
 } from '../db/repo.js';
 import { invalidateModerationCache } from '../features/moderation.js';
-import { consolidateMemories } from '../features/memory.js';
 import { listPanelChannels, PanelError, panelState, publishPanel, removePanel } from '../features/panel.js';
 import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
 import { MAX_BINARY_BYTES } from '../lib/chunker.js';
@@ -60,12 +52,10 @@ import {
   dokumenPage,
   keywordPage,
   loginPage,
-  memoriPage,
   moderasiPage,
   panelPage,
   pengaturanPage,
   ringkasanPage,
-  transkripPage,
 } from './ui/pages.js';
 import { dbLabel, dialect } from '../db/index.js';
 import { parseLoginLink } from './login-link.js';
@@ -323,7 +313,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       database: await dbLabel(),
       rag: config.rag.enabled,
       documents: await countRows('documents'),
-      rooms: await countRows('rooms'),
+      dmSessions: await countRows('dm_sessions'),
     });
     return;
   }
@@ -424,14 +414,12 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       ? {
           dokumen: await countGuildRows(id, 'documents'),
           keyword: await countGuildRows(id, 'keywords'),
-          memori: await countGuildRows(id, 'memories'),
-          transkrip: await countTranscripts(id),
           moderasi: await countModerationLogs(id),
         }
       : {};
 
   if (path === '/' && method === 'GET') {
-    const rooms = guildId ? (await listRooms(guildId)).slice(0, 8) : [];
+    const sessions = guildId ? (await listDmSessions(guildId)).slice(0, 8) : [];
     const documents = guildId ? (await listDocuments(guildId)).slice(0, 6) : [];
 
     sendHtml(
@@ -445,19 +433,17 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         // di bawahnya kosong — dua bagian halaman seolah saling bertentangan.
         stats: guildId
           ? {
-              rooms: await countGuildRows(guildId, 'rooms'),
+              rooms: await countGuildRows(guildId, 'dm_sessions'),
               documents: await countGuildRows(guildId, 'documents'),
               chunks: await countGuildRows(guildId, 'chunks'),
               keywords: (await listKeywords(guildId)).length,
-              memories: await countGuildRows(guildId, 'memories'),
               messages: await countGuildMessages(guildId),
             }
-          : { rooms: 0, documents: 0, chunks: 0, keywords: 0, memories: 0, messages: 0 },
-        rooms: rooms.map((room) => ({
-          channelId: room.channelId,
-          userId: room.userId,
-          messageCount: room.messageCount,
-          lastActiveAt: room.lastActiveAt,
+          : { rooms: 0, documents: 0, chunks: 0, keywords: 0, messages: 0 },
+        rooms: sessions.map((session) => ({
+          userId: session.userId,
+          messageCount: session.messageCount,
+          lastActiveAt: session.lastActiveAt,
         })),
         documents: documents.map((document) => ({
           id: document.id,
@@ -518,51 +504,6 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
               createdAt: keyword.createdAt,
             }))
           : [],
-        status: dashboardStatus(),
-        counts: await navCounts(guildId),
-      }),
-    );
-    return;
-  }
-
-  if (path === '/memori' && method === 'GET') {
-    const owners = guildId ? await listMemoryOwners(guildId) : [];
-    const all = guildId ? await listGuildMemories(guildId, 500) : [];
-    const groups = owners.map((owner) => ({
-      userId: owner.userId,
-      items: all
-        .filter((memory) => memory.userId === owner.userId)
-        .map((memory) => ({
-          id: memory.id,
-          content: memory.content,
-          source: memory.source,
-          createdAt: memory.createdAt,
-        })),
-    }));
-
-    sendHtml(
-      response,
-      200,
-      memoriPage({
-        guildId,
-        guilds: await listGuilds(),
-        groups,
-        status: dashboardStatus(),
-        counts: await navCounts(guildId),
-      }),
-    );
-    return;
-  }
-
-  if (path === '/transkrip' && method === 'GET') {
-    const items = guildId ? await listTranscripts(guildId, 100) : [];
-    sendHtml(
-      response,
-      200,
-      transkripPage({
-        guildId,
-        guilds: await listGuilds(),
-        items,
         status: dashboardStatus(),
         counts: await navCounts(guildId),
       }),
@@ -648,7 +589,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         adminOnlyRoomsSetting: settings?.adminOnlyRooms ?? null,
         adminOnlyRoomsDefault: config.features.adminOnlyRooms,
         stats: {
-          rooms: guildId ? await countGuildRows(guildId, 'rooms') : 0,
+          rooms: guildId ? await countGuildRows(guildId, 'dm_sessions') : 0,
           messages: guildId ? await countGuildMessages(guildId) : 0,
           documents: guildId ? await countGuildRows(guildId, 'documents') : 0,
         },
@@ -710,71 +651,8 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
 
   // Unduh transkrip: dikirim sebagai attachment supaya HTML-nya tidak dieksekusi
   // di origin dashboard (transkrip berisi teks dari member).
-  const transcriptMatch = /^\/api\/transkrip\/(\d+)$/.exec(path);
-  if (transcriptMatch) {
-    const id = Number(transcriptMatch[1]);
-
-    if (method === 'GET') {
-      const record = guildId ? await getTranscript(guildId, id) : null;
-      if (!record) {
-        sendJson(response, 404, { error: 'Transkrip tidak ditemukan.' });
-        return;
-      }
-
-      const safeName = record.fileName.replace(/[^\w.\-]+/g, '-');
-      response.writeHead(200, {
-        'content-type': 'text/html; charset=utf-8',
-        'content-disposition': `attachment; filename="${safeName}"`,
-        'cache-control': 'no-store',
-        'x-content-type-options': 'nosniff',
-        'referrer-policy': 'no-referrer',
-      });
-      response.end(record.html);
-      return;
-    }
-
-    if (method === 'DELETE') {
-      const removed = guildId ? await deleteTranscript(guildId, id) : false;
-      sendJson(response, removed ? 200 : 404, removed ? { ok: true } : { error: 'Transkrip tidak ditemukan.' });
-      return;
-    }
-  }
-
-  if (path === '/api/search' && method === 'GET') {
-    const query = url.searchParams.get('q') ?? '';
-    if (!guildId || !query.trim()) {
-      sendJson(response, 200, { results: [] });
-      return;
-    }
-
-    const results = await searchKnowledge(guildId, query, { topK: 5 });
-    sendJson(response, 200, {
-      results: results.map((result) => ({
-        documentName: result.documentName,
-        ordinal: result.ordinal,
-        score: Number(result.score.toFixed(3)),
-        via: result.via,
-        preview: truncate(result.content, 600),
-      })),
-    });
-    return;
-  }
-
   if (path === '/api/documents' && method === 'GET') {
     sendJson(response, 200, { documents: guildId ? await listDocuments(guildId) : [] });
-    return;
-  }
-
-  if (path === '/api/rooms' && method === 'GET') {
-    sendJson(response, 200, { rooms: guildId ? await listRooms(guildId) : [] });
-    return;
-  }
-
-  if (path === '/api/memories' && method === 'GET') {
-    const userId = url.searchParams.get('user') ?? '';
-    sendJson(response, 200, {
-      memories: guildId && userId ? await listMemories(guildId, userId, 200) : [],
-    });
     return;
   }
 
@@ -813,32 +691,6 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     }
 
     sendJson(response, 200, { ok: true, id: result.id });
-    return;
-  }
-
-  const memoryMatch = /^\/api\/memori\/(\d+)$/.exec(path);
-  if (memoryMatch && method === 'DELETE') {
-    const id = Number(memoryMatch[1]);
-    const userId = url.searchParams.get('user') ?? '';
-    const removed = guildId && userId ? await deleteMemory(guildId, userId, id) : false;
-    sendJson(response, removed ? 200 : 404, removed ? { ok: true } : { error: 'Memori tidak ditemukan.' });
-    return;
-  }
-
-  if (path === '/api/memori/consolidate' && method === 'POST') {
-    if (!guildId) {
-      sendJson(response, 400, { error: 'Server belum dipilih.' });
-      return;
-    }
-
-    const userId = url.searchParams.get('user') ?? '';
-    if (!userId) {
-      sendJson(response, 400, { error: 'User belum dipilih.' });
-      return;
-    }
-
-    const result = await consolidateMemories(guildId, userId);
-    sendJson(response, 200, result);
     return;
   }
 

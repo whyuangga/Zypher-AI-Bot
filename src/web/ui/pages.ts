@@ -97,8 +97,8 @@ document.getElementById('pwToggle').addEventListener('click', function () {
 /* ------------------------------------------------------------------ */
 
 export interface DashboardData extends PageContext {
-  stats: { rooms: number; documents: number; chunks: number; keywords: number; memories: number; messages: number };
-  rooms: Array<{ channelId: string; userId: string; messageCount: number; lastActiveAt: number }>;
+  stats: { rooms: number; documents: number; chunks: number; keywords: number; messages: number };
+  rooms: Array<{ userId: string; messageCount: number; lastActiveAt: number }>;
   documents: Array<{ id: number; name: string; chunkCount: number; chars: number; createdAt: number }>;
   series: Array<{ day: string; count: number }>;
   ragEnabled: boolean;
@@ -110,10 +110,9 @@ export interface DashboardData extends PageContext {
 
 export function ringkasanPage(data: DashboardData): string {
   const stats = `<div class="grid stats">
-  ${statCard({ label: 'Room AI', value: data.stats.rooms, icon: 'message', foot: 'privat per member' })}
+  ${statCard({ label: 'Sesi DM', value: data.stats.rooms, icon: 'message', foot: 'pribadi per member' })}
   ${statCard({ label: 'Dokumen RAG', value: data.stats.documents, icon: 'book', foot: `<b>${formatNumber(data.stats.chunks)}</b> potongan teks` })}
   ${statCard({ label: 'Keyword', value: data.stats.keywords, icon: 'tag', foot: 'template owner' })}
-  ${statCard({ label: 'Memori user', value: data.stats.memories, icon: 'brain', foot: 'antar sesi' })}
 </div>`;
 
   const chartCard = card({
@@ -139,26 +138,26 @@ export function ringkasanPage(data: DashboardData): string {
     ? data.rooms
         .slice(0, 6)
         .map(
-          (room) => `<tr>
+          (session) => `<tr>
     <td>
       <div class="cell-main">
-        <span class="avatar-sm">${esc(initials(room.userId))}</span>
+        <span class="avatar-sm">${esc(initials(session.userId))}</span>
         <span>
-          <div class="cell-title">Room <span class="mono">…${esc(room.channelId.slice(-4))}</span></div>
-          <div class="cell-sub mono" title="Pemilik: ${esc(room.userId)}">pemilik …${esc(room.userId.slice(-4))}</div>
+          <div class="cell-title">DM <span class="mono">…${esc(session.userId.slice(-4))}</span></div>
+          <div class="cell-sub mono" title="Member: ${esc(session.userId)}">member …${esc(session.userId.slice(-4))}</div>
         </span>
       </div>
     </td>
-    <td class="num">${formatNumber(room.messageCount)}</td>
-    <td><span class="badge">${icon('activity', 13)} ${esc(relativeTime(room.lastActiveAt))}</span></td>
+    <td class="num">${formatNumber(session.messageCount)}</td>
+    <td><span class="badge">${icon('activity', 13)} ${esc(relativeTime(session.lastActiveAt))}</span></td>
   </tr>`,
         )
         .join('')
     : '';
 
   const roomsCard = card({
-    title: 'Room AI terbaru',
-    right: `<a class="btn-ghost btn-sm" href="/memori">Lihat memori ${icon('chevron', 13)}</a>`,
+    title: 'Sesi DM terbaru',
+    right: `<a class="btn-ghost btn-sm" href="/panel">Kelola panel ${icon('chevron', 13)}</a>`,
     body: roomRows
       ? `<div class="table-wrap"><table>
   <thead><tr><th>Pemilik</th><th class="num">Pesan</th><th>Aktivitas</th></tr></thead>
@@ -166,8 +165,8 @@ export function ringkasanPage(data: DashboardData): string {
 </table></div>`
       : emptyState({
           icon: 'message',
-          title: 'Belum ada room aktif',
-          text: 'Buat room lewat tombol "Buat Room AI" di panel Discord — channel privat akan muncul di sini.',
+          title: 'Belum ada sesi DM',
+          text: 'Member memulai chat lewat tombol "Chat via DM" di panel Discord — sesinya akan muncul di sini (tanpa isi percakapan).',
         }),
   });
 
@@ -715,129 +714,6 @@ async function removeKeyword(id, trigger) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Memori                                                             */
-/* ------------------------------------------------------------------ */
-
-export interface MemoryGroupView {
-  userId: string;
-  items: Array<{ id: number; content: string; source: string; createdAt: number }>;
-}
-
-export function memoriPage(options: PageContext & { groups: MemoryGroupView[] }): string {
-  const total = options.groups.reduce((sum, group) => sum + group.items.length, 0);
-
-  const groups = options.groups
-    .map(
-      (group, index) => `<details class="user-group"${index === 0 ? ' open' : ''}>
-  <summary>
-    <span class="avatar-sm">${esc(initials(group.userId))}</span>
-    <span>
-      <div class="cell-title mono">${esc(group.userId)}</div>
-      <div class="cell-sub">${group.items.length} memori</div>
-    </span>
-    <span class="chev">${icon('chevron', 16)}</span>
-    <button class="btn-ghost btn-sm" type="button"
-      onclick="consolidateMemories(${esc(JSON.stringify(group.userId))})"
-      title="AI meninjau & menggabungkan memori yang berulang"">${icon('sparkles', 14)} Konsolidasi AI</button>
-  </summary>
-  <div class="list" style="padding-bottom:6px">
-    ${group.items
-      .map(
-        (memory) => `<div class="list-row" style="padding-left:20px">
-      <div class="list-body">
-        <div class="list-text">${esc(memory.content)}</div>
-        <div class="list-meta">
-          ${memory.source === 'manual' ? badge('manual', 'brand', false) : badge('otomatis', 'neutral', false)}
-          <span>${esc(relativeTime(memory.createdAt))}</span>
-        </div>
-      </div>
-      <button class="btn-ghost btn-sm btn-icon" type="button"
-        onclick="removeMemory(${memory.id}, ${esc(JSON.stringify(group.userId))})"
-        title="Hapus memori" aria-label="Hapus memori">${icon('trash', 15)}</button>
-    </div>`,
-      )
-      .join('')}
-  </div>
-</details>`,
-    )
-    .join('');
-
-  const listCard = card({
-    title: 'Memori per user',
-    hint: `${total} fakta · ${options.groups.length} user`,
-    body: groups
-      ? groups
-      : emptyState({
-          icon: 'brain',
-          title: 'AI belum mengingat siapa pun',
-          text: 'Memori terbentuk saat member memakai /ingat di room AI, atau otomatis dari percakapan penting.',
-        }),
-  });
-
-  const explainCard = card({
-    title: 'Cara kerja memori',
-    body: `<div class="list">
-  <div class="kv"><span>Ditambah manual</span><b class="mono">/ingat</b></div>
-  <div class="kv"><span>Dilihat member</span><b class="mono">/memori</b></div>
-  <div class="kv"><span>Dihapus member</span><b class="mono">/lupakan</b></div>
-  <div class="kv"><span>Dipakai AI</span><b>setiap jawaban di room itu</b></div>
-</div>
-<div class="card-pad">
-  <p class="hint" style="margin:0">Memori terikat ke server + user, jadi AI tidak mencampur fakta antar member.
-  Menghapus di sini membuat AI benar-benar lupa.</p>
-</div>`,
-  });
-
-  const body = `${pageHead({
-    kicker: '05 — Ingatan AI',
-    title: 'Memori',
-    subtitle: 'Fakta yang diingat AI tentang tiap member, lintas percakapan.',
-    actions: badge(`${total} fakta`, total ? 'ok' : 'neutral'),
-  })}
-<div class="grid cols-2">${listCard}${explainCard}</div>
-<script>
-const GUILD = ${JSON.stringify(options.guildId)};
-
-async function removeMemory(id, userId) {
-  var ok = await askConfirm('Hapus memori?', 'AI akan lupa fakta ini pada percakapan berikutnya.');
-  if (!ok) return;
-  try {
-    await api('/api/memori/' + id + '?guild=' + encodeURIComponent(GUILD) + '&user=' + encodeURIComponent(userId), { method: 'DELETE' });
-    toast('Memori dihapus');
-    setTimeout(function () { location.reload(); }, 400);
-  } catch (error) {
-    toast('Gagal menghapus: ' + error.message, true);
-  }
-}
-
-async function consolidateMemories(userId) {
-  var ok = await askConfirm(
-    'Konsolidasi memori?',
-    'AI akan meninjau semua memori user ini, menggabungkan fakta yang berulang, dan menghapus yang tidak berguna.'
-  );
-  if (!ok) return;
-  try {
-    var result = await api('/api/memori/consolidate?guild=' + encodeURIComponent(GUILD) + '&user=' + encodeURIComponent(userId), { method: 'POST' });
-    toast(result.skipped ? result.skipped : 'Konsolidasi selesai: ' + (result.before - result.removed) + ' dari ' + result.before + ' memori dipertahankan');
-    setTimeout(function () { location.reload(); }, 400);
-  } catch (error) {
-    toast('Gagal mengonsolidasi: ' + error.message, true);
-  }
-}
-</script>`;
-
-  return appShell({
-    title: 'Memori',
-    guildId: options.guildId,
-    guilds: options.guilds,
-    active: 'memori',
-    body,
-    counts: options.counts,
-    status: options.status,
-  });
-}
-
-/* ------------------------------------------------------------------ */
 /*  Pengaturan                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -1037,133 +913,6 @@ async function saveFeatureToggles() {
 export { SHARED_JS };
 
 /* ------------------------------------------------------------------ */
-/*  Transkrip                                                          */
-/* ------------------------------------------------------------------ */
-
-export interface TranskripItem {
-  id: number;
-  userId: string;
-  userName: string;
-  channelName: string;
-  fileName: string;
-  summary: string | null;
-  messageCount: number;
-  memoryCount: number;
-  sizeBytes: number;
-  createdAt: number;
-}
-
-export interface TranskripOptions extends PageContext {
-  items: TranskripItem[];
-}
-
-const sizeLabel = (bytes: number): string =>
-  bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
-
-export function transkripPage(options: TranskripOptions): string {
-  const total = options.items.length;
-
-  const rows = options.items
-    .map(
-      (item) => `<tr>
-  <td class="cell-main-cell">
-    <div class="cell-main">
-      <span class="avatar-sm">${esc(initials(item.userId))}</span>
-      <span style="min-width:0">
-        <div class="cell-title">${esc(item.userName)}</div>
-        <div class="cell-sub">${esc(item.channelName || item.fileName)}</div>
-      </span>
-    </div>
-  </td>
-  <td class="num" data-label="Pesan">${formatNumber(item.messageCount)}</td>
-  <td class="num col-hide-sm" data-label="Memori">${formatNumber(item.memoryCount)}</td>
-  <td class="num col-hide-sm" data-label="Ukuran">${esc(sizeLabel(item.sizeBytes))}</td>
-  <td class="cell-date"><span class="cell-sub"><span class="date-long">${esc(formatDate(item.createdAt))}</span><span class="date-short">${esc(
-    new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', timeZone: 'Asia/Jakarta' }).format(new Date(item.createdAt)),
-  )}</span></span></td>
-  <td class="num cell-aksi">
-    <span class="row-actions">
-      <a class="btn-ghost btn-sm" href="/api/transkrip/${item.id}?guild=${encodeURIComponent(options.guildId)}"
-        title="Unduh transkrip">${icon('file', 14)} Unduh</a>
-      <button class="btn-danger btn-sm btn-icon" type="button"
-        onclick="removeTranscript(${item.id}, ${esc(JSON.stringify(item.fileName))})"
-        title="Hapus arsip" aria-label="Hapus ${esc(item.fileName)}">${icon('trash', 15)}</button>
-    </span>
-  </td>
-</tr>`,
-    )
-    .join('');
-
-  const listCard = card({
-    title: 'Arsip sesi',
-    hint: total > 0 ? `${total} file — disimpan saat member menutup room AI` : undefined,
-    body: rows
-      ? `<div class="table-wrap"><table class="table-stack">
-  <thead><tr>
-    <th>Sesi</th><th class="num">Pesan</th><th class="num col-hide-sm">Memori</th><th class="num col-hide-sm">Ukuran</th>
-    <th>Ditutup</th><th></th>
-  </tr></thead>
-  <tbody>${rows}</tbody>
-</table></div>`
-      : emptyState({
-          icon: 'file',
-          title: 'Belum ada transkrip',
-          text: 'Transkrip otomatis tersimpan di sini setiap kali member menekan Akhiri Sesi di room AI-nya.',
-        }),
-  });
-
-  const summaryCard = card({
-    title: 'Isi transkrip',
-    body: `<div class="list">
-  ${options.items
-    .slice(0, 5)
-    .filter((item) => item.summary)
-    .map(
-      (item) => `<div class="list-row">
-    <div class="list-body">
-      <div class="list-title">${esc(item.userName)} <span class="list-meta">${esc(formatDate(item.createdAt))}</span></div>
-      <div class="list-text">${esc(item.summary ?? '')}</div>
-    </div>
-  </div>`,
-    )
-    .join('') || `<div class="card-pad"><p class="hint" style="margin:0">Ringkasan AI muncul di sini setelah ada sesi yang ditutup dengan cukup banyak percakapan.</p></div>`}
-</div>`,
-  });
-
-  const body = `${pageHead({
-    kicker: '06 — Arsip sesi',
-    title: 'Transkrip',
-    subtitle: 'Salinan HTML setiap room AI yang sudah ditutup. Unduh untuk arsip, hapus kalau sudah tidak perlu.',
-    actions: badge(`${total} arsip`, total ? 'brand' : 'neutral'),
-  })}
-${listCard}
-<div class="mt">${summaryCard}</div>
-<script>
-async function removeTranscript(id, name) {
-  var ok = await askConfirm('Hapus arsip transkrip?', name + ' akan dihapus dari dashboard. File yang sudah diunduh member tidak terpengaruh.');
-  if (!ok) return;
-  try {
-    await api('/api/transkrip/' + id + '?guild=' + encodeURIComponent(${JSON.stringify(options.guildId)}), { method: 'DELETE' });
-    toast('Arsip transkrip dihapus');
-    setTimeout(function () { location.reload(); }, 400);
-  } catch (error) {
-    toast('Gagal menghapus: ' + error.message, true);
-  }
-}
-</script>`;
-
-  return appShell({
-    title: 'Transkrip',
-    guildId: options.guildId,
-    guilds: options.guilds,
-    active: 'transkrip',
-    body,
-    counts: options.counts,
-    status: options.status,
-  });
-}
-
-/* ------------------------------------------------------------------ */
 /*  Moderasi                                                           */
 /* ------------------------------------------------------------------ */
 
@@ -1172,7 +921,6 @@ export interface ModerationLogItem {
   userId: string;
   userName: string;
   channelId: string;
-  content: string;
   matched: string;
   action: string;
   createdAt: number;
@@ -1246,7 +994,7 @@ export function moderasiPage(options: ModerasiOptions): string {
   <div class="kv"><span>Durasi timeout</span><b>${formatNumber(options.timeoutMinutes)} menit</b></div>
   <div class="kv"><span>Log tercatat</span><b>${formatNumber(options.logs.length)}</b></div>
 </div>
-<div class="card-pad"><p class="hint" style="margin:0">Staff (role <code>STAFF_ROLE_ID</code> atau izin <b>Manage Messages</b>) tidak terkena filter. Setiap tindakan dikirim juga ke channel log <code>TRANSCRIPT_CHANNEL_ID</code> bila diisi.</p></div>`,
+<div class="card-pad"><p class="hint" style="margin:0">Staff (role <code>STAFF_ROLE_ID</code> atau izin <b>Manage Messages</b>) tidak terkena filter. Setiap tindakan dikirim juga ke channel log <code>MODLOG_CHANNEL_ID</code> bila diisi.</p></div>`,
   });
 
   const logRows = options.logs
@@ -1262,7 +1010,6 @@ export function moderasiPage(options: ModerasiOptions): string {
     </div>
   </td>
   <td data-label="Kata"><span class="badge danger"><span class="dot"></span>${esc(log.matched)}</span></td>
-  <td class="col-hide-sm" data-label="Pesan"><div class="list-text" style="margin-top:0;max-width:360px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(log.content || '—')}</div></td>
   <td class="col-hide-sm" data-label="Tindakan"><span class="cell-sub">${esc(ACTION_TEXT[log.action] ?? log.action)}</span></td>
   <td class="cell-date"><span class="cell-sub"><span class="date-long">${esc(formatDate(log.createdAt))}</span><span class="date-short">${esc(
     new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', timeZone: 'Asia/Jakarta' }).format(new Date(log.createdAt)),
@@ -1284,7 +1031,7 @@ export function moderasiPage(options: ModerasiOptions): string {
         : undefined,
     body: logRows
       ? `<div class="table-wrap"><table class="table-stack table-mod">
-  <thead><tr><th>Pelanggar</th><th>Kata</th><th class="col-hide-sm">Pesan</th><th class="col-hide-sm">Tindakan</th><th>Waktu</th><th></th></tr></thead>
+  <thead><tr><th>Pelanggar</th><th>Kata</th><th class="col-hide-sm">Tindakan</th><th>Waktu</th><th></th></tr></thead>
   <tbody>${logRows}</tbody>
 </table></div>`
       : emptyState({

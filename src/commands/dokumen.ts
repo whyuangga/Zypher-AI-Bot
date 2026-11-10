@@ -167,7 +167,7 @@ export const dokumenCommand: Command = {
           `> ${result.chunkCount} potongan · ${formatSize(result.document.chars)}`,
           `> Pencarian: ${result.embedded ? 'hybrid (leksikal + vektor)' : 'leksikal (BM25, tanpa API tambahan)'}`,
           '',
-          'Sekarang tanyakan sesuatu di room AI — kalau relevan, AI menjawab dari dokumen ini dan menyebut sumbernya.',
+          'Sekarang tanyakan sesuatu lewat chat DM ke bot — kalau relevan, AI menjawab dari dokumen ini dan menyebut sumbernya.',
           `Uji dulu dengan \`/dokumen cari pertanyaan:...\`.`,
         ].join('\n'),
       });

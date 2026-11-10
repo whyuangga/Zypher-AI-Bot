@@ -74,16 +74,19 @@ tanda baca jadi spasi, dan substitusi umum (`4→a`, `0→o`, `1→i`, `3→e`, 
 ## Log & audit
 
 Setiap pelanggaran dicatat ke tabel `mod_logs` dan tampil di dashboard `/moderasi`:
-pelaku, kata yang cocok, cuplikan pesan (maks 500 karakter), tindakan, waktu.
+pelaku, kata yang cocok, tindakan, dan waktu.
 
-Kalau `TRANSCRIPT_CHANNEL_ID` diisi, ringkasannya juga dikirim ke channel itu:
+> **Isi pesan member tidak disimpan.** Tabel `mod_logs` tidak punya kolom `content`, dan
+> dashboard tidak menampilkan cuplikan kalimat apa pun. Ini supaya dashboard moderasi tidak
+> bisa dipakai membaca pesan member — termasuk kalau filter kata salah tangkap.
+
+Kalau `MODLOG_CHANNEL_ID` diisi, ringkasannya juga dikirim ke channel itu:
 
 ```
 🛡️ Moderasi · timeout 30 menit
 • Pelanggar: Rina (900000000000000002)
-• Channel: #room-ai-0001
+• Channel: #nama-channel
 • Kata: `bangsat`
-• Pesan: dasar bangsat banget sih ini
 ```
 
 Log bisa dihapus satu per satu atau dibersihkan semua dari dashboard

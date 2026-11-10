@@ -12,8 +12,6 @@ export type PageKey =
   | 'panel'
   | 'dokumen'
   | 'keyword'
-  | 'memori'
-  | 'transkrip'
   | 'moderasi'
   | 'pengaturan';
 
@@ -39,8 +37,6 @@ const NAV: Array<{ key: PageKey; label: string; href: string; icon: IconName }> 
   { key: 'panel', label: 'Panel', href: '/panel', icon: 'sparkles' },
   { key: 'dokumen', label: 'Dokumen RAG', href: '/dokumen', icon: 'book' },
   { key: 'keyword', label: 'Keyword', href: '/keyword', icon: 'tag' },
-  { key: 'memori', label: 'Memori', href: '/memori', icon: 'brain' },
-  { key: 'transkrip', label: 'Transkrip', href: '/transkrip', icon: 'file' },
   { key: 'moderasi', label: 'Moderasi', href: '/moderasi', icon: 'shield' },
   { key: 'pengaturan', label: 'Pengaturan', href: '/pengaturan', icon: 'sliders' },
 ];

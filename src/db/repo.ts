@@ -16,7 +16,7 @@ export interface GuildSettings {
   name: string | null;
   persona: string | null;
   model: string | null;
-  /** Otomatis membalas jawaban room dengan suara (TTS). `null` = memakai default `.env`. */
+  /** Otomatis membalas jawaban chat dengan suara (TTS). `null` = memakai default `.env`. */
   ttsReplyInRoom: boolean | null;
   /** AI boleh jawab dari dokumen. `null` = memakai RAG_ENABLED dari .env. */
   ragEnabled: boolean | null;
@@ -24,7 +24,7 @@ export interface GuildSettings {
   visionEnabled: boolean | null;
   /** AI boleh ingat otomatis. `null` = memakai AUTO_MEMORY dari .env. */
   autoMemory: boolean | null;
-  /** Hanya admin yang boleh buat room. `null` = memakai ADMIN_ONLY_ROOMS dari .env. */
+  /** Hanya admin yang boleh memulai chat AI. `null` = memakai ADMIN_ONLY_ROOMS dari .env. */
   adminOnlyRooms: boolean | null;
   createdAt: number;
 }
@@ -53,10 +53,15 @@ export interface Keyword {
   createdAt: number;
 }
 
-export interface Room {
-  channelId: string;
-  guildId: string;
+/**
+ * Sesi chat DM milik member.
+ *
+ * Menggantikan konsep "room" (channel/thread) yang sudah dihapus: percakapan
+ * berjalan di DM, `guildId` hanya menyimpan konteks server mana yang dipakai.
+ */
+export interface DmSession {
   userId: string;
+  guildId: string;
   createdAt: number;
   lastActiveAt: number;
   messageCount: number;
@@ -84,31 +89,6 @@ export interface ChunkRecord {
 
 export interface ChunkWithDocument extends ChunkRecord {
   documentName: string;
-}
-
-/* ------------------------------------------------------------------ */
-/*  Arsip transkrip                                                    */
-/* ------------------------------------------------------------------ */
-
-/** Ringkasan satu sesi AI yang sudah ditutup (tanpa HTML-nya). */
-export interface TranscriptSummary {
-  id: number;
-  guildId: string;
-  channelId: string;
-  channelName: string;
-  userId: string;
-  userName: string;
-  fileName: string;
-  summary: string | null;
-  messageCount: number;
-  memoryCount: number;
-  sizeBytes: number;
-  createdAt: number;
-}
-
-/** Satu arsip transkrip lengkap, termasuk file HTML yang bisa diunduh. */
-export interface TranscriptRecord extends TranscriptSummary {
-  html: string;
 }
 
 export type ChatRole = 'user' | 'assistant';
@@ -152,14 +132,6 @@ interface KeywordRow {
   answer: string;
   created_by: string | null;
   created_at: number;
-}
-interface RoomRow {
-  channel_id: string;
-  guild_id: string;
-  user_id: string;
-  created_at: number;
-  last_active_at: number;
-  message_count: number;
 }
 interface DocumentRow {
   id: number;
@@ -223,15 +195,6 @@ const toKeyword = (row: KeywordRow): Keyword => ({
   answer: row.answer,
   createdBy: row.created_by,
   createdAt: Number(row.created_at),
-});
-
-const toRoom = (row: RoomRow): Room => ({
-  channelId: row.channel_id,
-  guildId: row.guild_id,
-  userId: row.user_id,
-  createdAt: Number(row.created_at),
-  lastActiveAt: Number(row.last_active_at),
-  messageCount: Number(row.message_count),
 });
 
 const toDocument = (row: DocumentRow): DocumentRecord => ({
@@ -315,7 +278,7 @@ export async function setGuildAutoMemory(guildId: string, enabled: boolean | nul
   await run('UPDATE guilds SET auto_memory = ? WHERE guild_id = ?', [enabled === null ? null : enabled ? 1 : 0, guildId]);
 }
 
-/** Hanya admin yang boleh buat room. `null` = pakai ADMIN_ONLY_ROOMS dari .env. */
+/** Hanya admin yang boleh memulai chat AI. `null` = pakai ADMIN_ONLY_ROOMS dari .env. */
 export async function setGuildAdminOnlyRooms(guildId: string, enabled: boolean | null): Promise<void> {
   await ensureGuild(guildId);
   await run('UPDATE guilds SET admin_only_rooms = ? WHERE guild_id = ?', [enabled === null ? null : enabled ? 1 : 0, guildId]);
@@ -420,47 +383,65 @@ export async function deleteKeyword(guildId: string, id: number): Promise<boolea
 }
 
 /* ------------------------------------------------------------------ */
-/*  Rooms                                                              */
+/*  Sesi chat DM                                                       */
 /* ------------------------------------------------------------------ */
 
-export async function createRoom(channelId: string, guildId: string, userId: string): Promise<void> {
+interface DmSessionRow {
+  user_id: string;
+  guild_id: string;
+  created_at: number;
+  last_active_at: number;
+  message_count: number;
+}
+
+const toDmSession = (row: DmSessionRow): DmSession => ({
+  userId: row.user_id,
+  guildId: row.guild_id,
+  createdAt: Number(row.created_at),
+  lastActiveAt: Number(row.last_active_at),
+  messageCount: Number(row.message_count),
+});
+
+/**
+ * Simpan sesi DM member. Kalau sudah ada, perbarui server konteksnya.
+ *
+ * `ensureGuild` dipanggil supaya server baru tetap muncul di dropdown dashboard
+ * walau belum pernah punya dokumen atau keyword.
+ */
+export async function setDmSession(userId: string, guildId: string, _ignored?: string): Promise<void> {
   const now = Date.now();
-  // Setiap room menyiratkan server: pastikan baris `guilds` ada supaya server
-  // muncul di dropdown dashboard (kalau tidak, dashboard tampak kosong).
   await ensureGuild(guildId);
   await run(
-    `INSERT INTO rooms (channel_id, guild_id, user_id, created_at, last_active_at)
-     VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT (channel_id) DO UPDATE SET guild_id = excluded.guild_id, user_id = excluded.user_id`,
-    [channelId, guildId, userId, now, now],
+    `INSERT INTO dm_sessions (user_id, guild_id, created_at, last_active_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT (user_id) DO UPDATE SET guild_id = excluded.guild_id, last_active_at = excluded.last_active_at`,
+    [userId, guildId, now, now],
   );
 }
 
-export async function getRoomByChannel(channelId: string): Promise<Room | null> {
-  const row = await get<RoomRow>('SELECT * FROM rooms WHERE channel_id = ?', [channelId]);
-  return row ? toRoom(row) : null;
+export async function getDmSession(userId: string): Promise<DmSession | null> {
+  const row = await get<DmSessionRow>('SELECT * FROM dm_sessions WHERE user_id = ?', [userId]);
+  return row ? toDmSession(row) : null;
 }
 
-export async function getRoomByUser(guildId: string, userId: string): Promise<Room | null> {
-  const row = await get<RoomRow>('SELECT * FROM rooms WHERE guild_id = ? AND user_id = ?', [guildId, userId]);
-  return row ? toRoom(row) : null;
+export async function listDmSessions(guildId: string): Promise<DmSession[]> {
+  const rows = await all<DmSessionRow>(
+    'SELECT * FROM dm_sessions WHERE guild_id = ? ORDER BY last_active_at DESC',
+    [guildId],
+  );
+  return rows.map(toDmSession);
 }
 
-export async function listRooms(guildId: string): Promise<Room[]> {
-  const rows = await all<RoomRow>('SELECT * FROM rooms WHERE guild_id = ? ORDER BY last_active_at DESC', [guildId]);
-  return rows.map(toRoom);
-}
-
-export async function touchRoom(channelId: string, messagesAdded = 1): Promise<void> {
-  await run('UPDATE rooms SET last_active_at = ?, message_count = message_count + ? WHERE channel_id = ?', [
+export async function touchDmSession(userId: string, messagesAdded = 2): Promise<void> {
+  await run('UPDATE dm_sessions SET last_active_at = ?, message_count = message_count + ? WHERE user_id = ?', [
     Date.now(),
     messagesAdded,
-    channelId,
+    userId,
   ]);
 }
 
-export async function deleteRoom(channelId: string): Promise<void> {
-  await run('DELETE FROM rooms WHERE channel_id = ?', [channelId]);
+export async function deleteDmSession(userId: string): Promise<void> {
+  await run('DELETE FROM dm_sessions WHERE user_id = ?', [userId]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -605,7 +586,7 @@ export async function listGuilds(): Promise<GuildChoice[]> {
     `SELECT ids.guild_id AS guild_id, guilds.name AS name
      FROM (
        SELECT guild_id FROM guilds
-       UNION SELECT guild_id FROM rooms
+       UNION SELECT guild_id FROM dm_sessions
        UNION SELECT guild_id FROM documents
        UNION SELECT guild_id FROM keywords
        UNION SELECT guild_id FROM memories
@@ -617,7 +598,7 @@ export async function listGuilds(): Promise<GuildChoice[]> {
 }
 
 export async function countRows(
-  table: 'memories' | 'keywords' | 'rooms' | 'messages' | 'documents' | 'chunks',
+  table: 'memories' | 'keywords' | 'dm_sessions' | 'messages' | 'documents' | 'chunks',
 ): Promise<number> {
   const row = await get<{ total: number }>(`SELECT COUNT(*) AS total FROM ${table}`);
   return Number(row?.total ?? 0);
@@ -626,162 +607,32 @@ export async function countRows(
 /** Jumlah baris milik satu server — dipakai dashboard agar angka cocok dengan daftar di bawahnya. */
 export async function countGuildRows(
   guildId: string,
-  table: 'memories' | 'keywords' | 'rooms' | 'documents' | 'chunks',
+  table: 'memories' | 'keywords' | 'dm_sessions' | 'documents' | 'chunks',
 ): Promise<number> {
   const row = await get<{ total: number }>(`SELECT COUNT(*) AS total FROM ${table} WHERE guild_id = ?`, [guildId]);
   return Number(row?.total ?? 0);
 }
 
-/** Tabel `messages` tidak menyimpan `guild_id` — hitung lewat room milik server itu. */
+/**
+ * Tabel `messages` tidak menyimpan `guild_id` — hitung lewat sesi DM yang
+ * memakai server itu sebagai konteks.
+ *
+ * Catatan privasi: angka ini hanya jumlah pesan, bukan isinya. Isi percakapan
+ * DM member tidak pernah dibaca dashboard.
+ */
 export async function countGuildMessages(guildId: string): Promise<number> {
   const row = await get<{ total: number }>(
     `SELECT COUNT(*) AS total FROM messages m
-     JOIN rooms r ON r.channel_id = m.channel_id
-     WHERE r.guild_id = ?`,
+     JOIN dm_sessions d ON m.channel_id = 'dm:' || d.user_id
+     WHERE d.guild_id = ?`,
     [guildId],
   );
-  return Number(row?.total ?? 0);
-}
-
-/* ------------------------------------------------------------------ */
-/*  Arsip transkrip                                                    */
-/* ------------------------------------------------------------------ */
-
-interface TranscriptRow {
-  id: number;
-  guild_id: string;
-  channel_id: string;
-  channel_name: string;
-  user_id: string;
-  user_name: string;
-  file_name: string;
-  summary: string | null;
-  message_count: number;
-  memory_count: number;
-  size_bytes: number;
-  created_at: number;
-}
-
-function toTranscriptSummary(row: TranscriptRow): TranscriptSummary {
-  return {
-    id: Number(row.id),
-    guildId: row.guild_id,
-    channelId: row.channel_id,
-    channelName: row.channel_name,
-    userId: row.user_id,
-    userName: row.user_name,
-    fileName: row.file_name,
-    summary: row.summary,
-    messageCount: Number(row.message_count),
-    memoryCount: Number(row.memory_count),
-    sizeBytes: Number(row.size_bytes),
-    createdAt: Number(row.created_at),
-  };
-}
-
-/**
- * Simpan arsip sesi AI yang baru ditutup.
- *
- * HTML-nya ikut disimpan di database (bukan file terpisah) supaya dashboard bisa
- * mengunduh transkrip lama walau folder `transcripts/` di panel sudah dibersihkan
- * atau bot dipindah ke host lain. `size_bytes` disimpan supaya daftar transkrip
- * tidak perlu membaca kolom HTML yang besar.
- */
-export async function insertTranscript(input: {
-  guildId: string;
-  channelId: string;
-  channelName: string;
-  userId: string;
-  userName: string;
-  fileName: string;
-  summary?: string | null;
-  messageCount: number;
-  memoryCount: number;
-  html: string;
-  createdAt?: number;
-}): Promise<number> {
-  return insert(
-    `INSERT INTO transcripts
-      (guild_id, channel_id, channel_name, user_id, user_name, file_name, summary,
-       message_count, memory_count, size_bytes, html, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      input.guildId,
-      input.channelId,
-      input.channelName,
-      input.userId,
-      input.userName,
-      input.fileName,
-      input.summary ?? null,
-      input.messageCount,
-      input.memoryCount,
-      Buffer.byteLength(input.html, 'utf8'),
-      input.html,
-      input.createdAt ?? Date.now(),
-    ],
-  );
-}
-
-/** Daftar transkrip satu server, terbaru dulu. Kolom HTML tidak ikut dibaca. */
-export async function listTranscripts(guildId: string, limit = 100): Promise<TranscriptSummary[]> {
-  const rows = await all<TranscriptRow>(
-    `SELECT id, guild_id, channel_id, channel_name, user_id, user_name, file_name, summary,
-            message_count, memory_count, size_bytes, created_at
-     FROM transcripts WHERE guild_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`,
-    [guildId, limit],
-  );
-  return rows.map(toTranscriptSummary);
-}
-
-/** Satu transkrip lengkap (dengan HTML) — dipakai untuk unduhan. */
-export async function getTranscript(guildId: string, id: number): Promise<TranscriptRecord | null> {
-  const row = await get<TranscriptRow & { html: string }>('SELECT * FROM transcripts WHERE guild_id = ? AND id = ?', [
-    guildId,
-    id,
-  ]);
-  if (!row) return null;
-  return { ...toTranscriptSummary(row), html: row.html };
-}
-
-export async function deleteTranscript(guildId: string, id: number): Promise<boolean> {
-  const info = await run('DELETE FROM transcripts WHERE guild_id = ? AND id = ?', [guildId, id]);
-  return info.changes > 0;
-}
-
-export async function countTranscripts(guildId: string): Promise<number> {
-  const row = await get<{ total: number }>('SELECT COUNT(*) AS total FROM transcripts WHERE guild_id = ?', [guildId]);
   return Number(row?.total ?? 0);
 }
 
 /* ------------------------------------------------------------------ */
 /*  Statistik dashboard                                                */
 /* ------------------------------------------------------------------ */
-
-export interface MemoryOwner {
-  userId: string;
-  count: number;
-  lastAt: number;
-}
-
-/** Pemilik memori di satu server, diurutkan dari yang paling banyak. */
-export async function listMemoryOwners(guildId: string): Promise<MemoryOwner[]> {
-  const rows = await all<{ user_id: string; total: number; last_at: number }>(
-    `SELECT user_id, COUNT(*) AS total, MAX(created_at) AS last_at
-     FROM memories WHERE guild_id = ?
-     GROUP BY user_id ORDER BY total DESC, last_at DESC`,
-    [guildId],
-  );
-  return rows.map((row) => ({ userId: row.user_id, count: Number(row.total), lastAt: Number(row.last_at) }));
-}
-
-/** Semua memori satu server (untuk halaman Memori). */
-export async function listGuildMemories(guildId: string, limit = 500): Promise<Memory[]> {
-  const rows = await all<MemoryRow>('SELECT * FROM memories WHERE guild_id = ? ORDER BY id DESC LIMIT ?', [
-    guildId,
-    limit,
-  ]);
-  return rows.map(toMemory);
-}
 
 /**
  * Jumlah pesan per hari (zona waktu WIB) selama `days` hari terakhir.
@@ -816,8 +667,8 @@ export async function messagesPerDay(
   const since = Date.now() - (days + 1) * 24 * 60 * 60 * 1000;
   const rows = await all<{ created_at: number }>(
     `SELECT m.created_at AS created_at FROM messages m
-     JOIN rooms r ON r.channel_id = m.channel_id
-     WHERE r.guild_id = ? AND m.created_at >= ?`,
+     JOIN dm_sessions d ON m.channel_id = 'dm:' || d.user_id
+     WHERE d.guild_id = ? AND m.created_at >= ?`,
     [guildId, since],
   );
 
@@ -850,7 +701,6 @@ export interface ModerationLog {
   channelId: string;
   userId: string;
   userName: string;
-  content: string;
   matched: string;
   action: ModerationAction;
   createdAt: number;
@@ -909,28 +759,25 @@ export async function setModerationSettings(input: {
   );
 }
 
+/**
+ * Catat satu pelanggaran moderasi.
+ *
+ * **Isi pesan sengaja TIDAK disimpan.** Hanya kata yang cocok dan tindakan yang
+ * dicatat, supaya dashboard moderasi tidak bisa dipakai membaca pesan member.
+ * Cuplikan pesan hanya dikirim ke channel log Discord (`MODLOG_CHANNEL_ID`).
+ */
 export async function addModerationLog(input: {
   guildId: string;
   channelId: string;
   userId: string;
   userName: string;
-  content: string;
   matched: string;
   action: ModerationAction;
 }): Promise<number> {
   return insert(
-    `INSERT INTO mod_logs (guild_id, channel_id, user_id, user_name, content, matched, action, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      input.guildId,
-      input.channelId,
-      input.userId,
-      input.userName,
-      input.content.slice(0, 500),
-      input.matched,
-      input.action,
-      Date.now(),
-    ],
+    `INSERT INTO mod_logs (guild_id, channel_id, user_id, user_name, matched, action, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [input.guildId, input.channelId, input.userId, input.userName, input.matched, input.action, Date.now()],
   );
 }
 
@@ -941,7 +788,6 @@ export async function listModerationLogs(guildId: string, limit = 50): Promise<M
     channel_id: string;
     user_id: string;
     user_name: string;
-    content: string;
     matched: string;
     action: string;
     created_at: number;
@@ -953,7 +799,6 @@ export async function listModerationLogs(guildId: string, limit = 50): Promise<M
     channelId: row.channel_id,
     userId: row.user_id,
     userName: row.user_name,
-    content: row.content,
     matched: row.matched,
     action: (row.action as ModerationAction) ?? 'delete',
     createdAt: Number(row.created_at),
@@ -976,7 +821,7 @@ export async function countModerationLogs(guildId: string): Promise<number> {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Panel room AI (satu channel per server)                            */
+/*  Panel chat AI (satu channel per server)                            */
 /* ------------------------------------------------------------------ */
 
 export interface PanelState {
@@ -985,7 +830,7 @@ export interface PanelState {
   channelId: string | null;
   /** ID pesan panel, dipakai untuk menghapus/mengganti panel lama. */
   messageId: string | null;
-  /** `false` = tombol "Buat Room AI" ditolak walau pesan panelnya masih ada. */
+  /** `false` = tombol "Chat via DM" ditolak walau pesan panelnya masih ada. */
   enabled: boolean;
   updatedAt: number | null;
 }
@@ -1027,7 +872,7 @@ export async function setPanelMessage(
   );
 }
 
-/** Nyalakan/matikan tombol pembuat room tanpa menghapus pesan panelnya. */
+/** Nyalakan/matikan tombol "Chat via DM" tanpa menghapus pesan panelnya. */
 export async function setPanelEnabled(guildId: string, enabled: boolean): Promise<PanelState> {
   const now = Date.now();
   await run(

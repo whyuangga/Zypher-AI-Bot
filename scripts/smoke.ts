@@ -1,6 +1,6 @@
 /**
  * Smoke test tanpa koneksi Discord / tanpa API key asli.
- * Menguji logika inti: database, memori, keyword, prompt, transkrip, chunking.
+ * Menguji logika inti: database, memori, keyword, prompt, privasi, chunking.
  *
  * Jalankan: npm run smoke
  */
@@ -13,23 +13,18 @@ process.env.AI_FALLBACKS = 'gemini:gemini-3.8-flash,openrouter:google/gemma-4-31
 process.env.GEMINI_API_KEY = 'smoke-gemini-key';
 
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 
 const { addMemory, listMemories, deleteMemory, clearMemories, addKeyword, listKeywords, deleteKeyword } = await import(
   '../src/db/repo.js'
 );
-const { createRoom, getRoomByChannel, getRoomByUser, appendMessage, getHistory, clearHistory, deleteRoom, touchRoom } =
+const { setDmSession, getDmSession, listDmSessions, deleteDmSession, touchDmSession, appendMessage, getHistory, clearHistory } =
   await import('../src/db/repo.js');
 const { setPersona, getGuildSettings } = await import('../src/db/repo.js');
-const { listGuilds, countGuildRows, countGuildMessages, listMemoryOwners, listGuildMemories, messagesPerDay } =
-  await import('../src/db/repo.js');
-const { insertTranscript, listTranscripts, getTranscript, deleteTranscript, countTranscripts } = await import(
-  '../src/db/repo.js'
-);
+const { listGuilds, countGuildRows, countGuildMessages, messagesPerDay } = await import('../src/db/repo.js');
 const { setGuildName, getPanel, setPanelMessage, setPanelEnabled } = await import('../src/db/repo.js');
-const { ringkasanPage, keywordPage, memoriPage, transkripPage, moderasiPage, panelPage } = await import(
-  '../src/web/ui/pages.js'
-);
+const { ringkasanPage, keywordPage, moderasiPage, panelPage } = await import('../src/web/ui/pages.js');
 const { pengaturanPage } = await import('../src/web/ui/pages.js');
 const {
   setModerationSettings,
@@ -206,32 +201,42 @@ test('parseConsolidatedMemories: teks bebas jadi satu baris', () => {
   assert.equal(result[0], 'ini bukan JSON juga bukan bullet');
 });
 
-console.log('\nRoom & riwayat');
-await testAsync('membuat room dan menemukannya kembali', async () => {
-  await createRoom(CHANNEL, GUILD, USER);
-  assert.equal((await getRoomByChannel(CHANNEL))?.userId, USER);
-  assert.equal((await getRoomByUser(GUILD, USER))?.channelId, CHANNEL);
+console.log('\nSesi DM & riwayat');
+await testAsync('membuat sesi DM dan menemukannya kembali', async () => {
+  await setDmSession(USER, GUILD);
+  const session = await getDmSession(USER);
+  assert.equal(session?.userId, USER);
+  assert.equal(session?.guildId, GUILD);
+  assert.equal((await listDmSessions(GUILD)).length, 1);
+});
+await testAsync('ganti server konteks memperbarui sesi, bukan menambah baris', async () => {
+  await setDmSession(USER, '777777777777777777');
+  const session = await getDmSession(USER);
+  assert.equal(session?.guildId, '777777777777777777');
+  assert.equal((await listDmSessions(GUILD)).length, 0, 'server lama tidak boleh punya sesi lagi');
+  await setDmSession(USER, GUILD);
 });
 await testAsync('menyimpan & mengambil riwayat berurutan', async () => {
-  await appendMessage(CHANNEL, 'user', 'Halo');
-  await appendMessage(CHANNEL, 'assistant', 'Hai! Ada yang bisa dibantu?');
-  await appendMessage(CHANNEL, 'user', 'Ajarin Inggris dong');
-  await touchRoom(CHANNEL, 3);
+  const key = `dm:${USER}`;
+  await appendMessage(key, 'user', 'Halo');
+  await appendMessage(key, 'assistant', 'Hai! Ada yang bisa dibantu?');
+  await appendMessage(key, 'user', 'Ajarin Inggris dong');
+  await touchDmSession(USER, 3);
 
-  const history = await getHistory(CHANNEL, 2);
+  const history = await getHistory(key, 2);
   assert.equal(history.length, 2);
   assert.equal(history[0]?.content, 'Hai! Ada yang bisa dibantu?');
   assert.equal(history[1]?.role, 'user');
-  assert.equal((await getRoomByChannel(CHANNEL))?.messageCount, 3);
+  assert.equal((await getDmSession(USER))?.messageCount, 3);
 });
 await testAsync('reset tidak menghapus memori', async () => {
-  await clearHistory(CHANNEL);
-  assert.equal((await getHistory(CHANNEL, 10)).length, 0);
+  await clearHistory(`dm:${USER}`);
+  assert.equal((await getHistory(`dm:${USER}`, 10)).length, 0);
   assert.equal((await listMemories(GUILD, USER)).length, 1);
 });
-await testAsync('hapus room membersihkan data', async () => {
-  await deleteRoom(CHANNEL);
-  assert.equal(await getRoomByChannel(CHANNEL), null);
+await testAsync('hapus sesi DM membersihkan data', async () => {
+  await deleteDmSession(USER);
+  assert.equal(await getDmSession(USER), null);
 });
 
 console.log('\nTranskrip');
@@ -290,11 +295,12 @@ await testAsync('server yang hanya punya data tetap muncul di daftar server', as
     'guild dengan data harus ikut terdaftar',
   );
 });
-await testAsync('createRoom mendaftarkan server ke tabel guilds', async () => {
+await testAsync('setDmSession mendaftarkan server ke tabel guilds', async () => {
   const freshGuild = '555555555555555555';
   assert.equal(await getGuildSettings(freshGuild), null);
-  await createRoom('666666666666666666', freshGuild, USER);
-  assert.ok(await getGuildSettings(freshGuild), 'server harus punya baris guilds setelah room dibuat');
+  await setDmSession(USER, freshGuild);
+  assert.ok(await getGuildSettings(freshGuild), 'server harus punya baris guilds setelah sesi DM dibuat');
+  await deleteDmSession(USER);
 });
 await testAsync('nama server tersimpan dan dipakai daftar server dashboard', async () => {
   const named = '1567780679515770900';
@@ -345,37 +351,39 @@ await testAsync('statistik dashboard dipisah per server', async () => {
   const guildB = '888888888888888888';
   const channelA = '999999999999999991';
 
-  await createRoom(channelA, guildA, USER);
-  await appendMessage(channelA, 'user', 'Halo dari server A');
+  await setDmSession(USER, guildA);
+  await appendMessage(`dm:${USER}`, 'user', 'Halo dari server A');
 
-  assert.equal(await countGuildRows(guildA, 'rooms'), 1);
-  assert.equal(await countGuildRows(guildB, 'rooms'), 0, 'server B tidak boleh ikut menghitung room A');
+  assert.equal(await countGuildRows(guildA, 'dm_sessions'), 1);
+  assert.equal(await countGuildRows(guildB, 'dm_sessions'), 0, 'server B tidak boleh ikut menghitung sesi A');
   assert.equal(await countGuildMessages(guildA), 1);
   assert.equal(await countGuildMessages(guildB), 0);
 });
 
 await testAsync('grafik aktivitas menghitung pesan 7 hari terakhir', async () => {
   const guildId = '121212121212121212';
-  const channelId = '131313131313131313';
-  await createRoom(channelId, guildId, USER);
-  await appendMessage(channelId, 'user', 'Halo');
-  await appendMessage(channelId, 'assistant', 'Hai');
+  const dmKey = 'dm:131313131313131313';
+  await setDmSession('131313131313131313', guildId);
+  await appendMessage(dmKey, 'user', 'Halo');
+  await appendMessage(dmKey, 'assistant', 'Hai');
 
   const series = await messagesPerDay(guildId, 7);
   assert.equal(series.length, 7, 'harus tepat 7 batang');
   assert.equal(series[6]?.count, 2, 'pesan hari ini masuk batang terakhir');
   assert.equal(series.reduce((sum, item) => sum + item.count, 0), 2);
 });
-await testAsync('memori dikelompokkan per user', async () => {
+await testAsync('memori terpisah per user (tidak tercampur antar member)', async () => {
   const guildId = '141414141414141414';
-  await addMemory(guildId, '151515151515151515', 'Fakta A');
-  await addMemory(guildId, '151515151515151515', 'Fakta B');
-  await addMemory(guildId, '161616161616161616', 'Fakta C');
+  const A = '151515151515151515';
+  const B = '161616161616161616';
+  await addMemory(guildId, A, 'Fakta A');
+  await addMemory(guildId, A, 'Fakta B');
+  await addMemory(guildId, B, 'Fakta C');
 
-  const owners = await listMemoryOwners(guildId);
-  assert.equal(owners.length, 2);
-  assert.equal(owners[0]?.count, 2, 'user dengan memori terbanyak di atas');
-  assert.equal((await listGuildMemories(guildId)).length, 3);
+  assert.equal((await listMemories(guildId, A)).length, 2);
+  assert.equal((await listMemories(guildId, B)).length, 1);
+  const isiA = (await listMemories(guildId, A)).map((m) => m.content);
+  assert.ok(!isiA.includes('Fakta C'), 'memori user B tidak boleh terbaca user A');
 });
 
 console.log('\nLogin lewat link');
@@ -405,22 +413,22 @@ const pageContext = {
 await testAsync('ringkasan merender sidebar, kartu statistik, dan grafik', async () => {
   const html = ringkasanPage({
     ...pageContext,
-    stats: { rooms: 3, documents: 2, chunks: 9, keywords: 4, memories: 6, messages: 84 },
-    rooms: [{ channelId: '1400000000000000001', userId: USER, messageCount: 12, lastActiveAt: Date.now() }],
+    stats: { rooms: 3, documents: 2, chunks: 9, keywords: 4, messages: 84 },
+    rooms: [{ userId: USER, messageCount: 12, lastActiveAt: Date.now() }],
     documents: [{ id: 1, name: 'faq.md', chunkCount: 6, chars: 4200, createdAt: Date.now() }],
     series: await messagesPerDay('1569424777750257766', 7),
     ragEnabled: true,
     embedModel: null,
     model: 'openai/gpt-oss-120b',
-    counts: { dokumen: 2, keyword: 4, memori: 6 },
+    counts: { dokumen: 2, keyword: 4 },
   });
 
   assert.match(html, /class="sidebar"/);
   assert.match(html, /Kontrol panel|Control panel/);
-  assert.equal((html.match(/class="stat-value"/g) ?? []).length, 4);
+  assert.equal((html.match(/class="stat-value"/g) ?? []).length, 3, 'Room AI, Dokumen RAG, Keyword');
   assert.equal((html.match(/class="bar-col/g) ?? []).length, 7);
   assert.match(html, /openai\/gpt-oss-120b/);
-  assert.match(html, /Room AI terbaru/);
+  assert.match(html, /Sesi DM terbaru/);
 });
 test('halaman keyword meng-escape input user', () => {
   const html = keywordPage({
@@ -429,11 +437,6 @@ test('halaman keyword meng-escape input user', () => {
   });
   assert.ok(!html.includes('<script>alert(1)</script>'), 'tag mentah tidak boleh lolos');
   assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
-});
-test('empty state muncul kalau belum ada memori', () => {
-  const html = memoriPage({ ...pageContext, groups: [] });
-  assert.match(html, /Belum|belum mengingat|AI belum mengingat/);
-  assert.match(html, /class="empty"/);
 });
 
 console.log('\nTeks & rate limit');
@@ -708,71 +711,204 @@ test('format .doc lama tetap ditolak dengan saran konversi', () => {
   );
 });
 
-console.log('\nArsip transkrip');
+console.log('\nPrivasi: transkrip & memori tidak lewat dashboard');
 
-const TRANSCRIPT_ID = await insertTranscript({
-  guildId: 'g-tr',
-  channelId: 'chan-1',
-  channelName: 'room-ai-0001',
-  userId: USER,
-  userName: 'Bagas',
-  fileName: 'transkrip-bagas.html',
-  summary: 'Member menanyakan jam operasional server.',
-  messageCount: 12,
-  memoryCount: 2,
-  html: '<!doctype html><html><body><p>Halo</p></body></html>',
-  createdAt: 1_700_000_000_000,
+await testAsync('tabel transcripts sudah tidak ada di schema', async () => {
+  const { SCHEMA_SQLITE } = await import('../src/db/schema.js');
+  assert.ok(!/CREATE TABLE[^;]*transcripts/i.test(SCHEMA_SQLITE), 'schema tidak boleh punya tabel transcripts');
 });
 
-await testAsync('transkrip tersimpan & terbaca di daftar', async () => {
-  assert.equal(await countTranscripts('g-tr'), 1);
-  const [item] = await listTranscripts('g-tr');
-  assert.ok(item);
-  assert.equal(item.id, TRANSCRIPT_ID);
-  assert.equal(item.messageCount, 12);
-  assert.equal(item.userName, 'Bagas');
-  assert.match(item.summary ?? '', /jam operasional/);
-  assert.ok(item.sizeBytes > 20, 'ukuran file harus tercatat');
+await testAsync('repo tidak mengekspor fungsi transkrip/memori-dashboard', async () => {
+  const repo = await import('../src/db/repo.js');
+  for (const name of [
+    'insertTranscript',
+    'listTranscripts',
+    'getTranscript',
+    'deleteTranscript',
+    'countTranscripts',
+    'listMemoryOwners',
+    'listGuildMemories',
+  ]) {
+    assert.ok(!(name in repo), `${name} masih diekspor — dashboard bisa membaca data member`);
+  }
 });
 
-await testAsync('transkrip lengkap hanya bisa dibuka oleh server pemiliknya', async () => {
-  const record = await getTranscript('g-tr', TRANSCRIPT_ID);
-  assert.ok(record);
-  assert.match(record.html, /<!doctype html>/);
-  assert.equal(await getTranscript('g-lain', TRANSCRIPT_ID), null);
-});
-
-await testAsync('transkrip bisa dihapus', async () => {
-  assert.equal(await deleteTranscript('g-tr', TRANSCRIPT_ID), true);
-  assert.equal(await countTranscripts('g-tr'), 0);
-  assert.equal(await deleteTranscript('g-tr', TRANSCRIPT_ID), false);
-});
-
-test('halaman transkrip merender arsip + tombol unduh', () => {
-  const html = transkripPage({
-    guildId: 'g-tr',
-    guilds: [{ id: 'g-tr', name: 'Server Transkrip' }],
-    items: [
-      {
-        id: 7,
-        userId: USER,
-        userName: 'Bagas',
-        channelName: 'room-ai-0001',
-        fileName: 'transkrip-bagas.html',
-        summary: 'Member menanyakan jam operasional.',
-        messageCount: 12,
-        memoryCount: 2,
-        sizeBytes: 24_000,
-        createdAt: 1_700_000_000_000,
-      },
-    ],
-    status: { online: false, mode: 'standalone', uptimeSeconds: 90 },
+test('navigasi dashboard tidak punya menu Memori & Transkrip', async () => {
+  const { ringkasanPage } = await import('../src/web/ui/pages.js');
+  const html = ringkasanPage({
+    guildId: 'g-priv',
+    guilds: [{ id: 'g-priv', name: 'Server Privasi' }],
+    status: { online: false, mode: 'standalone', uptimeSeconds: 1 },
+    stats: { rooms: 0, documents: 0, chunks: 0, keywords: 0, messages: 0 },
+    rooms: [],
+    documents: [],
+    series: [],
+    ragEnabled: false,
+    embedModel: null,
+    model: 'test',
   });
-  assert.match(html, /Transkrip/);
-  assert.match(html, /Bagas/);
-  assert.match(html, /\/api\/transkrip\/7/);
-  assert.match(html, /Unduh/);
-  assert.match(html, /23 KB/);
+  assert.ok(!html.includes('href="/memori"'), 'menu Memori masih ada');
+  assert.ok(!html.includes('href="/transkrip"'), 'menu Transkrip masih ada');
+});
+
+test('halaman dashboard tidak menyebut channel arsip transkrip', async () => {
+  const { moderasiPage } = await import('../src/web/ui/pages.js');
+  const html = moderasiPage({
+    guildId: 'g-priv',
+    guilds: [{ id: 'g-priv', name: 'Server Privasi' }],
+    enabled: false,
+    words: [],
+    action: 'delete',
+    timeoutMinutes: 10,
+    fromEnv: true,
+    logs: [],
+    status: { online: false, mode: 'standalone', uptimeSeconds: 1 },
+  });
+  assert.ok(!html.includes('TRANSCRIPT_CHANNEL_ID'), 'nama env lama masih dipakai');
+  assert.ok(html.includes('MODLOG_CHANNEL_ID'), 'nama env log moderasi yang baru harus dipakai');
+});
+
+console.log('\nPrivasi: chat hanya lewat DM, tidak ada channel');
+
+test('DM menggantikan room: tidak ada channel/thread yang dibuat', async () => {
+  const source = await readFile(new URL('../src/features/dm.ts', import.meta.url), 'utf8');
+  assert.ok(source.length > 0, 'modul dm.ts harus ada');
+  assert.ok(!/channels\.create\(/.test(source), 'DM tidak boleh membuat channel');
+  assert.ok(!/threads\.create\(/.test(source), 'DM tidak boleh membuat thread');
+  assert.ok(!/permissionOverwrites/.test(source), 'DM tidak butuh permission channel');
+});
+
+test('rooms.ts sudah dihapus — tidak ada konsep room/channel lagi', async () => {
+  let exists = true;
+  try {
+    await readFile(new URL('../src/features/rooms.ts', import.meta.url), 'utf8');
+  } catch {
+    exists = false;
+  }
+  assert.equal(exists, false, 'rooms.ts harus sudah dihapus');
+});
+
+test('bot menjawab DM member (messageCreate merutekan DM)', async () => {
+  const source = await readFile(new URL('../src/events/messageCreate.ts', import.meta.url), 'utf8');
+  assert.match(source, /if \(!message\.inGuild\(\)\)/, 'harus mendeteksi DM');
+  assert.match(source, /handleDmMessage\(message\)/, 'DM harus diarahkan ke handler DM');
+  assert.ok(!/handleRoomMessage/.test(source), 'tidak boleh lagi memanggil handleRoomMessage');
+});
+
+test('chat.ts tidak lagi menangani pesan server (hanya DM)', async () => {
+  const source = await readFile(new URL('../src/features/chat.ts', import.meta.url), 'utf8');
+  assert.ok(!source.includes('handleRoomMessage'), 'handleRoomMessage harus dihapus');
+  assert.match(source, /export async function generateAnswer/, 'generateAnswer harus diekspor untuk dm.ts');
+});
+
+test('schema tidak punya tabel rooms, tapi punya dm_sessions', async () => {
+  const { SCHEMA_SQLITE } = await import('../src/db/schema.js');
+  assert.ok(!/CREATE TABLE[^;]*\brooms\b/i.test(SCHEMA_SQLITE), 'tabel rooms harus dihapus');
+  assert.match(SCHEMA_SQLITE, /CREATE TABLE IF NOT EXISTS dm_sessions/, 'tabel dm_sessions harus ada');
+});
+
+test('migrasi membersihkan riwayat pesan room lama', async () => {
+  const source = await readFile(new URL('../src/db/index.ts', import.meta.url), 'utf8');
+  assert.match(source, /DROP TABLE IF EXISTS rooms/, 'tabel rooms lama harus di-drop');
+  assert.match(source, /DELETE FROM messages WHERE channel_id NOT LIKE 'dm:%'/,
+    'riwayat pesan room lama harus dibersihkan');
+});
+
+test('dm_sessions menyimpan server konteks, bukan channel', async () => {
+  const sed = `SELECT * FROM dm_sessions WHERE user_id = ?`;
+  const { getDmSession, setDmSession, deleteDmSession } = await import('../src/db/repo.js');
+
+  await setDmSession('555000555000555000', '999000999000999000');
+  const session = await getDmSession('555000555000555000');
+  assert.equal(session?.guildId, '999000999000999000');
+  assert.equal((session as unknown as { channelId?: string }).channelId, undefined,
+    'sesi DM tidak boleh punya channelId');
+  assert.ok(sed.includes('user_id'));
+  await deleteDmSession('555000555000555000');
+});
+
+test('panel menyebut DM, bukan room/thread', async () => {
+  const { panelEmbed, panelRow } = await import('../src/features/ui.js');
+  const embed = panelEmbed('Zypher AI').toJSON();
+  const text = JSON.stringify(embed);
+  assert.match(text, /Chat via DM|DM/, 'panel harus menyebut DM');
+  assert.ok(!/Buat Room AI/.test(text), 'panel tidak boleh lagi menawarkan room');
+  assert.ok(!/private thread/i.test(text), 'panel tidak boleh menyebut private thread');
+
+  const row = panelRow().toJSON();
+  const ids = JSON.stringify(row);
+  assert.match(ids, /dm:start/, 'tombol harus memakai customId dm:start');
+  assert.ok(!ids.includes('room:create'), 'tombol room:create harus hilang');
+});
+
+test('log moderasi TIDAK menyimpan isi pesan member', async () => {
+  const { SCHEMA_SQLITE, SCHEMA_PG } = await import('../src/db/schema.js');
+  const modLogSqlite = /CREATE TABLE IF NOT EXISTS mod_logs \(([^)]*)\)/.exec(SCHEMA_SQLITE)?.[1] ?? '';
+  const modLogPg = /CREATE TABLE IF NOT EXISTS mod_logs \(([^)]*)\)/.exec(SCHEMA_PG)?.[1] ?? '';
+
+  assert.ok(modLogSqlite.length > 0, 'tabel mod_logs harus ada di schema SQLite');
+  assert.ok(!/\bcontent\b/.test(modLogSqlite), 'mod_logs SQLite tidak boleh punya kolom content');
+  assert.ok(!/\bcontent\b/.test(modLogPg), 'mod_logs PG tidak boleh punya kolom content');
+
+  const { addModerationLog } = await import('../src/db/repo.js');
+  const params = addModerationLog.length > 0 ? String(addModerationLog) : '';
+  assert.ok(!/content/.test(params), 'addModerationLog tidak boleh menerima content');
+});
+
+test('dashboard moderasi tidak punya kolom "Pesan"', async () => {
+  const { moderasiPage } = await import('../src/web/ui/pages.js');
+  const html = moderasiPage({
+    guildId: 'g-audit',
+    guilds: [{ id: 'g-audit', name: 'Server Audit' }],
+    enabled: true,
+    words: ['anjing'],
+    action: 'delete',
+    timeoutMinutes: 10,
+    fromEnv: false,
+    logs: [
+      { id: 1, userId: USER, userName: 'Bagas', channelId: 'c-1', matched: 'anjing', action: 'delete', createdAt: Date.now() },
+    ],
+    status: { online: false, mode: 'standalone', uptimeSeconds: 1 },
+  });
+  assert.ok(!html.includes('<th class="col-hide-sm">Pesan</th>'), 'kolom Pesan harus hilang dari tabel log');
+  assert.ok(html.includes('Pelanggar'), 'kolom Pelanggar tetap ada');
+  assert.ok(html.includes('anjing'), 'kata yang cocok tetap ditampilkan');
+});
+
+test('tidak ada endpoint yang membocorkan sesi DM ke dashboard', async () => {
+  const source = await readFile(new URL('../src/web/server.ts', import.meta.url), 'utf8');
+  assert.ok(!source.includes('/api/rooms'), 'endpoint /api/rooms harus dihapus');
+  assert.ok(!source.includes('api/memories'), 'endpoint memori harus tetap hilang');
+  assert.ok(!source.includes('api/transkrip'), 'endpoint transkrip harus tetap hilang');
+  assert.ok(!source.includes('api/memori'), 'endpoint memori harus tetap hilang');
+});
+
+test('halaman dashboard tidak menyajikan isi percakapan', async () => {
+  const source = await readFile(new URL('../src/web/ui/pages.ts', import.meta.url), 'utf8');
+  // Hanya nama member + jumlah pesan yang boleh tampil untuk sesi DM.
+  const dmTable = source.slice(source.indexOf('Sesi DM terbaru'), source.indexOf('const docsCard'));
+  assert.ok(!/content/i.test(dmTable), 'tabel sesi DM tidak boleh merender isi pesan');
+});
+
+test('admin tidak bisa membaca/menghapus memori member lain lewat Discord', async () => {
+  const { memoriSlashSource, konsolidasiSlashSource } = await (async () => ({
+    memoriSlashSource: await readFile(new URL('../src/commands/memori.ts', import.meta.url), 'utf8'),
+    konsolidasiSlashSource: await readFile(new URL('../src/commands/konsolidasi.ts', import.meta.url), 'utf8'),
+  }))();
+
+  // Tidak boleh ada opsi `user` untuk menunjuk member lain.
+  assert.ok(!memoriSlashSource.includes("addUserOption"), '/memori tidak boleh punya opsi user lain');
+  assert.ok(!konsolidasiSlashSource.includes('addUserOption'), '/konsolidasi tidak boleh punya opsi user lain');
+
+  // Target selalu diri sendiri.
+  assert.match(memoriSlashSource, /const target: User = interaction\.user/, '/memori harus memakai interaction.user');
+  assert.match(konsolidasiSlashSource, /const target: User = interaction\.user/, '/konsolidasi harus memakai interaction.user');
+});
+
+test('log moderasi ke Discord tidak memuat cuplikan isi pesan', async () => {
+  const source = await readFile(new URL('../src/features/moderation.ts', import.meta.url), 'utf8');
+  assert.ok(!source.includes('excerpt'), 'cuplikan pesan harus dihapus');
+  assert.ok(!/• \*\*Pesan:\*\*|• Pesan:/.test(source), 'baris "Pesan:" di log harus dihapus');
 });
 
 console.log('\nModerasi otomatis');
@@ -819,7 +955,6 @@ await testAsync('moderasi: log pelanggaran tercatat, terisolasi per server, bisa
     channelId: 'c-1',
     userId: USER,
     userName: 'Bagas',
-    content: 'dasar anjing',
     matched: 'anjing',
     action: 'delete',
   });
@@ -828,7 +963,6 @@ await testAsync('moderasi: log pelanggaran tercatat, terisolasi per server, bisa
     channelId: 'c-2',
     userId: '999',
     userName: 'Rina',
-    content: 'bangsat banget',
     matched: 'bangsat',
     action: 'warn',
   });
@@ -864,8 +998,7 @@ test('halaman moderasi merender pengaturan + log', () => {
         userId: USER,
         userName: 'Bagas',
         channelId: 'c-1',
-        content: 'dasar anjing',
-        matched: 'anjing',
+            matched: 'anjing',
         action: 'timeout',
         createdAt: 1_700_000_000_000,
       },

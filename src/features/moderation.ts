@@ -11,7 +11,7 @@ import { normalize } from '../lib/text.js';
  *   pernah mengaturnya, dipakai nilai dari `.env` sebagai cadangan.
  * - Staff (role `STAFF_ROLE_ID` atau izin Manage Messages) tidak terkena filter.
  * - Setiap tindakan dicatat ke tabel `mod_logs` dan dikirim ke channel log
- *   (`TRANSCRIPT_CHANNEL_ID`) bila tersedia.
+ *   (`MODLOG_CHANNEL_ID`) bila tersedia.
  */
 
 export interface EffectiveModeration {
@@ -103,6 +103,18 @@ export async function resolveModeration(guildId: string): Promise<EffectiveModer
   return value;
 }
 
+/**
+ * Channel yang ikut moderasi: channel teks biasa dan thread (room AI berupa
+ * private thread, jadi tanpa ini moderasi tidak jalan di room member).
+ */
+function isModeratableChannel(channel: {
+  type: ChannelType;
+  isThread?: () => boolean;
+}): boolean {
+  if (channel.type === ChannelType.GuildText) return true;
+  return typeof channel.isThread === 'function' && channel.isThread();
+}
+
 function isStaff(message: Message): boolean {
   const member = message.member;
   if (!member) return false;
@@ -123,7 +135,8 @@ const ACTION_LABEL: Record<ModerationAction, string> = {
 export async function moderateMessage(message: Message): Promise<boolean> {
   if (message.author.bot || message.system) return false;
   if (!message.inGuild()) return false;
-  if (message.channel.type !== ChannelType.GuildText) return false;
+  // Room AI sekarang berupa private thread; moderasi harus tetap jalan di sana.
+  if (!isModeratableChannel(message.channel)) return false;
   if (isStaff(message)) return false;
 
   const guildId = message.guildId;
@@ -183,8 +196,9 @@ async function notify(message: Message, content: string): Promise<void> {
   try {
     await message.reply({ content, allowedMentions: { repliedUser: false, parse: [] } });
   } catch {
-    if (message.channel.type !== ChannelType.GuildText) return;
-    await message.channel.send({ content, allowedMentions: { repliedUser: false, parse: [] } }).catch(() => undefined);
+    const channel = message.channel;
+    if (!isModeratableChannel(channel) || !('send' in channel)) return;
+    await channel.send({ content, allowedMentions: { repliedUser: false, parse: [] } }).catch(() => undefined);
   }
 }
 
@@ -202,7 +216,6 @@ async function logAction(
       channelId: message.channelId,
       userId: message.author.id,
       userName,
-      content,
       matched: detail.matched,
       action: detail.action,
     });
@@ -217,14 +230,13 @@ async function logAction(
     logger.error('Moderasi: gagal menyimpan log', errorMessage(error));
   }
 
-  const logChannelId = config.ids.transcriptChannel;
+  const logChannelId = config.ids.modLogChannel;
   if (!logChannelId) return;
 
   const channel = message.guild?.channels.cache.get(logChannelId);
   if (!channel || channel.type !== ChannelType.GuildText) return;
 
   const timeoutNote = detail.action === 'timeout' ? ` · timeout ${detail.timeoutMinutes} menit` : '';
-  const excerpt = content.length > 400 ? `${content.slice(0, 400)}…` : content;
 
   channel
     .send({
@@ -233,7 +245,6 @@ async function logAction(
         `• Pelanggar: <@${message.author.id}> (${userName})`,
         `• Channel: <#${message.channelId}>`,
         `• Kata: \`${detail.matched}\``,
-        `• Pesan: ${excerpt || '*(kosong)*'}`,
       ].join('\n'),
       allowedMentions: { parse: [] },
     })

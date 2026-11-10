@@ -54,6 +54,40 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
       // Kolom sudah ada (SQLite tidak punya IF NOT EXISTS untuk ALTER TABLE).
     }
   }
+
+  // Dashboard tidak lagi menyimpan transkrip percakapan. Tabel lama dihapus
+  // supaya isi percakapan member tidak tertinggal di database setelah upgrade.
+  // Transkrip sekarang hanya dikirim ke DM user (dan tidak diarsipkan).
+  try {
+    await driver.exec('DROP TABLE IF EXISTS transcripts');
+    await driver.exec('DROP INDEX IF EXISTS idx_transcripts_guild');
+  } catch {
+    // Tabel memang belum ada — tidak apa-apa.
+  }
+
+  // Log moderasi tidak lagi menyimpan isi pesan member — hanya kata yang cocok
+  // dan tindakan. Kolom `content` dihapus supaya cuplikan pesan lama tidak
+  // tertinggal dan bisa dibaca dari dashboard.
+  try {
+    if (driver.dialect === 'pg') {
+      await driver.exec('ALTER TABLE mod_logs DROP COLUMN IF EXISTS content');
+    } else {
+      await driver.exec('ALTER TABLE mod_logs DROP COLUMN content');
+    }
+  } catch {
+    // Kolom sudah tidak ada — tidak apa-apa.
+  }
+
+  // Room AI (channel/thread) sudah diganti percakapan DM. Tabel `rooms` tidak
+  // dipakai lagi, dan riwayat `messages` milik room lama ikut dibersihkan
+  // supaya percakapan member tidak tertinggal di database.
+  try {
+    await driver.exec("DELETE FROM messages WHERE channel_id NOT LIKE 'dm:%'");
+    await driver.exec('DROP TABLE IF EXISTS rooms');
+    await driver.exec('DROP INDEX IF EXISTS idx_rooms_user');
+  } catch {
+    // Tabel memang belum ada — tidak apa-apa.
+  }
 }
 
 async function initDriver(): Promise<Driver> {

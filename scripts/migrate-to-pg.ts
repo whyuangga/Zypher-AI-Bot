@@ -38,8 +38,8 @@ const TABLES: TablePlan[] = [
     identity: true,
   },
   {
-    name: 'rooms',
-    columns: ['channel_id', 'guild_id', 'user_id', 'created_at', 'last_active_at', 'message_count'],
+    name: 'dm_sessions',
+    columns: ['user_id', 'guild_id', 'created_at', 'last_active_at', 'message_count'],
   },
   {
     name: 'messages',
@@ -54,25 +54,6 @@ const TABLES: TablePlan[] = [
   {
     name: 'chunks',
     columns: ['id', 'document_id', 'guild_id', 'ordinal', 'content', 'embedding'],
-    identity: true,
-  },
-  {
-    name: 'transcripts',
-    columns: [
-      'id',
-      'guild_id',
-      'channel_id',
-      'channel_name',
-      'user_id',
-      'user_name',
-      'file_name',
-      'summary',
-      'message_count',
-      'memory_count',
-      'size_bytes',
-      'html',
-      'created_at',
-    ],
     identity: true,
   },
   { name: 'moderation', columns: ['guild_id', 'enabled', 'words', 'action', 'timeout_minutes', 'updated_at'] },

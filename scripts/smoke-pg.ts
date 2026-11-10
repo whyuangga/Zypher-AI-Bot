@@ -148,33 +148,36 @@ await test('keyword: tambah, duplikat, hapus', async () => {
   assert.equal((await repo.listKeywords(GUILD)).length, 0);
 });
 
-await test('room: upsert, riwayat berurutan, statistik', async () => {
-  await repo.createRoom(CHANNEL, GUILD, USER);
-  await repo.createRoom(CHANNEL, GUILD, USER); // upsert, tidak boleh error
+await test('sesi DM: upsert, riwayat berurutan, statistik', async () => {
+  const dmKey = `dm:${USER}`;
 
-  assert.equal((await repo.getRoomByChannel(CHANNEL))?.userId, USER);
-  assert.equal((await repo.getRoomByUser(GUILD, USER))?.channelId, CHANNEL);
+  await repo.setDmSession(USER, GUILD);
+  await repo.setDmSession(USER, GUILD); // upsert, tidak boleh error
 
-  await repo.appendMessage(CHANNEL, 'user', 'Halo');
-  await repo.appendMessage(CHANNEL, 'assistant', 'Hai!');
-  await repo.touchRoom(CHANNEL, 2);
+  assert.equal((await repo.getDmSession(USER))?.userId, USER);
+  assert.equal((await repo.getDmSession(USER))?.guildId, GUILD);
+  assert.equal((await repo.listDmSessions(GUILD)).length, 1);
 
-  const history = await repo.getHistory(CHANNEL, 2);
+  await repo.appendMessage(dmKey, 'user', 'Halo');
+  await repo.appendMessage(dmKey, 'assistant', 'Hai!');
+  await repo.touchDmSession(USER, 2);
+
+  const history = await repo.getHistory(dmKey, 2);
   assert.equal(history.length, 2);
   assert.equal(history[0]?.content, 'Halo');
   assert.equal(history[1]?.role, 'assistant');
-  assert.equal((await repo.getRoomByChannel(CHANNEL))?.messageCount, 2);
+  assert.equal((await repo.getDmSession(USER))?.messageCount, 2);
 
   assert.equal(await repo.countGuildMessages(GUILD), 2);
-  assert.equal(await repo.countGuildRows(GUILD, 'rooms'), 1);
+  assert.equal(await repo.countGuildRows(GUILD, 'dm_sessions'), 1);
 
   const series = await repo.messagesPerDay(GUILD, 7);
   assert.equal(series.length, 7);
   assert.equal(series[6]?.count, 2);
 
-  assert.equal(await repo.clearHistory(CHANNEL), 2);
-  await repo.deleteRoom(CHANNEL);
-  assert.equal(await repo.getRoomByChannel(CHANNEL), null);
+  assert.equal(await repo.clearHistory(dmKey), 2);
+  await repo.deleteDmSession(USER);
+  assert.equal(await repo.getDmSession(USER), null);
 });
 
 console.log('\nDokumen RAG');
@@ -208,37 +211,7 @@ await test('dokumen: insert, chunk, hitung, hapus', async () => {
   assert.equal((await repo.listDocuments(GUILD)).length, 0);
 });
 
-console.log('\nTranskrip & moderasi');
-
-await test('transkrip: simpan, daftar, unduh, hapus', async () => {
-  const id = await repo.insertTranscript({
-    guildId: GUILD,
-    channelId: CHANNEL,
-    channelName: 'room-ai-0001',
-    userId: USER,
-    userName: 'Bagas',
-    fileName: 'transkrip-bagas.html',
-    summary: 'Ringkasan.',
-    messageCount: 10,
-    memoryCount: 1,
-    html: '<!doctype html><html><body>Halo</body></html>',
-    createdAt: 1_700_000_000_000,
-  });
-
-  assert.ok(id > 0);
-  assert.equal(await repo.countTranscripts(GUILD), 1);
-
-  const [item] = await repo.listTranscripts(GUILD);
-  assert.equal(item?.id, id);
-  assert.equal(item?.createdAt, 1_700_000_000_000, 'BIGINT harus jadi number');
-
-  const full = await repo.getTranscript(GUILD, id);
-  assert.match(full?.html ?? '', /<!doctype html>/);
-  assert.equal(await repo.getTranscript('g-lain', id), null);
-
-  assert.equal(await repo.deleteTranscript(GUILD, id), true);
-  assert.equal(await repo.countTranscripts(GUILD), 0);
-});
+console.log('\nModerasi');
 
 await test('moderasi: pengaturan upsert + log', async () => {
   assert.equal(await repo.getModerationSettings(GUILD), null);
@@ -268,7 +241,6 @@ await test('moderasi: pengaturan upsert + log', async () => {
     channelId: CHANNEL,
     userId: USER,
     userName: 'Bagas',
-    content: 'dasar anjing',
     matched: 'anjing',
     action: 'warn',
   });
