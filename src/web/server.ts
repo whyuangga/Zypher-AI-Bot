@@ -10,6 +10,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { config } from '../config.js';
 import {
   countChunks,
+  countGuildMessages,
+  countGuildRows,
   countRows,
   listDocuments,
   listGuildIds,
@@ -118,7 +120,13 @@ function hasSession(request: IncomingMessage): boolean {
 }
 
 function resolveGuild(request: IncomingMessage, url: URL): string {
-  const fromQuery = url.searchParams.get('guild');
+  // Form header punya dua kolom: dropdown `guild` dan kotak ketik `guild_manual`.
+  // Yang diketik manual menang, supaya ID server yang belum terdaftar di database
+  // tetap bisa dibuka.
+  const manual = url.searchParams.get('guild_manual')?.trim();
+  if (manual) return manual;
+
+  const fromQuery = url.searchParams.get('guild')?.trim();
   if (fromQuery) return fromQuery;
 
   const fromCookie = parseCookies(request.headers.cookie)[GUILD_COOKIE];
@@ -227,14 +235,19 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       dashboardPage({
         guildId,
         guilds: listGuildIds(),
-        stats: {
-          rooms: countRows('rooms'),
-          documents: countRows('documents'),
-          chunks: countRows('chunks'),
-          keywords: guildId ? listKeywords(guildId).length : 0,
-          memories: countRows('memories'),
-          messages: countRows('messages'),
-        },
+        // Angka di dashboard harus mencerminkan server yang sedang dipilih.
+        // Dulu ini global, jadi user melihat "1 ROOM AI" sementara daftar room
+        // di bawahnya kosong — dua bagian halaman seolah saling bertentangan.
+        stats: guildId
+          ? {
+              rooms: countGuildRows(guildId, 'rooms'),
+              documents: countGuildRows(guildId, 'documents'),
+              chunks: countGuildRows(guildId, 'chunks'),
+              keywords: listKeywords(guildId).length,
+              memories: countGuildRows(guildId, 'memories'),
+              messages: countGuildMessages(guildId),
+            }
+          : { rooms: 0, documents: 0, chunks: 0, keywords: 0, memories: 0, messages: 0 },
         rooms: rooms.map((room) => ({
           channelId: room.channelId,
           userId: room.userId,

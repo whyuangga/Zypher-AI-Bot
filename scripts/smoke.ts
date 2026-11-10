@@ -19,6 +19,7 @@ const { addMemory, listMemories, deleteMemory, clearMemories, addKeyword, listKe
 const { createRoom, getRoomByChannel, getRoomByUser, appendMessage, getHistory, clearHistory, deleteRoom, touchRoom } =
   await import('../src/db/repo.js');
 const { setPersona, getGuildSettings } = await import('../src/db/repo.js');
+const { listGuildIds, countGuildRows, countGuildMessages } = await import('../src/db/repo.js');
 const { matchKeywords } = await import('../src/features/keywords.js');
 const { buildSystemPrompt } = await import('../src/features/prompt.js');
 const { buildTranscriptHtml, transcriptFileName } = await import('../src/lib/transcript.js');
@@ -215,6 +216,34 @@ test('meng-escape HTML berbahaya', () => {
 test('nama file transkrip aman', () => {
   const name = transcriptFileName('Bagas /../ Prasetyo', new Date('2026-11-09T10:30:00Z'));
   assert.match(name, /^transkrip-bagas-prasetyo-[\d-]+\.html$/);
+});
+
+console.log('\nDashboard & daftar server');
+test('server yang hanya punya data tetap muncul di daftar server', () => {
+  // Kasus nyata: room sudah ada, tapi tabel `guilds` belum pernah terisi.
+  // Dashboard dulu menampilkan "(belum ada server)" dan semua panel kosong.
+  const dataOnlyGuild = '444444444444444444';
+  addKeyword(dataOnlyGuild, 'jam buka', 'Setiap hari 08.00–22.00 WIB.', USER);
+  assert.ok(listGuildIds().includes(dataOnlyGuild), 'guild dengan data harus ikut terdaftar');
+});
+test('createRoom mendaftarkan server ke tabel guilds', () => {
+  const freshGuild = '555555555555555555';
+  assert.equal(getGuildSettings(freshGuild), null);
+  createRoom('666666666666666666', freshGuild, USER);
+  assert.ok(getGuildSettings(freshGuild), 'server harus punya baris guilds setelah room dibuat');
+});
+test('statistik dashboard dipisah per server', () => {
+  const guildA = '777777777777777777';
+  const guildB = '888888888888888888';
+  const channelA = '999999999999999991';
+
+  createRoom(channelA, guildA, USER);
+  appendMessage(channelA, 'user', 'Halo dari server A');
+
+  assert.equal(countGuildRows(guildA, 'rooms'), 1);
+  assert.equal(countGuildRows(guildB, 'rooms'), 0, 'server B tidak boleh ikut menghitung room A');
+  assert.equal(countGuildMessages(guildA), 1);
+  assert.equal(countGuildMessages(guildB), 0);
 });
 
 console.log('\nTeks & rate limit');
