@@ -76,7 +76,7 @@ Cocok untuk dokumen panjang atau saat bot sedang restart. Caranya ada di [dashbo
 
 ## Bagaimana AI memakainya
 
-Setiap pertanyaan di room AI:
+Setiap pertanyaan di chat DM:
 
 1. Bot mencari 5 potongan dokumen paling relevan (bisa diatur `RAG_TOP_K`).
 2. Potongan itu diselipkan ke system prompt sebagai **dokumen rujukan** — sumber kebenaran tertinggi.
@@ -115,7 +115,7 @@ Semua perintah di atas khusus **admin server** (izin Manage Server), kecuali `/d
 |---|---|
 | Satu topik per paragraf, pakai heading `##` | Satu paragraf raksasa berisi 10 topik |
 | Tulis kalimat lengkap: "Server aktif pukul 09.00–21.00 WIB" | Tabel lebar penuh angka tanpa konteks |
-| Sebut istilah yang dipakai member ("giveaway", "tiket", "room AI") | Singkatan internal yang tidak umum |
+| Sebut istilah yang dipakai member ("giveaway", "tiket", "chat AI") | Singkatan internal yang tidak umum |
 | Perbarui dengan upload ulang nama yang sama | Menambah file baru tiap revisi (jadi duplikat) |
 
 ---

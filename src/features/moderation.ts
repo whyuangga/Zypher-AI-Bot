@@ -216,7 +216,6 @@ async function logAction(
       channelId: message.channelId,
       userId: message.author.id,
       userName,
-      content,
       matched: detail.matched,
       action: detail.action,
     });
@@ -238,7 +237,6 @@ async function logAction(
   if (!channel || channel.type !== ChannelType.GuildText) return;
 
   const timeoutNote = detail.action === 'timeout' ? ` · timeout ${detail.timeoutMinutes} menit` : '';
-  const excerpt = content.length > 400 ? `${content.slice(0, 400)}…` : content;
 
   channel
     .send({
@@ -247,7 +245,6 @@ async function logAction(
         `• Pelanggar: <@${message.author.id}> (${userName})`,
         `• Channel: <#${message.channelId}>`,
         `• Kata: \`${detail.matched}\``,
-        `• Pesan: ${excerpt || '*(kosong)*'}`,
       ].join('\n'),
       allowedMentions: { parse: [] },
     })

@@ -1,6 +1,6 @@
 # 🖼️🎙️ Vision (gambar) & voice (suara)
 
-Dua fitur yang membuat room AI tidak cuma menerima teks:
+Dua fitur yang membuat chat AI tidak cuma menerima teks:
 
 1. **Vision** — member mengirim gambar, AI membacanya (butuh model multimodal).
 2. **Voice** — member mengirim voice note, AI transkrip (STT) lalu bisa membalas dengan suara (TTS).
@@ -19,7 +19,7 @@ VISION_MAX_MB=5
 
 Alur:
 
-1. Member kirim gambar (JPG/PNG/WebP/GIF) di room AI — boleh disertai teks pertanyaan.
+1. Member kirim gambar (JPG/PNG/WebP/GIF) di DM — boleh disertai teks pertanyaan.
 2. Bot mengunduh maksimal **3 gambar** per pesan, dicek ukurannya (`VISION_MAX_MB`).
 3. Gambar diubah jadi **data URI base64** lalu dimasukkan ke pesan dengan format
    `image_url` (protokol OpenAI-compatible) — tidak perlu upload ke storage mana pun.
@@ -74,7 +74,7 @@ Endpoint yang dipakai (OpenAI-compatible, sama dengan provider chat):
 Alur voice note:
 
 1. Member kirim voice note (`voice-message.ogg`) atau file audio (`.mp3`, `.m4a`, `.wav`,
-   `.webm`, `.flac`) di room AI.
+   `.webm`, `.flac`) di DM.
 2. Bot mengunduh audio (maks `VOICE_MAX_MB`), lalu minta transkrip ke provider.
 3. Transkrip dipakai sebagai pertanyaan → AI menjawab dengan teks seperti biasa.
 4. Kalau `TTS_ENABLED=true`, bot mengirim **tambahan** pesan berisi file audio jawaban
@@ -84,7 +84,7 @@ Alur voice note:
 Kalau transkrip gagal (kuota habis, format ditolak, file rusak), member melihat alasan
 singkatnya dan percakapan tetap bisa lanjut dengan teks.
 
-### Suara di room AI (TTS otomatis)
+### Suara otomatis (TTS)
 
 Bot bisa membalas jawaban AI di room dengan suara — tanpa harus dikirim voice note dulu.
 

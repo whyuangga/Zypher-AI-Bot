@@ -65,6 +65,19 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
     // Tabel memang belum ada — tidak apa-apa.
   }
 
+  // Log moderasi tidak lagi menyimpan isi pesan member — hanya kata yang cocok
+  // dan tindakan. Kolom `content` dihapus supaya cuplikan pesan lama tidak
+  // tertinggal dan bisa dibaca dari dashboard.
+  try {
+    if (driver.dialect === 'pg') {
+      await driver.exec('ALTER TABLE mod_logs DROP COLUMN IF EXISTS content');
+    } else {
+      await driver.exec('ALTER TABLE mod_logs DROP COLUMN content');
+    }
+  } catch {
+    // Kolom sudah tidak ada — tidak apa-apa.
+  }
+
   // Room AI (channel/thread) sudah diganti percakapan DM. Tabel `rooms` tidak
   // dipakai lagi, dan riwayat `messages` milik room lama ikut dibersihkan
   // supaya percakapan member tidak tertinggal di database.

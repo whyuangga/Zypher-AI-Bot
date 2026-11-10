@@ -33,7 +33,7 @@ Tidak ada yang perlu diubah di kode — cukup salin connection string.
 
 ## 2. Pindahkan data dari SQLite
 
-Sudah punya data di `data/zypher.db` dan tidak mau kehilangan memori/dokumen/transkrip?
+Sudah punya data di `data/zypher.db` dan tidak mau kehilangan memori/dokumen?
 
 ```bash
 DATABASE_PATH=./data/zypher.db \
@@ -80,7 +80,7 @@ manager.on('shardCreate', (shard) => console.log(`Shard ${shard.id} siap`));
 await manager.spawn();
 ```
 
-Dengan Postgres, semua shard menulis ke database yang sama, jadi memori/dokumen/transkrip
+Dengan Postgres, semua shard menulis ke database yang sama, jadi memori/dokumen
 konsisten di semua shard. Tidak ada env tambahan yang perlu diisi.
 
 ### b. Beberapa aplikasi bot + `SHARD_INDEX` / `SHARD_COUNT`
@@ -128,7 +128,7 @@ npm run smoke:pg   # 12 test, jalur Postgres lewat pg-mem (in-memory)
 ```
 
 `smoke:pg` membuat database Postgres palsu di memori, menjalankan skema asli, lalu menguji
-repo yang sama (memori, keyword, room, RAG, transkrip, moderasi). Jadi perubahan SQL yang
+repo yang sama (memori, keyword, sesi DM, RAG, moderasi). Jadi perubahan SQL yang
 tidak kompatibel akan ketahuan tanpa perlu menyewa database.
 
 ---

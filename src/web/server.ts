@@ -656,11 +656,6 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
 
-  if (path === '/api/rooms' && method === 'GET') {
-    sendJson(response, 200, { sessions: guildId ? await listDmSessions(guildId) : [] });
-    return;
-  }
-
   if (path === '/api/keyword' && method === 'POST') {
     if (!guildId) {
       sendJson(response, 400, { error: 'Server belum dipilih.' });

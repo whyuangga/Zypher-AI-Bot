@@ -98,7 +98,6 @@ CREATE TABLE IF NOT EXISTS mod_logs (
   channel_id TEXT NOT NULL,
   user_id    TEXT NOT NULL,
   user_name  TEXT NOT NULL,
-  content    TEXT NOT NULL,
   matched    TEXT NOT NULL,
   action     TEXT NOT NULL,
   created_at INTEGER NOT NULL
@@ -215,7 +214,6 @@ CREATE TABLE IF NOT EXISTS mod_logs (
   channel_id TEXT NOT NULL,
   user_id    TEXT NOT NULL,
   user_name  TEXT NOT NULL,
-  content    TEXT NOT NULL,
   matched    TEXT NOT NULL,
   action     TEXT NOT NULL,
   created_at BIGINT NOT NULL

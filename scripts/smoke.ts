@@ -841,6 +841,76 @@ test('panel menyebut DM, bukan room/thread', async () => {
   assert.ok(!ids.includes('room:create'), 'tombol room:create harus hilang');
 });
 
+test('log moderasi TIDAK menyimpan isi pesan member', async () => {
+  const { SCHEMA_SQLITE, SCHEMA_PG } = await import('../src/db/schema.js');
+  const modLogSqlite = /CREATE TABLE IF NOT EXISTS mod_logs \(([^)]*)\)/.exec(SCHEMA_SQLITE)?.[1] ?? '';
+  const modLogPg = /CREATE TABLE IF NOT EXISTS mod_logs \(([^)]*)\)/.exec(SCHEMA_PG)?.[1] ?? '';
+
+  assert.ok(modLogSqlite.length > 0, 'tabel mod_logs harus ada di schema SQLite');
+  assert.ok(!/\bcontent\b/.test(modLogSqlite), 'mod_logs SQLite tidak boleh punya kolom content');
+  assert.ok(!/\bcontent\b/.test(modLogPg), 'mod_logs PG tidak boleh punya kolom content');
+
+  const { addModerationLog } = await import('../src/db/repo.js');
+  const params = addModerationLog.length > 0 ? String(addModerationLog) : '';
+  assert.ok(!/content/.test(params), 'addModerationLog tidak boleh menerima content');
+});
+
+test('dashboard moderasi tidak punya kolom "Pesan"', async () => {
+  const { moderasiPage } = await import('../src/web/ui/pages.js');
+  const html = moderasiPage({
+    guildId: 'g-audit',
+    guilds: [{ id: 'g-audit', name: 'Server Audit' }],
+    enabled: true,
+    words: ['anjing'],
+    action: 'delete',
+    timeoutMinutes: 10,
+    fromEnv: false,
+    logs: [
+      { id: 1, userId: USER, userName: 'Bagas', channelId: 'c-1', matched: 'anjing', action: 'delete', createdAt: Date.now() },
+    ],
+    status: { online: false, mode: 'standalone', uptimeSeconds: 1 },
+  });
+  assert.ok(!html.includes('<th class="col-hide-sm">Pesan</th>'), 'kolom Pesan harus hilang dari tabel log');
+  assert.ok(html.includes('Pelanggar'), 'kolom Pelanggar tetap ada');
+  assert.ok(html.includes('anjing'), 'kata yang cocok tetap ditampilkan');
+});
+
+test('tidak ada endpoint yang membocorkan sesi DM ke dashboard', async () => {
+  const source = await readFile(new URL('../src/web/server.ts', import.meta.url), 'utf8');
+  assert.ok(!source.includes('/api/rooms'), 'endpoint /api/rooms harus dihapus');
+  assert.ok(!source.includes('api/memories'), 'endpoint memori harus tetap hilang');
+  assert.ok(!source.includes('api/transkrip'), 'endpoint transkrip harus tetap hilang');
+  assert.ok(!source.includes('api/memori'), 'endpoint memori harus tetap hilang');
+});
+
+test('halaman dashboard tidak menyajikan isi percakapan', async () => {
+  const source = await readFile(new URL('../src/web/ui/pages.ts', import.meta.url), 'utf8');
+  // Hanya nama member + jumlah pesan yang boleh tampil untuk sesi DM.
+  const dmTable = source.slice(source.indexOf('Sesi DM terbaru'), source.indexOf('const docsCard'));
+  assert.ok(!/content/i.test(dmTable), 'tabel sesi DM tidak boleh merender isi pesan');
+});
+
+test('admin tidak bisa membaca/menghapus memori member lain lewat Discord', async () => {
+  const { memoriSlashSource, konsolidasiSlashSource } = await (async () => ({
+    memoriSlashSource: await readFile(new URL('../src/commands/memori.ts', import.meta.url), 'utf8'),
+    konsolidasiSlashSource: await readFile(new URL('../src/commands/konsolidasi.ts', import.meta.url), 'utf8'),
+  }))();
+
+  // Tidak boleh ada opsi `user` untuk menunjuk member lain.
+  assert.ok(!memoriSlashSource.includes("addUserOption"), '/memori tidak boleh punya opsi user lain');
+  assert.ok(!konsolidasiSlashSource.includes('addUserOption'), '/konsolidasi tidak boleh punya opsi user lain');
+
+  // Target selalu diri sendiri.
+  assert.match(memoriSlashSource, /const target: User = interaction\.user/, '/memori harus memakai interaction.user');
+  assert.match(konsolidasiSlashSource, /const target: User = interaction\.user/, '/konsolidasi harus memakai interaction.user');
+});
+
+test('log moderasi ke Discord tidak memuat cuplikan isi pesan', async () => {
+  const source = await readFile(new URL('../src/features/moderation.ts', import.meta.url), 'utf8');
+  assert.ok(!source.includes('excerpt'), 'cuplikan pesan harus dihapus');
+  assert.ok(!/• \*\*Pesan:\*\*|• Pesan:/.test(source), 'baris "Pesan:" di log harus dihapus');
+});
+
 console.log('\nModerasi otomatis');
 test('moderasi: mencocokkan kata walau beda huruf besar/kecil & tanda baca', () => {
   assert.deepEqual(findBannedWords('Dasar ANJING banget', ['anjing']), ['anjing']);
@@ -885,7 +955,6 @@ await testAsync('moderasi: log pelanggaran tercatat, terisolasi per server, bisa
     channelId: 'c-1',
     userId: USER,
     userName: 'Bagas',
-    content: 'dasar anjing',
     matched: 'anjing',
     action: 'delete',
   });
@@ -894,7 +963,6 @@ await testAsync('moderasi: log pelanggaran tercatat, terisolasi per server, bisa
     channelId: 'c-2',
     userId: '999',
     userName: 'Rina',
-    content: 'bangsat banget',
     matched: 'bangsat',
     action: 'warn',
   });
@@ -930,8 +998,7 @@ test('halaman moderasi merender pengaturan + log', () => {
         userId: USER,
         userName: 'Bagas',
         channelId: 'c-1',
-        content: 'dasar anjing',
-        matched: 'anjing',
+            matched: 'anjing',
         action: 'timeout',
         createdAt: 1_700_000_000_000,
       },

@@ -241,7 +241,6 @@ await test('moderasi: pengaturan upsert + log', async () => {
     channelId: CHANNEL,
     userId: USER,
     userName: 'Bagas',
-    content: 'dasar anjing',
     matched: 'anjing',
     action: 'warn',
   });

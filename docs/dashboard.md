@@ -194,7 +194,10 @@ Demi privasi member, dashboard **tidak** menyimpan dan **tidak** menampilkan:
   jalur cadangan apa pun.
 - **Memori member** — tidak ada halaman `/memori`, tidak ada API baca/hapus memori, dan tidak ada
   kartu statistik memori di Ringkasan. Memori tetap berfungsi penuh di Discord (`/ingat`,
-  `/lupakan`, `/memori`, `/konsolidasi`) dan tetap dipakai AI untuk menjawab.
+  `/lupakan`, `/memori`, `/konsolidasi`) dan tetap dipakai AI untuk menjawab. Perintah `/memori`
+  dan `/konsolidasi` **hanya untuk diri sendiri** — admin pun tidak bisa membaca memori member lain.
+- **Isi pesan di log moderasi** — tabel `mod_logs` hanya menyimpan **kata yang cocok** dan tindakan,
+  bukan kalimat member. Cuplikan pesan tidak dikirim ke dashboard maupun ke channel log Discord.
 
 Admin server tidak bisa membaca isi percakapan atau fakta pribadi member lewat dashboard.
 Database dari versi lama akan otomatis **menghapus tabel `transcripts` dan `rooms`** saat bot
@@ -240,8 +243,8 @@ atas `.env` karena tersimpan per server. Halaman ini berisi:
 - **Filter kata**: status aktif/nonaktif, daftar kata (koma atau baris baru), tindakan
   (`delete`/`warn`/`timeout`), durasi timeout 1–10080 menit.
 - **Ringkasan**: jumlah kata terdaftar, tindakan aktif, jumlah log.
-- **Log pelanggaran**: pelaku, kata yang cocok, cuplikan pesan, tindakan, waktu —
-  bisa dihapus satu per satu atau dibersihkan sekaligus.
+- **Log pelanggaran**: pelaku, kata yang cocok, tindakan, waktu — bisa dihapus satu per satu
+  atau dibersihkan sekaligus. **Isi pesan member tidak disimpan dan tidak ditampilkan.**
 
 | Endpoint | Fungsi |
 |---|---|

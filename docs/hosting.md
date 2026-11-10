@@ -356,7 +356,7 @@ pg_dump "$DATABASE_URL" > zypher-$(date +%F).sql
 - [ ] `npm run doctor` di server: semua provider di rantai menjawab ✅
 - [ ] Log menunjukkan `🤖 Login sebagai <bot> (N server)`
 - [ ] Slash command muncul di Discord (bisa butuh beberapa menit; restart bot kalau lama)
-- [ ] `/panel` → klik **Buat Room AI** → channel privat muncul
+- [ ] `/panel` → klik **Chat via DM** → bot mengirim DM (tidak ada channel dibuat)
 - [ ] Tanya sesuatu, AI menjawab (streaming terlihat)
 - [ ] `/dokumen tambah file:faq.txt` → `/dokumen cari pertanyaan:...` mengembalikan potongan
 - [ ] (Kalau dashboard aktif) `curl https://domain-kamu/healthz` → `{"ok":true,...}`

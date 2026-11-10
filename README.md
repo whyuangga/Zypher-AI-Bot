@@ -26,6 +26,35 @@ Chat bebas → AI menjawab, mengingat fakta, memakai keyword admin
 
 ---
 
+## 🔒 Privasi member
+
+Bot ini dirancang supaya **admin server tidak bisa membaca percakapan atau fakta pribadi member.**
+
+| Data | Siapa yang bisa baca |
+|---|---|
+| Isi percakapan | Hanya member + bot (DM) |
+| Memori member | Hanya member itu sendiri |
+| Transkrip | Hanya member (dikirim ke DM saat `/akhiri`) |
+| Cuplikan pesan di log moderasi | **Tidak disimpan** — hanya kata yang cocok + tindakan |
+
+Yang **tetap** terlihat admin di dashboard: jumlah sesi DM, jumlah pesan, jumlah dokumen, keyword,
+dan daftar pelanggaran moderasi (nama pelanggar + kata + tindakan).
+
+Yang **tidak pernah** ditampilkan: isi percakapan, isi memori, isi transkrip.
+
+### Kenapa bukan channel/thread?
+
+| Media | Siapa yang bisa baca |
+|---|---|
+| Channel privat | Member, admin, **pemilik server**, role `Administrator` |
+| Private thread | Member, **`Manage Threads`**, **pemilik server**, `Administrator` |
+| **DM** | **Hanya member dan bot** |
+
+Channel dan thread selalu bisa dibaca pemilik server dan pemegang `Administrator` — itu batas
+platform Discord yang tidak bisa dilewati bot. Karena itu fitur room/thread dihapus dan diganti DM.
+
+---
+
 ## ✨ Fitur
 
 | Fitur | Keterangan |
@@ -178,7 +207,6 @@ Klik **Chat via DM** → bot mengirim DM ke kamu → mulai ngobrol di DM.
 | `AUTO_MEMORY` | `true` | Simpan memori otomatis lewat tool calling |
 | `RATE_LIMIT_PER_MINUTE` | `12` | Batas request AI per user/menit |
 | `MAX_INPUT_CHARS` | `2000` | Panjang pesan user yang diproses |
-| `AI_CATEGORY_ID` | kosong | Kategori tempat channel induk `#ai-rooms` dibuat (kosong = bot buat "AI Lounge") |
 | `MODLOG_CHANNEL_ID` | kosong | Channel log moderasi (opsional). Transkrip tidak diarsipkan ke sini. |
 | `STAFF_ROLE_ID` | kosong | Role staff yang boleh melihat/menutup room member |
 | `ADMIN_ONLY_ROOMS` | `false` | `true` = hanya admin yang bisa membuat room |
@@ -236,8 +264,8 @@ Kalau model tidak mendukung *tool calling*, bot otomatis lanjut tanpa fitur memo
 | `/bantuan` | Semua | Panduan singkat (ephemeral) |
 | `/ucap teks:` | Semua | Ubah teks jadi pesan suara (butuh `VOICE_ENABLED` + `TTS_ENABLED`) |
 | `/ingat fakta:` | Semua | Simpan memori manual tentang diri sendiri |
-| `/memori [user]` | Semua / admin | Lihat daftar memori (dengan id) — admin bisa lihat memori member lain |
-| `/lupakan id:` / `semua:true` | Semua | Hapus satu / semua memori |
+| `/memori` | Semua | Lihat daftar memori **milik sendiri** (dengan id) |
+| `/lupakan id:` / `semua:true` | Semua | Hapus satu / semua memori sendiri |
 | `/server [nama]` | Semua | Pilih server konteks untuk chat DM (persona, dokumen, memori) |
 | `/akhiri` | Semua | Tutup sesi DM → transkrip HTML dikirim ke DM → riwayat dihapus |
 | `/reset` | Semua | Hapus riwayat konteks DM, memori tetap |
@@ -460,7 +488,7 @@ docs/hosting.md              # hosting bot gratis 24/7 + backup
 
 - [x] Streaming jawaban (edit pesan bertahap)
 - [x] RAG dokumen server (`.txt`/`.md`/`.csv`/`.json`, pencarian hybrid)
-- [x] Web dashboard (statistik, grafik aktivitas, kelola dokumen/keyword/memori/persona, uji pencarian)
+- [x] Web dashboard (statistik, grafik aktivitas, kelola dokumen/keyword/persona, uji pencarian)
 - [x] Dukungan PDF/DOCX (ekstraksi teks via `unpdf` + `fflate`, tanpa dependency native)
 - [x] Riwayat transkrip dari dashboard (arsip di SQLite, unduh & hapus dari web)
 - [x] Moderasi otomatis + logging (filter kata terlarang, halaman `/moderasi`, audit log)

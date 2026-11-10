@@ -701,7 +701,6 @@ export interface ModerationLog {
   channelId: string;
   userId: string;
   userName: string;
-  content: string;
   matched: string;
   action: ModerationAction;
   createdAt: number;
@@ -760,28 +759,25 @@ export async function setModerationSettings(input: {
   );
 }
 
+/**
+ * Catat satu pelanggaran moderasi.
+ *
+ * **Isi pesan sengaja TIDAK disimpan.** Hanya kata yang cocok dan tindakan yang
+ * dicatat, supaya dashboard moderasi tidak bisa dipakai membaca pesan member.
+ * Cuplikan pesan hanya dikirim ke channel log Discord (`MODLOG_CHANNEL_ID`).
+ */
 export async function addModerationLog(input: {
   guildId: string;
   channelId: string;
   userId: string;
   userName: string;
-  content: string;
   matched: string;
   action: ModerationAction;
 }): Promise<number> {
   return insert(
-    `INSERT INTO mod_logs (guild_id, channel_id, user_id, user_name, content, matched, action, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      input.guildId,
-      input.channelId,
-      input.userId,
-      input.userName,
-      input.content.slice(0, 500),
-      input.matched,
-      input.action,
-      Date.now(),
-    ],
+    `INSERT INTO mod_logs (guild_id, channel_id, user_id, user_name, matched, action, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [input.guildId, input.channelId, input.userId, input.userName, input.matched, input.action, Date.now()],
   );
 }
 
@@ -792,7 +788,6 @@ export async function listModerationLogs(guildId: string, limit = 50): Promise<M
     channel_id: string;
     user_id: string;
     user_name: string;
-    content: string;
     matched: string;
     action: string;
     created_at: number;
@@ -804,7 +799,6 @@ export async function listModerationLogs(guildId: string, limit = 50): Promise<M
     channelId: row.channel_id,
     userId: row.user_id,
     userName: row.user_name,
-    content: row.content,
     matched: row.matched,
     action: (row.action as ModerationAction) ?? 'delete',
     createdAt: Number(row.created_at),

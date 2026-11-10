@@ -921,7 +921,6 @@ export interface ModerationLogItem {
   userId: string;
   userName: string;
   channelId: string;
-  content: string;
   matched: string;
   action: string;
   createdAt: number;
@@ -1011,7 +1010,6 @@ export function moderasiPage(options: ModerasiOptions): string {
     </div>
   </td>
   <td data-label="Kata"><span class="badge danger"><span class="dot"></span>${esc(log.matched)}</span></td>
-  <td class="col-hide-sm" data-label="Pesan"><div class="list-text" style="margin-top:0;max-width:360px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${esc(log.content || '—')}</div></td>
   <td class="col-hide-sm" data-label="Tindakan"><span class="cell-sub">${esc(ACTION_TEXT[log.action] ?? log.action)}</span></td>
   <td class="cell-date"><span class="cell-sub"><span class="date-long">${esc(formatDate(log.createdAt))}</span><span class="date-short">${esc(
     new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', timeZone: 'Asia/Jakarta' }).format(new Date(log.createdAt)),
@@ -1033,7 +1031,7 @@ export function moderasiPage(options: ModerasiOptions): string {
         : undefined,
     body: logRows
       ? `<div class="table-wrap"><table class="table-stack table-mod">
-  <thead><tr><th>Pelanggar</th><th>Kata</th><th class="col-hide-sm">Pesan</th><th class="col-hide-sm">Tindakan</th><th>Waktu</th><th></th></tr></thead>
+  <thead><tr><th>Pelanggar</th><th>Kata</th><th class="col-hide-sm">Tindakan</th><th>Waktu</th><th></th></tr></thead>
   <tbody>${logRows}</tbody>
 </table></div>`
       : emptyState({
