@@ -133,13 +133,25 @@ berarti langkah 5 belum dijalankan atau `npm install` gagal karena RAM — coba 
 
 ### Dashboard di Wispbyte
 
-Panel bot biasanya tidak meneruskan port HTTP ke internet. Dua pilihan:
+Kalau panelmu memberi port publik, isi environment variable ini:
 
-1. **Biarkan mati** — kosongkan `DASHBOARD_TOKEN`. Semua fitur bot tetap jalan.
-2. **Coba port publik** kalau panelmu menampilkan alokasi port: isi `DASHBOARD_TOKEN`,
-   `DASHBOARD_HOST=0.0.0.0`, `DASHBOARD_PORT` sesuai port yang diberikan panel.
+| Variabel | Nilai |
+|---|---|
+| `DASHBOARD_TOKEN` | token acak, mis. hasil `openssl rand -hex 16` |
+| `WEB_HOST` | `0.0.0.0` (nama dari panel) |
+| `WEB_PORT` | port dari panel, **atau** `DASHBOARD_PORT=<port>` |
 
-Kelola dokumen tetap bisa lewat `/dokumen tambah` di Discord, jadi dashboard bukan keharusan.
+Bot menerima `DASHBOARD_PORT` → `WEB_PORT` → `PORT` → `SERVER_PORT` (prioritas kiri ke kanan), dan
+**nilai `0` dianggap belum diisi** — jadi `WEB_PORT=0` tidak membuat bot memilih port acak; ia jatuh ke
+3000. Setelah start, log menunjukkan port yang benar-benar dipakai:
+
+```
+INFO  🌐 Dashboard: http://localhost:25566 (login pakai DASHBOARD_TOKEN)
+INFO     Port diambil dari WEB_PORT=25566
+```
+
+Kalau panel **tidak** meneruskan port HTTP, cukup kosongkan `DASHBOARD_TOKEN` — semua fitur bot tetap
+jalan penuh dan dokumen tetap bisa dikelola lewat `/dokumen tambah` di Discord.
 
 ---
 

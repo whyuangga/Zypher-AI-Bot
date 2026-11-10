@@ -159,7 +159,7 @@ Klik **Buat Room AI** → channel privat muncul → mulai ngobrol.
 | `RAG_MAX_CHARS` | `200000` | Batas ukuran satu dokumen |
 | `EMBED_MODEL`, `EMBED_BASE_URL`, `EMBED_API_KEY` | kosong | Embeddings opsional untuk pencarian semantik (lihat [docs/rag.md](docs/rag.md)) |
 | `DASHBOARD_TOKEN` | kosong | Token login dashboard web. **Kosong = dashboard mati** |
-| `DASHBOARD_PORT` | `3000` | Port dashboard |
+| `DASHBOARD_PORT` | `3000` | Port dashboard. Alias dari panel: `WEB_PORT`, `PORT`, `SERVER_PORT` (nilai `0` = belum diisi) |
 | `DATABASE_PATH` | `./data/zypher.db` | Lokasi file SQLite |
 | `AUTO_MEMORY` | `true` | Simpan memori otomatis lewat tool calling |
 | `RATE_LIMIT_PER_MINUTE` | `12` | Batas request AI per user/menit |

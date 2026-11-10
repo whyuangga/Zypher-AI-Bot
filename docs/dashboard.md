@@ -52,6 +52,35 @@ Mode ini hanya menyalakan dashboard (bot tidak login ke Discord). Berguna untuk:
 Kalau `DASHBOARD_TOKEN` belum diisi, mode ini memakai token contoh `preview-token-1234` dan
 menampilkannya di log. **Jangan pakai token contoh itu di server publik.**
 
+### Kalau panel hosting memberi nama variabel sendiri
+
+Banyak panel (Wispbyte, Railway, Render) menyuntikkan `WEB_PORT`, `WEB_HOST`, atau `PORT`.
+Bot menerima semuanya — tidak perlu rename:
+
+| Prioritas | Variabel port | Variabel host |
+|---|---|---|
+| 1 | `DASHBOARD_PORT` | `DASHBOARD_HOST` |
+| 2 | `WEB_PORT` | `WEB_HOST` |
+| 3 | `PORT` | — |
+| 4 | `SERVER_PORT` | — |
+| default | `3000` | `0.0.0.0` |
+
+**Nilai `0` atau kosong dianggap "belum diisi"** (Wispbyte mengirim `WEB_PORT=0` sebagai default),
+jadi bot otomatis memakai 3000 — bukan memilih port acak.
+
+Di log kamu bisa memastikan port mana yang dipakai:
+
+```
+INFO  🌐 Dashboard: http://localhost:25566 (login pakai DASHBOARD_TOKEN)
+INFO     Port diambil dari WEB_PORT=25566
+```
+
+Kalau panel menampilkan port tertentu (mis. `25566` di tab Startup/Network), tulis di
+`DASHBOARD_PORT=25566` supaya bisa diakses dari luar container.
+
+> **Catatan:** variabel dari panel **mengalahkan** isi `.env`, karena `dotenv` tidak menimpa
+> variabel yang sudah ada. Jadi aman mengisi keduanya.
+
 ---
 
 ## Pilih server

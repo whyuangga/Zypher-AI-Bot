@@ -31,6 +31,28 @@ const numberish = (fallback: number, min: number, max: number) =>
       return Math.min(max, Math.max(min, parsed));
     });
 
+/**
+ * Port dari env. `0` atau kosong dianggap "belum diisi", karena beberapa panel
+ * hosting (mis. Wispbyte) mengirim `WEB_PORT=0` sebagai nilai default.
+ */
+const portish = z
+  .string()
+  .optional()
+  .transform((value, ctx) => {
+    if (value === undefined || value.trim() === '') return undefined;
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `port tidak valid: "${value}"` });
+      return z.NEVER;
+    }
+    return parsed === 0 ? undefined : parsed;
+  });
+
+const optionalHost = z
+  .string()
+  .optional()
+  .transform((value) => (value && value.trim() !== '' ? value.trim() : undefined));
+
 const optionalId = z
   .string()
   .optional()
@@ -80,8 +102,13 @@ const schema = z.object({
   // ---------- Web dashboard ----------
   // Kosong = dashboard tidak dijalankan.
   DASHBOARD_TOKEN: optionalToken,
-  DASHBOARD_PORT: numberish(3000, 1, 65535),
-  DASHBOARD_HOST: z.string().default('0.0.0.0'),
+  DASHBOARD_PORT: portish,
+  DASHBOARD_HOST: optionalHost,
+  // Alias yang dikirim panel hosting (Wispbyte, Railway, Render, dsb).
+  WEB_PORT: portish,
+  WEB_HOST: optionalHost,
+  PORT: portish,
+  SERVER_PORT: portish,
   DATABASE_PATH: z.string().default('./data/zypher.db'),
   AUTO_MEMORY: booleanish(true),
   RATE_LIMIT_PER_MINUTE: numberish(12, 0, 240),
@@ -137,11 +164,23 @@ export const config = {
     embedApiKey: env.EMBED_API_KEY,
     embedModel: env.EMBED_MODEL,
   },
-  dashboard: {
-    token: env.DASHBOARD_TOKEN,
-    port: env.DASHBOARD_PORT,
-    host: env.DASHBOARD_HOST,
-  },
+  dashboard: (() => {
+    const portSources = [
+      ['DASHBOARD_PORT', env.DASHBOARD_PORT],
+      ['WEB_PORT', env.WEB_PORT],
+      ['PORT', env.PORT],
+      ['SERVER_PORT', env.SERVER_PORT],
+    ] as const;
+    const found = portSources.find(([, value]) => value !== undefined);
+
+    return {
+      token: env.DASHBOARD_TOKEN,
+      port: found?.[1] ?? 3000,
+      /** Nama variabel yang menentukan port — dipakai untuk log diagnostik. */
+      portSource: found?.[0] ?? 'default',
+      host: env.DASHBOARD_HOST ?? env.WEB_HOST ?? '0.0.0.0',
+    };
+  })(),
   database: {
     path: env.DATABASE_PATH,
   },

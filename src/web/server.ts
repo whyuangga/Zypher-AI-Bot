@@ -404,7 +404,15 @@ export function startDashboard(): Server | null {
   });
 
   server.listen(config.dashboard.port, config.dashboard.host, () => {
-    logger.info(`🌐 Dashboard: http://${config.dashboard.host}:${config.dashboard.port} (login pakai DASHBOARD_TOKEN)`);
+    const address = server?.address();
+    const actualPort = typeof address === 'object' && address ? address.port : config.dashboard.port;
+    const shownHost = config.dashboard.host === '0.0.0.0' ? 'localhost' : config.dashboard.host;
+
+    logger.info(`🌐 Dashboard: http://${shownHost}:${actualPort} (login pakai DASHBOARD_TOKEN)`);
+    if (config.dashboard.portSource !== 'default') {
+      logger.info(`   Port diambil dari ${config.dashboard.portSource}=${config.dashboard.port}`);
+    }
+    logger.info('   Di panel hosting, pakai port yang sama dengan yang diberikan panel (bukan selalu 3000).');
   });
 
   server.on('error', (error) => logger.error(`Dashboard gagal jalan di port ${config.dashboard.port}`, errorMessage(error)));
