@@ -3,7 +3,15 @@ import { MessageFlags, PermissionFlagsBits, type ChatInputCommandInteraction } f
 /** Pastikan command dipakai di dalam server. */
 export async function requireGuild(interaction: ChatInputCommandInteraction): Promise<boolean> {
   if (interaction.inGuild() && interaction.guild) return true;
-  await interaction.reply({ content: 'Perintah ini hanya bisa dipakai di dalam server.', flags: MessageFlags.Ephemeral });
+  await interaction.reply({
+    content: [
+      'Perintah ini hanya bisa dipakai **di dalam server**, bukan di DM —',
+      'karena ia mengubah pengaturan server (bukan percakapan pribadimu).',
+      '',
+      'Yang bisa dipakai di DM: `/server` · `/akhiri` · `/reset` · `/ingat` · `/memori` · `/lupakan` · `/konsolidasi` · `/bantuan`.',
+    ].join('\n'),
+    flags: MessageFlags.Ephemeral,
+  });
   return false;
 }
 

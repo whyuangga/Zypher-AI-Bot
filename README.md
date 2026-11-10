@@ -268,7 +268,7 @@ Kalau model tidak mendukung *tool calling*, bot otomatis lanjut tanpa fitur memo
 | `/lupakan id:` / `semua:true` | Semua | Hapus satu / semua memori sendiri |
 | `/server [nama]` | Semua | Pilih **server konteks** untuk chat DM (persona, dokumen, memori mana yang dipakai). **Tidak membuat channel apa pun** |
 | `/akhiri` | Semua | Tutup sesi DM → transkrip HTML dikirim ke DM → riwayat dihapus |
-| `/reset` | Semua | Hapus riwayat konteks DM, memori tetap |
+| `/reset` | Semua (termasuk DM) | Lupakan obrolan sebelumnya, mulai topik baru. **Sesi tetap aktif**, memori jangka panjang tetap ada |
 | `/dokumen tambah file:` | Admin | Upload dokumen teks sebagai pengetahuan AI |
 | `/dokumen daftar\|hapus` | Admin | Kelola dokumen pengetahuan |
 | `/dokumen cari pertanyaan:` | Semua | Uji potongan dokumen yang akan dipakai AI |
@@ -280,6 +280,22 @@ Lampiran di DM: **gambar** (JPG/PNG/WebP) dibaca AI bila `VISION_ENABLED=true`,
 
 Tombol di panel server: **Chat via DM** (mengirim DM pembuka) dan **Cara Kerja**.
 Tidak ada channel/thread yang dibuat — tidak ada yang bisa dibaca admin.
+
+### `/reset` atau `/akhiri`?
+
+Dua-duanya menghapus riwayat, tapi hasilnya beda:
+
+| | `/reset` | `/akhiri` |
+|---|---|---|
+| Sesi setelah dijalankan | **tetap aktif** | ditutup |
+| Bisa langsung bertanya lagi | ✅ | perlu kirim pesan baru dulu |
+| Transkrip dikirim ke DM | ❌ | ✅ |
+| Riwayat dihapus | ✅ | ✅ |
+| Memori jangka panjang | tetap | tetap |
+
+Pakai **`/reset`** kalau mau ganti topik tapi masih ingin lanjut ngobrol.
+Pakai **`/akhiri`** kalau sudah selesai dan ingin menyimpan transkrip. Keduanya
+bisa dipakai di DM.
 
 ---
 

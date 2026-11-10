@@ -1274,6 +1274,51 @@ test('endDmSession melaporkan kegagalan kirim transkrip', async () => {
   );
 });
 
+console.log('\nCommand di DM');
+
+test('/reset bisa dipakai di DM (bukan hanya di server)', async () => {
+  const source = await readFile('src/commands/reset.ts', 'utf8');
+  // requireGuild() membuat /reset selalu ditolak di DM, padahal yang dihapus
+  // justru riwayat percakapan DM.
+  assert.equal(
+    /requireGuild\(interaction\)/.test(source),
+    false,
+    '/reset tidak boleh memaksa dijalankan di server',
+  );
+  assert.ok(source.includes('isDirectMessage'), '/reset sadar konteks DM');
+  assert.ok(source.includes('clearHistory'), '/reset tetap menghapus riwayat');
+  // `/tanya` sudah dihapus dari bot — jangan disebut lagi di pesan bantuan.
+  assert.equal(source.includes('/tanya'), false, 'pesan /reset tidak menyebut /tanya');
+});
+
+test('hanya command pengaturan server yang dikunci ke server', async () => {
+  for (const name of ['dokumen', 'keyword', 'panel', 'persona']) {
+    const source = await readFile(`src/commands/${name}.ts`, 'utf8');
+    assert.ok(
+      /requireGuild\(interaction\)|requireAdmin\(interaction\)/.test(source),
+      `/${name} memang harus di server (mengubah pengaturan server)`,
+    );
+  }
+});
+
+test('panduan menjelaskan beda /reset dan /akhiri', async () => {
+  const { helpEmbed } = await import('../src/features/ui.js');
+  const embed = helpEmbed('Zypher').toJSON();
+  const text = (embed.fields ?? []).map((f) => `${f.name}\n${f.value}`).join('\n');
+
+  assert.ok(text.includes('/reset'), '/bantuan menyebut /reset');
+  assert.ok(text.includes('/akhiri'), '/bantuan menyebut /akhiri');
+  assert.ok(/`\/reset` vs `\/akhiri`/.test(text), 'ada penjelasan bedanya');
+  assert.equal(text.includes('/tanya'), false, 'tidak menyebut /tanya yang sudah dihapus');
+});
+
+test('requireGuild menjelaskan kenapa harus di server', async () => {
+  const source = await readFile('src/commands/helpers.ts', 'utf8');
+  const block = source.slice(source.indexOf('export async function requireGuild'), source.indexOf('export async function requireAdmin'));
+  assert.ok(block.includes('mengubah pengaturan server'), 'menjelaskan alasannya');
+  assert.ok(block.includes('/akhiri'), 'menyebut command yang bisa dipakai di DM');
+});
+
 console.log('\nAlignment UI');
 
 test('card-head: teks di samping judul tidak turun (margin .hint direset)', async () => {

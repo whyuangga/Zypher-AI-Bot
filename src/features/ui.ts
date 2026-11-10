@@ -26,7 +26,12 @@ export function helpEmbed(botName: string): EmbedBuilder {
           '`/panel` — kirim panel tombol **Chat via DM** *(admin)*',
           'Klik **Chat via DM** di panel → bot mengirim DM ke kamu',
           'Tanya apa saja di DM — tidak bisa dibaca admin server',
+          '`/reset` — lupakan obrolan sebelumnya, mulai topik baru (sesi tetap aktif)',
           '`/akhiri` — tutup sesi & terima transkrip percakapan',
+          '',
+          '**`/reset` vs `/akhiri`**',
+          '> `/reset` = bot lupa obrolan lama, kamu tetap bisa lanjut bertanya.',
+          '> `/akhiri` = sesi ditutup, transkrip dikirim, riwayat dihapus.',
         ].join('\n'),
       },
       {
