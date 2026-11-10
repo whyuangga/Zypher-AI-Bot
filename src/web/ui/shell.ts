@@ -230,11 +230,13 @@ export function appShell(options: ShellOptions): string {
 
 export function pageHead(options: {
   title: string;
+  kicker?: string;
   subtitle?: string;
   actions?: string;
 }): string {
   return `<div class="page-head">
   <div>
+    ${options.kicker ? `<span class="kicker">${esc(options.kicker)}</span>` : ''}
     <h1>${esc(options.title)}</h1>
     ${options.subtitle ? `<p class="sub">${options.subtitle}</p>` : ''}
   </div>

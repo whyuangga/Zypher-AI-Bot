@@ -49,8 +49,9 @@ export function loginPage(error?: string): string {
 <div class="login-wrap">
   <div class="login-card">
     <div class="login-head">
-      <span class="brand-mark">${icon('sparkles', 22)}</span>
-      <h1>Masuk ke Zypher AI</h1>
+      <span class="brand-mark">${icon('sparkles', 20)}</span>
+      <span class="kicker">Zypher AI — Dashboard admin</span>
+      <h1>Masuk ke dashboard</h1>
       <p>Dashboard admin bot. Tempel <code>DASHBOARD_TOKEN</code> dari file <code>.env</code> atau tab Environment panel.</p>
     </div>
     <form class="card login-form" method="post" action="/login">
@@ -192,6 +193,7 @@ export function ringkasanPage(data: DashboardData): string {
   });
 
   const body = `${pageHead({
+    kicker: '01 — Ikhtisar',
     title: 'Ringkasan',
     subtitle: `Server <span class="mono">${esc(data.guildId || '—')}</span> · data langsung dari SQLite bot`,
     actions: `<a class="btn-primary" href="/dokumen">${icon('upload', 16)} Upload dokumen</a>`,
@@ -246,8 +248,14 @@ export function dokumenPage(options: PageContext & { documents: DocumentRowView[
   const uploadCard = card({
     title: 'Upload dari komputer',
     body: `<div class="card-pad" style="padding-top:6px">
-  <input type="file" id="file" accept=".txt,.md,.markdown,.csv,.tsv,.json,.jsonl,.html,.htm,.xml,.log,.ini,.yaml,.yml,.sql,.ts,.js,.py">
-  <p class="hint">Teks saja: .txt .md .csv .json .html .log — maks 5 MB.</p>
+  <label class="drop" for="file">
+    <input type="file" id="file" accept=".txt,.md,.markdown,.csv,.tsv,.json,.jsonl,.html,.htm,.xml,.log,.ini,.yaml,.yml,.sql,.ts,.js,.py">
+    <span class="drop-ico">${icon('upload', 17)}</span>
+    <span class="drop-text">
+      <b id="fileName">Pilih file dari perangkat</b>
+      <span id="fileMeta">TXT · MD · CSV · JSON · HTML · LOG — maks 5 MB</span>
+    </span>
+  </label>
   <div class="field-row" style="margin-top:14px">
     <button class="btn-primary" type="button" id="uploadBtn" onclick="uploadFile()">${icon('upload', 16)} Upload dokumen</button>
     <span class="hint" id="uploadState"></span>
@@ -301,6 +309,7 @@ export function dokumenPage(options: PageContext & { documents: DocumentRowView[
   });
 
   const body = `${pageHead({
+    kicker: '02 — Basis pengetahuan',
     title: 'Dokumen RAG',
     subtitle: 'Rujukan jawaban AI. Nama yang sama akan menggantikan versi lama.',
     actions: options.embedModel
@@ -312,6 +321,15 @@ export function dokumenPage(options: PageContext & { documents: DocumentRowView[
 <div class="mt">${listCard}</div>
 <script>
 const GUILD = ${JSON.stringify(options.guildId)};
+
+var dropInput = document.getElementById('file');
+if (dropInput) dropInput.addEventListener('change', function () {
+  var f = this.files && this.files[0];
+  document.getElementById('fileName').textContent = f ? f.name : 'Pilih file dari perangkat';
+  document.getElementById('fileMeta').textContent = f
+    ? Math.max(1, Math.round(f.size / 1024)) + ' KB · siap diunggah'
+    : 'TXT · MD · CSV · JSON · HTML · LOG — maks 5 MB';
+});
 
 async function postDocument(name, text) {
   return api('/api/dokumen', {
@@ -473,6 +491,7 @@ export function keywordPage(options: PageContext & { keywords: KeywordRowView[] 
   });
 
   const body = `${pageHead({
+    kicker: '03 — Template jawaban',
     title: 'Keyword',
     subtitle: 'Template jawaban owner. AI memvariasikan kalimatnya, isinya tetap sama.',
     actions: badge(`${options.keywords.length} aktif`, 'brand'),
@@ -599,6 +618,7 @@ export function memoriPage(options: PageContext & { groups: MemoryGroupView[] })
   });
 
   const body = `${pageHead({
+    kicker: '04 — Ingatan AI',
     title: 'Memori',
     subtitle: 'Fakta yang diingat AI tentang tiap member, lintas percakapan.',
     actions: badge(`${total} fakta`, total ? 'ok' : 'neutral'),
@@ -690,6 +710,7 @@ export function pengaturanPage(
   });
 
   const body = `${pageHead({
+    kicker: '05 — Konfigurasi',
     title: 'Pengaturan',
     subtitle: 'Perilaku AI dan informasi server. Perubahan langsung berlaku untuk pesan berikutnya.',
   })}

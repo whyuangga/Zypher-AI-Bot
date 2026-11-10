@@ -114,7 +114,9 @@ export function activityChart(series: Array<{ day: string; count: number }>): st
       )}">
       <div class="bar-track"><div class="bar-fill" style="height:${zero ? 0 : Math.max(6, height)}%"></div></div>
       <span class="bar-val">${formatNumber(item.count)}</span>
-      <span class="bar-day">${esc(isToday ? 'Hari ini' : dayLabel(item.day))}</span>
+      <span class="bar-day">${
+        isToday ? '<span class="day-long">Hari ini</span><span class="day-short">Kini</span>' : esc(dayLabel(item.day))
+      }</span>
     </div>`;
     })
     .join('');

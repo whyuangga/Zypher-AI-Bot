@@ -15,8 +15,12 @@ Yang bisa dilakukan:
 | `/pengaturan` | Persona AI & model per server, info server + salin Server ID |
 | `/healthz` | JSON status untuk monitoring (tanpa login) |
 
-Tampilan memakai tema gelap dengan sidebar, kartu, dan grafik tanpa library chart —
-semua CSS/SVG dibuat langsung dari server, jadi tidak ada bundler yang harus jalan di panel hosting.
+Tampilan memakai gaya **editorial monokrom**: latar `#0D0D0F`, teks putih, garis rambut 1px,
+judul & angka serif, label kecil monospace, dan tombol solid putih tanpa gradient.
+Sidebar di kiri, grafik 7 hari tanpa library chart — semua CSS/SVG dibuat langsung dari server,
+jadi tidak ada bundler yang harus jalan di panel hosting.
+
+Pratinjau tampilan ada di [`docs/screenshots/`](screenshots/README.md) (desktop 1440px + mobile 390px).
 
 ---
 
