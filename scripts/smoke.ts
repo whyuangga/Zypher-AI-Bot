@@ -2628,6 +2628,85 @@ await testAsync('dashboard: tombol kirim tes ada di kedua halaman', async () => 
   assert.ok(pages.includes('Kirim tes ke channel'), 'tombol agent & perpisahan');
 });
 
+await testAsync('kirim tes: error Discord yang samar diterjemahkan', async () => {
+  const { sendAgentTest } = await import('../src/features/test-send.js');
+  const channel = {
+    id: '111111111111111111', name: 'ngobrol',
+    isTextBased: () => true, isDMBased: () => false,
+    permissionsFor: () => ({ has: () => true }),
+    // Inilah balasan asli Discord saat embed berisi data URI ditolak.
+    send: async () => { throw new Error('Received one or more errors'); },
+  };
+  const client = {
+    guilds: { fetch: async () => ({ id: '1', name: 'S', channels: { fetch: async () => channel }, members: { me: { id: '2' } } }) },
+  } as never;
+
+  await assert.rejects(
+    () => sendAgentTest(client, { guildId: '1', channelId: channel.id, reply: 'halo', role: 'chat', sampleMessage: 'hai', userName: 'Sky' }),
+    (error: unknown) => {
+      const message = (error as Error).message;
+      assert.match(message, /Received one or more errors/, 'pesan asli tetap disertakan');
+      assert.match(message, /banner|kartu PNG/i, 'menjelaskan kemungkinan penyebab');
+      assert.match(message, /unggah ulang/i, 'memberi tindakan yang bisa dilakukan');
+      return true;
+    },
+  );
+});
+
+await testAsync('kirim: banner dikirim sebagai lampiran, bukan data URI', async () => {
+  // Bug nyata: embed.setImage(dataUri) ditolak Discord dengan pesan samar
+  // "Received one or more errors", sehingga sambutan, salam perpisahan, dan
+  // tombol kirim tes semuanya gagal terkirim tanpa penjelasan.
+  const welcome = await readFile('src/features/welcome.ts', 'utf8');
+  const test = await readFile('src/features/test-send.ts', 'utf8');
+
+  for (const [name, source] of [['welcome.ts', welcome], ['test-send.ts', test]] as const) {
+    const setImages = [...source.matchAll(/embed\.setImage\(([^)]*)\)/g)].map((m) => m[1]!.trim());
+    assert.ok(setImages.length > 0, `${name} memakai setImage`);
+    for (const arg of setImages) {
+      assert.ok(
+        arg.includes('attachment://'),
+        `${name}: setImage harus merujuk attachment://, bukan ${arg.slice(0, 40)}`,
+      );
+    }
+    // Data URI hanya boleh dipakai untuk SVG kartu / <img> pratinjau.
+    assert.ok(
+      source.includes('readBannerAttachment'),
+      `${name} memakai readBannerAttachment untuk lampiran`,
+    );
+  }
+});
+
+await testAsync('ai: balasan kosong memicu provider berikutnya (bukan teks kosong)', async () => {
+  // Dulu rantai fallback hanya jalan kalau ada error. Model reasoning yang
+  // menghabiskan token untuk berpikir tetap dianggap "berhasil", jadi user
+  // menerima teks kosong padahal provider cadangan tersedia.
+  const llm = await readFile('src/lib/llm.ts', 'utf8');
+  assert.ok(llm.includes('hasVisibleText'), 'ada pemeriksaan isi balasan');
+  assert.ok(
+    /if \(!hasVisibleText\(result\.message\)\)/.test(llm),
+    'balasan kosong diperlakukan sebagai kegagalan provider',
+  );
+  assert.ok(llm.includes('continue;'), 'lanjut ke provider berikutnya');
+  // reasoning_content harus dianggap isi yang sah.
+  const block = llm.slice(llm.indexOf('function hasVisibleText'));
+  assert.ok(block.includes('reasoning_content'), 'reasoning_content ikut diterima');
+  assert.ok(block.includes('tool_calls'), 'tool call tanpa teks tetap sah');
+});
+
+await testAsync('agent: pesan uji memakai teks biasa, bukan embed', async () => {
+  const source = await readFile('src/features/test-send.ts', 'utf8');
+  const block = source.slice(source.indexOf('export async function sendAgentTest'));
+  const body = block.slice(0, block.indexOf('catch (error)'));
+
+  // Agent di channel membalas sebagai pesan biasa supaya menyatu dengan member.
+  // Pesan uji harus memperlihatkan bentuk yang sama.
+  assert.equal(/embeds:\s*\[/.test(body), false, 'tidak mengirim embed');
+  assert.ok(body.includes('content: body'), 'mengirim konten teks');
+  assert.ok(body.includes('quoted'), 'pesan member dikutip sebagai blockquote');
+  assert.ok(body.includes('allowedMentions'), 'mention tetap tidak dipicu');
+});
+
 await testAsync('css: ikon di tombol kotak tepat di tengah & badge sejajar judul', async () => {
   const theme = await readFile('src/web/ui/theme.ts', 'utf8');
 

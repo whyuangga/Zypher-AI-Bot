@@ -26,6 +26,22 @@ export interface ChatResult {
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
 }
 
+/**
+ * Apakah balasan punya isi yang benar-benar bisa dibaca user?
+ *
+ * `reasoning_content` ikut dianggap isi: sebagian provider reasoning menaruh
+ * jawaban di sana dan membiarkan `content` kosong.
+ */
+function hasVisibleText(message: AssistantMessage): boolean {
+  const raw = message as unknown as { content?: string | null; reasoning_content?: string | null };
+  const content = raw.content?.trim();
+  if (content) return true;
+  const reasoning = raw.reasoning_content?.trim();
+  if (reasoning) return true;
+  // Tool call tanpa teks tetap sah — model ingin memanggil fungsi dulu.
+  return Array.isArray(message.tool_calls) && message.tool_calls.length > 0;
+}
+
 export class AiError extends Error {
   override readonly name = 'AiError';
 
@@ -225,6 +241,18 @@ export async function chat(request: ChatRequest): Promise<ChatResult> {
         index === 0 ? PRIMARY_ATTEMPTS : FALLBACK_ATTEMPTS,
         index === 0,
       );
+
+      // Model bisa "berhasil" tapi tidak menulis apa pun — khas model reasoning
+      // yang menghabiskan jatah token untuk berpikir. Tanpa pemeriksaan ini
+      // rantai fallback tidak pernah dicoba dan pemanggil menerima teks kosong
+      // (gejala nyata: sambutan, salam perpisahan, dan pemecah sepi kosong
+      // padahal provider cadangan tersedia).
+      if (!hasVisibleText(result.message)) {
+        const detail = `model mengembalikan teks kosong (jatah ${request.maxTokens ?? 'default'} token mungkin habis untuk berpikir)`;
+        failures.push(`${provider.name}: ${detail}`);
+        logger.warn(`Provider ${provider.name} ${detail} — mencoba provider berikutnya.`);
+        continue;
+      }
 
       if (index > 0) {
         logger.info(`Provider utama gagal — jawaban diberikan oleh fallback ${result.provider}/${result.model}.`);

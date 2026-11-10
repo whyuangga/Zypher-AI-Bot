@@ -46,7 +46,13 @@ Discord. Karena Discord hanya menerima PNG/JPG, konversi ini butuh Chromium:
 - biarkan bot mencari sendiri di lokasi umum (`/usr/bin/chromium`, dll).
 
 Kalau Chromium tidak ada, kartu dilewati dan sambutan dikirim sebagai embed teks
-biasa — tidak ada error, hanya tanpa gambar. Dashboard menampilkan peringatan
+biasa — tidak ada error, hanya tanpa gambar.
+
+**Banner tanpa kartu.** Saat kartu dimatikan tapi banner diunggah, banner dipakai
+sebagai gambar embed. Discord **menolak** gambar embed berisi data URI (balasannya
+samar: `Received one or more errors`), jadi banner dikirim sebagai **lampiran**
+lalu dirujuk lewat `attachment://nama-file`. Tanpa ini, setiap sambutan dengan
+banner aktif gagal terkirim tanpa penjelasan. Dashboard menampilkan peringatan
 **"Kartu PNG tidak akan terkirim"** di bagian atas form sambutan kalau hal ini
 terdeteksi, supaya kamu tidak mengira kartunya rusak. Font General Sans
 di-embed sebagai data URI supaya hasilnya sama di server mana pun.
@@ -270,7 +276,7 @@ member baru, sehingga sambutan tidak terkirim.
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 220 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 224 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

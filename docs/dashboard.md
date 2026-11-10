@@ -278,7 +278,7 @@ Dua kartu berdampingan, satu tema "kehadiran":
   |---|---|---|
   | "Kirim tes sungguhan" (sambutan) | DM kamu, atau channel sambutan kalau dipilih | teks sambutan + kartu PNG kalau diaktifkan |
   | "Kirim tes ke channel" (perpisahan) | channel salam perpisahan yang tersimpan | teks salam perpisahan + kartu PNG |
-  | "Kirim tes ke channel" (agent) | channel ngobrol/galeri tersimpan | kutipan pesan uji + balasan bot |
+  | "Kirim tes ke channel" (agent) | channel ngobrol/galeri tersimpan | **teks biasa** (bukan embed): kutipan pesan uji + balasan bot |
 
   Pesannya selalu dibuka penanda *"🧪 Pesan uji dari dashboard"* dan mention
   tidak dipicu, jadi tidak ada member yang ter-tag karena tes. Tombol ini mati
@@ -306,7 +306,8 @@ Panel **Tes percakapan** menguji balasan bot untuk pesan contoh (mode ngobrol
 atau mode galeri) serta kalimat **pemecah sepi** — tanpa mengirim ke channel.
 Tombol "Kirim tes ke channel" di sebelahnya **mengirim** satu pesan nyata berisi
 kutipan pesan uji dan balasan bot, supaya gaya balasannya bisa dilihat langsung
-di Discord.
+di Discord. Pesannya **teks biasa, bukan embed** — agent membalas sebagai pesan
+biasa supaya menyatu dengan obrolan member, jadi pesan uji harus berbentuk sama.
 
 Detail perilaku & biaya API: [sambutan-agent.md](sambutan-agent.md).
 

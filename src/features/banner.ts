@@ -1,3 +1,5 @@
+import { AttachmentBuilder } from 'discord.js';
+
 /**
  * Banner kartu sambutan & salam perpisahan.
  *
@@ -191,7 +193,29 @@ export async function saveBanner(dataUri: string, randomId: string): Promise<Ban
   return { ok: true, name, width: meta.width, height: meta.height, bytes: buffer.byteLength };
 }
 
-/** Baca banner sebagai data URI untuk ditempel ke SVG kartu atau embed. */
+/**
+ * Baca banner sebagai lampiran Discord.
+ *
+ * Penting: Discord **menolak** `embed.setImage()` berisi data URI dengan pesan
+ * samar "Received one or more errors". Banner harus dikirim sebagai lampiran
+ * lalu dirujuk lewat `attachment://<nama>`. Itu sebabnya fungsi ini
+ * mengembalikan AttachmentBuilder, bukan data URI.
+ */
+export async function readBannerAttachment(
+  name: string | null,
+): Promise<{ attachment: AttachmentBuilder; name: string } | null> {
+  if (!isSafeBannerName(name)) return null;
+  try {
+    const buffer = await readFile(bannerPath(name));
+    const meta = detectImage(buffer);
+    if (!meta) return null;
+    return { attachment: new AttachmentBuilder(buffer, { name }), name };
+  } catch {
+    return null;
+  }
+}
+
+/** Baca banner sebagai data URI — hanya untuk `<img>` di dashboard/SVG kartu. */
 export async function readBannerDataUri(name: string | null): Promise<string | null> {
   if (!isSafeBannerName(name)) return null;
   try {
