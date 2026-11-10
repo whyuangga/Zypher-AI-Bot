@@ -46,8 +46,10 @@ Discord. Karena Discord hanya menerima PNG/JPG, konversi ini butuh Chromium:
 - biarkan bot mencari sendiri di lokasi umum (`/usr/bin/chromium`, dll).
 
 Kalau Chromium tidak ada, kartu dilewati dan sambutan dikirim sebagai embed teks
-biasa — tidak ada error, hanya tanpa gambar. Font General Sans di-embed sebagai
-data URI supaya hasilnya sama di server mana pun.
+biasa — tidak ada error, hanya tanpa gambar. Dashboard menampilkan peringatan
+**"Kartu PNG tidak akan terkirim"** di bagian atas form sambutan kalau hal ini
+terdeteksi, supaya kamu tidak mengira kartunya rusak. Font General Sans
+di-embed sebagai data URI supaya hasilnya sama di server mana pun.
 
 > Catatan biaya: kartu dibuat ~0,7 detik per member. Kalau servermu ramai
 > (ratusan member baru per hari), pertimbangkan mematikan kartu.
@@ -66,6 +68,22 @@ dengan sambutan, jadi pengaturannya ada di halaman yang sama.
 | **Tulis salam dengan AI** | kalau mati, template dipakai |
 | **Template** | `{user}` → nama panggilan, `{server}` → nama server |
 | **Gaya / contoh nada** | mis. `sopan, hangat, singkat` |
+
+### Mencoba tanpa menunggu member
+
+Menunggu ada orang join/keluar untuk menguji jelas tidak praktis. Halaman
+Sambutan punya dua tingkat pengujian:
+
+| Tombol | Mengirim? | Gunanya |
+|---|---|---|
+| **Tes sambutan / Tes salam perpisahan** | tidak | memeriksa teks + kartu dari isi form saat itu, termasuk sebelum disimpan |
+| **Kirim tes sungguhan / Kirim tes ke channel** | ya, 1 pesan | membuktikan izin, channel, DM, dan kartu benar-benar jalan |
+
+Pesan uji diawali penanda *"🧪 Pesan uji dari dashboard"* dan tidak memicu
+mention, jadi aman dites di channel yang sudah dipakai member. Sambutan
+default ke DM kamu (atau channel kalau dipilih); salam perpisahan selalu ke
+channel. Kalau DM gagal karena privasi Discord, alasannya muncul dan kamu bisa
+mengulang dengan target channel.
 
 **Kenapa tidak bisa DM?** Member yang keluar sudah tidak berbagi server dengan bot,
 jadi DM tidak mungkin dikirim. Kalau channel belum dipilih, salam **tidak dikirim
@@ -252,7 +270,7 @@ member baru, sehingga sambutan tidak terkirim.
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 204 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 220 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

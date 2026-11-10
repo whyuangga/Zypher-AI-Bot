@@ -5,17 +5,21 @@ Dua fitur yang membuat chat AI tidak cuma menerima teks:
 1. **Vision** — member mengirim gambar, AI membacanya (butuh model multimodal).
 2. **Voice** — member mengirim voice note, AI transkrip (STT) lalu bisa membalas dengan suara (TTS).
 
-Keduanya opsional dan mati secara default, karena butuh model/kuota tambahan di provider.
+Voice opsional dan mati secara default, karena butuh model/kuota tambahan di provider.
+**Vision selalu aktif** — tidak ada sakelar untuk mematikannya, cukup pastikan modelnya
+mendukung gambar.
 
 ---
 
 ## Vision: AI membaca gambar
 
 ```env
-VISION_ENABLED=true
 VISION_MODEL=meta-llama/llama-4-scout-17b-16e-instruct   # default, tersedia di Groq
 VISION_MAX_MB=5
 ```
+
+Tidak ada `VISION_ENABLED`: gambar dibaca otomatis. Kalau `VISION_MODEL` bukan
+model multimodal, provider menolak permintaan dan penyebabnya muncul di log.
 
 Alur:
 
@@ -122,5 +126,5 @@ Ganti suara lewat `TTS_VOICE`. Di Groq (PlayAI) contohnya `Fritz-PlayAI` (pria),
 
 ## Menyalakan di dashboard?
 
-Belum — pengaturan vision/voice masih lewat `.env`. Moderasi sudah punya halaman
-sendiri di `/moderasi`.
+Voice masih lewat `.env`. Vision tidak punya pengaturan sama sekali — selalu aktif,
+hanya modelnya yang diatur lewat `.env`. Moderasi punya halaman sendiri di `/moderasi`.

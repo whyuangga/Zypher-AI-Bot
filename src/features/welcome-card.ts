@@ -51,6 +51,22 @@ function findChromium(): string | null {
   return cachedBrowserPath;
 }
 
+/**
+ * Apakah Chromium tersedia untuk merender kartu.
+ *
+ * Dipakai dashboard untuk memberi peringatan lebih awal: tanpa Chromium, kartu
+ * PNG tidak pernah terkirim dan admin perlu tahu itu **sebelum** mengira fiturnya
+ * rusak. Fungsi ini tidak memuat Chromium, hanya memeriksa keberadaan file.
+ */
+export function cardRendererAvailable(): boolean {
+  return findChromium() !== null;
+}
+
+/** Path Chromium yang dipakai (null = tidak ditemukan). Untuk diagnosa. */
+export function chromiumPath(): string | null {
+  return findChromium();
+}
+
 function escapeXml(value: string): string {
   return value
     .replace(/&/g, '&amp;')

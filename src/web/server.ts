@@ -40,7 +40,6 @@ import {
   setGuildModel,
   setGuildTtsReplyInRoom,
   setGuildRagEnabled,
-  setGuildVisionEnabled,
   setGuildAutoMemory,
   setGuildAdminOnlyRooms,
   setModerationSettings,
@@ -57,7 +56,7 @@ import {
   previewWelcome,
   SAMPLE_MEMBER_NAME,
 } from '../features/preview.js';
-import { renderWelcomeCard } from '../features/welcome-card.js';
+import { cardRendererAvailable, chromiumPath, renderWelcomeCard } from '../features/welcome-card.js';
 import {
   BannerError,
   bannerExists,
@@ -65,6 +64,13 @@ import {
   readBannerDataUri,
   saveBanner,
 } from '../features/banner.js';
+import {
+  SendTestError,
+  sendAgentTest,
+  sendGoodbyeTest,
+  sendWelcomeTest,
+} from '../features/test-send.js';
+import { previewAgentReply as composeAgentPreview } from '../features/preview.js';
 import { MAX_BINARY_BYTES } from '../lib/chunker.js';
 import { embeddingModelName } from '../features/rag-embed.js';
 import { errorMessage, logger } from '../lib/logger.js';
@@ -526,6 +532,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
           channels,
           botOnline: status.online,
           sampleName: SAMPLE_MEMBER_NAME,
+          cardRenderer: { available: cardRendererAvailable(), path: chromiumPath() },
           status,
           counts,
         }),
@@ -677,8 +684,6 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         ttsReplyInRoomDefault: config.voice.ttsReplyInRoom,
         ragEnabledSetting: settings?.ragEnabled ?? null,
         ragEnabledDefault: config.rag.enabled,
-        visionEnabledSetting: settings?.visionEnabled ?? null,
-        visionEnabledDefault: config.vision.enabled,
         autoMemorySetting: settings?.autoMemory ?? null,
         autoMemoryDefault: config.features.autoMemory,
         adminOnlyRoomsSetting: settings?.adminOnlyRooms ?? null,
@@ -796,7 +801,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     }
 
     const raw = await readBody(request, 32 * 1024);
-    let payload: { persona?: unknown; model?: unknown; ttsReplyInRoom?: unknown; ragEnabled?: unknown; visionEnabled?: unknown; autoMemory?: unknown; adminOnlyRooms?: unknown };
+    let payload: { persona?: unknown; model?: unknown; ttsReplyInRoom?: unknown; ragEnabled?: unknown; autoMemory?: unknown; adminOnlyRooms?: unknown };
     try {
       payload = JSON.parse(raw) as { persona?: unknown; model?: unknown };
     } catch {
@@ -838,14 +843,6 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       await setGuildRagEnabled(guildId, payload.ragEnabled);
     }
 
-    if (payload.visionEnabled !== undefined) {
-      if (typeof payload.visionEnabled !== 'boolean') {
-        sendJson(response, 400, { error: 'visionEnabled harus boolean.' });
-        return;
-      }
-      await setGuildVisionEnabled(guildId, payload.visionEnabled);
-    }
-
     if (payload.autoMemory !== undefined) {
       if (typeof payload.autoMemory !== 'boolean') {
         sendJson(response, 400, { error: 'autoMemory harus boolean.' });
@@ -869,7 +866,6 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       model: settings?.model ?? null,
       ttsReplyInRoom: settings?.ttsReplyInRoom ?? null,
       ragEnabled: settings?.ragEnabled ?? null,
-      visionEnabled: settings?.visionEnabled ?? null,
       autoMemory: settings?.autoMemory ?? null,
       adminOnlyRooms: settings?.adminOnlyRooms ?? null,
     });
@@ -1079,6 +1075,147 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     }
   }
 
+  /* ---------------------------- kirim tes ---------------------------- */
+  // Berbeda dari /api/preview/*: endpoint ini BENAR-BENAR mengirim pesan ke
+  // Discord. Dipisah dengan sengaja supaya admin tidak salah menekan tombol
+  // pratinjau lalu kaget karena pesan terkirim.
+
+  if (path.startsWith('/api/send-test/') && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    if (!botClient?.isReady()) {
+      sendJson(response, 400, {
+        error:
+          'Bot sedang offline di proses ini, jadi pesan tidak bisa dikirim. ' +
+          'Jalankan bot (npm run dev), bukan dashboard-saja, lalu coba lagi.',
+      });
+      return;
+    }
+
+    const kind = path.slice('/api/send-test/'.length);
+    const payload = await readJson(request, response);
+    if (!payload) return;
+
+    const me = await botClient.guilds
+      .fetch(guildId)
+      .then((guild) => guild.members.me)
+      .catch(() => null);
+
+    if (!me) {
+      sendJson(response, 400, { error: 'Bot tidak berada di server ini.' });
+      return;
+    }
+
+    try {
+      if (kind === 'welcome') {
+        const current = await getWelcomeSettings(guildId);
+        const result = await sendWelcomeTest(botClient, {
+          guildId,
+          settings: {
+            ...current,
+            useAi: payload.useAi === undefined ? current.useAi : Boolean(payload.useAi),
+            template: textField(payload, 'template', current.template, 1000),
+            style: textField(payload, 'style', current.style),
+            example: textField(payload, 'example', current.example),
+            imageEnabled:
+              payload.imageEnabled === undefined ? current.imageEnabled : Boolean(payload.imageEnabled),
+            includeAvatar:
+              payload.includeAvatar === undefined ? current.includeAvatar : Boolean(payload.includeAvatar),
+          },
+          member: me,
+          target: payload.target === 'channel' ? 'channel' : 'dm',
+        });
+        sendJson(response, 200, { ...result, ok: true });
+        return;
+      }
+
+      if (kind === 'goodbye') {
+        const current = await getGoodbyeSettings(guildId);
+        const result = await sendGoodbyeTest(botClient, {
+          guildId,
+          settings: {
+            ...current,
+            useAi: payload.useAi === undefined ? current.useAi : Boolean(payload.useAi),
+            template: textField(payload, 'template', current.template, 1000),
+            style: textField(payload, 'style', current.style),
+            example: textField(payload, 'example', current.example),
+            imageEnabled:
+              payload.imageEnabled === undefined ? current.imageEnabled : Boolean(payload.imageEnabled),
+            includeAvatar:
+              payload.includeAvatar === undefined ? current.includeAvatar : Boolean(payload.includeAvatar),
+          },
+          member: me,
+        });
+        sendJson(response, 200, { ...result, ok: true });
+        return;
+      }
+
+      if (kind === 'agent') {
+        const message = typeof payload.message === 'string' ? payload.message.trim().slice(0, 500) : '';
+        const channelIdForSend =
+          typeof payload.channelId === 'string' && /^\d{17,20}$/.test(payload.channelId.trim())
+            ? payload.channelId.trim()
+            : '';
+        if (!message) {
+          sendJson(response, 400, { error: 'Tulis pesan uji dulu.' });
+          return;
+        }
+
+        const current = await getAgentSettings(guildId);
+        const role = payload.role === 'gallery' ? 'gallery' : 'chat';
+        const targetChannelId =
+          channelIdForSend ||
+          (role === 'gallery' ? current.galleryChannelId : current.channelId) ||
+          '';
+
+        if (!targetChannelId) {
+          sendJson(response, 400, {
+            error:
+              role === 'gallery'
+                ? 'Channel galeri belum dipilih. Pilih & simpan dulu sebelum mengirim tes.'
+                : 'Channel ngobrol belum dipilih. Pilih & simpan dulu sebelum mengirim tes.',
+          });
+          return;
+        }
+
+        const guildSettings = await getGuildSettings(guildId);
+        const reply = await composeAgentPreview({
+          settings: current,
+          guildName: (await getGuildName(guildId)) ?? 'Server ini',
+          userName: me.displayName || me.user.username,
+          message,
+          role,
+          botName: botClient.user?.username ?? 'Zypher AI',
+          persona: guildSettings?.persona ?? null,
+        });
+
+        const result = await sendAgentTest(botClient, {
+          guildId,
+          channelId: targetChannelId,
+          reply: reply.text,
+          role,
+          sampleMessage: message,
+          userName: me.displayName || me.user.username,
+        });
+        sendJson(response, 200, { ...result, ok: true });
+        return;
+      }
+
+      sendJson(response, 404, { error: 'Jenis tes tidak dikenal.' });
+      return;
+    } catch (error) {
+      if (error instanceof SendTestError) {
+        sendJson(response, 400, { error: error.message });
+        return;
+      }
+      logger.warn('Kirim tes gagal', errorMessage(error));
+      sendJson(response, 500, { error: `Gagal mengirim: ${errorMessage(error)}` });
+      return;
+    }
+  }
+
   /* ---------------------------- pratinjau ---------------------------- */
   // Endpoint pratinjau sengaja tidak menyentuh Discord sama sekali: admin bisa
   // mencoba sapaan berkali-kali tanpa mengirim pesan ke channel mana pun.
@@ -1172,12 +1309,6 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         : undefined,
     });
 
-    // Kalau kartu diminta tapi Chromium tidak ada, admin perlu tahu alasannya.
-    if (withCard && !result.card) {
-      result.note = [result.note, 'Kartu PNG tidak tersedia — sambutan tetap terkirim sebagai embed teks.']
-        .filter(Boolean)
-        .join(' ');
-    }
     sendJson(response, 200, { ok: true, ...result });
     return;
   }

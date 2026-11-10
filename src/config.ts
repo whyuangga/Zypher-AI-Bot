@@ -169,7 +169,6 @@ const schema = z.object({
   MODERATION_ACTION: z.enum(['delete', 'warn', 'timeout']).default('delete'),
   MODERATION_TIMEOUT_MINUTES: numberish(10, 1, 10080),
   // ---------- Vision (gambar) ----------
-  VISION_ENABLED: booleanish(false),
   VISION_MODEL: z.string().default('meta-llama/llama-4-scout-17b-16e-instruct'),
   VISION_MAX_MB: numberish(5, 1, 20),
   // ---------- Suara (STT/TTS, endpoint OpenAI-compatible mis. Groq) ----------
@@ -307,7 +306,9 @@ export const config = {
     timeoutMinutes: env.MODERATION_TIMEOUT_MINUTES,
   },
   vision: {
-    enabled: env.VISION_ENABLED,
+    // Selalu aktif: tidak ada sakelar on/off. Kalau `VISION_MODEL` bukan model
+    // multimodal, provider akan menolak dan alasannya diteruskan ke admin —
+    // lebih jujur daripada gambar diam-diam diabaikan.
     model: env.VISION_MODEL,
     maxBytes: env.VISION_MAX_MB * 1024 * 1024,
   },

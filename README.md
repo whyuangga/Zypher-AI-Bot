@@ -65,7 +65,7 @@ platform Discord yang tidak bisa dilewati bot. Karena itu fitur room/thread diha
 | 🧠 **Memori jangka panjang** | AI otomatis menyimpan fakta penting lewat *tool calling*, plus perintah manual `/ingat`. Memori dipakai lagi di sesi berikutnya; `/konsolidasi` menggabungkan memori yang berulang. |
 | 👋 **Sambutan & perpisahan** | Sapaan yang **digenerate AI per orang** — pakai nama panggilan + waktu setempat, jadi kalimatnya beda tiap member (bukan template seragam). Bisa disertai **kartu PNG** berisi nama & sapaan, dikirim lewat DM atau channel. Saat member keluar, bot mengucapkan **salam perpisahan** dengan nada sopan. Lihat [docs/sambutan-agent.md](docs/sambutan-agent.md). |
 | 🗣️ **AI Agent di channel** | Di **dua** channel: bot ikut ngobrol seperti anggota komunitas di channel ngobrol (balas mention/reply, tanggapi emoji/sticker, menyapa saat sepi), dan **mengomentari gambar & video** di channel galeri. **Diam saat obrolan ramai**, dibatasi N balasan per jam, dan riwayat obrolannya **hanya di memori** — tidak ditulis ke database. |
-| 🖥️ **Dashboard web** | `/`, `/panel`, `/sambutan`, `/agent`, `/dokumen`, `/keyword`, `/moderasi`, `/pengaturan` (8 halaman) — gaya editorial gelap ([pratinjau](docs/screenshots/README.md)), **toggle fitur AI per server** (RAG, Vision, Auto Memory, Chat khusus admin, Suara balasan AI). Sidebar kiri, grafik aktivitas 7 hari, kartu statistik per server. Nama server tampil di topbar (bukan ID mentah), dan panel "Chat via DM" bisa dikirim, dipindah, atau dimatikan dari `/panel`. **Dashboard tidak menyimpan isi percakapan maupun memori member.** |
+| 🖥️ **Dashboard web** | `/`, `/panel`, `/sambutan`, `/agent`, `/dokumen`, `/keyword`, `/moderasi`, `/pengaturan` (8 halaman) — gaya editorial gelap ([pratinjau](docs/screenshots/README.md)), **toggle fitur AI per server** (RAG, Auto Memory, tombol chat DM khusus admin, Suara balasan AI). Sidebar kiri, grafik aktivitas 7 hari, kartu statistik per server. Nama server tampil di topbar (bukan ID mentah), dan panel "Chat via DM" bisa dikirim, dipindah, atau dimatikan dari `/panel`. **Dashboard tidak menyimpan isi percakapan maupun memori member.** |
 | 📚 **Dokumen RAG** | Upload `.txt`/`.md`/`.csv`/`.json`/`.pdf`/`.docx` (maks 8 MB) lewat `/dokumen tambah` atau dashboard. AI menjawab dari isi dokumen dan menyebut sumbernya (`📚 Sumber: faq.md — bagian 3`). Pencarian BM25 bawaan — **tanpa API key tambahan**. |
 | 🔑 **Keyword kustom** | Admin menulis jawaban acuan; AI memakainya sebagai **fakta** dan menyusun ulang kalimatnya agar **bervariasi setiap kali** (bukan copy-paste). |
 | 🎭 **Persona per server** | Mis. "kamu guru bahasa Inggris yang sabar" — berlaku untuk semua chat yang memakai server itu sebagai konteks. |
@@ -216,8 +216,7 @@ Klik **Chat via DM** → bot mengirim DM ke kamu → mulai ngobrol di DM.
 | `MODERATION_WORDS` | kosong | Daftar kata terlarang, dipisah koma |
 | `MODERATION_ACTION` | `delete` | `delete` · `warn` (hapus + tegur) · `timeout` (hapus + bisukan) |
 | `MODERATION_TIMEOUT_MINUTES` | `10` | Durasi timeout moderasi (1–10080 menit) |
-| `VISION_ENABLED` | `false` | AI membaca gambar di DM — [docs](docs/vision-voice.md) |
-| `VISION_MODEL` | `meta-llama/llama-4-scout-17b-16e-instruct` | Model multimodal yang dipakai saat ada gambar |
+| `VISION_MODEL` | `meta-llama/llama-4-scout-17b-16e-instruct` | Model multimodal untuk gambar (vision selalu aktif, tidak ada sakelar) |
 | `VISION_MAX_MB` | `5` | Batas ukuran gambar yang diunduh bot |
 | `VOICE_ENABLED` | `false` | Transkrip voice note jadi pertanyaan — [docs](docs/vision-voice.md) |
 | `STT_MODEL` | `whisper-large-v3` | Model transkrip |
@@ -308,8 +307,9 @@ Server lain hanya bisa memakai bot versi mereka sendiri — bukan bot ini.
 | `/keyword tambah\|daftar\|hapus` | Admin | Kelola jawaban acuan yang divariasikan AI |
 | `/persona set\|lihat\|hapus` | Admin | Atur peran AI untuk seluruh server |
 
-Lampiran di DM: **gambar** (JPG/PNG/WebP) dibaca AI bila `VISION_ENABLED=true`,
-**voice note** ditranskrip bila `VOICE_ENABLED=true`.
+Lampiran di DM: **gambar** (JPG/PNG/WebP) langsung dibaca AI memakai
+`VISION_MODEL`, **voice note** ditranskrip bila `VOICE_ENABLED=true`. Membaca
+gambar tidak perlu dinyalakan — cukup pastikan modelnya multimodal.
 
 Tombol di panel server: **Chat via DM** (mengirim DM pembuka) dan **Cara Kerja**.
 Tidak ada channel/thread yang dibuat — tidak ada yang bisa dibaca admin.
@@ -455,7 +455,7 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke          # 204 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
+npm run smoke          # 220 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
 npm run smoke:pg       # 14 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # uji rantai fallback provider dengan server tiruan
 npm run dashboard      # nyalakan dashboard web saja, tanpa bot Discord
@@ -503,8 +503,8 @@ diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai u
 | Jawaban muncul sekaligus, bukan streaming | Normal bila provider/model menolak `stream: true` — bot otomatis memakai mode non-streaming di provider tersebut (lihat log). |
 | AI tidak menjawab dari dokumen | Cek `/dokumen cari pertanyaan:...`. Kalau kosong, kata kuncinya tidak ada di dokumen — tambahkan sinonim atau pakai istilah yang dipakai member. |
 | Upload PDF/DOCX gagal | Maksimal **8 MB**, PDF harus berisi teks (hasil scan perlu OCR dulu), dan file tidak boleh terkunci password. Lihat [docs/rag.md](docs/rag.md). |
-| AI menjawab "belum bisa membaca gambar" | `VISION_ENABLED` masih `false`. Nyalakan dan pastikan `VISION_MODEL` benar-benar model **multimodal** (`npm run models -- groq --all`). |
-| Error `model ... does not support image input` | `VISION_MODEL` bukan model vision, atau provider tidak mendukung `image_url`. Ganti model atau matikan `VISION_ENABLED`. |
+| AI menjawab "belum bisa membaca gambar" | `VISION_MODEL` bukan model **multimodal**. Vision selalu aktif, jadi yang perlu diperbaiki adalah modelnya (`npm run models -- groq --all`). |
+| Error `model ... does not support image input` | `VISION_MODEL` bukan model vision, atau provider tidak mendukung `image_url`. Ganti `VISION_MODEL` ke model multimodal. |
 | Voice note tidak ditranskrip | `VOICE_ENABLED` belum aktif, file > `VOICE_MAX_MB`, atau provider menolak endpoint `/audio/transcriptions`. Cek log: nama provider ikut dicatat. |
 | Balasan suara tidak muncul | `TTS_ENABLED=false`, kuota TTS habis, atau model suara tidak ada di provider. Jawaban teks tetap dikirim — tidak ada yang hilang. |
 | Panel "Chat via DM" masih muncul padahal ingin dimatikan | Dashboard → **Panel** → *Hapus panel* (menghapus pesannya) atau matikan centang *Izinkan member chat* (pesan tetap ada, tombol ditolak). Tanpa dashboard: hapus pesan panelnya di Discord — tombolnya ikut hilang. |
@@ -546,6 +546,7 @@ src/
 │   ├── banner.ts            # banner unggahan admin: validasi, simpan, baca, hapus
 │   ├── greeting-text.ts     # template {user}/{server} — dipakai bot & dashboard
 │   ├── preview.ts           # pratinjau & prompt bersama (sambutan, perpisahan, agent)
+│   ├── test-send.ts         # kirim tes sungguhan ke Discord (sambutan, perpisahan, agent)
 │   ├── agent-core.ts        # logika murni AI Agent: kapan membalas, riwayat, sepi
 │   ├── agent.ts             # lapisan Discord AI Agent (chat & galeri)
 │   └── ui.ts                # embed & komponen
@@ -578,22 +579,6 @@ docs/moderation.md           # moderasi otomatis + log pelanggaran
 docs/vision-voice.md         # vision gambar, STT/TTS, /ucap
 docs/hosting.md              # hosting bot gratis 24/7 + backup
 ```
-
----
-
-## 🗺️ Roadmap ide berikutnya
-
-- [x] Streaming jawaban (edit pesan bertahap)
-- [x] RAG dokumen server (`.txt`/`.md`/`.csv`/`.json`, pencarian hybrid)
-- [x] Web dashboard (statistik, grafik aktivitas, kelola dokumen/keyword/persona, uji pencarian)
-- [x] Dukungan PDF/DOCX (ekstraksi teks via `unpdf` + `fflate`, tanpa dependency native)
-- [x] Riwayat transkrip dari dashboard (arsip di SQLite, unduh & hapus dari web)
-- [x] Moderasi otomatis + logging (filter kata terlarang, halaman `/moderasi`, audit log)
-- [x] Dukungan gambar (vision) & voice (STT Whisper + TTS PlayAI, `/ucap`)
-- [x] Postgres untuk multi-shard (driver async SQLite ↔ Postgres, `npm run migrate:pg`, `SHARD_COUNT`/`SHARD_INDEX`)
-- [x] Sambutan & salam perpisahan ber-AI, kartu PNG, dan banner unggahan sendiri
-- [x] AI Agent dua channel (ngobrol + galeri) dengan riwayat obrolan di memori
-- [x] Pratinjau & tombol tes di dashboard (tanpa menunggu member / tanpa kirim pesan)
 
 ---
 

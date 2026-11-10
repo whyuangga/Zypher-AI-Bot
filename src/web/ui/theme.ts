@@ -200,6 +200,11 @@ code {
   display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: var(--r-sm);
   border: 1px solid var(--line); background: transparent; color: var(--text-2); cursor: pointer;
   transition: color .15s, border-color .15s, background .15s;
+  /* Aturan button global memberi padding 12px 18px. Di kotak 34px itu
+     menyisakan ruang isi hanya 8px, lebih kecil dari ikon 18px, sehingga
+     ikon menempel ke atas (turun 5px dari tengah). Nolkan padding dan
+     jangan biarkan flex mengecilkannya. */
+  padding: 0; flex: 0 0 auto; line-height: 0;
 }
 .icon-btn:hover { color: var(--text); border-color: var(--line-strong); background: rgba(226, 209, 204, .05); }
 .burger { display: none; }
@@ -363,6 +368,14 @@ tbody tr:hover { background: rgba(226, 209, 204, .04); }
 .chip {
   display: inline-flex; align-items: center; gap: 7px; padding: 5px 9px; border-radius: var(--r-sm);
   background: transparent; border: 1px solid var(--line); font-size: 12px; color: var(--text-2);
+}
+
+/* Atribut hidden harus selalu menang.
+   Tanpa aturan ini, kelas seperti .preview-img dan .banner-preview img yang
+   memakai display:block mengalahkan atribut hidden, sehingga gambar kosong
+   tetap tampil sebagai kotak rusak (bug nyata di halaman Sambutan). */
+[hidden] {
+  display: none !important;
 }
 
 /* Tombol: solid Wafer (bukan gradient), huruf kapital ber-spasi. */
@@ -585,8 +598,19 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   .list-row, .kv, details.user-group > summary { padding-left: 16px; padding-right: 16px; }
   .cols-2-even { grid-template-columns: minmax(0, 1fr); }
   .toast { left: 16px; right: 16px; max-width: none; bottom: 16px; }
-  /* Judul kartu + hint + aksi sering tidak muat satu baris di HP. */
-  .card-head { flex-wrap: wrap; row-gap: 4px; }
+  /* Judul kartu + hint + aksi sering tidak muat satu baris di HP. Dulu
+     flex-wrap menaruh badge di baris kedua dan hasilnya terlihat melorot
+     (38px dari tepi atas, 19px dari bawah). Grid dua kolom membuat
+     judul+hint menumpuk di kiri sementara badge tetap di tengah tinggi. */
+  .card-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 12px;
+    row-gap: 3px;
+  }
+  .card-head h2, .card-head .hint { grid-column: 1; }
+  .card-head .right { grid-column: 2; grid-row: 1 / span 2; margin-left: 0; }
 }
 @media (max-width: 520px) {
   .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
@@ -638,8 +662,24 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
 .toggle-row {
   display: flex; align-items: center; justify-content: space-between;
   gap: 16px; width: 100%;
+  /* .toggle-row adalah grid item (induknya display:grid). Grid item punya
+     min-width:auto, jadi tanpa baris ini ia selebar teks penjelasan dan
+     kartu memotong sisanya di layar HP. */
+  min-width: 0;
 }
-.toggle-row > div { min-width: 0; }
+/* Sama untuk anak flex-nya: .switch dikecualikan supaya tetap 40x22 px. */
+.toggle-row > div { min-width: 0; flex: 1 1 auto; }
+.toggle-row > .switch { flex: 0 0 auto; }
+/* Penjelasan boleh turun baris; jangan dihitung selebar satu baris teksnya.
+   Tanpa nowrap-reset, .cell-sub mewarisi white-space dari aturan tabel
+   (nowrap + ellipsis) sehingga kalimatnya terpotong, bukan dibungkus. */
+.toggle-row .toggle-text .cell-sub {
+  max-width: 100%;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  word-break: break-word;
+}
 
 /* Switch: input asli dipakai untuk aksesibilitas, tampilannya kotak geser. */
 .switch {
@@ -683,6 +723,9 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   text-transform: uppercase;
   color: var(--text-3);
   margin-bottom: 8px;
+  /* Beberapa catatan digabung dengan newline agar tetap terpisah per baris. */
+  white-space: pre-line;
+  line-height: 1.7;
 }
 .preview-text {
   font-size: 14.5px;
@@ -737,5 +780,25 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* Baris tombol kirim-tes: pilihan tujuan + tombol, sejajar dan membungkus
+   di layar sempit (390px) tanpa memotong teks tombol. */
+.send-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.send-select {
+  flex: 1 1 200px;
+  min-width: 0;
+  padding: 11px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
 }
 `;

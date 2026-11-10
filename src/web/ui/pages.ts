@@ -730,8 +730,6 @@ export function pengaturanPage(
     ttsReplyInRoomDefault: boolean;
     ragEnabledSetting: boolean | null;
     ragEnabledDefault: boolean;
-    visionEnabledSetting: boolean | null;
-    visionEnabledDefault: boolean;
     autoMemorySetting: boolean | null;
     autoMemoryDefault: boolean;
     adminOnlyRoomsSetting: boolean | null;
@@ -803,16 +801,6 @@ export function pengaturanPage(
   </div>
   <div class="toggle-row">
     <div>
-      <div class="cell-title">Vision (Gambar)</div>
-      <div class="cell-sub">AI boleh baca gambar yang dikirim member</div>
-    </div>
-    <label class="switch">
-      <input type="checkbox" id="visionEnabled"${(options.visionEnabledSetting ?? options.visionEnabledDefault) ? ' checked' : ''}>
-      <span class="slider"></span>
-    </label>
-  </div>
-  <div class="toggle-row">
-    <div>
       <div class="cell-title">Auto Memory</div>
       <div class="cell-sub">AI boleh ingat fakta otomatis dari percakapan</div>
     </div>
@@ -822,9 +810,9 @@ export function pengaturanPage(
     </label>
   </div>
   <div class="toggle-row">
-    <div>
-      <div class="cell-title">Chat khusus admin</div>
-      <div class="cell-sub">Hanya admin yang boleh memulai chat AI</div>
+    <div class="toggle-text">
+      <div class="cell-title">Tombol chat DM khusus admin</div>
+      <div class="cell-sub">Hanya admin (izin Manage Server) yang boleh menekan tombol &quot;Chat via DM&quot; di panel. AI Agent di channel tidak terpengaruh.</div>
     </div>
     <label class="switch">
       <input type="checkbox" id="adminOnlyRooms"${(options.adminOnlyRoomsSetting ?? options.adminOnlyRoomsDefault) ? ' checked' : ''}>
@@ -882,7 +870,6 @@ async function saveFeatureToggles() {
   const payload = {
     guild: ${JSON.stringify(options.guildId)},
     ragEnabled: document.getElementById('ragEnabled').checked,
-    visionEnabled: document.getElementById('visionEnabled').checked,
     autoMemory: document.getElementById('autoMemory').checked,
     adminOnlyRooms: document.getElementById('adminOnlyRooms').checked,
   };
@@ -947,6 +934,8 @@ export interface WelcomePageOptions extends PageContext {
   botOnline: boolean;
   /** Nama awal di kolom "Nama contoh" pada panel pratinjau. */
   sampleName: string;
+  /** Status Chromium — kartu PNG butuh ini; null artinya tidak tersedia. */
+  cardRenderer: { available: boolean; path: string | null };
 }
 
 /** Opsi channel: nilai kosong dipakai untuk "mati" atau "DM". */
@@ -1015,6 +1004,10 @@ export function welcomePage(options: WelcomePageOptions): string {
   const welcomeStatus = options.welcome.enabled ? badge('Aktif', 'ok') : badge('Nonaktif', 'warn');
   const goodbyeStatus = options.goodbye.enabled ? badge('Aktif', 'ok') : badge('Nonaktif', 'warn');
 
+  const rendererWarning = options.welcome.imageEnabled && !options.cardRenderer.available
+    ? `<div class="notice" style="margin-top:12px">${icon('alert', 16)}<span><b>Kartu PNG tidak akan terkirim.</b> Chromium tidak ditemukan di server ini, jadi sambutan & perpisahan jatuh ke embed teks. Set <code>CHROMIUM_PATH</code> ke binary Chromium di hosting-mu untuk mengaktifkan kartu.</span></div>`
+    : '';
+
   const welcomeCard = card({
     title: 'Sambutan member baru',
     hint: 'satu pesan per member baru',
@@ -1070,6 +1063,7 @@ export function welcomePage(options: WelcomePageOptions): string {
   </label>
 
   ${bannerBlock('welcome', options.welcome.bannerPath, options.welcome.bannerPreview)}
+  ${rendererWarning}
 
   <div><button class="btn-primary" type="button" onclick="saveWelcome()">${icon('check', 16)} Simpan sambutan</button></div>
 </div>`,
@@ -1157,6 +1151,17 @@ export function welcomePage(options: WelcomePageOptions): string {
     <img id="cardWelcome" class="preview-img" alt="Kartu sambutan" hidden>
   </div>
 
+  <div class="send-row">
+    <select id="sendWhere" class="send-select" ${options.botOnline ? '' : 'disabled'}>
+      <option value="dm">Kirim ke DM saya</option>
+      <option value="channel">Kirim ke channel sambutan</option>
+    </select>
+    <button class="btn-ghost" type="button" id="sendWelcome" onclick="sendTest('welcome')" ${options.botOnline ? '' : 'disabled'}>
+      ${icon('external', 15)} Kirim tes sungguhan
+    </button>
+  </div>
+  <p class="hint" style="margin:0">Tombol ini <b>benar-benar mengirim</b> satu pesan ke Discord, diberi penanda "pesan uji". Dipakai untuk membuktikan alurnya jalan — tidak perlu menunggu member baru.${options.botOnline ? '' : ' <b>Bot sedang offline</b>, jadi pengiriman dinonaktifkan.'}</p>
+
   <hr style="border:none;border-top:1px solid var(--line);margin:2px 0">
 
   <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -1168,6 +1173,13 @@ export function welcomePage(options: WelcomePageOptions): string {
     <div class="preview-text" id="textGoodbye"></div>
     <img id="cardGoodbye" class="preview-img" alt="Kartu perpisahan" hidden>
   </div>
+
+  <div class="send-row">
+    <button class="btn-ghost" type="button" id="sendGoodbye" onclick="sendTest('goodbye')" ${options.botOnline ? '' : 'disabled'}>
+      ${icon('external', 15)} Kirim tes ke channel
+    </button>
+  </div>
+  <p class="hint" style="margin:0">Salam perpisahan <b>selalu ke channel</b> — member yang keluar tidak bisa dikirimi DM. Channel harus dipilih &amp; disimpan dulu.</p>
 
   <p class="hint" style="margin:0">Yang diuji adalah <b>isi pesannya</b>, bukan pengirimannya. Tombol ini memakai form di atas apa adanya, jadi kamu bisa mencoba gaya lain sebelum menyimpan.</p>
 </div>`,
@@ -1258,6 +1270,74 @@ function showBanner(kind, src) {
   else image.removeAttribute('src');
 }
 
+/**
+ * Kirim satu pesan sungguhan ke Discord memakai form apa adanya.
+ *
+ * Sengaja terpisah dari runTest(): pratinjau hanya menampilkan teks, sedangkan
+ * tombol ini menembak API Discord. Pesan selalu diberi penanda "pesan uji".
+ */
+async function sendTest(kind) {
+  var button = document.getElementById('send' + kind.charAt(0).toUpperCase() + kind.slice(1));
+  var label = button.innerHTML;
+  button.disabled = true;
+  button.textContent = 'Mengirim…';
+  document.getElementById('previewState').textContent = 'Mengirim ke Discord…';
+
+  var payload = kind === 'welcome'
+    ? {
+        target: document.getElementById('sendWhere').value,
+        useAi: document.getElementById('welcomeUseAi').checked,
+        template: document.getElementById('welcomeTemplate').value.trim(),
+        style: document.getElementById('welcomeStyle').value.trim(),
+        example: document.getElementById('welcomeExample').value.trim(),
+        imageEnabled: document.getElementById('welcomeImage').checked,
+        includeAvatar: document.getElementById('welcomeAvatar').checked,
+      }
+    : {
+        useAi: document.getElementById('goodbyeUseAi').checked,
+        template: document.getElementById('goodbyeTemplate').value.trim(),
+        style: document.getElementById('goodbyeStyle').value.trim(),
+        example: document.getElementById('goodbyeExample').value.trim(),
+        imageEnabled: document.getElementById('goodbyeImage').checked,
+        includeAvatar: document.getElementById('goodbyeAvatar').checked,
+      };
+
+  try {
+    var data = await api('/api/send-test/' + kind, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    var where = data.where === 'dm' ? 'DM kamu' : ('#' + data.channelName);
+    toast('✅ Terkirim ke ' + where + (data.card ? ' (dengan kartu)' : ''));
+    document.getElementById('previewState').textContent = 'Terkirim';
+    showSendResult(kind, data);
+  } catch (error) {
+    toast('Gagal mengirim: ' + error.message, true);
+    document.getElementById('previewState').textContent = 'Gagal mengirim';
+    showSendError(kind, error.message);
+  } finally {
+    button.disabled = false;
+    button.innerHTML = label;
+  }
+}
+
+function showSendResult(kind, data) {
+  var box = document.getElementById('out' + kind.charAt(0).toUpperCase() + kind.slice(1));
+  box.hidden = false;
+  var meta = document.getElementById('meta' + kind.charAt(0).toUpperCase() + kind.slice(1));
+  meta.textContent = '📨 TERKIRIM KE ' + (data.where === 'dm' ? 'DM' : 'CHANNEL ' + (data.channelName || ''))
+    + (data.card ? ' · DENGAN KARTU' : ' · EMBED TEKS')
+    + (data.note ? ' — ' + data.note : '');
+}
+
+function showSendError(kind) {
+  var box = document.getElementById('out' + kind.charAt(0).toUpperCase() + kind.slice(1));
+  box.hidden = false;
+  var meta = document.getElementById('meta' + kind.charAt(0).toUpperCase() + kind.slice(1));
+  meta.textContent = '⚠️ GAGAL MENGIRIM — ' + arguments[1];
+}
+
 async function saveGoodbye() {
   await postJson('/api/goodbye', {
     enabled: document.getElementById('goodbyeEnabled').checked,
@@ -1316,8 +1396,8 @@ async function runTest(kind, templateOnly) {
     document.getElementById('text' + kind.charAt(0).toUpperCase() + kind.slice(1)).textContent = data.text || '(kosong)';
     document.getElementById('meta' + kind.charAt(0).toUpperCase() + kind.slice(1)).textContent =
       (data.source === 'ai' ? '✍️ ditulis AI' : data.source === 'template' ? '📄 dari template' : '⚠️ gagal')
-      + (data.note ? ' — ' + data.note : '')
-      + (data.card ? ' · kartu ' + Math.round((data.cardBytes || 0) / 1024) + ' KB' : '');
+      + (data.card ? ' · kartu ' + Math.round((data.cardBytes || 0) / 1024) + ' KB' : '')
+      + (data.note ? ' — ' + data.note : '');
 
     // Kartu dikirim sebagai data URI di respons yang sama — tidak perlu
     // endpoint gambar tambahan dan tidak ada yang disimpan ke disk.
@@ -1471,6 +1551,13 @@ export function agentPage(options: AgentPageOptions): string {
     <button class="btn-ghost" type="button" id="testQuiet" onclick="runQuietTest()">${icon('sparkles', 16)} Tes pemecah sepi</button>
   </div>
 
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <button class="btn-ghost" type="button" id="sendAgent" onclick="sendAgentTest()" ${options.botOnline ? '' : 'disabled'}>
+      ${icon('external', 15)} Kirim tes ke channel
+    </button>
+    <span class="hint" style="margin:0">Mengirim <b>satu</b> pesan nyata berisi balasan bot — diberi penanda "pesan uji".${options.botOnline ? '' : ' <b>Bot offline</b>.'}</span>
+  </div>
+
   <div class="preview-box" id="outAgent" hidden>
     <div class="preview-meta" id="metaAgent"></div>
     <div class="preview-text" id="textAgent"></div>
@@ -1582,6 +1669,42 @@ async function runQuietTest() {
   } finally {
     button.disabled = false;
     button.textContent = label;
+  }
+}
+
+/**
+ * Kirim balasan hasil tes ke channel AI Agent yang tersimpan.
+ *
+ * Bot mengirim SATU pesan: kutipan pesan uji + balasannya. Tidak membuat pesan
+ * palsu dari "member", supaya riwayat channel tetap jujur.
+ */
+async function sendAgentTest() {
+  var button = document.getElementById('sendAgent');
+  var label = button.innerHTML;
+  button.disabled = true;
+  button.textContent = 'Mengirim…';
+  document.getElementById('testState').textContent = 'Mengirim ke Discord…';
+
+  try {
+    var data = await api('/api/send-test/agent', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: document.getElementById('testName').value.trim(),
+        message: document.getElementById('testMessage').value.trim(),
+        role: document.getElementById('testRole').value,
+      }),
+    });
+    toast('✅ Terkirim ke #' + data.channelName);
+    showAgentResult('📨 terkirim ke #' + data.channelName, data.text || '(kosong)', null);
+    document.getElementById('testState').textContent = 'Terkirim';
+  } catch (error) {
+    toast('Gagal mengirim: ' + error.message, true);
+    showAgentResult('⚠️ gagal mengirim', '(tidak terkirim)', error.message);
+    document.getElementById('testState').textContent = 'Gagal mengirim';
+  } finally {
+    button.disabled = false;
+    button.innerHTML = label;
   }
 }
 

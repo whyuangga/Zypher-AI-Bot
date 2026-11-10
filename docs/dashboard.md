@@ -13,7 +13,7 @@ Yang bisa dilakukan:
 | `/dokumen` | Upload dokumen RAG (file atau tempel teks), daftar dokumen, hapus dokumen, **uji pencarian** |
 | `/keyword` | Tambah & hapus template jawaban owner (FAQ, harga, aturan) |
 | `/moderasi` | Filter kata terlarang per server, tindakan (hapus/tegur/timeout), log pelanggaran |
-| `/pengaturan` | Persona AI & model per server, **toggle fitur AI** (RAG, Vision, Auto Memory, Chat khusus admin, Suara balasan AI), info server + salin Server ID |
+| `/pengaturan` | Persona AI & model per server, **toggle fitur AI** (RAG, Auto Memory, tombol chat DM khusus admin, Suara balasan AI), info server + salin Server ID |
 | `/healthz` | JSON status untuk monitoring (tanpa login) — termasuk engine database |
 
 Tampilan memakai gaya **editorial gelap** (hangat, bukan hitam-putih murni) dengan palet pemilik proyek:
@@ -271,6 +271,22 @@ Dua kartu berdampingan, satu tema "kehadiran":
   "Tes tanpa AI". Hasilnya menampilkan teksnya beserta sumbernya (AI / template /
   gagal) dan kartu PNG kalau opsi kartu dicentang. Memakai isi form saat itu,
   jadi bisa dicoba sebelum menyimpan.
+- **Kirim tes sungguhan** — tombol terpisah yang **benar-benar mengirim satu
+  pesan ke Discord**, bukan pratinjau. Ada tiga:
+
+  | Tombol | Tujuan | Isi pesan |
+  |---|---|---|
+  | "Kirim tes sungguhan" (sambutan) | DM kamu, atau channel sambutan kalau dipilih | teks sambutan + kartu PNG kalau diaktifkan |
+  | "Kirim tes ke channel" (perpisahan) | channel salam perpisahan yang tersimpan | teks salam perpisahan + kartu PNG |
+  | "Kirim tes ke channel" (agent) | channel ngobrol/galeri tersimpan | kutipan pesan uji + balasan bot |
+
+  Pesannya selalu dibuka penanda *"🧪 Pesan uji dari dashboard"* dan mention
+  tidak dipicu, jadi tidak ada member yang ter-tag karena tes. Tombol ini mati
+  saat bot offline di proses dashboard — mengirim butuh koneksi Discord.
+
+  Kegagalan dijelaskan spesifik, bukan "gagal": channel tidak ditemukan, bot
+  tidak punya izin *Send Message* / *View Channel*, DM ditutup privasi, atau
+  Chromium tidak ada sehingga kartu tidak dibuat.
 
 ---
 
@@ -288,6 +304,9 @@ Halaman sendiri, sengaja terpisah dari sambutan karena yang diatur bukan
 
 Panel **Tes percakapan** menguji balasan bot untuk pesan contoh (mode ngobrol
 atau mode galeri) serta kalimat **pemecah sepi** — tanpa mengirim ke channel.
+Tombol "Kirim tes ke channel" di sebelahnya **mengirim** satu pesan nyata berisi
+kutipan pesan uji dan balasan bot, supaya gaya balasannya bisa dilihat langsung
+di Discord.
 
 Detail perilaku & biaya API: [sambutan-agent.md](sambutan-agent.md).
 
@@ -309,6 +328,21 @@ atas `.env` karena tersimpan per server. Halaman ini berisi:
 | `POST /api/moderasi` | Simpan pengaturan (JSON: `enabled`, `words[]`, `action`, `timeoutMinutes`) |
 | `DELETE /api/moderasi/logs/<id>` | Hapus satu catatan pelanggaran |
 | `DELETE /api/moderasi/logs` | Bersihkan semua catatan pelanggaran server ini |
+
+Endpoint halaman Sambutan & AI Agent (pratinjau tidak mengirim apa pun;
+`send-test` yang benar-benar mengirim):
+
+| Endpoint | Fungsi |
+|---|---|
+| `POST /api/preview/welcome` \| `/goodbye` \| `/agent` \| `/quiet` | Hasil pratinjau + sumber (AI/template) + alasan gagal. Tanpa efek samping di Discord |
+| `POST /api/send-test/welcome` `{target:'dm'\|'channel', ...form}` | Kirim **satu pesan uji** sambutan ke DM admin atau channel sambutan |
+| `POST /api/send-test/goodbye` `{...form}` | Kirim satu pesan uji salam perpisahan ke channel tersimpan |
+| `POST /api/send-test/agent` `{message, role, channelId}` | Kirim satu pesan uji berisi kutipan + balasan bot |
+
+Semua `send-test` menolak dengan **400** kalau bot tidak jalan di proses
+dashboard (tidak ada koneksi Discord untuk mengirim), dan alasan kegagalan
+dikembalikan apa adanya: channel tidak ditemukan, izin kurang, DM ditutup,
+atau Chromium tidak ada.
 
 Endpoint halaman Panel:
 
@@ -360,10 +394,21 @@ Semua fitur AI bisa di-toggle per server dari dashboard `/pengaturan` — tidak 
 | Toggle | Arti | Default .env |
 |---|---|---|
 | **Dokumen RAG** | AI boleh jawab dari dokumen yang di-upload | `RAG_ENABLED=true` |
-| **Vision (Gambar)** | AI boleh baca gambar yang dikirim member | `VISION_ENABLED=false` |
 | **Auto Memory** | AI boleh ingat fakta otomatis dari percakapan | `AUTO_MEMORY=true` |
-| **Chat khusus admin** | Hanya admin yang boleh memulai chat AI | `ADMIN_ONLY_ROOMS=false` |
+| **Tombol chat DM khusus admin** | Hanya admin yang boleh menekan tombol "Chat via DM" di panel | `ADMIN_ONLY_ROOMS=false` |
 | **Suara di room** | Jawaban AI di room otomatis dibacakan (TTS) | `TTS_REPLY_IN_ROOM=true` |
+
+**Vision tidak punya toggle.** Membaca gambar selalu aktif: kalau member mengirim
+gambar, AI memakai `VISION_MODEL` untuk membacanya. Yang perlu dipastikan hanya
+modelnya benar-benar **multimodal** — kalau bukan, provider menolak dan pesan
+error-nya diteruskan ke log, bukan gambar diam-diam diabaikan.
+
+**Apa arti toggle "Tombol chat DM khusus admin" persisnya?** Ia hanya menjaga
+tombol **"Chat via DM"** di pesan panel server. Saat aktif, member tanpa izin
+*Manage Server* yang menekan tombol itu ditolak dengan pesan bahwa chat hanya
+bisa dimulai admin. Ia **tidak** memengaruhi AI Agent yang mengobrol di channel,
+keyword, moderasi, maupun slash command `/tanya`. Nama lamanya "Chat khusus
+admin" sengaja diganti karena terbaca seolah membatasi semua chat AI.
 
 Bila belum di-set (default), memakai nilai dari `.env`. Setelah di-set, nilai di database dipakai — overriding `.env`.
 

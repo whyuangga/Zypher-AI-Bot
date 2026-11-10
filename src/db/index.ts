@@ -37,9 +37,6 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
       ? 'ALTER TABLE guilds ADD COLUMN IF NOT EXISTS rag_enabled BOOLEAN'
       : 'ALTER TABLE guilds ADD COLUMN rag_enabled INTEGER',
     driver.dialect === 'pg'
-      ? 'ALTER TABLE guilds ADD COLUMN IF NOT EXISTS vision_enabled BOOLEAN'
-      : 'ALTER TABLE guilds ADD COLUMN vision_enabled INTEGER',
-    driver.dialect === 'pg'
       ? 'ALTER TABLE guilds ADD COLUMN IF NOT EXISTS auto_memory BOOLEAN'
       : 'ALTER TABLE guilds ADD COLUMN auto_memory INTEGER',
     driver.dialect === 'pg'
