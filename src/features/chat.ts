@@ -12,6 +12,7 @@ import { chat, streamChat, type ChatMessage, type ChatTool } from '../lib/llm.js
 import { logger, errorMessage } from '../lib/logger.js';
 import { checkRateLimit } from '../lib/ratelimit.js';
 import { chunkMessage, truncate } from '../lib/text.js';
+import { detectLanguage } from '../lib/language.js';
 import { getMemories, memoryTools, runMemoryTool } from './memory.js';
 import { matchKeywords } from './keywords.js';
 import { buildSystemPrompt } from './prompt.js';
@@ -67,6 +68,7 @@ async function generateAnswer(
     memories,
     keywords,
     knowledgeBlock: buildKnowledgeBlock(sources),
+    language: detectLanguage(context.question),
   });
 
   // Model vision umumnya belum mendukung function calling, jadi tool dimatikan

@@ -44,6 +44,7 @@ import {
   setPersona,
 } from '../db/repo.js';
 import { invalidateModerationCache } from '../features/moderation.js';
+import { consolidateMemories } from '../features/memory.js';
 import { listPanelChannels, PanelError, panelState, publishPanel, removePanel } from '../features/panel.js';
 import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
 import { MAX_BINARY_BYTES } from '../lib/chunker.js';
@@ -806,6 +807,23 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     const userId = url.searchParams.get('user') ?? '';
     const removed = guildId && userId ? await deleteMemory(guildId, userId, id) : false;
     sendJson(response, removed ? 200 : 404, removed ? { ok: true } : { error: 'Memori tidak ditemukan.' });
+    return;
+  }
+
+  if (path === '/api/memori/consolidate' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+
+    const userId = url.searchParams.get('user') ?? '';
+    if (!userId) {
+      sendJson(response, 400, { error: 'User belum dipilih.' });
+      return;
+    }
+
+    const result = await consolidateMemories(guildId, userId);
+    sendJson(response, 200, result);
     return;
   }
 

@@ -736,6 +736,9 @@ export function memoriPage(options: PageContext & { groups: MemoryGroupView[] })
       <div class="cell-sub">${group.items.length} memori</div>
     </span>
     <span class="chev">${icon('chevron', 16)}</span>
+    <button class="btn-ghost btn-sm" type="button"
+      onclick="consolidateMemories(${esc(JSON.stringify(group.userId))})"
+      title="AI meninjau & menggabungkan memori yang berulang"">${icon('sparkles', 14)} Konsolidasi AI</button>
   </summary>
   <div class="list" style="padding-bottom:6px">
     ${group.items
@@ -804,6 +807,21 @@ async function removeMemory(id, userId) {
     setTimeout(function () { location.reload(); }, 400);
   } catch (error) {
     toast('Gagal menghapus: ' + error.message, true);
+  }
+}
+
+async function consolidateMemories(userId) {
+  var ok = await askConfirm(
+    'Konsolidasi memori?',
+    'AI akan meninjau semua memori user ini, menggabungkan fakta yang berulang, dan menghapus yang tidak berguna.'
+  );
+  if (!ok) return;
+  try {
+    var result = await api('/api/memori/consolidate?guild=' + encodeURIComponent(GUILD) + '&user=' + encodeURIComponent(userId), { method: 'POST' });
+    toast(result.skipped ? result.skipped : 'Konsolidasi selesai: ' + (result.before - result.removed) + ' dari ' + result.before + ' memori dipertahankan');
+    setTimeout(function () { location.reload(); }, 400);
+  } catch (error) {
+    toast('Gagal mengonsolidasi: ' + error.message, true);
   }
 }
 </script>`;

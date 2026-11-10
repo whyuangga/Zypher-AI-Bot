@@ -12,7 +12,7 @@ Yang bisa dilakukan:
 | `/panel` | Kelola panel "Buat Room AI": kirim ke satu channel, ganti channel, hapus, atau matikan tombolnya |
 | `/dokumen` | Upload dokumen RAG (file atau tempel teks), daftar dokumen, hapus dokumen, **uji pencarian** |
 | `/keyword` | Tambah & hapus template jawaban owner (FAQ, harga, aturan) |
-| `/memori` | Fakta yang diingat AI per user, dikelompokkan per member, bisa dihapus |
+| `/memori` | Fakta yang diingat AI per user, dikelompokkan per member, bisa dihapus + **konsolidasi AI** (gabung duplikat, hapus noise) |
 | `/transkrip` | Arsip HTML tiap sesi AI yang sudah ditutup — unduh, lihat ringkasan, hapus |
 | `/moderasi` | Filter kata terlarang per server, tindakan (hapus/tegur/timeout), log pelanggaran |
 | `/pengaturan` | Persona AI & model per server, info server + salin Server ID |
@@ -259,10 +259,26 @@ Endpoint halaman Panel:
 | `POST /api/panel` `{action:'send',channelId}` | Kirim/kirim ulang panel ke channel itu (panel lama dihapus) |
 | `POST /api/panel` `{action:'remove'}` | Hapus pesan panel dari Discord |
 | `POST /api/panel` `{action:'toggle',enabled}` | Nyalakan/matikan tombol "Buat Room AI" tanpa menyentuh pesannya |
+| `POST /api/memori/consolidate?guild=…&user=…` | AI meninjau memori user, menggabungkan duplikat, menghapus yang tidak berguna |
 
 Penjelasan cara pencocokan kata, pengecualian staff, dan pengiriman log ke channel ada di
 [docs/moderation.md](moderation.md). Perubahan dari dashboard langsung dipakai pada pesan
 berikutnya (cache pengaturan hanya 15 detik dan di-reset saat menyimpan).
+
+---
+
+## Konsolidasi memori (dashboard + `/konsolidasi`)
+
+AI bisa meninjau memori user secara periodik: menggabungkan fakta yang berulang
+("Namaku Bagas" × 3 → satu fakta), dan menghapus obrolan basi yang tidak berguna untuk
+percakapan nanti. Di ruang privat (room AI), AI otomatis memanggil ini setelah 40 memori
+terkumpul; admin juga bisa menjalankannya dari dashboard atau slash command:
+
+1. **Dashboard**: buka `/memori` → pilih user → klik **Konsolidasi AI** → konfirmasi.
+2. **Discord**: `/konsolidasi [user]` — bisa dipakai member untuk dirinya sendiri, atau admin untuk member lain.
+
+Keamanan: konsolidasi gagal (AI error, output tidak valid) → **tidak menghapus apa pun**. Memori lama
+dihapus hanya setelah AI mengembalikan daftar fakta yang valid.
 
 ---
 

@@ -49,6 +49,9 @@ const { matchKeywords } = await import('../src/features/keywords.js');
 const { buildSystemPrompt } = await import('../src/features/prompt.js');
 const { buildTranscriptHtml, transcriptFileName } = await import('../src/lib/transcript.js');
 const { chunkMessage, truncate, normalize } = await import('../src/lib/text.js');
+const { detectLanguage } = await import('../src/lib/language.js');
+const { parseConsolidatedMemories } = await import('../src/features/memory.js');
+const { invalidateIndex } = await import('../src/features/rag.js');
 const { checkRateLimit } = await import('../src/lib/ratelimit.js');
 const { parseFallbackSpec, providerNameForBaseUrl, buildProviderChain } = await import('../src/lib/providers.js');
 const { chunkText, extractText, extractFileText, htmlToText, DocumentError } = await import('../src/lib/chunker.js');
@@ -168,6 +171,34 @@ await testAsync('menyusun system prompt lengkap', async () => {
   assert.match(prompt, /Namanya Bagas/);
   assert.match(prompt, /jam mabar/);
   assert.match(prompt, /variasikan|bervariasi|variasi/i);
+});
+
+console.log('\nKonsolidasi memori');
+test('parseConsolidatedMemories: JSON array', () => {
+  const result = parseConsolidatedMemories('["Namaku Bagas", "Bagas suka desain"]');
+  assert.equal(result.length, 2);
+  assert.equal(result[0], 'Namaku Bagas');
+});
+test('parseConsolidatedMemories: blok JSON dengan markdown', () => {
+  const result = parseConsolidatedMemories('```json\n["fakta 1", "fakta 2"]\n```');
+  assert.equal(result.length, 2);
+  assert.equal(result[0], 'fakta 1');
+});
+test('parseConsolidatedMemories: fallback bullet list', () => {
+  const result = parseConsolidatedMemories('- fakta satu\n- fakta dua\n- fakta tiga');
+  assert.equal(result.length, 3);
+  assert.equal(result[0], 'fakta satu');
+});
+test('parseConsolidatedMemories: membatasi maksimal 25', () => {
+  const items = Array.from({ length: 40 }, (_, i) => `fakta ${i}`);
+  const result = parseConsolidatedMemories(JSON.stringify(items));
+  assert.equal(result.length, 25);
+});
+test('parseConsolidatedMemories: teks bebas jadi satu baris', () => {
+  // Fallback bullet-list: teks tanpa bullet tetap ditangkap sebagai satu baris.
+  const result = parseConsolidatedMemories('ini bukan JSON juga bukan bullet');
+  assert.equal(result.length, 1);
+  assert.equal(result[0], 'ini bukan JSON juga bukan bullet');
 });
 
 console.log('\nRoom & riwayat');
@@ -421,6 +452,50 @@ test('rate limit memblokir setelah batas', () => {
   const blocked = checkRateLimit(key, 3);
   assert.equal(blocked.allowed, false);
   assert.ok(blocked.retryAfterMs > 0);
+});
+
+console.log('\nDeteksi bahasa & kutipan');
+test('detectLanguage: Indonesian vs English', () => {
+  assert.equal(detectLanguage('halo apa kabar ya teman'), 'id');
+  assert.equal(detectLanguage('what is the price for premium?'), 'en');
+  assert.equal(detectLanguage('kamu bisa bantu saya dengan harga ini'), 'id');
+  assert.equal(detectLanguage('tell me more about this feature please'), 'en');
+  assert.equal(detectLanguage('...'), 'unknown');
+});
+test('summarizeSources menampilkan nama dokumen + bagian', () => {
+  const chunks = [
+    { documentId: 1, documentName: 'FAQ', ordinal: 0, content: 'a', score: 0.9, via: 'lexical' as const },
+    { documentId: 1, documentName: 'FAQ', ordinal: 2, content: 'b', score: 0.8, via: 'lexical' as const },
+    { documentId: 2, documentName: 'Panduan', ordinal: 0, content: 'c', score: 0.7, via: 'lexical' as const },
+  ];
+  const note = summarizeSources(chunks);
+  assert.ok(note.includes('FAQ'), 'FAQ disebut');
+  assert.ok(note.includes('bagian 1'), 'bagian 1 disebut');
+  assert.ok(note.includes('Panduan'), 'Panduan disebut');
+  assert.ok(note.includes('bagian 3'), 'bagian 3 disebut (ordinal 2)');
+});
+test('buildSystemPrompt menambah instruksi bahasa Inggris', () => {
+  const enPrompt = buildSystemPrompt({
+    botName: 'Zypher',
+    guildName: 'Test',
+    userName: 'User',
+    persona: null,
+    memories: [],
+    keywords: [],
+    language: 'en',
+  });
+  assert.ok(enPrompt.includes('bahasa Inggris'), 'prompt bahasa Inggris');
+
+  const idPrompt = buildSystemPrompt({
+    botName: 'Zypher',
+    guildName: 'Test',
+    userName: 'User',
+    persona: null,
+    memories: [],
+    keywords: [],
+    language: 'id',
+  });
+  assert.ok(idPrompt.includes('Bahasa Indonesia'), 'prompt bahasa Indonesia');
 });
 
 console.log('\nRAG dokumen');

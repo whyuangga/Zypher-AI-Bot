@@ -1,4 +1,5 @@
-import { addMemory, deleteMemory, listMemories, type Memory } from '../db/repo.js';
+import { addMemory, clearMemories, deleteMemory, listMemories, type Memory } from '../db/repo.js';
+import { chat } from '../lib/llm.js';
 import type { ChatTool } from '../lib/llm.js';
 import { logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
@@ -101,4 +102,126 @@ export async function runMemoryTool(name: string, rawArguments: string, context:
   }
 
   return `Tool "${name}" tidak dikenal.`;
+}
+
+
+/* ------------------------------------------------------------------ */
+/*  Konsolidasi memori                                                  */
+/* ------------------------------------------------------------------ */
+
+export interface ConsolidateResult {
+  before: number;
+  after: number;
+  removed: number;
+  /** Fakta yang dipertahankan/digabung setelah konsolidasi. */
+  kept: string[];
+  /** Mengapa tidak dikonversi (jika terlalu sedikit atau AI gagal). */
+  skipped?: string;
+}
+
+/**
+ * AI meninjau semua memori user, menggabungkan fakta yang berulang,
+ * dan membuang yang tidak berguna (obrolan basi, asumsi tak jelas).
+ *
+ * Keamanan: memori lama dihapus hanya jika AI mengembalikan hasil valid
+ * dengan minimal 1 fakta — jadi konsolidasi yang gagal tidak menghapus apa pun.
+ */
+export async function consolidateMemories(guildId: string, userId: string): Promise<ConsolidateResult> {
+  const memories = await listMemories(guildId, userId, 100);
+
+  if (memories.length < 8) {
+    return {
+      before: memories.length,
+      after: memories.length,
+      removed: 0,
+      kept: memories.map((memory) => memory.content),
+      skipped: 'Memori masih sedikit — konsolidasi tidak perlu.',
+    };
+  }
+
+  const list = memories
+    .map((memory, index) => `${index + 1}. ${memory.content}`)
+    .join('\n');
+
+  const systemPrompt = `Kamu mengorganisir memori jangka panjang seorang user di Discord.
+Tugas: tinjau daftar memori di bawah, lalu:
+- GABUNG fakta yang sama/berulang menjadi satu fakta yang lebih ringkas
+- HAPUS obrolan basi, asumsi yang tidak jelas, atau fakta yang tidak berguna untuk percakapan nanti
+- PERtahankan fakta penting (nama, preferensi, pekerjaan, keluhan, tanggal penting)
+
+Kembalikan JSON array string — HANYA JSON, tanpa penjelasan:
+["fakta 1", "fakta 2", ...]
+Batas: maksimal 25 fakta. Jangan menambahkan fakta baru yang tidak ada di daftar.`;
+
+  try {
+    const result = await chat({
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `Daftar memori user:\n${list}` },
+      ],
+    });
+
+    const raw = (result.message.content ?? '').trim();
+    const kept = parseConsolidatedMemories(raw);
+
+    if (kept.length === 0) {
+      return {
+        before: memories.length,
+        after: memories.length,
+        removed: 0,
+        kept: memories.map((memory) => memory.content),
+        skipped: 'AI tidak mengembalikan hasil yang valid — memori tetap utuh.',
+      };
+    }
+
+    // Hapus semua memori lama, lalu simpan yang baru (dedupe otomatis lewat addMemory).
+    const removed = await clearMemories(guildId, userId);
+    for (const fact of kept) {
+      await addMemory(guildId, userId, truncate(fact, 400), 'manual');
+    }
+
+    return {
+      before: memories.length,
+      after: memories.length,
+      removed,
+      kept,
+    };
+  } catch (error) {
+    logger.warn('Konsolidasi memori gagal', error instanceof Error ? error.message : String(error));
+    return {
+      before: memories.length,
+      after: memories.length,
+      removed: 0,
+      kept: memories.map((memory) => memory.content),
+      skipped: 'Gagal menghubungi AI — memori tetap utuh.',
+    };
+  }
+}
+
+/** Ubah output AI (JSON atau daftar bullet) jadi array fakta bersih. */
+export function parseConsolidatedMemories(raw: string): string[] {
+  const cleaned = raw
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```\s*$/, '')
+    .trim();
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    // Fallback: baris-baris bullet (mis. model tidak mengikuti format JSON).
+    const lines = cleaned
+      .split('\n')
+      .map((line) => line.replace(/^[-*\d.)\s]+/, '').trim())
+      .filter((line) => line.length > 0);
+    return lines.slice(0, 25);
+  }
+
+  if (!Array.isArray(parsed)) return [];
+
+  return parsed
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+    .slice(0, 25);
 }
