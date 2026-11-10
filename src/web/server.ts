@@ -6,7 +6,9 @@
  * jadi server Discord tetap bisa dipakai tanpa membuka port apa pun.
  */
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 import {
   addKeyword,
@@ -89,6 +91,41 @@ function sendJson(response: ServerResponse, status: number, payload: unknown): v
     'cache-control': 'no-store',
   });
   response.end(body);
+}
+
+/**
+ * Font self-host (General Sans, assets/fonts) — disajikan dari repo supaya
+ * dashboard tidak bergantung pada CDN/fontshare saat panel tanpa akses keluar.
+ * Isinya kecil dan statis, jadi cukup dibaca sekali lalu di-cache di memori.
+ */
+const FONT_FILES: Record<string, string> = {
+  'general-sans-regular.woff2': 'GeneralSans-Regular.woff2',
+  'general-sans-medium.woff2': 'GeneralSans-Medium.woff2',
+};
+const fontCache = new Map<string, Buffer>();
+
+function serveFont(name: string, response: ServerResponse): boolean {
+  const file = FONT_FILES[name];
+  if (!file) return false;
+
+  let data = fontCache.get(file);
+  if (!data) {
+    try {
+      data = readFileSync(fileURLToPath(new URL(`../../assets/fonts/${file}`, import.meta.url)));
+    } catch {
+      return false;
+    }
+    fontCache.set(file, data);
+  }
+
+  response.writeHead(200, {
+    'content-type': 'font/woff2',
+    'content-length': String(data.byteLength),
+    'cache-control': 'public, max-age=31536000, immutable',
+    'access-control-allow-origin': '*',
+  });
+  response.end(data);
+  return true;
 }
 
 function sendHtml(response: ServerResponse, status: number, html: string): void {
@@ -225,6 +262,14 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
   const path = url.pathname.replace(/\/+$/, '') || '/';
   const method = request.method ?? 'GET';
+
+  // Font statis dipakai halaman login & dashboard — publik, tanpa auth.
+  if (method === 'GET' && path.startsWith('/fonts/')) {
+    if (serveFont(path.slice('/fonts/'.length), response)) return;
+    response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+    response.end('Font tidak ditemukan');
+    return;
+  }
 
   // Health check tanpa auth — dipakai hosting untuk memastikan proses hidup.
   if (path === '/healthz') {

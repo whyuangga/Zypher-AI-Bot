@@ -15,8 +15,19 @@ Yang bisa dilakukan:
 | `/pengaturan` | Persona AI & model per server, info server + salin Server ID |
 | `/healthz` | JSON status untuk monitoring (tanpa login) |
 
-Tampilan memakai gaya **editorial monokrom**: latar `#0D0D0F`, teks putih, garis rambut 1px,
-judul & angka serif, label kecil monospace, dan tombol solid putih tanpa gradient.
+Tampilan memakai gaya **editorial monokrom** dengan palet pemilik proyek:
+
+| Peran | Warna | Hex |
+|---|---|---|
+| Latar | near-black | `#0D0D0F` |
+| Teks utama | Wafer | `#E2D1CC` |
+| Teks sekunder | Cold Turkey | `#D0B2B7` |
+| Aksen (aktif, fokus, badge) | Kimberly | `#716C98` |
+| Garis / permukaan gelap | Don Juan | `#55434E` (diturunkan jadi `rgba`) |
+
+Hurufnya **General Sans** (Fontshare) yang di-*self-host* dari `assets/fonts/` —
+tidak ada permintaan ke CDN, jadi panel tanpa akses internet keluar tetap tampil benar.
+Garis rambut 1px, label kapital ber-spasi lebar, dan tombol solid (tanpa gradient).
 Sidebar di kiri, grafik 7 hari tanpa library chart — semua CSS/SVG dibuat langsung dari server,
 jadi tidak ada bundler yang harus jalan di panel hosting.
 
