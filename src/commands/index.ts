@@ -9,13 +9,11 @@ import { memoriCommand } from './memori.js';
 import { panelCommand } from './panel.js';
 import { personaCommand } from './persona.js';
 import { resetCommand } from './reset.js';
-import { serverCommand } from './server.js';
 import { ucapCommand } from './ucap.js';
 import type { Command } from './types.js';
 
 export const commands: Command[] = [
   panelCommand,
-  serverCommand,
   akhiriCommand,
   ucapCommand,
   bantuanCommand,

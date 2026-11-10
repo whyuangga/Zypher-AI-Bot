@@ -154,20 +154,32 @@ code {
   padding: 13px 40px; border-bottom: 1px solid var(--line);
   background: rgba(13, 13, 15, .94); backdrop-filter: blur(10px);
 }
-.guild-picker { display: flex; align-items: center; gap: 8px; }
-.select-shell { position: relative; display: inline-flex; align-items: center; }
+/* Badge server di topbar. Bukan kontrol: bot ini untuk satu server,
+   jadi yang perlu diketahui admin hanya server mana yang sedang dibuka. */
+/* Shell mengikuti lebar <select>, bukan sebaliknya.
+   Dulu shell bisa width:100% sementara select dibatasi max-width:260px,
+   jadi chevron (position:absolute; right:10px) menempel ke tepi shell —
+   jauh di kanan garis bawah select. Sekarang shell menyusut selebar select. */
+.select-shell { position: relative; display: inline-flex; align-items: center; max-width: 100%; }
 .select-shell svg { position: absolute; right: 10px; pointer-events: none; color: var(--text-3); }
 .select-shell select {
-  appearance: none; padding: 8px 32px 8px 0; min-width: 190px; max-width: 260px;
+  appearance: none; padding: 8px 32px 8px 0; min-width: 190px; max-width: 260px; width: 100%;
   background: transparent; border: 0; border-bottom: 1px solid var(--line-strong); border-radius: 0;
   color: var(--text); font-family: var(--font-mono); font-size: 12.5px; letter-spacing: .02em;
 }
 .select-shell select:hover { border-bottom-color: var(--text); }
-.guild-manual { display: flex; gap: 6px; }
-.guild-manual input {
-  width: 168px; padding: 8px 10px; background: transparent; border: 1px solid var(--line);
-  border-radius: var(--r-sm); color: var(--text); font-family: var(--font-mono); font-size: 12px;
+
+.guild-static {
+  display: inline-flex; align-items: center; gap: 9px; min-width: 0;
+  padding: 7px 12px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, .015); color: var(--text);
 }
+.guild-static svg { color: var(--text-3); flex: none; }
+.guild-static > span:not(.guild-static-id) {
+  font-size: 13.5px; font-weight: 500; letter-spacing: -.01em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 34vw;
+}
+.guild-static-id { color: var(--text-3); font-size: 11px; letter-spacing: .02em; }
 .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
 .search { position: relative; display: flex; align-items: center; }
 .search svg { position: absolute; left: 0; color: var(--text-3); }
@@ -218,7 +230,12 @@ code {
   font-size: 10px; font-weight: 500; letter-spacing: .18em;
   text-transform: uppercase; color: var(--text);
 }
-.card-head .hint { color: var(--text-3); font-size: 12px; letter-spacing: -.005em; }
+.card-head .hint {
+  /* margin-top: 8px global milik .hint membuat teks di samping judul kartu
+     turun ~4px. Di dalam card-head teks harus sebaris rata dengan judul. */
+  color: var(--text-3); font-size: 12px; letter-spacing: -.005em;
+  margin: 0; line-height: 1.2;
+}
 .card-head .right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
 .grid { display: grid; gap: 14px; }
@@ -316,6 +333,16 @@ tbody tr:hover { background: rgba(226, 209, 204, .04); }
 }
 .date-short { display: none; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Kolom angka di tabel (mis. "Pesan" pada Sesi DM).
+   Dulu memakai .num (rata kanan) dengan padding 24px di dua sisi, jadi satu
+   digit angka mengambang jauh dari judul kolomnya. Lebar dipatok supaya angka
+   duduk tepat di bawah judulnya, bukan di tengah sel. */
+.col-count {
+  width: 92px; text-align: left;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.col-activity { width: 1%; white-space: nowrap; }
 .row-actions { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
 
 /* ---------------- badges, chips, buttons ---------------- */
@@ -536,9 +563,12 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   .backdrop.show { display: block; }
   .burger { display: inline-grid; }
   .topbar { padding: 10px 16px; gap: 10px; }
-  .guild-manual { display: none; }
   .topbar-right .chip { display: none; }
   .select-shell select { min-width: 0; max-width: 52vw; font-size: 11.5px; padding: 7px 26px 7px 0; }
+  /* Di layar sempit ID-nya disembunyikan — nama server sudah cukup. */
+  .guild-static { padding: 6px 10px; gap: 7px; flex: 1; min-width: 0; }
+  .guild-static-id { display: none; }
+  .guild-static > span:not(.guild-static-id) { max-width: 100%; font-size: 12.5px; }
   .content { padding: 26px 16px 96px; }
   h1 { font-size: 33px; }
   .page-head { margin-bottom: 24px; padding-bottom: 16px; gap: 16px; }
@@ -636,5 +666,76 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+/* Kotak pratinjau: menampilkan hasil uji fitur tanpa mengirim apa pun.
+   Dibedakan dari kartu pengaturan supaya jelas ini keluaran, bukan isian. */
+.preview-box {
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  padding: 14px;
+  background: rgba(109, 140, 255, 0.04);
+}
+.preview-meta {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 8px;
+}
+.preview-text {
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.preview-img {
+  display: block;
+  width: 100%;
+  max-width: 460px;
+  margin-top: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+
+/* Banner unggahan: kotak pratinjau di kiri, tombol di kanan.
+   Ukurannya dibuat mirip kartu (900x320) tapi lebih pendek supaya tidak makan
+   tempat di form. */
+.banner-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.banner-preview {
+  flex: 1 1 260px;
+  min-height: 96px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  background: rgba(109, 140, 255, 0.03);
+  overflow: hidden;
+}
+.banner-preview img {
+  display: block;
+  width: 100%;
+  max-height: 150px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+.banner-preview span {
+  font-size: 12px;
+  color: var(--text-3);
+  text-align: center;
+}
+.banner-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 `;

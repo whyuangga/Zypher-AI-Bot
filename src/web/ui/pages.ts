@@ -15,7 +15,7 @@ import {
   relativeTime,
   statCard,
 } from './base.js';
-import { appShell, guildLabel, pageHead, SHARED_JS, type GuildChoice, type PageKey } from './shell.js';
+import { appShell, guildLabel, pageHead, SHARED_JS, type PageKey } from './shell.js';
 import { STYLE } from './theme.js';
 
 export interface ShellStatus {
@@ -26,7 +26,7 @@ export interface ShellStatus {
 
 export interface PageContext {
   guildId: string;
-  guilds: GuildChoice[];
+  guildName: string | null;
   status: ShellStatus;
   counts?: Partial<Record<PageKey, number>>;
 }
@@ -148,8 +148,8 @@ export function ringkasanPage(data: DashboardData): string {
         </span>
       </div>
     </td>
-    <td class="num">${formatNumber(session.messageCount)}</td>
-    <td><span class="badge">${icon('activity', 13)} ${esc(relativeTime(session.lastActiveAt))}</span></td>
+    <td class="col-count">${formatNumber(session.messageCount)}</td>
+    <td class="col-activity"><span class="badge">${icon('activity', 13)} ${esc(relativeTime(session.lastActiveAt))}</span></td>
   </tr>`,
         )
         .join('')
@@ -160,7 +160,7 @@ export function ringkasanPage(data: DashboardData): string {
     right: `<a class="btn-ghost btn-sm" href="/panel">Kelola panel ${icon('chevron', 13)}</a>`,
     body: roomRows
       ? `<div class="table-wrap"><table>
-  <thead><tr><th>Pemilik</th><th class="num">Pesan</th><th>Aktivitas</th></tr></thead>
+  <thead><tr><th>Pemilik</th><th class="col-count">Pesan</th><th class="col-activity">Aktivitas</th></tr></thead>
   <tbody>${roomRows}</tbody>
 </table></div>`
       : emptyState({
@@ -198,8 +198,8 @@ export function ringkasanPage(data: DashboardData): string {
     kicker: '01 — Ikhtisar',
     title: 'Ringkasan',
     subtitle: `${
-      data.guilds.find((guild) => guild.id === data.guildId)?.name
-        ? `${esc(data.guilds.find((guild) => guild.id === data.guildId)?.name ?? '')} · <span class="mono">${esc(data.guildId)}</span>`
+      data.guildName
+        ? `${esc(data.guildName)} · <span class="mono">${esc(data.guildId)}</span>`
         : `Server <span class="mono">${esc(data.guildId || '—')}</span>`
     } · data langsung dari ${esc(data.storage ?? 'SQLite')} bot`,
     actions: `<a class="btn-primary" href="/dokumen">${icon('upload', 16)} Upload dokumen</a>`,
@@ -208,7 +208,7 @@ ${stats}
 <div class="grid cols-2 mt">${chartCard}${statusCard}</div>
 <div class="grid cols-2 mt">${roomsCard}${docsCard}</div>`;
 
-  return appShell({ title: 'Ringkasan', guildId: data.guildId, guilds: data.guilds, active: 'ringkasan', body, counts: data.counts, status: data.status });
+  return appShell({ title: 'Ringkasan', guildId: data.guildId, guildName: data.guildName, active: 'ringkasan', body, counts: data.counts, status: data.status });
 }
 
 /* ------------------------------------------------------------------ */
@@ -232,8 +232,8 @@ export function panelPage(options: PanelOptions): string {
   const hasPanel = Boolean(options.messageId);
 
   const channelField = options.channels.length
-    ? `<span class="select-shell" style="width:100%">
-    <select id="panelChannel" style="width:100%">
+    ? `<span class="select-shell" style="display:flex;width:100%">
+    <select id="panelChannel" style="width:100%;max-width:none">
       <option value="">— pilih channel —</option>
       ${options.channels
         .map(
@@ -362,7 +362,7 @@ async function togglePanel() {
   return appShell({
     title: 'Panel',
     guildId: options.guildId,
-    guilds: options.guilds,
+    guildName: options.guildName,
     active: 'panel',
     body,
     counts: options.counts,
@@ -590,7 +590,7 @@ async function runSearch() {
   return appShell({
     title: 'Dokumen',
     guildId: options.guildId,
-    guilds: options.guilds,
+    guildName: options.guildName,
     active: 'dokumen',
     body,
     counts: options.counts,
@@ -705,7 +705,7 @@ async function removeKeyword(id, trigger) {
   return appShell({
     title: 'Keyword',
     guildId: options.guildId,
-    guilds: options.guilds,
+    guildName: options.guildName,
     active: 'keyword',
     body,
     counts: options.counts,
@@ -902,7 +902,7 @@ async function saveFeatureToggles() {
   return appShell({
     title: 'Pengaturan',
     guildId: options.guildId,
-    guilds: options.guilds,
+    guildName: options.guildName,
     active: 'pengaturan',
     body,
     counts: options.counts,
@@ -911,6 +911,697 @@ async function saveFeatureToggles() {
 }
 
 export { SHARED_JS };
+
+/* ------------------------------------------------------------------ */
+/*  Sambutan & perpisahan                                              */
+/* ------------------------------------------------------------------ */
+
+export interface WelcomePageOptions extends PageContext {
+  welcome: {
+    enabled: boolean;
+    useAi: boolean;
+    channelId: string | null;
+    template: string | null;
+    imageEnabled: boolean;
+    includeAvatar: boolean;
+    style: string | null;
+    example: string | null;
+    /** Nama file banner (null = latar bawaan). */
+    bannerPath: string | null;
+    /** Banner tersimpan sebagai data URI, untuk langsung ditampilkan. */
+    bannerPreview: string | null;
+  };
+  goodbye: {
+    enabled: boolean;
+    useAi: boolean;
+    channelId: string | null;
+    template: string | null;
+    style: string | null;
+    example: string | null;
+    bannerPath: string | null;
+    bannerPreview: string | null;
+    imageEnabled: boolean;
+    includeAvatar: boolean;
+  };
+  channels: Array<{ id: string; name: string }>;
+  botOnline: boolean;
+  /** Nama awal di kolom "Nama contoh" pada panel pratinjau. */
+  sampleName: string;
+}
+
+/** Opsi channel: nilai kosong dipakai untuk "mati" atau "DM". */
+function channelOptions(
+  channels: Array<{ id: string; name: string }>,
+  selected: string | null,
+  emptyLabel: string,
+): string {
+  const options = [`<option value=""${selected ? '' : ' selected'}>${esc(emptyLabel)}</option>`];
+  for (const channel of channels) {
+    options.push(
+      `<option value="${esc(channel.id)}"${channel.id === selected ? ' selected' : ''}>#${esc(channel.name)}</option>`,
+    );
+  }
+  // Channel yang tersimpan tapi tidak ada di cache (bot offline) tetap tampil.
+  if (selected && !channels.some((channel) => channel.id === selected)) {
+    options.push(`<option value="${esc(selected)}" selected>#${esc(selected)}</option>`);
+  }
+  return options.join('');
+}
+
+const CHECK_ROW = 'style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-2)"';
+
+/**
+ * Blok unggah banner.
+ *
+ * Banner dipakai sebagai latar kartu PNG; kalau kartu dimatikan, banner tetap
+ * dipakai sebagai gambar embed. Karena itu blok ini muncul di kedua kartu
+ * (sambutan & perpisahan) dengan nama field yang berbeda.
+ *
+ * File dibaca di browser lalu dikirim sebagai data URI: tidak perlu parser
+ * multipart di server, dan pratinjaunya bisa langsung tampil tanpa menunggu.
+ */
+function bannerBlock(
+  kind: 'welcome' | 'goodbye',
+  currentPath: string | null,
+  preview: string | null,
+): string {
+  const label = kind === 'welcome' ? 'sambutan' : 'perpisahan';
+  // Server sudah mengirim data URI banner yang tersimpan, jadi halaman bisa
+  // langsung menampilkannya tanpa permintaan tambahan.
+
+  return `<div>
+    <label class="field">Banner ${label} <span class="hint" style="margin:0;text-transform:none;letter-spacing:0">(opsional)</span></label>
+    <div class="banner-row">
+      <div class="banner-preview" id="bannerBox-${kind}">
+        <img id="bannerImg-${kind}" alt="Banner ${label}"${preview ? ` src="${esc(preview)}"` : ' hidden'}>
+        <span id="bannerEmpty-${kind}"${preview ? ' hidden' : ''}>Belum ada banner — kartu memakai latar bawaan.</span>
+      </div>
+      <div class="banner-actions">
+        <input type="file" id="bannerFile-${kind}" accept="image/png,image/jpeg,image/webp" hidden
+               onchange="uploadBanner('${kind}', this)">
+        <button class="btn-ghost" type="button" onclick="document.getElementById('bannerFile-${kind}').click()">
+          Pilih gambar
+        </button>
+        <button class="btn-ghost" type="button" id="bannerClear-${kind}" onclick="removeBanner('${kind}')"${currentPath ? '' : ' hidden'}>
+          Hapus
+        </button>
+      </div>
+    </div>
+    <p class="hint">PNG, JPG, atau WebP — maksimal 8 MB, minimal 300px lebar. Disarankan 900×320 agar pas di kartu.</p>
+  </div>`;
+}
+
+export function welcomePage(options: WelcomePageOptions): string {
+  const welcomeStatus = options.welcome.enabled ? badge('Aktif', 'ok') : badge('Nonaktif', 'warn');
+  const goodbyeStatus = options.goodbye.enabled ? badge('Aktif', 'ok') : badge('Nonaktif', 'warn');
+
+  const welcomeCard = card({
+    title: 'Sambutan member baru',
+    hint: 'satu pesan per member baru',
+    right: welcomeStatus,
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+  <label class="check-row" ${CHECK_ROW}>
+    <input type="checkbox" id="welcomeEnabled" ${options.welcome.enabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Sapa setiap member yang baru bergabung</span>
+  </label>
+
+  <div>
+    <label class="field" for="welcomeChannel">Kirim ke</label>
+    <span class="select-shell" style="width:100%">
+      <select id="welcomeChannel" style="width:100%">
+        ${channelOptions(options.channels, options.welcome.channelId, 'DM member (disarankan)')}
+      </select>
+      ${icon('chevron', 15)}
+    </span>
+    <p class="hint">DM lebih sopan dan tidak membanjiri channel. Pilih channel kalau ingin disambut ramai-ramai.</p>
+  </div>
+
+  <label class="check-row" ${CHECK_ROW}>
+    <input type="checkbox" id="welcomeUseAi" ${options.welcome.useAi ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Tulis sapaan dengan AI — kalimatnya beda tiap orang</span>
+  </label>
+
+  <div>
+    <label class="field" for="welcomeTemplate">Template (dipakai kalau AI mati / gagal)</label>
+    <textarea id="welcomeTemplate" rows="3" placeholder="Halo {user}, selamat datang di **{server}**!">${esc(
+      options.welcome.template ?? '',
+    )}</textarea>
+    <p class="hint"><code>{user}</code> diganti nama panggilan, <code>{server}</code> diganti nama server.</p>
+  </div>
+
+  <div class="grid cols-2-even" style="gap:14px">
+    <div>
+      <label class="field" for="welcomeStyle">Gaya sapaan</label>
+      <input type="text" id="welcomeStyle" value="${esc(options.welcome.style ?? '')}" placeholder="hangat, santai, sedikit bercanda">
+    </div>
+    <div>
+      <label class="field" for="welcomeExample">Contoh nada</label>
+      <input type="text" id="welcomeExample" value="${esc(options.welcome.example ?? '')}" placeholder="Pagi Sky! Ngapain aja hari ini?">
+    </div>
+  </div>
+
+  <label class="check-row" ${CHECK_ROW}>
+    <input type="checkbox" id="welcomeImage" ${options.welcome.imageEnabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Kirim kartu sambutan (gambar PNG berisi nama &amp; sapaan)</span>
+  </label>
+  <label class="check-row" ${CHECK_ROW}>
+    <input type="checkbox" id="welcomeAvatar" ${options.welcome.includeAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Tampilkan avatar member di kartu</span>
+  </label>
+
+  ${bannerBlock('welcome', options.welcome.bannerPath, options.welcome.bannerPreview)}
+
+  <div><button class="btn-primary" type="button" onclick="saveWelcome()">${icon('check', 16)} Simpan sambutan</button></div>
+</div>`,
+  });
+
+  const goodbyeCard = card({
+    title: 'Salam perpisahan',
+    hint: 'saat member keluar',
+    right: goodbyeStatus,
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+  <label class="check-row" ${CHECK_ROW}>
+    <input type="checkbox" id="goodbyeEnabled" ${options.goodbye.enabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Kirim salam saat ada member keluar</span>
+  </label>
+
+  <div class="notice">${icon('alert', 16)}<span>Member yang keluar tidak bisa dikirimi DM. Pilih channel — kalau kosong, salam tidak dikirim (lebih baik diam daripada menulis ke channel acak).</span></div>
+
+  <div>
+    <label class="field" for="goodbyeChannel">Kirim ke</label>
+    <span class="select-shell" style="width:100%">
+      <select id="goodbyeChannel" style="width:100%">
+        ${channelOptions(options.channels, options.goodbye.channelId, 'Belum dipilih — salam tidak dikirim')}
+      </select>
+      ${icon('chevron', 15)}
+    </span>
+  </div>
+
+  <label class="check-row" ${CHECK_ROW}>
+    <input type="checkbox" id="goodbyeUseAi" ${options.goodbye.useAi ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Tulis salam dengan AI</span>
+  </label>
+
+  <div>
+    <label class="field" for="goodbyeTemplate">Template (dipakai kalau AI mati / gagal)</label>
+    <textarea id="goodbyeTemplate" rows="2" placeholder="{user} sudah keluar dari **{server}**. Semoga lancar!">${esc(
+      options.goodbye.template ?? '',
+    )}</textarea>
+    <p class="hint">Nada AI-nya sopan dan tidak menanyakan alasan keluar.</p>
+  </div>
+
+  <div class="grid cols-2-even" style="gap:14px">
+    <div>
+      <label class="field" for="goodbyeStyle">Gaya salam</label>
+      <input type="text" id="goodbyeStyle" value="${esc(options.goodbye.style ?? '')}" placeholder="sopan, hangat, singkat">
+    </div>
+    <div>
+      <label class="field" for="goodbyeExample">Contoh nada</label>
+      <input type="text" id="goodbyeExample" value="${esc(options.goodbye.example ?? '')}" placeholder="Semoga urusannya lancar ya.">
+    </div>
+  </div>
+
+  <label class="check-row" ${CHECK_ROW}>
+    <input type="checkbox" id="goodbyeImage" ${options.goodbye.imageEnabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Kirim kartu perpisahan (gambar PNG)</span>
+  </label>
+  <label class="check-row" ${CHECK_ROW}>
+    <input type="checkbox" id="goodbyeAvatar" ${options.goodbye.includeAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Tampilkan avatar member di kartu</span>
+  </label>
+
+  ${bannerBlock('goodbye', options.goodbye.bannerPath, options.goodbye.bannerPreview)}
+
+  <div><button class="btn-primary" type="button" onclick="saveGoodbye()">${icon('check', 16)} Simpan salam</button></div>
+</div>`,
+  });
+
+  const previewCard = card({
+    title: 'Pratinjau & tes',
+    hint: 'tanpa mengirim apa pun ke Discord',
+    right: `<span id="previewState" class="hint" style="margin:0">Siap diuji</span>`,
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+  <div>
+    <label class="field" for="previewName">Nama contoh</label>
+    <input type="text" id="previewName" value="${esc(options.sampleName)}" placeholder="Sky" maxlength="60">
+    <p class="hint">Dipakai sebagai nama member di sapaan. Coba beberapa nama untuk melihat kalimatnya berubah.</p>
+  </div>
+
+  <div style="display:flex;gap:10px;flex-wrap:wrap">
+    <button class="btn-primary" type="button" id="testWelcome" onclick="runTest('welcome')">${icon('message', 16)} Tes sambutan</button>
+    <button class="btn-ghost" type="button" onclick="runTest('welcome', true)">Tes tanpa AI</button>
+  </div>
+  <div class="preview-box" id="outWelcome" hidden>
+    <div class="preview-meta" id="metaWelcome"></div>
+    <div class="preview-text" id="textWelcome"></div>
+    <img id="cardWelcome" class="preview-img" alt="Kartu sambutan" hidden>
+  </div>
+
+  <hr style="border:none;border-top:1px solid var(--line);margin:2px 0">
+
+  <div style="display:flex;gap:10px;flex-wrap:wrap">
+    <button class="btn-primary" type="button" id="testGoodbye" onclick="runTest('goodbye')">${icon('logout', 16)} Tes salam perpisahan</button>
+    <button class="btn-ghost" type="button" onclick="runTest('goodbye', true)">Tes tanpa AI</button>
+  </div>
+  <div class="preview-box" id="outGoodbye" hidden>
+    <div class="preview-meta" id="metaGoodbye"></div>
+    <div class="preview-text" id="textGoodbye"></div>
+    <img id="cardGoodbye" class="preview-img" alt="Kartu perpisahan" hidden>
+  </div>
+
+  <p class="hint" style="margin:0">Yang diuji adalah <b>isi pesannya</b>, bukan pengirimannya. Tombol ini memakai form di atas apa adanya, jadi kamu bisa mencoba gaya lain sebelum menyimpan.</p>
+</div>`,
+  });
+
+  const body = `${pageHead({
+    kicker: '03 — Kehadiran',
+    title: 'Sambutan & Perpisahan',
+    subtitle: 'Sapa member yang baru datang, dan ucapkan salam saat mereka pamit. Dua-duanya mati secara default.',
+  })}
+<div class="grid cols-2-even mt">${welcomeCard}${goodbyeCard}</div>
+<div class="mt">${previewCard}</div>
+
+<script>
+async function saveWelcome() {
+  await postJson('/api/welcome', {
+    enabled: document.getElementById('welcomeEnabled').checked,
+    channelId: document.getElementById('welcomeChannel').value || null,
+    useAi: document.getElementById('welcomeUseAi').checked,
+    template: document.getElementById('welcomeTemplate').value.trim() || null,
+    style: document.getElementById('welcomeStyle').value.trim() || null,
+    example: document.getElementById('welcomeExample').value.trim() || null,
+    imageEnabled: document.getElementById('welcomeImage').checked,
+    includeAvatar: document.getElementById('welcomeAvatar').checked,
+  }, 'Sambutan disimpan.');
+}
+
+/**
+ * Baca file di browser, kirim sebagai data URI, lalu tampilkan hasilnya.
+ *
+ * Validasi ukuran dilakukan di sini juga supaya file 50 MB tidak dikirim
+ * percuma — server tetap memeriksa ulang isinya.
+ */
+function uploadBanner(kind, input) {
+  var file = input.files && input.files[0];
+  if (!file) return;
+  if (file.size > 8 * 1024 * 1024) {
+    toast('Gambar terlalu besar — maksimal 8 MB.', true);
+    input.value = '';
+    return;
+  }
+
+  var reader = new FileReader();
+  reader.onload = async function () {
+    try {
+      var data = await api('/api/banner/' + kind, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ dataUri: reader.result }),
+      });
+      showBanner(kind, data.preview || null);
+      toast('✅ Banner ' + (kind === 'welcome' ? 'sambutan' : 'perpisahan') + ' tersimpan');
+    } catch (error) {
+      toast('Gagal mengunggah: ' + error.message, true);
+    } finally {
+      input.value = '';
+    }
+  };
+  reader.onerror = function () {
+    toast('Gagal membaca file.', true);
+    input.value = '';
+  };
+  reader.readAsDataURL(file);
+}
+
+async function removeBanner(kind) {
+  try {
+    await api('/api/banner/' + kind, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ remove: true }),
+    });
+    showBanner(kind, null);
+    toast('Banner dihapus');
+  } catch (error) {
+    toast('Gagal menghapus: ' + error.message, true);
+  }
+}
+
+function showBanner(kind, src) {
+  var image = document.getElementById('bannerImg-' + kind);
+  var empty = document.getElementById('bannerEmpty-' + kind);
+  var clear = document.getElementById('bannerClear-' + kind);
+  image.hidden = !src;
+  empty.hidden = !!src;
+  clear.hidden = !src;
+  if (src) image.src = src;
+  else image.removeAttribute('src');
+}
+
+async function saveGoodbye() {
+  await postJson('/api/goodbye', {
+    enabled: document.getElementById('goodbyeEnabled').checked,
+    channelId: document.getElementById('goodbyeChannel').value || null,
+    useAi: document.getElementById('goodbyeUseAi').checked,
+    template: document.getElementById('goodbyeTemplate').value.trim() || null,
+    style: document.getElementById('goodbyeStyle').value.trim() || null,
+    example: document.getElementById('goodbyeExample').value.trim() || null,
+    imageEnabled: document.getElementById('goodbyeImage').checked,
+    includeAvatar: document.getElementById('goodbyeAvatar').checked,
+  }, 'Salam perpisahan disimpan.');
+}
+
+/**
+ * Ambil nilai form apa adanya (belum tentu tersimpan) lalu minta server
+ * merendernya. Hasilnya hanya ditampilkan — tidak ada pesan yang dikirim.
+ */
+async function runTest(kind, templateOnly) {
+  var button = document.getElementById(kind === 'welcome' ? 'testWelcome' : 'testGoodbye');
+  var state = document.getElementById('previewState');
+  var label = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Menguji…';
+  state.textContent = 'Menghubungi model…';
+
+  var name = document.getElementById('previewName').value.trim();
+  var payload = kind === 'welcome'
+    ? {
+        name: name,
+        useAi: document.getElementById('welcomeUseAi').checked,
+        template: document.getElementById('welcomeTemplate').value.trim(),
+        style: document.getElementById('welcomeStyle').value.trim(),
+        example: document.getElementById('welcomeExample').value.trim(),
+        withCard: document.getElementById('welcomeImage').checked,
+        templateOnly: !!templateOnly,
+      }
+    : {
+        name: name,
+        useAi: document.getElementById('goodbyeUseAi').checked,
+        template: document.getElementById('goodbyeTemplate').value.trim(),
+        style: document.getElementById('goodbyeStyle').value.trim(),
+        example: document.getElementById('goodbyeExample').value.trim(),
+        withCard: document.getElementById('goodbyeImage').checked,
+        templateOnly: !!templateOnly,
+      };
+
+  try {
+    var data = await api('/api/preview/' + kind, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    var box = document.getElementById('out' + kind.charAt(0).toUpperCase() + kind.slice(1));
+    box.hidden = false;
+    document.getElementById('text' + kind.charAt(0).toUpperCase() + kind.slice(1)).textContent = data.text || '(kosong)';
+    document.getElementById('meta' + kind.charAt(0).toUpperCase() + kind.slice(1)).textContent =
+      (data.source === 'ai' ? '✍️ ditulis AI' : data.source === 'template' ? '📄 dari template' : '⚠️ gagal')
+      + (data.note ? ' — ' + data.note : '')
+      + (data.card ? ' · kartu ' + Math.round((data.cardBytes || 0) / 1024) + ' KB' : '');
+
+    // Kartu dikirim sebagai data URI di respons yang sama — tidak perlu
+    // endpoint gambar tambahan dan tidak ada yang disimpan ke disk.
+    var image = document.getElementById(kind === 'welcome' ? 'cardWelcome' : 'cardGoodbye');
+    image.hidden = !data.cardDataUri;
+    if (data.cardDataUri) image.src = data.cardDataUri;
+    state.textContent = 'Selesai';
+    toast('✅ Pratinjau siap — belum ada yang dikirim');
+  } catch (error) {
+    state.textContent = 'Gagal';
+    toast('Gagal menguji: ' + error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+</script>`;
+
+  return appShell({
+    title: 'Sambutan & Perpisahan',
+    guildId: options.guildId,
+    guildName: options.guildName ?? null,
+    active: 'sambutan',
+    body,
+    counts: options.counts,
+    status: options.status,
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/*  AI Agent                                                           */
+/* ------------------------------------------------------------------ */
+
+export interface AgentPageOptions extends PageContext {
+  agent: {
+    channelId: string | null;
+    galleryChannelId: string | null;
+    quietMinutes: number;
+    maxPerHour: number;
+    reactEmoji: boolean;
+    reactImages: boolean;
+    busyMute: boolean;
+    cooldownSeconds: number;
+  };
+  channels: Array<{ id: string; name: string }>;
+  botOnline: boolean;
+  /** Nama awal di kolom "Nama member contoh" pada panel tes. */
+  sampleName: string;
+}
+
+export function agentPage(options: AgentPageOptions): string {
+  const active = Boolean(options.agent.channelId || options.agent.galleryChannelId);
+  const agentStatus = active ? badge('Aktif', 'ok') : badge('Nonaktif', 'warn');
+
+  const channelsCard = card({
+    title: 'Channel AI',
+    hint: 'dua channel, dua peran',
+    right: agentStatus,
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+  <div class="notice">${icon('alert', 16)}<span>AI membalas <b>di depan semua orang</b> di channel ini. Itu memang tujuannya — bikin obrolan lebih hidup. Percakapan pribadi tetap hanya di DM.</span></div>
+
+  <div>
+    <label class="field" for="agentChannel">Channel ngobrol</label>
+    <span class="select-shell" style="width:100%">
+      <select id="agentChannel" style="width:100%">
+        ${channelOptions(options.channels, options.agent.channelId, 'Mati — AI tidak ikut ngobrol')}
+      </select>
+      ${icon('chevron', 15)}
+    </span>
+    <p class="hint">Bot nimbrung seperti anggota: balas mention/reply, tanggapi emoji, dan menyapa saat sepi.</p>
+  </div>
+
+  <div>
+    <label class="field" for="agentGallery">Channel galeri</label>
+    <span class="select-shell" style="width:100%">
+      <select id="agentGallery" style="width:100%">
+        ${channelOptions(options.channels, options.agent.galleryChannelId, 'Mati — AI tidak mengomentari foto')}
+      </select>
+      ${icon('chevron', 15)}
+    </span>
+    <p class="hint">Bot hanya menanggapi <b>gambar &amp; video</b> di channel ini — teks biasa diabaikan supaya tidak berisik.</p>
+  </div>
+
+  <div class="grid cols-2-even" style="gap:14px">
+    <div>
+      <label class="field" for="agentQuiet">Sapa saat sepi setelah (menit)</label>
+      <input type="text" id="agentQuiet" class="mono" inputmode="numeric" value="${options.agent.quietMinutes}">
+      <p class="hint">0 = jangan pernah menyapa duluan. Berlaku di channel ngobrol.</p>
+    </div>
+    <div>
+      <label class="field" for="agentMax">Batas balasan per jam</label>
+      <input type="text" id="agentMax" class="mono" inputmode="numeric" value="${options.agent.maxPerHour}">
+      <p class="hint">Pengaman biaya API, gabungan kedua channel. 1–60.</p>
+    </div>
+  </div>
+
+  <div>
+    <label class="field" for="agentCooldown">Jeda minimum antar balasan (detik)</label>
+    <input type="text" id="agentCooldown" class="mono" inputmode="numeric" value="${options.agent.cooldownSeconds}">
+    <p class="hint">Supaya bot tidak mendominasi obrolan. 0 = tanpa jeda.</p>
+  </div>
+
+  <label class="check-row" ${CHECK_ROW}>
+    <input type="checkbox" id="agentBusy" ${options.agent.busyMute ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Diam saat obrolan sedang ramai (beberapa member aktif bersamaan)</span>
+  </label>
+  <label class="check-row" ${CHECK_ROW}>
+    <input type="checkbox" id="agentEmoji" ${options.agent.reactEmoji ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Tanggapi emoji &amp; sticker member</span>
+  </label>
+  <label class="check-row" ${CHECK_ROW}>
+    <input type="checkbox" id="agentImages" ${options.agent.reactImages ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Komentari gambar &amp; video (butuh Vision aktif)</span>
+  </label>
+
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <button class="btn-primary" type="button" onclick="saveAgent()">${icon('check', 16)} Simpan agent</button>
+    <span class="hint" style="margin:0">${options.botOnline ? 'Berlaku untuk pesan berikutnya.' : 'Bot sedang offline — pengaturan tetap tersimpan.'}</span>
+  </div>
+</div>`,
+  });
+
+  const testCard = card({
+    title: 'Tes percakapan',
+    hint: 'tanpa mengirim ke channel',
+    right: `<span id="testState" class="hint" style="margin:0">Siap diuji</span>`,
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+  <div>
+    <label class="field" for="testName">Nama member contoh</label>
+    <input type="text" id="testName" value="${esc(options.sampleName)}" maxlength="60" placeholder="Sky">
+  </div>
+
+  <div>
+    <label class="field" for="testMessage">Pesan yang dikirim member</label>
+    <textarea id="testMessage" rows="2" placeholder="selamat pagi semua">selamat pagi semua</textarea>
+  </div>
+
+  <div>
+    <label class="field" for="testRole">Uji sebagai</label>
+    <span class="select-shell" style="width:100%">
+      <select id="testRole" style="width:100%">
+        <option value="chat">Pesan di channel ngobrol</option>
+        <option value="gallery">Komentar di channel galeri</option>
+      </select>
+      ${icon('chevron', 15)}
+    </span>
+  </div>
+
+  <div style="display:flex;gap:10px;flex-wrap:wrap">
+    <button class="btn-primary" type="button" id="testChat" onclick="runAgentTest()">${icon('message', 16)} Tes balasan</button>
+    <button class="btn-ghost" type="button" id="testQuiet" onclick="runQuietTest()">${icon('sparkles', 16)} Tes pemecah sepi</button>
+  </div>
+
+  <div class="preview-box" id="outAgent" hidden>
+    <div class="preview-meta" id="metaAgent"></div>
+    <div class="preview-text" id="textAgent"></div>
+  </div>
+</div>`,
+  });
+
+  const behaviourCard = card({
+    title: 'Kapan bot membalas',
+    body: `<div class="list">
+  <div class="kv"><span>Di-mention atau dibalas</span><b>Selalu dijawab</b></div>
+  <div class="kv"><span>Satu member ngobrol sendiri</span><b>Dibalas, dengan jeda</b></div>
+  <div class="kv"><span>Beberapa member aktif bersamaan</span><b>Diam — tidak menyela</b></div>
+  <div class="kv"><span>Channel ngobrol sepi</span><b>Menyapa sekali</b></div>
+  <div class="kv"><span>Kiriman foto/video di galeri</span><b>Dikomentari</b></div>
+  <div class="kv"><span>Teks biasa di galeri</span><b>Diabaikan</b></div>
+  <div class="kv"><span>Pesan dari bot lain</span><b>Tidak pernah dibalas</b></div>
+</div>
+<div class="card-pad"><p class="hint" style="margin:0">Riwayat obrolan channel <b>tidak disimpan ke database</b> — hanya di memori bot, dan hilang saat restart. Yang tersimpan permanen cuma ID pesan yang sudah ditanggapi (tanpa teks).</p></div>`,
+  });
+
+  const body = `${pageHead({
+    kicker: '04 — Kehadiran',
+    title: 'AI Agent',
+    subtitle: 'Bot ikut menghidupkan channel ngobrol, dan mengomentari foto di channel galeri.',
+  })}
+<div class="grid cols-2 mt">${channelsCard}${behaviourCard}</div>
+<div class="mt">${testCard}</div>
+
+<script>
+async function saveAgent() {
+  await postJson('/api/agent', {
+    channelId: document.getElementById('agentChannel').value || null,
+    galleryChannelId: document.getElementById('agentGallery').value || null,
+    quietMinutes: Number(document.getElementById('agentQuiet').value) || 0,
+    maxPerHour: Number(document.getElementById('agentMax').value) || 6,
+    cooldownSeconds: Number(document.getElementById('agentCooldown').value) || 0,
+    busyMute: document.getElementById('agentBusy').checked,
+    reactEmoji: document.getElementById('agentEmoji').checked,
+    reactImages: document.getElementById('agentImages').checked,
+  }, 'Pengaturan agent disimpan.');
+}
+
+/**
+ * Uji balasan agent memakai pengaturan yang TERSIMPAN.
+ *
+ * Berbeda dengan halaman Sambutan (yang memakai isi form), di sini pengaturan
+ * agent dipakai apa adanya karena hasilnya juga bergantung pada channel, jeda,
+ * dan batas per jam — menguji nilai yang belum disimpan akan menyesatkan.
+ */
+async function runAgentTest() {
+  var button = document.getElementById('testChat');
+  var label = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Menguji…';
+  document.getElementById('testState').textContent = 'Menghubungi model…';
+
+  try {
+    var data = await api('/api/preview/agent', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: document.getElementById('testName').value.trim(),
+        message: document.getElementById('testMessage').value.trim(),
+        role: document.getElementById('testRole').value,
+      }),
+    });
+    showAgentResult(
+      data.source === 'ai' ? '✍️ balasan ' + (data.role === 'gallery' ? 'mode galeri' : 'mode ngobrol') : '⚠️ gagal',
+      data.text || '(kosong)',
+      data.note,
+    );
+    document.getElementById('testState').textContent = 'Selesai';
+    toast('✅ Pratinjau balasan siap — belum ada yang dikirim');
+  } catch (error) {
+    document.getElementById('testState').textContent = 'Gagal';
+    toast('Gagal menguji: ' + error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
+/** Uji apakah bot akan menyapa saat channel sepi, beserta kalimatnya. */
+async function runQuietTest() {
+  var button = document.getElementById('testQuiet');
+  var label = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Menguji…';
+  document.getElementById('testState').textContent = 'Menghubungi model…';
+
+  try {
+    var data = await api('/api/preview/quiet', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (!data.wouldFire) {
+      showAgentResult('⏸️ tidak akan menyapa', '(tidak ada kalimat)', data.reason);
+    } else if (data.source === 'ai') {
+      showAgentResult('✍️ kalimat pemecah sepi', data.text, data.reason);
+    } else {
+      showAgentResult('⚠️ gagal membuat kalimat', '(kosong)', data.note || data.reason);
+    }
+    document.getElementById('testState').textContent = 'Selesai';
+  } catch (error) {
+    document.getElementById('testState').textContent = 'Gagal';
+    toast('Gagal menguji: ' + error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
+function showAgentResult(meta, text, note) {
+  document.getElementById('outAgent').hidden = false;
+  document.getElementById('metaAgent').textContent = meta + (note ? ' — ' + note : '');
+  document.getElementById('textAgent').textContent = text;
+}
+</script>`;
+
+  return appShell({
+    title: 'AI Agent',
+    guildId: options.guildId,
+    guildName: options.guildName ?? null,
+    active: 'agent',
+    body,
+    counts: options.counts,
+    status: options.status,
+  });
+}
 
 /* ------------------------------------------------------------------ */
 /*  Moderasi                                                           */
@@ -1041,11 +1732,13 @@ export function moderasiPage(options: ModerasiOptions): string {
         }),
   });
 
+  // Badge status hanya dipakai SEKALI, di header kartu "Filter kata".
+  // Dulu badge yang sama juga ditempel di judul halaman, jadi terbaca dua kali
+  // ("NONAKTIF" di atas dan "NONAKTIF" lagi di kartu) dengan jarak lega.
   const body = `${pageHead({
     kicker: '08 — Keamanan',
     title: 'Moderasi',
     subtitle: 'Saring kata terlarang otomatis tanpa perlu bot moderasi tambahan. Pengaturan disimpan per server.',
-    actions: status,
   })}
 <div class="grid cols-2-even">${settingsCard}${statsCard}</div>
 <div class="mt">${logsCard}</div>
@@ -1118,7 +1811,7 @@ async function clearModLogs() {
   return appShell({
     title: 'Moderasi',
     guildId: options.guildId,
-    guilds: options.guilds,
+    guildName: options.guildName,
     active: 'moderasi',
     body,
     counts: options.counts,

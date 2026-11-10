@@ -22,7 +22,7 @@ AI_API_KEY=gsk_xxxxxxxxxxxxxxxx
 ```env
 DISCORD_TOKEN=xxxxx.xxxxx.xxxxx
 CLIENT_ID=123456789012345678
-DEV_GUILD_ID=123456789012345678
+GUILD_ID=123456789012345678
 
 AI_API_KEY=gsk_xxxxxxxxxxxxxxxx        # ← Groq (utama)
 GEMINI_API_KEY=AIzaSy...               # ← cadangan 1
@@ -45,7 +45,9 @@ yang benar (`https://api.groq.com/openai/v1` dan `openai/gpt-oss-120b`).
    *Token hanya ditampilkan sekali. Kalau hilang, reset lagi.*
 4. Masih di tab **Bot**, scroll ke **Privileged Gateway Intents** → aktifkan:
    - ✅ **Message Content Intent** ← **wajib**, tanpa ini bot tidak bisa membaca isi chat
-   - ✅ **Server Members Intent** *(opsional)*
+   - ✅ **Server Members Intent** ← **wajib untuk sambutan & salam perpisahan**
+     (tanpa ini, event member bergabung/keluar tidak dikirim dan kedua fitur itu
+     tidak pernah jalan). Aman dimatikan hanya kalau kamu tidak memakai keduanya.
 5. Tab **OAuth2 → URL Generator**:
    - Scopes: `bot`, `applications.commands`
    - Bot Permissions: `Manage Channels`, `Manage Threads`, `Create Private Threads`, `View Channels`, `Send Messages`, `Manage Messages`,
@@ -56,15 +58,18 @@ yang benar (`https://api.groq.com/openai/v1` dan `openai/gpt-oss-120b`).
 > URL siap pakai (ganti `YOUR_CLIENT_ID`):
 > `https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=1099909803952&scope=bot%20applications.commands`
 
-### Cara mendapatkan `DEV_GUILD_ID`
+### Cara mendapatkan `GUILD_ID`
 
 Di Discord: **Settings → Advanced → Developer Mode: ON** → klik kanan nama server → **Copy Server ID**.
 
-Ini **opsional** dan hanya mempercepat: command didaftarkan instan di server itu untuk pengujian.
-Command **global tetap selalu didaftarkan**, karena itulah satu-satunya cara slash command muncul
-di DM bot — dan seluruh percakapan AI berjalan di DM.
+Ini **wajib**. Bot ini untuk satu server: `GUILD_ID` menentukan server mana yang dilayani,
+dan bot menolak start kalau nilainya kosong atau bukan 17–20 digit angka.
 
-> ⚠️ **Kalau `/akhiri` dan `/server` tidak muncul di DM**, hampir selalu ini penyebabnya:
+Bot yang diundang ke server lain akan mengirim alasan lalu **keluar sendiri** — supaya
+token dan kuota API pemilik tidak terpakai di server orang lain. Mau versi untuk servermu?
+Fork repo ini dan jalankan dengan token + API key milikmu.
+
+> ⚠️ **Kalau `/akhiri` tidak muncul di DM**, hampir selalu ini penyebabnya:
 > versi lama hanya mendaftarkan command per-guild saat `DEV_GUILD_ID` diisi. Teks `/akhiri` lalu
 > dikirim sebagai pesan biasa dan dijawab AI sebagai pertanyaan ("Baik, sampai jumpa lagi! 👋")
 > — chat tidak berakhir dan transkrip tidak pernah terkirim.
@@ -128,7 +133,7 @@ dalam nilai, dan jangan menaruh `#` di tengah nilai.
 # ---------- Discord ----------
 DISCORD_TOKEN=xxxxx.xxxxx.xxxxx
 CLIENT_ID=123456789012345678
-DEV_GUILD_ID=123456789012345678
+GUILD_ID=123456789012345678
 
 # ---------- Groq (utama) ----------
 AI_API_KEY=gsk_xxxxxxxxxxxxxxxx
@@ -353,7 +358,7 @@ Message Content Intent belum aktif → Developer Portal → Bot → Privileged G
 Key-nya ada di variabel yang salah. Saat Groq utama, key Groq harus di `AI_API_KEY`, bukan `GROQ_API_KEY`.
 
 **Slash command tidak muncul.**
-Isi `DEV_GUILD_ID`, lalu restart bot. Pastikan undangan memakai scope `applications.commands`.
+Pastikan bot sudah diundang ke server `GUILD_ID` dengan scope `applications.commands`, lalu restart bot.
 
 **Tombol Chat via DM bilang DM tertutup.**
 Member perlu mengaktifkan **Privasi & Keamanan → Izinkan pesan langsung dari server** untuk server itu. Bot tidak butuh izin channel apa pun karena tidak membuat channel.

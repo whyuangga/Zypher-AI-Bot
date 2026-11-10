@@ -29,12 +29,7 @@ export interface GuildSettings {
   createdAt: number;
 }
 
-/** Satu pilihan server di dropdown dashboard. */
-export interface GuildChoice {
-  id: string;
-  name: string | null;
-}
-
+/** Satu fakta jangka panjang tentang member. */
 export interface Memory {
   id: number;
   guildId: string;
@@ -575,26 +570,346 @@ export async function countChunks(guildId: string): Promise<number> {
  * padahal data bot jelas ada. UNION membuat data itu tetap muncul.
  */
 /**
- * Server yang punya data + nama tampilannya (bila sudah diketahui bot).
+ * Nama tampilan server (bila bot sudah pernah melihatnya).
  *
- * Dipakai dashboard: dropdown menampilkan nama, bukan ID mentah. Server yang
- * belum pernah dilihat bot (mode dashboard saja) tetap muncul dengan `name: null`
- * supaya datanya tidak "hilang" dari dashboard.
+ * Dashboard hanya mengelola satu server, jadi tidak perlu lagi daftar server —
+ * cukup satu nama untuk ditampilkan di topbar.
  */
-export async function listGuilds(): Promise<GuildChoice[]> {
-  const rows = await all<{ guild_id: string; name: string | null }>(
-    `SELECT ids.guild_id AS guild_id, guilds.name AS name
-     FROM (
-       SELECT guild_id FROM guilds
-       UNION SELECT guild_id FROM dm_sessions
-       UNION SELECT guild_id FROM documents
-       UNION SELECT guild_id FROM keywords
-       UNION SELECT guild_id FROM memories
-     ) AS ids
-     LEFT JOIN guilds ON guilds.guild_id = ids.guild_id
-     ORDER BY ids.guild_id`,
+export async function getGuildName(guildId: string): Promise<string | null> {
+  const row = await get<{ name: string | null }>('SELECT name FROM guilds WHERE guild_id = ?', [guildId]);
+  return row?.name?.trim() || null;
+}
+
+/* ------------------------------------------------------------------ */
+/*  AI Agent (nimbrung di channel) & sambutan member                   */
+/* ------------------------------------------------------------------ */
+
+/** Pengaturan AI Agent. `channelId` null = fitur mati. */
+export interface AgentSettings {
+  guildId: string;
+  /** Channel ngobrol utama. null = fitur agent mati. */
+  channelId: string | null;
+  /** Channel galeri: bot hanya mengomentari gambar/video + memberi reaksi. */
+  galleryChannelId: string | null;
+  /** Dianggap "sepi" setelah sekian menit tanpa pesan. 0 = jangan menyapa sendiri. */
+  quietMinutes: number;
+  /** Batas balasan AI per jam — pengaman biaya API. */
+  maxPerHour: number;
+  /** Ikut menanggapi emoji & sticker. */
+  reactEmoji: boolean;
+  /** Ikut menanggapi gambar di channel. */
+  reactImages: boolean;
+  /** Diam saat obrolan sedang ramai (bot tidak menyela). */
+  busyMute: boolean;
+  /** Jeda minimum antar balasan, supaya bot tidak mendominasi. */
+  cooldownSeconds: number;
+  updatedAt: number;
+}
+
+export const AGENT_DEFAULTS = {
+  quietMinutes: 45,
+  maxPerHour: 6,
+  reactEmoji: true,
+  reactImages: true,
+  busyMute: true,
+  cooldownSeconds: 90,
+} as const;
+
+interface AgentRow {
+  guild_id: string;
+  channel_id: string | null;
+  gallery_channel_id: string | null;
+  quiet_minutes: number;
+  max_per_hour: number;
+  react_emoji: number | boolean;
+  react_images: number | boolean;
+  busy_mute: number | boolean;
+  cooldown_seconds: number;
+  updated_at: number;
+}
+
+/** Pengaturan agent (default kalau server belum pernah menyimpan). */
+export async function getAgentSettings(guildId: string): Promise<AgentSettings> {
+  const row = await get<AgentRow>('SELECT * FROM agent WHERE guild_id = ?', [guildId]);
+  if (!row) {
+    return {
+      guildId,
+      channelId: null,
+      galleryChannelId: null,
+      ...AGENT_DEFAULTS,
+      updatedAt: 0,
+    };
+  }
+
+  return {
+    guildId: row.guild_id,
+    channelId: row.channel_id?.trim() || null,
+    galleryChannelId: row.gallery_channel_id?.trim() || null,
+    quietMinutes: Number(row.quiet_minutes),
+    maxPerHour: Number(row.max_per_hour),
+    reactEmoji: Boolean(row.react_emoji),
+    reactImages: Boolean(row.react_images),
+    busyMute: Boolean(row.busy_mute),
+    cooldownSeconds: Number(row.cooldown_seconds),
+    updatedAt: Number(row.updated_at),
+  };
+}
+
+export async function saveAgentSettings(
+  guildId: string,
+  patch: Partial<Omit<AgentSettings, 'guildId' | 'updatedAt'>>,
+): Promise<void> {
+  const current = await getAgentSettings(guildId);
+  const next = { ...current, ...patch };
+  await run(
+    `INSERT INTO agent (guild_id, channel_id, gallery_channel_id, quiet_minutes, max_per_hour, react_emoji, react_images, busy_mute, cooldown_seconds, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (guild_id) DO UPDATE SET
+       channel_id = excluded.channel_id,
+       gallery_channel_id = excluded.gallery_channel_id,
+       quiet_minutes = excluded.quiet_minutes,
+       max_per_hour = excluded.max_per_hour,
+       react_emoji = excluded.react_emoji,
+       react_images = excluded.react_images,
+       busy_mute = excluded.busy_mute,
+       cooldown_seconds = excluded.cooldown_seconds,
+       updated_at = excluded.updated_at`,
+    [
+      guildId,
+      next.channelId,
+      next.galleryChannelId,
+      next.quietMinutes,
+      next.maxPerHour,
+      next.reactEmoji ? 1 : 0,
+      next.reactImages ? 1 : 0,
+      next.busyMute ? 1 : 0,
+      next.cooldownSeconds,
+      Date.now(),
+    ],
   );
-  return rows.map((row) => ({ id: row.guild_id, name: row.name?.trim() || null }));
+}
+
+/** Sudah pernah ditanggapi? Dipakai supaya satu pesan tidak dibalas dua kali. */
+export async function hasAgentReaction(messageId: string): Promise<boolean> {
+  const row = await get<{ message_id: string }>('SELECT message_id FROM agent_reactions WHERE message_id = ?', [
+    messageId,
+  ]);
+  return Boolean(row);
+}
+
+export async function markAgentReaction(messageId: string): Promise<void> {
+  await run(
+    'INSERT INTO agent_reactions (message_id, created_at) VALUES (?, ?) ON CONFLICT (message_id) DO NOTHING',
+    [messageId, Date.now()],
+  );
+}
+
+/** Buang catatan reaksi lama supaya tabelnya tidak tumbuh tanpa batas. */
+export async function pruneAgentReactions(olderThanMs: number): Promise<void> {
+  await run('DELETE FROM agent_reactions WHERE created_at < ?', [Date.now() - olderThanMs]);
+}
+
+/** Pengaturan sambutan member baru. `enabled` false = tidak mengirim apa pun. */
+export interface WelcomeSettings {
+  guildId: string;
+  /** null = kirim lewat DM (default, aman untuk privasi). */
+  channelId: string | null;
+  enabled: boolean;
+  /** Kalau false, pakai `template` apa adanya tanpa memanggil AI. */
+  useAi: boolean;
+  template: string | null;
+  /** Kartu sambutan PNG (nama + avatar). */
+  imageEnabled: boolean;
+  /** Gaya sapaan, mis. "hangat dan santai". */
+  style: string | null;
+  /** Contoh kalimat yang ditiru nada bicaranya. */
+  example: string | null;
+  includeAvatar: boolean;
+  /** Nama file banner di data/banners (null = pakai latar bawaan). */
+  bannerPath: string | null;
+  updatedAt: number;
+}
+
+interface WelcomeRow {
+  guild_id: string;
+  channel_id: string | null;
+  enabled: number | boolean;
+  use_ai: number | boolean;
+  template: string | null;
+  image_enabled: number | boolean;
+  style: string | null;
+  example: string | null;
+  include_avatar: number | boolean;
+  banner_path: string | null;
+  updated_at: number;
+}
+
+export const WELCOME_DEFAULTS = {
+  channelId: null,
+  enabled: false,
+  useAi: true,
+  template: null,
+  imageEnabled: true,
+  style: null,
+  example: null,
+  includeAvatar: true,
+  bannerPath: null,
+} as const;
+
+export async function getWelcomeSettings(guildId: string): Promise<WelcomeSettings> {
+  const row = await get<WelcomeRow>('SELECT * FROM welcome WHERE guild_id = ?', [guildId]);
+  if (!row) {
+    return { guildId, ...WELCOME_DEFAULTS, updatedAt: 0 };
+  }
+
+  return {
+    guildId: row.guild_id,
+    channelId: row.channel_id?.trim() || null,
+    enabled: Boolean(row.enabled),
+    useAi: Boolean(row.use_ai),
+    template: row.template,
+    imageEnabled: Boolean(row.image_enabled),
+    style: row.style,
+    example: row.example,
+    includeAvatar: Boolean(row.include_avatar),
+    bannerPath: row.banner_path ?? null,
+    updatedAt: Number(row.updated_at),
+  };
+}
+
+export async function saveWelcomeSettings(
+  guildId: string,
+  patch: Partial<Omit<WelcomeSettings, 'guildId' | 'updatedAt'>>,
+): Promise<void> {
+  const current = await getWelcomeSettings(guildId);
+  const next = { ...current, ...patch };
+  await run(
+    `INSERT INTO welcome (guild_id, channel_id, enabled, use_ai, template, image_enabled, style, example, include_avatar, banner_path, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (guild_id) DO UPDATE SET
+       channel_id = excluded.channel_id,
+       enabled = excluded.enabled,
+       use_ai = excluded.use_ai,
+       template = excluded.template,
+       image_enabled = excluded.image_enabled,
+       style = excluded.style,
+       example = excluded.example,
+       include_avatar = excluded.include_avatar,
+       banner_path = excluded.banner_path,
+       updated_at = excluded.updated_at`,
+    [
+      guildId,
+      next.channelId,
+      next.enabled ? 1 : 0,
+      next.useAi ? 1 : 0,
+      next.template,
+      next.imageEnabled ? 1 : 0,
+      next.style,
+      next.example,
+      next.includeAvatar ? 1 : 0,
+      next.bannerPath,
+      Date.now(),
+    ],
+  );
+}
+
+/** Pengaturan salam perpisahan. `enabled` false = tidak mengirim apa pun. */
+export interface GoodbyeSettings {
+  guildId: string;
+  /** null = kirim ke channel default (member sudah keluar, DM tidak mungkin). */
+  channelId: string | null;
+  enabled: boolean;
+  useAi: boolean;
+  template: string | null;
+  style: string | null;
+  example: string | null;
+  /** Kartu perpisahan PNG (opsional). */
+  imageEnabled: boolean;
+  includeAvatar: boolean;
+  /** Nama file banner di data/banners (null = pakai latar bawaan). */
+  bannerPath: string | null;
+  updatedAt: number;
+}
+
+interface GoodbyeRow {
+  guild_id: string;
+  channel_id: string | null;
+  enabled: number | boolean;
+  use_ai: number | boolean;
+  template: string | null;
+  style: string | null;
+  example: string | null;
+  image_enabled: number | boolean;
+  include_avatar: number | boolean;
+  banner_path: string | null;
+  updated_at: number;
+}
+
+export const GOODBYE_DEFAULTS = {
+  channelId: null,
+  enabled: false,
+  useAi: true,
+  template: null,
+  style: null,
+  example: null,
+  imageEnabled: false,
+  includeAvatar: true,
+  bannerPath: null,
+} as const;
+
+export async function getGoodbyeSettings(guildId: string): Promise<GoodbyeSettings> {
+  const row = await get<GoodbyeRow>('SELECT * FROM goodbye WHERE guild_id = ?', [guildId]);
+  if (!row) return { guildId, ...GOODBYE_DEFAULTS, updatedAt: 0 };
+
+  return {
+    guildId: row.guild_id,
+    channelId: row.channel_id?.trim() || null,
+    enabled: Boolean(row.enabled),
+    useAi: Boolean(row.use_ai),
+    template: row.template,
+    style: row.style,
+    example: row.example,
+    imageEnabled: Boolean(row.image_enabled),
+    includeAvatar: Boolean(row.include_avatar),
+    bannerPath: row.banner_path ?? null,
+    updatedAt: Number(row.updated_at),
+  };
+}
+
+export async function saveGoodbyeSettings(
+  guildId: string,
+  patch: Partial<Omit<GoodbyeSettings, 'guildId' | 'updatedAt'>>,
+): Promise<void> {
+  const current = await getGoodbyeSettings(guildId);
+  const next = { ...current, ...patch };
+  await run(
+    `INSERT INTO goodbye (guild_id, channel_id, enabled, use_ai, template, style, example, image_enabled, include_avatar, banner_path, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (guild_id) DO UPDATE SET
+       channel_id = excluded.channel_id,
+       enabled = excluded.enabled,
+       use_ai = excluded.use_ai,
+       template = excluded.template,
+       style = excluded.style,
+       example = excluded.example,
+       image_enabled = excluded.image_enabled,
+       include_avatar = excluded.include_avatar,
+       banner_path = excluded.banner_path,
+       updated_at = excluded.updated_at`,
+    [
+      guildId,
+      next.channelId,
+      next.enabled ? 1 : 0,
+      next.useAi ? 1 : 0,
+      next.template,
+      next.style,
+      next.example,
+      next.imageEnabled ? 1 : 0,
+      next.includeAvatar ? 1 : 0,
+      next.bannerPath,
+      Date.now(),
+    ],
+  );
 }
 
 export async function countRows(

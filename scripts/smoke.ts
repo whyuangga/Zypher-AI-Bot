@@ -5,6 +5,8 @@
  * Jalankan: npm run smoke
  */
 process.env.DISCORD_TOKEN = 'smoke-test-token-0000000000000000';
+// GUILD_ID wajib sejak bot jadi single-server.
+process.env.GUILD_ID = '123456789012345678';
 process.env.CLIENT_ID = '123456789012345678';
 process.env.VOICE_ENABLED = 'true';
 process.env.AI_API_KEY = 'smoke-test-key-0000';
@@ -22,7 +24,7 @@ const { addMemory, listMemories, deleteMemory, clearMemories, addKeyword, listKe
 const { setDmSession, getDmSession, listDmSessions, deleteDmSession, touchDmSession, appendMessage, getHistory, clearHistory } =
   await import('../src/db/repo.js');
 const { setPersona, getGuildSettings } = await import('../src/db/repo.js');
-const { listGuilds, countGuildRows, countGuildMessages, messagesPerDay } = await import('../src/db/repo.js');
+const { getGuildName, countGuildRows, countGuildMessages, messagesPerDay } = await import('../src/db/repo.js');
 const { setGuildName, getPanel, setPanelMessage, setPanelEnabled } = await import('../src/db/repo.js');
 const { ringkasanPage, keywordPage, moderasiPage, panelPage } = await import('../src/web/ui/pages.js');
 const { pengaturanPage } = await import('../src/web/ui/pages.js');
@@ -77,6 +79,13 @@ async function testAsync(name: string, fn: () => Promise<void>): Promise<void> {
     process.exitCode = 1;
   }
 }
+/**
+ * Test sinkron.
+ *
+ * `fn` sengaja bertipe `() => void` (bukan `void | Promise<void>`): dulu ada
+ * fungsi async yang didaftarkan ke sini, promise-nya tidak pernah di-await,
+ * dan assertion-nya lolos tanpa dicek. Test async wajib memakai `testAsync`.
+ */
 function test(name: string, fn: () => void): void {
   try {
     fn();
@@ -284,16 +293,27 @@ test('nama file transkrip aman', () => {
   assert.match(name, /^transkrip-bagas-prasetyo-[\d-]+\.html$/);
 });
 
-console.log('\nDashboard & daftar server');
-await testAsync('server yang hanya punya data tetap muncul di daftar server', async () => {
-  // Kasus nyata: room sudah ada, tapi tabel `guilds` belum pernah terisi.
-  // Dashboard dulu menampilkan "(belum ada server)" dan semua panel kosong.
-  const dataOnlyGuild = '444444444444444444';
-  await addKeyword(dataOnlyGuild, 'jam buka', 'Setiap hari 08.00–22.00 WIB.', USER);
-  assert.ok(
-    (await listGuilds()).some((guild) => guild.id === dataOnlyGuild),
-    'guild dengan data harus ikut terdaftar',
-  );
+console.log('\nDashboard server tunggal');
+await testAsync('dashboard memakai GUILD_ID, bukan daftar server', async () => {
+  // Bot ini untuk satu server: tidak ada lagi dropdown server untuk dipilih.
+  const source = await readFile('src/web/server.ts', 'utf8');
+  assert.equal(source.includes('guild_manual'), false, 'kotak "Tempel Server ID" sudah dihapus');
+  assert.equal(source.includes('zp_guild'), false, 'cookie pilihan server sudah dihapus');
+  assert.ok(source.includes('config.discord.homeGuildId'), 'server diambil dari GUILD_ID');
+});
+
+await testAsync('shell dashboard tidak punya form pemilih server', async () => {
+  const shell = await readFile('src/web/ui/shell.ts', 'utf8');
+  assert.equal(shell.includes('guild-picker'), false, 'form .guild-picker sudah dihapus');
+  assert.equal(shell.includes('guild_manual'), false, 'input ID manual sudah dihapus');
+  assert.ok(shell.includes('guildBadge'), 'diganti badge server statis');
+});
+
+await testAsync('nama server tetap tersimpan untuk label dashboard', async () => {
+  const named = '1567780679515770900';
+  await setGuildName(named, '  Server Uji  ');
+  assert.equal(await getGuildName(named), 'Server Uji', 'nama di-trim sebelum disimpan');
+  assert.equal(await getGuildName('555555555555555555'), null, 'server tanpa nama -> null');
 });
 await testAsync('setDmSession mendaftarkan server ke tabel guilds', async () => {
   const freshGuild = '555555555555555555';
@@ -301,18 +321,6 @@ await testAsync('setDmSession mendaftarkan server ke tabel guilds', async () => 
   await setDmSession(USER, freshGuild);
   assert.ok(await getGuildSettings(freshGuild), 'server harus punya baris guilds setelah sesi DM dibuat');
   await deleteDmSession(USER);
-});
-await testAsync('nama server tersimpan dan dipakai daftar server dashboard', async () => {
-  const named = '1567780679515770900';
-  await setGuildName(named, '  Server Uji  ');
-  assert.equal((await getGuildSettings(named))?.name, 'Server Uji');
-
-  const listed = (await listGuilds()).find((guild) => guild.id === named);
-  assert.equal(listed?.name, 'Server Uji');
-
-  // Server tanpa nama (database lama) tetap muncul, hanya namanya null.
-  const unnamed = (await listGuilds()).find((guild) => guild.id === '555555555555555555');
-  assert.equal(unnamed?.name, null);
 });
 
 await testAsync('panel: default aktif, simpan pesan, pindah channel, toggle', async () => {
@@ -407,7 +415,7 @@ test('link tanpa token dan path lain tidak dianggap login link', () => {
 console.log('\nHalaman dashboard');
 const pageContext = {
   guildId: '1569424777750257766',
-  guilds: [{ id: '1569424777750257766', name: 'Server Demo' }],
+  guildName: 'Server Uji',
   status: { online: true, mode: 'bot' as const, uptimeSeconds: 3600 },
 };
 await testAsync('ringkasan merender sidebar, kartu statistik, dan grafik', async () => {
@@ -733,11 +741,11 @@ await testAsync('repo tidak mengekspor fungsi transkrip/memori-dashboard', async
   }
 });
 
-test('navigasi dashboard tidak punya menu Memori & Transkrip', async () => {
+await testAsync('navigasi dashboard tidak punya menu Memori & Transkrip', async () => {
   const { ringkasanPage } = await import('../src/web/ui/pages.js');
   const html = ringkasanPage({
     guildId: 'g-priv',
-    guilds: [{ id: 'g-priv', name: 'Server Privasi' }],
+    guildName: 'Server Uji',
     status: { online: false, mode: 'standalone', uptimeSeconds: 1 },
     stats: { rooms: 0, documents: 0, chunks: 0, keywords: 0, messages: 0 },
     rooms: [],
@@ -751,11 +759,11 @@ test('navigasi dashboard tidak punya menu Memori & Transkrip', async () => {
   assert.ok(!html.includes('href="/transkrip"'), 'menu Transkrip masih ada');
 });
 
-test('halaman dashboard tidak menyebut channel arsip transkrip', async () => {
+await testAsync('halaman dashboard tidak menyebut channel arsip transkrip', async () => {
   const { moderasiPage } = await import('../src/web/ui/pages.js');
   const html = moderasiPage({
     guildId: 'g-priv',
-    guilds: [{ id: 'g-priv', name: 'Server Privasi' }],
+    guildName: 'Server Uji',
     enabled: false,
     words: [],
     action: 'delete',
@@ -770,7 +778,7 @@ test('halaman dashboard tidak menyebut channel arsip transkrip', async () => {
 
 console.log('\nPrivasi: chat hanya lewat DM, tidak ada channel');
 
-test('DM menggantikan room: tidak ada channel/thread yang dibuat', async () => {
+await testAsync('DM menggantikan room: tidak ada channel/thread yang dibuat', async () => {
   const source = await readFile(new URL('../src/features/dm.ts', import.meta.url), 'utf8');
   assert.ok(source.length > 0, 'modul dm.ts harus ada');
   assert.ok(!/channels\.create\(/.test(source), 'DM tidak boleh membuat channel');
@@ -778,7 +786,7 @@ test('DM menggantikan room: tidak ada channel/thread yang dibuat', async () => {
   assert.ok(!/permissionOverwrites/.test(source), 'DM tidak butuh permission channel');
 });
 
-test('rooms.ts sudah dihapus — tidak ada konsep room/channel lagi', async () => {
+await testAsync('rooms.ts sudah dihapus — tidak ada konsep room/channel lagi', async () => {
   let exists = true;
   try {
     await readFile(new URL('../src/features/rooms.ts', import.meta.url), 'utf8');
@@ -788,33 +796,33 @@ test('rooms.ts sudah dihapus — tidak ada konsep room/channel lagi', async () =
   assert.equal(exists, false, 'rooms.ts harus sudah dihapus');
 });
 
-test('bot menjawab DM member (messageCreate merutekan DM)', async () => {
+await testAsync('bot menjawab DM member (messageCreate merutekan DM)', async () => {
   const source = await readFile(new URL('../src/events/messageCreate.ts', import.meta.url), 'utf8');
   assert.match(source, /if \(!message\.inGuild\(\)\)/, 'harus mendeteksi DM');
   assert.match(source, /handleDmMessage\(message\)/, 'DM harus diarahkan ke handler DM');
   assert.ok(!/handleRoomMessage/.test(source), 'tidak boleh lagi memanggil handleRoomMessage');
 });
 
-test('chat.ts tidak lagi menangani pesan server (hanya DM)', async () => {
+await testAsync('chat.ts tidak lagi menangani pesan server (hanya DM)', async () => {
   const source = await readFile(new URL('../src/features/chat.ts', import.meta.url), 'utf8');
   assert.ok(!source.includes('handleRoomMessage'), 'handleRoomMessage harus dihapus');
   assert.match(source, /export async function generateAnswer/, 'generateAnswer harus diekspor untuk dm.ts');
 });
 
-test('schema tidak punya tabel rooms, tapi punya dm_sessions', async () => {
+await testAsync('schema tidak punya tabel rooms, tapi punya dm_sessions', async () => {
   const { SCHEMA_SQLITE } = await import('../src/db/schema.js');
   assert.ok(!/CREATE TABLE[^;]*\brooms\b/i.test(SCHEMA_SQLITE), 'tabel rooms harus dihapus');
   assert.match(SCHEMA_SQLITE, /CREATE TABLE IF NOT EXISTS dm_sessions/, 'tabel dm_sessions harus ada');
 });
 
-test('migrasi membersihkan riwayat pesan room lama', async () => {
+await testAsync('migrasi membersihkan riwayat pesan room lama', async () => {
   const source = await readFile(new URL('../src/db/index.ts', import.meta.url), 'utf8');
   assert.match(source, /DROP TABLE IF EXISTS rooms/, 'tabel rooms lama harus di-drop');
   assert.match(source, /DELETE FROM messages WHERE channel_id NOT LIKE 'dm:%'/,
     'riwayat pesan room lama harus dibersihkan');
 });
 
-test('dm_sessions menyimpan server konteks, bukan channel', async () => {
+await testAsync('dm_sessions menyimpan server konteks, bukan channel', async () => {
   const sed = `SELECT * FROM dm_sessions WHERE user_id = ?`;
   const { getDmSession, setDmSession, deleteDmSession } = await import('../src/db/repo.js');
 
@@ -827,7 +835,7 @@ test('dm_sessions menyimpan server konteks, bukan channel', async () => {
   await deleteDmSession('555000555000555000');
 });
 
-test('panel menyebut DM, bukan room/thread', async () => {
+await testAsync('panel menyebut DM, bukan room/thread', async () => {
   const { panelEmbed, panelRow } = await import('../src/features/ui.js');
   const embed = panelEmbed('Zypher AI').toJSON();
   const text = JSON.stringify(embed);
@@ -841,7 +849,7 @@ test('panel menyebut DM, bukan room/thread', async () => {
   assert.ok(!ids.includes('room:create'), 'tombol room:create harus hilang');
 });
 
-test('log moderasi TIDAK menyimpan isi pesan member', async () => {
+await testAsync('log moderasi TIDAK menyimpan isi pesan member', async () => {
   const { SCHEMA_SQLITE, SCHEMA_PG } = await import('../src/db/schema.js');
   const modLogSqlite = /CREATE TABLE IF NOT EXISTS mod_logs \(([^)]*)\)/.exec(SCHEMA_SQLITE)?.[1] ?? '';
   const modLogPg = /CREATE TABLE IF NOT EXISTS mod_logs \(([^)]*)\)/.exec(SCHEMA_PG)?.[1] ?? '';
@@ -855,11 +863,11 @@ test('log moderasi TIDAK menyimpan isi pesan member', async () => {
   assert.ok(!/content/.test(params), 'addModerationLog tidak boleh menerima content');
 });
 
-test('dashboard moderasi tidak punya kolom "Pesan"', async () => {
+await testAsync('dashboard moderasi tidak punya kolom "Pesan"', async () => {
   const { moderasiPage } = await import('../src/web/ui/pages.js');
   const html = moderasiPage({
     guildId: 'g-audit',
-    guilds: [{ id: 'g-audit', name: 'Server Audit' }],
+    guildName: 'Server Uji',
     enabled: true,
     words: ['anjing'],
     action: 'delete',
@@ -875,7 +883,7 @@ test('dashboard moderasi tidak punya kolom "Pesan"', async () => {
   assert.ok(html.includes('anjing'), 'kata yang cocok tetap ditampilkan');
 });
 
-test('tidak ada endpoint yang membocorkan sesi DM ke dashboard', async () => {
+await testAsync('tidak ada endpoint yang membocorkan sesi DM ke dashboard', async () => {
   const source = await readFile(new URL('../src/web/server.ts', import.meta.url), 'utf8');
   assert.ok(!source.includes('/api/rooms'), 'endpoint /api/rooms harus dihapus');
   assert.ok(!source.includes('api/memories'), 'endpoint memori harus tetap hilang');
@@ -883,14 +891,14 @@ test('tidak ada endpoint yang membocorkan sesi DM ke dashboard', async () => {
   assert.ok(!source.includes('api/memori'), 'endpoint memori harus tetap hilang');
 });
 
-test('halaman dashboard tidak menyajikan isi percakapan', async () => {
+await testAsync('halaman dashboard tidak menyajikan isi percakapan', async () => {
   const source = await readFile(new URL('../src/web/ui/pages.ts', import.meta.url), 'utf8');
   // Hanya nama member + jumlah pesan yang boleh tampil untuk sesi DM.
   const dmTable = source.slice(source.indexOf('Sesi DM terbaru'), source.indexOf('const docsCard'));
   assert.ok(!/content/i.test(dmTable), 'tabel sesi DM tidak boleh merender isi pesan');
 });
 
-test('admin tidak bisa membaca/menghapus memori member lain lewat Discord', async () => {
+await testAsync('admin tidak bisa membaca/menghapus memori member lain lewat Discord', async () => {
   const { memoriSlashSource, konsolidasiSlashSource } = await (async () => ({
     memoriSlashSource: await readFile(new URL('../src/commands/memori.ts', import.meta.url), 'utf8'),
     konsolidasiSlashSource: await readFile(new URL('../src/commands/konsolidasi.ts', import.meta.url), 'utf8'),
@@ -905,7 +913,7 @@ test('admin tidak bisa membaca/menghapus memori member lain lewat Discord', asyn
   assert.match(konsolidasiSlashSource, /const target: User = interaction\.user/, '/konsolidasi harus memakai interaction.user');
 });
 
-test('log moderasi ke Discord tidak memuat cuplikan isi pesan', async () => {
+await testAsync('log moderasi ke Discord tidak memuat cuplikan isi pesan', async () => {
   const source = await readFile(new URL('../src/features/moderation.ts', import.meta.url), 'utf8');
   assert.ok(!source.includes('excerpt'), 'cuplikan pesan harus dihapus');
   assert.ok(!/• \*\*Pesan:\*\*|• Pesan:/.test(source), 'baris "Pesan:" di log harus dihapus');
@@ -986,7 +994,7 @@ await testAsync('moderasi: log pelanggaran tercatat, terisolasi per server, bisa
 test('halaman moderasi merender pengaturan + log', () => {
   const html = moderasiPage({
     guildId: 'g-mod',
-    guilds: [{ id: 'g-mod', name: 'Server Moderasi' }],
+    guildName: 'Server Uji',
     enabled: true,
     words: ['anjing', 'bangsat'],
     action: 'timeout',
@@ -1017,7 +1025,7 @@ test('halaman moderasi merender pengaturan + log', () => {
 test('halaman panel: dropdown channel saat bot online, peringatan saat offline', () => {
   const online = panelPage({
     guildId: 'g-panel',
-    guilds: [{ id: 'g-panel', name: 'Server Panel' }],
+    guildName: 'Server Uji',
     enabled: true,
     channelId: '1400000000000000001',
     messageId: '1500000000000000001',
@@ -1040,7 +1048,7 @@ test('halaman panel: dropdown channel saat bot online, peringatan saat offline',
 
   const offline = panelPage({
     guildId: 'g-panel',
-    guilds: [{ id: 'g-panel', name: 'Server Panel' }],
+    guildName: 'Server Uji',
     enabled: false,
     channelId: null,
     messageId: null,
@@ -1137,7 +1145,7 @@ test('config voice.sttModel default whisper-large-v3', () => {
 });
 
 console.log('\nToggle fitur per server');
-test('setGuildRagEnabled menyimpan boolean', async () => {
+await testAsync('setGuildRagEnabled menyimpan boolean', async () => {
   const { setGuildRagEnabled, getGuildSettings } = await import('../src/db/repo.js');
   const guild = '131313131313131313';
   await setGuildRagEnabled(guild, true);
@@ -1147,7 +1155,7 @@ test('setGuildRagEnabled menyimpan boolean', async () => {
   await setGuildRagEnabled(guild, null);
   assert.equal((await getGuildSettings(guild))?.ragEnabled, null);
 });
-test('setGuildVisionEnabled menyimpan boolean', async () => {
+await testAsync('setGuildVisionEnabled menyimpan boolean', async () => {
   const { setGuildVisionEnabled, getGuildSettings } = await import('../src/db/repo.js');
   const guild = '131313131313131313';
   await setGuildVisionEnabled(guild, true);
@@ -1155,7 +1163,7 @@ test('setGuildVisionEnabled menyimpan boolean', async () => {
   await setGuildVisionEnabled(guild, null);
   assert.equal((await getGuildSettings(guild))?.visionEnabled, null);
 });
-test('setGuildAutoMemory menyimpan boolean', async () => {
+await testAsync('setGuildAutoMemory menyimpan boolean', async () => {
   const { setGuildAutoMemory, getGuildSettings } = await import('../src/db/repo.js');
   const guild = '131313131313131313';
   await setGuildAutoMemory(guild, true);
@@ -1163,7 +1171,7 @@ test('setGuildAutoMemory menyimpan boolean', async () => {
   await setGuildAutoMemory(guild, null);
   assert.equal((await getGuildSettings(guild))?.autoMemory, null);
 });
-test('setGuildAdminOnlyRooms menyimpan boolean', async () => {
+await testAsync('setGuildAdminOnlyRooms menyimpan boolean', async () => {
   const { setGuildAdminOnlyRooms, getGuildSettings } = await import('../src/db/repo.js');
   const guild = '131313131313131313';
   await setGuildAdminOnlyRooms(guild, true);
@@ -1174,7 +1182,7 @@ test('setGuildAdminOnlyRooms menyimpan boolean', async () => {
 test('pengaturanPage menampilkan toggle fitur', () => {
   const page = pengaturanPage({
     guildId: '123',
-    guilds: [],
+    guildName: 'Server Uji',
     persona: null,
     model: null,
     defaultModel: 'test',
@@ -1202,7 +1210,7 @@ test('pengaturanPage menampilkan toggle fitur', () => {
 
 console.log('\nSlash command di DM');
 
-test('semua command didaftarkan untuk DM (user install + konteks BotDM)', async () => {
+await testAsync('semua command didaftarkan untuk DM (user install + konteks BotDM)', async () => {
   const { commands } = await import('../src/commands/index.js');
 
   for (const command of commands) {
@@ -1227,45 +1235,39 @@ test('semua command didaftarkan untuk DM (user install + konteks BotDM)', async 
   // /tanya sudah dihapus — chat hanya lewat DM, tanpa perintah pembuka room.
   assert.equal(commands.some((c) => c.data.name === 'tanya'), false, '/tanya tidak ada lagi');
   assert.ok(commands.some((c) => c.data.name === 'akhiri'), '/akhiri terdaftar');
-  assert.ok(commands.some((c) => c.data.name === 'server'), '/server terdaftar');
+  // /server sudah dihapus permanen: bot ini untuk satu server.
+  assert.equal(commands.some((c) => c.data.name === 'server'), false, '/server tidak terdaftar lagi');
 });
 
-test('register: global SELALU didaftarkan, bukan hanya saat DEV_GUILD_ID kosong', async () => {
+await testAsync('register: global SELALU didaftarkan, bukan hanya per-guild', async () => {
   const source = await readFile('src/lib/register.ts', 'utf8');
   // Command per-guild tidak muncul di DM — global wajib, bukan opsional.
   assert.ok(source.includes('application.commands.set(body)'), 'mendaftarkan command global');
   assert.equal(
-    /if\s*\(config\.discord\.devGuildId\)\s*\{\s*[\s\S]{0,200}?application\.commands\.set/.test(source),
+    /if\s*\(config\.discord\.(devGuildId|homeGuildId)\)\s*\{\s*[\s\S]{0,200}?application\.commands\.set/.test(source),
     false,
-    'pendaftaran global tidak boleh bergantung pada DEV_GUILD_ID',
+    'pendaftaran global tidak boleh bergantung pada pendaftaran per-server',
   );
 });
 
-test('tombol dm:server:<id> punya handler', async () => {
-  const source = await readFile('src/features/buttons.ts', 'utf8');
-  // Tanpa handler, tombol pilihan server diam saja saat diklik.
-  assert.ok(source.includes("'dm:server:'"), 'prefix dm:server ditangani');
-  assert.ok(source.includes('handleDmServerPick'), 'ada fungsi handler-nya');
-  assert.ok(source.includes('listGuildChoices'), 'memverifikasi keanggotaan sebelum memilih server');
+await testAsync('fitur multi-server sudah dihapus total', async () => {
+  const buttons = await readFile('src/features/buttons.ts', 'utf8');
+  assert.equal(buttons.includes('dm:server:'), false, 'handler tombol pilih server hilang');
+  assert.equal(buttons.includes('handleDmServerPick'), false, 'fungsi handler pilih server hilang');
+
+  const dm = await readFile('src/features/dm.ts', 'utf8');
+  assert.equal(dm.includes('listGuildChoices'), false, 'tidak ada lagi daftar server untuk dipilih');
+  assert.equal(dm.includes('dmServerPickerEmbed'), false, 'embed pilih server hilang');
+  assert.equal(dm.includes('setDmPrefGuild') || dm.includes('getDmPrefGuild'), false, 'preferensi server hilang');
 });
 
-test('embed /server menjelaskan bahwa tidak ada channel yang dibuat', async () => {
-  const { dmServerPickerEmbed } = await import('../src/features/dm.js');
-  const embed = dmServerPickerEmbed(
-    [
-      { id: '1', name: 'Server A' },
-      { id: '2', name: 'Server B' },
-    ],
-    null,
-  ).toJSON();
-
-  const text = `${embed.title ?? ''}\n${embed.description ?? ''}`;
-  assert.ok(/bukan perintah untuk membuat channel/i.test(text), 'menjelaskan /server bukan pembuat channel');
-  assert.ok(/tidak ada channel/i.test(text), 'menegaskan tidak ada channel dibuat');
-  assert.ok(text.includes('Server A') && text.includes('Server B'), 'menampilkan daftar server');
+await testAsync('/server tidak lagi terdaftar sebagai command', async () => {
+  const index = await readFile('src/commands/index.ts', 'utf8');
+  assert.equal(/from '\.\/server\.js'/.test(index), false, 'import /server hilang');
+  assert.equal(/\bserverCommand\b/.test(index), false, 'entri /server hilang dari daftar command');
 });
 
-test('endDmSession melaporkan kegagalan kirim transkrip', async () => {
+await testAsync('endDmSession melaporkan kegagalan kirim transkrip', async () => {
   const source = await readFile('src/features/dm.ts', 'utf8');
   assert.ok(source.includes('delivered'), 'ada penanda delivered');
   assert.ok(
@@ -1274,8 +1276,162 @@ test('endDmSession melaporkan kegagalan kirim transkrip', async () => {
   );
 });
 
+console.log('\nSatu bot, satu server');
+
+await testAsync('GUILD_ID wajib dan divalidasi saat start', async () => {
+  const source = await readFile('src/config.ts', 'utf8');
+  assert.ok(source.includes('requiredGuildId'), 'ada skema GUILD_ID wajib');
+  assert.equal(
+    /guildId:\s*z\.string\(\)\.optional\(\)/.test(source),
+    false,
+    'GUILD_ID tidak boleh opsional lagi',
+  );
+  assert.ok(source.includes('homeGuildId'), 'config mengekspos homeGuildId');
+  // Alias lama tetap diterima supaya .env lama tidak langsung rusak.
+  assert.ok(source.includes('DEV_GUILD_ID'), 'alias DEV_GUILD_ID tetap diterima');
+  assert.ok(source.includes('SERVER_ID'), 'alias SERVER_ID tetap diterima');
+});
+
+await testAsync('bot auto-leave server selain GUILD_ID dan memberi alasan', async () => {
+  const source = await readFile('src/bot.ts', 'utf8');
+  assert.ok(source.includes('leaveOtherGuilds'), 'ada fungsi auto-leave');
+  assert.ok(source.includes('guild.leave()'), 'benar-benar keluar dari server lain');
+  assert.ok(/hanya untuk satu server/i.test(source), 'menjelaskan alasannya ke admin server');
+  assert.ok(source.includes('GuildCreate'), 'server baru langsung ditangani');
+});
+
+await testAsync('sesi DM memakai server rumah, bukan pilihan member', async () => {
+  const source = await readFile('src/features/dm.ts', 'utf8');
+  assert.ok(source.includes('homeGuild'), 'ada helper server rumah');
+  assert.ok(source.includes('config.discord.homeGuildId'), 'memakai GUILD_ID');
+  assert.equal(source.includes('/server'), false, 'tidak menyebut /server lagi di pesan');
+
+  const block = source.slice(source.indexOf('export async function handleDmMessage'));
+  assert.equal(/choices\[0\]/.test(block), false, 'tidak ada fallback "server pertama di cache"');
+});
+
+await testAsync('member yang bukan anggota server rumah diberi tahu cara fork', async () => {
+  const source = await readFile('src/features/dm.ts', 'utf8');
+  assert.ok(/bukan anggota/.test(source), 'pesan jelas saat bukan anggota');
+  assert.ok(/fork repo/i.test(source), 'mengarahkan ke fork + API key sendiri');
+});
+
+await testAsync('dashboard memakai nama server untuk label, bukan daftar', async () => {
+  const repo = await readFile('src/db/repo.ts', 'utf8');
+  assert.ok(repo.includes('export async function getGuildName'), 'ada getGuildName');
+  assert.equal(repo.includes('export async function listGuilds'), false, 'listGuilds dihapus');
+});
+
+await testAsync('/akhiri memberi tahu bahwa sesi baru bisa dimulai langsung di DM', async () => {
+  const source = await readFile('src/features/dm.ts', 'utf8');
+  assert.ok(source.includes('Langsung tulis di chat ini'), 'menjelaskan tidak perlu klik panel lagi');
+  assert.ok(source.includes('Sesi baru dimulai'), 'memberi tahu saat sesi baru dibuka otomatis');
+});
+
+console.log('\nCommand di DM');
+
+await testAsync('/reset bisa dipakai di DM (bukan hanya di server)', async () => {
+  const source = await readFile('src/commands/reset.ts', 'utf8');
+  // requireGuild() membuat /reset selalu ditolak di DM, padahal yang dihapus
+  // justru riwayat percakapan DM.
+  assert.equal(
+    /requireGuild\(interaction\)/.test(source),
+    false,
+    '/reset tidak boleh memaksa dijalankan di server',
+  );
+  assert.ok(source.includes('isDirectMessage'), '/reset sadar konteks DM');
+  assert.ok(source.includes('clearHistory'), '/reset tetap menghapus riwayat');
+  // `/tanya` sudah dihapus dari bot — jangan disebut lagi di pesan bantuan.
+  assert.equal(source.includes('/tanya'), false, 'pesan /reset tidak menyebut /tanya');
+});
+
+await testAsync('hanya command pengaturan server yang dikunci ke server', async () => {
+  for (const name of ['dokumen', 'keyword', 'panel', 'persona']) {
+    const source = await readFile(`src/commands/${name}.ts`, 'utf8');
+    assert.ok(
+      /requireGuild\(interaction\)|requireAdmin\(interaction\)/.test(source),
+      `/${name} memang harus di server (mengubah pengaturan server)`,
+    );
+  }
+});
+
+await testAsync('panduan menjelaskan beda /reset dan /akhiri', async () => {
+  const { helpEmbed } = await import('../src/features/ui.js');
+  const embed = helpEmbed('Zypher').toJSON();
+  const text = (embed.fields ?? []).map((f) => `${f.name}\n${f.value}`).join('\n');
+
+  assert.ok(text.includes('/reset'), '/bantuan menyebut /reset');
+  assert.ok(text.includes('/akhiri'), '/bantuan menyebut /akhiri');
+  assert.ok(/`\/reset` vs `\/akhiri`/.test(text), 'ada penjelasan bedanya');
+  assert.equal(text.includes('/tanya'), false, 'tidak menyebut /tanya yang sudah dihapus');
+});
+
+await testAsync('requireGuild menjelaskan kenapa harus di server', async () => {
+  const source = await readFile('src/commands/helpers.ts', 'utf8');
+  const block = source.slice(source.indexOf('export async function requireGuild'), source.indexOf('export async function requireAdmin'));
+  assert.ok(block.includes('mengubah pengaturan server'), 'menjelaskan alasannya');
+  assert.ok(block.includes('/akhiri'), 'menyebut command yang bisa dipakai di DM');
+});
+
+console.log('\nAlignment UI');
+
+await testAsync('card-head: teks di samping judul tidak turun (margin .hint direset)', async () => {
+  const { STYLE } = await import('../src/web/ui/theme.js');
+  // .hint global punya margin-top 8px. Di dalam .card-head itu membuat teks
+  // di samping judul kartu turun ~4px dari judulnya.
+  // Ambil isi rule-nya (antara { dan }), bukan 220 karakter pertama — komentar
+  // penjelas di dalam rule bisa lebih panjang dari itu.
+  const start = STYLE.indexOf('.card-head .hint');
+  const block = STYLE.slice(start, STYLE.indexOf('}', start));
+  assert.ok(block.includes('margin: 0'), '.card-head .hint harus margin:0');
+});
+
+await testAsync('select-shell: chevron menempel ke ujung <select>, bukan tepi shell', async () => {
+  const { STYLE } = await import('../src/web/ui/theme.js');
+  const shell = STYLE.slice(STYLE.indexOf('.select-shell {'), STYLE.indexOf('.select-shell select'));
+  assert.ok(shell.includes('max-width: 100%'), 'shell dibatasi supaya tidak lebih lebar dari select');
+  const select = STYLE.slice(STYLE.indexOf('.select-shell select {'), STYLE.indexOf('.select-shell select:hover'));
+  assert.ok(select.includes('width: 100%'), 'select mengisi lebar shell');
+});
+
+await testAsync('tabel Sesi DM: kolom Pesan punya kelas sendiri, bukan .num rata kanan', async () => {
+  const source = await readFile('src/web/ui/pages.ts', 'utf8');
+  const card = source.slice(source.indexOf('Sesi DM terbaru'), source.indexOf('Sesi DM terbaru') + 700);
+  assert.ok(card.includes('col-count'), 'header Pesan memakai col-count');
+  assert.equal(
+    /<th class="num">Pesan<\/th>/.test(card),
+    false,
+    'header Pesan tidak lagi memakai .num (yang rata kanan dan mengambang)',
+  );
+
+  const { STYLE } = await import('../src/web/ui/theme.js');
+  const rule = STYLE.slice(STYLE.indexOf('.col-count {'), STYLE.indexOf('.col-count {') + 200);
+  assert.ok(rule.includes('text-align: left'), 'kolom angka rata kiri, sejajar judulnya');
+  assert.ok(rule.includes('width: 92px'), 'lebar kolom dipatok supaya angka tidak di tengah sel');
+});
+
+await testAsync('Moderasi: badge status hanya muncul sekali', async () => {
+  const source = await readFile('src/web/ui/pages.ts', 'utf8');
+  // Badge dulu dipasang di pageHead.actions DAN card right -> terbaca 2x.
+  assert.equal(
+    /kicker: '08 — Keamanan'[\s\S]{0,400}?actions: status/.test(source),
+    false,
+    'badge tidak lagi dipasang di judul halaman Moderasi',
+  );
+
+  // Kartu "Filter kata" ada SEBELUM pageHead, jadi jangan potong dari judul.
+  const cardStart = source.indexOf("title: 'Filter kata'");
+  const card = source.slice(cardStart, cardStart + 400);
+  assert.ok(card.includes('right: status'), 'badge tetap ada di header kartu Filter kata');
+  // Batasi ke fungsi moderasiPage — halaman Panel juga punya `right: status`.
+  const fnStart = source.indexOf('export function moderasiPage');
+  const fnEnd = source.indexOf('export function ', fnStart + 10);
+  const moderasi = source.slice(fnStart, fnEnd);
+  assert.equal((moderasi.match(/right: status\b/g) ?? []).length, 1, 'badge dipasang tepat satu kali');
+});
+
 console.log('\nScreenshot dokumentasi');
-test('screenshot: tidak ada file yang membocorkan halaman privasi', async () => {
+await testAsync('screenshot: tidak ada file yang membocorkan halaman privasi', async () => {
   const { readdir } = await import('node:fs/promises');
   const files = await readdir('docs/screenshots');
   const names = files.filter((f) => f.endsWith('.png'));
@@ -1288,8 +1444,11 @@ test('screenshot: tidak ada file yang membocorkan halaman privasi', async () => 
     'tidak ada screenshot memori/transkrip',
   );
 
-  // Setiap halaman yang masih ada harus punya versi desktop + mobile.
-  const pages = ['ringkasan', 'panel', 'dokumen', 'keyword', 'moderasi', 'pengaturan'];
+  // Daftar halaman diambil dari script screenshot itu sendiri, supaya halaman
+  // baru tidak bisa lolos tanpa screenshot (dulu 'agent' tidak ikut dicek).
+  const shots = await readFile('scripts/screenshots.ts', 'utf8');
+  const pages = [...shots.matchAll(/\['([a-z-]+)', '\//g)].map((m) => m[1]);
+  assert.ok(pages.length >= 8, `ada ${pages.length} halaman yang di-screenshot`);
   for (const slug of pages) {
     assert.ok(names.includes(`${slug}-desktop.png`), `screenshot ${slug}-desktop.png ada`);
     assert.ok(names.includes(`${slug}-mobile.png`), `screenshot ${slug}-mobile.png ada`);
@@ -1297,7 +1456,7 @@ test('screenshot: tidak ada file yang membocorkan halaman privasi', async () => 
   assert.ok(names.includes('login-mobile.png'), 'screenshot login ada');
 });
 
-test('screenshot: README hanya menyebut file yang benar-benar ada', async () => {
+await testAsync('screenshot: README hanya menyebut file yang benar-benar ada', async () => {
   const { readdir } = await import('node:fs/promises');
   const files = await readdir('docs/screenshots');
   const readme = await readFile('docs/screenshots/README.md', 'utf8');
@@ -1311,7 +1470,7 @@ test('screenshot: README hanya menyebut file yang benar-benar ada', async () => 
   assert.equal(readme.includes('transkrip-'), false, 'README tanpa screenshot transkrip');
 });
 
-test('screenshot: seed menolak database non-demo', async () => {
+await testAsync('screenshot: seed menolak database non-demo', async () => {
   const source = await readFile('scripts/screenshots-seed.ts', 'utf8');
   assert.ok(source.includes("dbPath.includes('screenshot')"), 'seed memeriksa nama database');
   assert.ok(source.includes("'[pertanyaan member]'"), 'isi pesan demo berupa penanda, bukan kalimat asli');
@@ -1429,5 +1588,987 @@ test('rantai provider: utama di depan, fallback hanya yang ada key-nya', () => {
   assert.equal(chain.length, 2, 'openrouter harus dilewati karena OPENROUTER_API_KEY kosong');
   assert.equal(chain[1]?.name, 'gemini');
 });
+
+/* ------------------------------------------------------------------ */
+/*  Sambutan member baru & AI Agent                                    */
+/* ------------------------------------------------------------------ */
+
+console.log('\nAI Agent di channel');
+
+const agentSettings = (patch: Record<string, unknown> = {}) => ({
+  guildId: GUILD,
+  channelId: '444444444444444444',
+  galleryChannelId: null,
+  quietMinutes: 45,
+  maxPerHour: 6,
+  reactEmoji: true,
+  reactImages: true,
+  busyMute: true,
+  cooldownSeconds: 90,
+  updatedAt: 0,
+  ...patch,
+});
+
+const welcomeSettings = (patch: Record<string, unknown> = {}) => ({
+  guildId: GUILD,
+  channelId: null,
+  enabled: true,
+  useAi: true,
+  template: null,
+  style: null,
+  example: null,
+  imageEnabled: false,
+  includeAvatar: true,
+  bannerPath: null,
+  updatedAt: 0,
+  ...patch,
+});
+
+const goodbyeSettings = (patch: Record<string, unknown> = {}) => ({
+  guildId: GUILD,
+  channelId: '333333333333333333',
+  enabled: true,
+  useAi: true,
+  template: null,
+  style: null,
+  example: null,
+  imageEnabled: false,
+  includeAvatar: true,
+  bannerPath: null,
+  updatedAt: 0,
+  ...patch,
+});
+
+await testAsync('agent: channel selain yang diaktifkan tidak disentuh', async () => {
+  const { shouldReply, emptyState } = await import('../src/features/agent-core.js');
+  const decision = shouldReply({
+    settings: agentSettings(),
+    state: emptyState(),
+    channelId: '999999999999999999',
+    fromBot: false,
+    summoned: false,
+    now: Date.now(),
+  });
+  assert.equal(decision.reply, false);
+  assert.equal(decision.reason, 'other-channel');
+});
+
+await testAsync('agent: mati saat channel belum diatur', async () => {
+  const { shouldReply, emptyState } = await import('../src/features/agent-core.js');
+  const decision = shouldReply({
+    settings: agentSettings({ channelId: null }),
+    state: emptyState(),
+    channelId: '444444444444444444',
+    fromBot: false,
+    summoned: true,
+    now: Date.now(),
+  });
+  assert.equal(decision.reply, false);
+  assert.equal(decision.reason, 'disabled');
+});
+
+await testAsync('agent: diam saat obrolan ramai, tapi tetap jawab kalau dipanggil', async () => {
+  const { shouldReply, recordTrace, emptyState } = await import('../src/features/agent-core.js');
+  const now = Date.now();
+  let state = emptyState();
+  // Tiga member berbeda bicara dalam 30 detik terakhir → ramai.
+  state = recordTrace(state, 'user-a', now - 30_000);
+  state = recordTrace(state, 'user-b', now - 20_000);
+  state = recordTrace(state, 'user-c', now - 5_000);
+
+  const nimbrung = shouldReply({
+    settings: agentSettings({ cooldownSeconds: 0 }),
+    state,
+    channelId: '444444444444444444',
+    fromBot: false,
+    summoned: false,
+    now,
+  });
+  assert.equal(nimbrung.reply, false);
+  assert.equal(nimbrung.reason, 'busy');
+
+  // Dipanggil langsung → tetap menjawab meski ramai.
+  const dipanggil = shouldReply({
+    settings: agentSettings({ cooldownSeconds: 0 }),
+    state,
+    channelId: '444444444444444444',
+    fromBot: false,
+    summoned: true,
+    now,
+  });
+  assert.equal(dipanggil.reply, true, 'mention/reply harus selalu dijawab');
+});
+
+await testAsync('agent: satu member sendirian tetap dilayani', async () => {
+  const { shouldReply, recordTrace, emptyState } = await import('../src/features/agent-core.js');
+  const now = Date.now();
+  let state = emptyState();
+  state = recordTrace(state, 'user-a', now - 3000);
+  state = recordTrace(state, 'user-a', now - 1000);
+
+  const decision = shouldReply({
+    settings: agentSettings({ cooldownSeconds: 0 }),
+    state,
+    channelId: '444444444444444444',
+    fromBot: false,
+    summoned: false,
+    now,
+  });
+  assert.equal(decision.reply, true, 'satu orang ngobrol = bot boleh menanggapi');
+});
+
+await testAsync('agent: jatah per jam membatasi walau dipanggil', async () => {
+  const { shouldReply, recordReply, emptyState } = await import('../src/features/agent-core.js');
+  const now = Date.now();
+  let state = emptyState();
+  for (let i = 0; i < 6; i += 1) state = recordReply(state, now - i * 1000);
+
+  const decision = shouldReply({
+    settings: agentSettings({ maxPerHour: 6, cooldownSeconds: 0 }),
+    state,
+    channelId: '444444444444444444',
+    fromBot: false,
+    summoned: true,
+    now,
+  });
+  assert.equal(decision.reply, false);
+  assert.equal(decision.reason, 'hourly-limit', 'pengaman biaya API tetap berlaku');
+});
+
+await testAsync('agent: jatah per jam dihitung ulang setelah 1 jam', async () => {
+  const { shouldReply, recordReply, emptyState } = await import('../src/features/agent-core.js');
+  const now = Date.now();
+  let state = emptyState();
+  for (let i = 0; i < 6; i += 1) state = recordReply(state, now - 3_700_000 - i * 1000);
+
+  const decision = shouldReply({
+    settings: agentSettings({ maxPerHour: 6, cooldownSeconds: 0 }),
+    state,
+    channelId: '444444444444444444',
+    fromBot: false,
+    summoned: true,
+    now,
+  });
+  assert.equal(decision.reply, true, 'balasan lama tidak lagi dihitung');
+});
+
+await testAsync('agent: cooldown mencegah bot membalas beruntun', async () => {
+  const { shouldReply, recordReply, emptyState } = await import('../src/features/agent-core.js');
+  const now = Date.now();
+  const state = recordReply(emptyState(), now - 10_000);
+
+  const decision = shouldReply({
+    settings: agentSettings({ cooldownSeconds: 90 }),
+    state,
+    channelId: '444444444444444444',
+    fromBot: false,
+    summoned: false,
+    now,
+  });
+  assert.equal(decision.reply, false);
+  assert.equal(decision.reason, 'cooldown');
+});
+
+await testAsync('agent: tidak pernah membalas pesan bot lain', async () => {
+  const { shouldReply, emptyState } = await import('../src/features/agent-core.js');
+  const decision = shouldReply({
+    settings: agentSettings({ cooldownSeconds: 0 }),
+    state: emptyState(),
+    channelId: '444444444444444444',
+    fromBot: true,
+    summoned: true,
+    now: Date.now(),
+  });
+  assert.equal(decision.reply, false);
+  assert.equal(decision.reason, 'from-bot');
+});
+
+await testAsync('agent: menyapa saat sepi hanya setelah batas waktu', async () => {
+  const { shouldBreakSilence, recordTrace, emptyState } = await import('../src/features/agent-core.js');
+  const now = Date.now();
+  const settings = agentSettings({ quietMinutes: 45, cooldownSeconds: 0 });
+
+  // 10 menit lalu masih ada obrolan → belum sepi.
+  assert.equal(
+    shouldBreakSilence(settings, recordTrace(emptyState(), 'u1', now - 10 * 60_000), now),
+    false,
+  );
+  // 50 menit tanpa pesan → sepi, boleh menyapa.
+  assert.equal(
+    shouldBreakSilence(settings, recordTrace(emptyState(), 'u1', now - 50 * 60_000), now),
+    true,
+  );
+  // quietMinutes 0 = tidak pernah menyapa sendiri.
+  assert.equal(
+    shouldBreakSilence(agentSettings({ quietMinutes: 0 }), recordTrace(emptyState(), 'u1', now - 50 * 60_000), now),
+    false,
+  );
+});
+
+await testAsync('agent: tidak bicara ke channel yang belum pernah ada obrolan', async () => {
+  const { shouldBreakSilence, emptyState } = await import('../src/features/agent-core.js');
+  assert.equal(shouldBreakSilence(agentSettings(), emptyState(), Date.now()), false);
+});
+
+await testAsync('agent: settings tersimpan per server', async () => {
+  const { getAgentSettings, saveAgentSettings } = await import('../src/db/repo.js');
+  const guild = '777777777777777777';
+  assert.equal((await getAgentSettings(guild)).channelId, null, 'default: mati');
+
+  await saveAgentSettings(guild, { channelId: '888888888888888888', maxPerHour: 9, reactImages: false });
+  const saved = await getAgentSettings(guild);
+  assert.equal(saved.channelId, '888888888888888888');
+  assert.equal(saved.maxPerHour, 9);
+  assert.equal(saved.reactImages, false);
+
+  // Matikan lagi dengan channelId null.
+  await saveAgentSettings(guild, { channelId: null });
+  assert.equal((await getAgentSettings(guild)).channelId, null);
+});
+
+await testAsync('agent: pesan yang sama tidak ditanggapi dua kali', async () => {
+  const { hasAgentReaction, markAgentReaction } = await import('../src/db/repo.js');
+  const messageId = 'agent-msg-1';
+  assert.equal(await hasAgentReaction(messageId), false);
+  await markAgentReaction(messageId);
+  assert.equal(await hasAgentReaction(messageId), true);
+  // Idempotent.
+  await markAgentReaction(messageId);
+  assert.equal(await hasAgentReaction(messageId), true);
+});
+
+console.log('\nSambutan member baru');
+
+await testAsync('sambutan: default mati, jadi server lama tidak berubah perilakunya', async () => {
+  const { getWelcomeSettings } = await import('../src/db/repo.js');
+  const settings = await getWelcomeSettings('666666666666666666');
+  assert.equal(settings.enabled, false);
+  assert.equal(settings.channelId, null);
+  assert.equal(settings.useAi, true, 'kalau dinyalakan, default-nya memakai AI');
+  assert.equal(settings.imageEnabled, true);
+});
+
+await testAsync('sambutan: template mengisi {user} dan {server}', async () => {
+  const { fillTemplate } = await import('../src/features/welcome.js');
+  const member = {
+    displayName: 'Sky',
+    user: { username: 'sky123' },
+    guild: { name: 'Komunitas Zypher' },
+  } as unknown as Parameters<typeof fillTemplate>[1];
+
+  assert.equal(
+    fillTemplate('Halo {user}, selamat datang di {server}!', member),
+    'Halo Sky, selamat datang di Komunitas Zypher!',
+  );
+  // Nama panggilan (nickname) dipakai, bukan username.
+  const tanpaNick = { ...member, displayName: '' } as typeof member;
+  assert.ok(fillTemplate('Hai {user}', tanpaNick).includes('sky123'));
+});
+
+await testAsync('sambutan: prompt melarang pembuka khas bot & membatasi panjang', async () => {
+  const { buildWelcomePrompt } = await import('../src/features/preview.js');
+  const member = { name: 'Sky', guildName: 'Komunitas Zypher' };
+
+  const prompt = buildWelcomePrompt(
+    { ...welcomeSettings({ style: 'santai' }) },
+    member,
+    'pagi',
+  );
+  assert.ok(prompt.includes('Sky'), 'menyebut nama panggilan');
+  assert.ok(/[Jj]angan memakai pembuka khas AI/.test(prompt), 'melarang pembuka khas bot');
+  assert.ok(prompt.includes('220 karakter'), 'membatasi panjang sapaan');
+  assert.ok(prompt.includes('pagi'), 'menyebut waktu');
+});
+
+await testAsync('sambutan: settings tersimpan dan bisa dimatikan lagi', async () => {
+  const { getWelcomeSettings, saveWelcomeSettings } = await import('../src/db/repo.js');
+  const guild = '666666666666666667';
+  await saveWelcomeSettings(guild, { enabled: true, channelId: null, template: 'Halo {user}' });
+
+  const saved = await getWelcomeSettings(guild);
+  assert.equal(saved.enabled, true);
+  assert.equal(saved.template, 'Halo {user}');
+  assert.equal(saved.channelId, null, 'null = kirim lewat DM');
+
+  await saveWelcomeSettings(guild, { enabled: false });
+  assert.equal((await getWelcomeSettings(guild)).enabled, false);
+  // Field lain tidak ikut terhapus saat patch sebagian.
+  assert.equal((await getWelcomeSettings(guild)).template, 'Halo {user}');
+});
+
+await testAsync('sambutan: bot lain tidak disambut', async () => {
+  const source = await readFile('src/features/welcome.ts', 'utf8');
+  assert.ok(source.includes('if (member.user.bot) return'), 'member bot dilewati');
+});
+
+await testAsync('sambutan: hanya untuk server rumah', async () => {
+  const source = await readFile('src/events/guildMemberAdd.ts', 'utf8');
+  assert.ok(source.includes('config.discord.homeGuildId'), 'memeriksa GUILD_ID');
+});
+
+await testAsync('kartu sambutan membungkus teks panjang tanpa melewati lebar', async () => {
+  const { wrap } = await import('../src/features/welcome-card.js');
+  const panjang = 'Halo Sky, selamat datang di komunitas kami! Semoga betah dan seru-seruan bareng yang lain ya.';
+  const lines = wrap(panjang, 52, 3);
+  assert.ok(lines.length <= 3, 'maksimal 3 baris');
+  for (const line of lines) assert.ok(line.length <= 52, `baris "${line}" terlalu panjang`);
+
+  const pendek = wrap('Halo J!', 52, 3);
+  assert.deepEqual(pendek, ['Halo J!']);
+
+  // Teks yang dipotong diberi elipsis.
+  const terpotong = wrap('kata '.repeat(80), 20, 2);
+  assert.ok(terpotong[terpotong.length - 1]?.endsWith('…'), 'penanda potongan');
+});
+
+await testAsync('dashboard: Sambutan dan AI Agent jadi DUA halaman terpisah', async () => {
+  const shell = await readFile('src/web/ui/shell.ts', 'utf8');
+  assert.ok(shell.includes("href: '/sambutan'"), 'menu Sambutan ada');
+  assert.ok(shell.includes("href: '/agent'"), 'menu AI Agent ada');
+  assert.ok(shell.includes("key: 'agent'"), 'key halaman agent terdaftar');
+
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(server.includes("path === '/agent'"), 'route agent ada');
+  assert.ok(server.includes("path === '/api/welcome'"), 'API sambutan ada');
+  assert.ok(server.includes("path === '/api/goodbye'"), 'API perpisahan ada');
+  assert.ok(server.includes("path === '/api/agent'"), 'API agent ada');
+
+  // Halaman gabungan sudah tidak ada lagi.
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  assert.equal(pages.includes('sambutanPage'), false, 'halaman gabungan dihapus');
+  assert.ok(pages.includes('export function welcomePage'), 'halaman sambutan ada');
+  assert.ok(pages.includes('export function agentPage'), 'halaman agent ada');
+});
+
+await testAsync('dashboard: input angka agent dibatasi sebelum disimpan', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  // Tanpa clamp, nilai 0/9999 dari form bisa mematikan pengaman biaya.
+  assert.ok(server.includes('clamp(payload.maxPerHour, 1, 60'), 'batas per jam dijaga');
+  assert.ok(server.includes('clamp(payload.quietMinutes, 0, 1440'), 'batas menit sepi dijaga');
+  // Bentuk di sumber: /^\\d{17,20}$/ (backslash literal di file .ts).
+  assert.ok(server.includes('\\d{17,20}'), 'channel ID divalidasi 17–20 digit');
+});
+
+await testAsync('privasi: agent tidak menyimpan transkrip ke database', async () => {
+  const source = await readFile('src/features/agent.ts', 'utf8');
+  // State hanya di memori (Map) — tidak boleh ada INSERT ke tabel pesan.
+  assert.ok(source.includes('const channels = new Map'), 'state di memori');
+  assert.equal(
+    /appendMessage|INSERT INTO messages/.test(source),
+    false,
+    'tidak menyimpan isi obrolan channel ke database',
+  );
+});
+
+await testAsync('privasi: sambutan default dikirim lewat DM, bukan channel', async () => {
+  const welcome = await readFile('src/features/welcome.ts', 'utf8');
+  assert.ok(welcome.includes('member.send'), 'ada jalur DM');
+  assert.ok(
+    /settings\.channelId\s*&&\s*settings\.channelId !== member\.guild\.id/.test(welcome) ||
+      welcome.includes('settings.channelId && settings.channelId !== member.guild.id'),
+    'channel hanya dipakai kalau admin memilihnya',
+  );
+});
+
+await testAsync('bot: intent GuildMembers & reaksi ditambahkan', async () => {
+  const source = await readFile('src/bot.ts', 'utf8');
+  assert.ok(source.includes('GatewayIntentBits.GuildMembers'), 'intent member baru');
+  assert.ok(source.includes('Events.GuildMemberAdd'), 'handler member baru terpasang');
+  assert.ok(source.includes('startQuietWatcher'), 'timer channel sepi terpasang');
+});
+
+
+await testAsync('settings agent: patch sebagian tidak mereset field lain', async () => {
+  const { getAgentSettings, saveAgentSettings } = await import('../src/db/repo.js');
+  const guild = '777777777777777778';
+  await saveAgentSettings(guild, { channelId: '101010101010101010', reactImages: false, maxPerHour: 12 });
+
+  // Permintaan kedua hanya mengirim satu field (mis. dari API lain).
+  await saveAgentSettings(guild, { quietMinutes: 20 });
+  const saved = await getAgentSettings(guild);
+  assert.equal(saved.maxPerHour, 12, 'nilai lama tidak ikut terhapus');
+  assert.equal(saved.reactImages, false, 'toggle lama dipertahankan');
+  assert.equal(saved.quietMinutes, 20, 'field baru tersimpan');
+});
+
+await testAsync('API agent & sambutan mempertahankan nilai yang tidak dikirim', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  // Tanpa pola ini, menyimpan sebagian akan mematikan toggle lain diam-diam.
+  const agentBlock = server.slice(server.indexOf("path === '/api/agent'"), server.indexOf("path === '/api/moderasi'"));
+  assert.ok(agentBlock.includes('current.reactImages'), 'nilai lama dipakai sebagai fallback');
+  assert.ok(agentBlock.includes('bool('), 'ada helper yang membedakan "tidak dikirim" vs "false"');
+
+  const welcomeBlock = server.slice(server.indexOf("path === '/api/welcome'"), server.indexOf("path === '/api/agent'"));
+  assert.ok(welcomeBlock.includes("'template' in payload"), 'template hanya diubah kalau dikirim');
+});
+
+
+console.log('\nAI Agent: channel galeri');
+
+await testAsync('galeri: channel galeri dikenali sebagai peran "gallery"', async () => {
+  const { channelRole } = await import('../src/features/agent-core.js');
+  const settings = agentSettings({ galleryChannelId: '555555555555555555' });
+
+  assert.equal(channelRole(settings, '444444444444444444'), 'chat', 'channel ngobrol');
+  assert.equal(channelRole(settings, '555555555555555555'), 'gallery', 'channel galeri');
+  assert.equal(channelRole(settings, '999999999999999999'), null, 'channel lain');
+});
+
+await testAsync('galeri: bisa hidup tanpa channel ngobrol', async () => {
+  const { channelRole, shouldReply, emptyState } = await import('../src/features/agent-core.js');
+  const settings = agentSettings({ channelId: null, galleryChannelId: '555555555555555555' });
+
+  assert.equal(channelRole(settings, '555555555555555555'), 'gallery');
+  const decision = shouldReply({
+    settings,
+    state: emptyState(),
+    channelId: '555555555555555555',
+    fromBot: false,
+    summoned: false,
+    now: Date.now(),
+  });
+  assert.equal(decision.reply, true, 'galeri tetap boleh membalas walau channel ngobrol mati');
+});
+
+await testAsync('galeri: fitur mati total hanya kalau kedua channel kosong', async () => {
+  const { shouldReply, emptyState } = await import('../src/features/agent-core.js');
+  const decision = shouldReply({
+    settings: agentSettings({ channelId: null, galleryChannelId: null }),
+    state: emptyState(),
+    channelId: '444444444444444444',
+    fromBot: false,
+    summoned: true,
+    now: Date.now(),
+  });
+  assert.equal(decision.reason, 'disabled');
+});
+
+await testAsync('galeri: tidak pernah menyapa sendiri saat sepi', async () => {
+  const { shouldBreakSilence, recordTrace, emptyState } = await import('../src/features/agent-core.js');
+  const now = Date.now();
+  // Hanya galeri yang aktif — tidak ada channel ngobrol untuk disapa.
+  const settings = agentSettings({ channelId: null, galleryChannelId: '555555555555555555', quietMinutes: 1 });
+  assert.equal(shouldBreakSilence(settings, recordTrace(emptyState(), 'u1', now - 10 * 60_000), now), false);
+});
+
+console.log('\nAI Agent: riwayat percakapan di memori');
+
+await testAsync('riwayat: giliran percakapan dibatasi 8 terakhir', async () => {
+  const { pushTurn, emptyState, MEMORY_TURNS } = await import('../src/features/agent-core.js');
+  let state = emptyState();
+  for (let i = 0; i < 20; i += 1) {
+    state = pushTurn(state, { userId: 'u1', userName: 'Sky', role: i % 2 === 0 ? 'user' : 'bot', text: `pesan ${i}`, at: i });
+  }
+  assert.equal(state.turns.length, MEMORY_TURNS, 'dibatasi supaya prompt tidak membengkak');
+  assert.equal(state.turns[state.turns.length - 1]?.text, 'pesan 19', 'yang terbaru dipertahankan');
+});
+
+await testAsync('riwayat: disimpan di MEMORI, bukan database', async () => {
+  const source = await readFile('src/features/agent.ts', 'utf8');
+  assert.ok(source.includes('state.turns'), 'riwayat dibaca dari state');
+  assert.ok(source.includes('pushTurn'), 'percakapan dicatat ke state');
+  // Privasi: tidak boleh ada INSERT ke tabel pesan untuk channel publik.
+  assert.equal(/appendMessage|INSERT INTO messages/.test(source), false, 'tidak menulis ke tabel messages');
+});
+
+console.log('\nSalam perpisahan (goodbye)');
+
+await testAsync('goodbye: default mati', async () => {
+  const { getGoodbyeSettings } = await import('../src/db/repo.js');
+  const settings = await getGoodbyeSettings('999999999999999001');
+  assert.equal(settings.enabled, false);
+  assert.equal(settings.channelId, null, 'wajib pilih channel — DM tidak mungkin');
+  assert.equal(settings.useAi, true);
+});
+
+await testAsync('goodbye: template mengisi {user} dan {server}', async () => {
+  const { fillGoodbyeTemplate } = await import('../src/features/welcome.js');
+  const member = {
+    displayName: 'Sky',
+    user: { username: 'sky123' },
+    guild: { name: 'Komunitas Zypher' },
+  } as unknown as Parameters<typeof fillGoodbyeTemplate>[1];
+
+  assert.equal(
+    fillGoodbyeTemplate('{user} keluar dari {server}.', member),
+    'Sky keluar dari Komunitas Zypher.',
+  );
+});
+
+await testAsync('goodbye: prompt tidak menanyakan alasan keluar & singkat', async () => {
+  const { buildGoodbyePrompt } = await import('../src/features/preview.js');
+  const member = { name: 'Sky', guildName: 'Komunitas Zypher' };
+
+  const prompt = buildGoodbyePrompt(
+    { ...goodbyeSettings({ channelId: '123' }) },
+    member,
+  );
+  assert.ok(/[Jj]angan menanyakan alasan keluar/.test(prompt), 'melarang menanyakan alasan');
+  assert.ok(prompt.includes('180 karakter'), 'membatasi panjang');
+  assert.ok(prompt.includes('Sky'), 'menyebut nama');
+});
+
+await testAsync('goodbye: tidak dikirim kalau channel belum diatur', async () => {
+  const source = await readFile('src/features/welcome.ts', 'utf8');
+  const block = source.slice(source.indexOf('export async function goodbyeMember'));
+  // Member sudah keluar → DM mustahil; tanpa channel, lebih baik diam.
+  assert.ok(/if \(!channel\)/.test(block), 'berhenti kalau channel tidak ada');
+  assert.ok(block.includes('channel belum diatur'), 'alasannya dicatat di log');
+});
+
+await testAsync('goodbye: event GuildMemberRemove terpasang', async () => {
+  const bot = await readFile('src/bot.ts', 'utf8');
+  assert.ok(bot.includes('Events.GuildMemberRemove'), 'event terpasang');
+  assert.ok(bot.includes('onGuildMemberRemove'), 'handler dipanggil');
+
+  const events = await readFile('src/events/guildMemberAdd.ts', 'utf8');
+  assert.ok(events.includes('goodbyeMember'), 'memanggil fitur goodbye');
+  assert.ok(events.includes('homeGuildId'), 'hanya untuk server rumah');
+});
+
+await testAsync('goodbye: settings tersimpan dan patch sebagian aman', async () => {
+  const { getGoodbyeSettings, saveGoodbyeSettings } = await import('../src/db/repo.js');
+  const guild = '999999999999999002';
+  await saveGoodbyeSettings(guild, { enabled: true, channelId: '121212121212121212', style: 'sopan' });
+
+  await saveGoodbyeSettings(guild, { enabled: false });
+  const saved = await getGoodbyeSettings(guild);
+  assert.equal(saved.enabled, false);
+  assert.equal(saved.channelId, '121212121212121212', 'channel lama dipertahankan');
+  assert.equal(saved.style, 'sopan', 'gaya lama dipertahankan');
+});
+
+await testAsync('agent: gallery_channel_id tersimpan & bisa dikosongkan', async () => {
+  const { getAgentSettings, saveAgentSettings } = await import('../src/db/repo.js');
+  const guild = '999999999999999003';
+  await saveAgentSettings(guild, { channelId: '111111111111111111', galleryChannelId: '222222222222222222' });
+  assert.equal((await getAgentSettings(guild)).galleryChannelId, '222222222222222222');
+
+  await saveAgentSettings(guild, { galleryChannelId: null });
+  const saved = await getAgentSettings(guild);
+  assert.equal(saved.galleryChannelId, null);
+  assert.equal(saved.channelId, '111111111111111111', 'channel ngobrol tidak ikut terhapus');
+});
+
+await testAsync('API agent: channel ngobrol & galeri tidak boleh sama', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(server.includes('Channel ngobrol dan galeri harus berbeda'), 'ada validasi');
+});
+
+await testAsync('screening: video dihitung konten visual untuk galeri', async () => {
+  const source = await readFile('src/features/agent.ts', 'utf8');
+  assert.ok(source.includes('hasVisualContent'), 'ada deteksi konten visual');
+  assert.ok(source.includes('video/'), 'video ikut dikenali');
+  assert.ok(/mp4|mov\|webm/.test(source) || source.includes('VIDEO_EXT'), 'ekstensi video dikenali');
+});
+
+
+console.log('\nPratinjau & tes fitur (tanpa Discord)');
+
+await testAsync('pratinjau: sambutan jatuh ke template saat AI dimatikan', async () => {
+  const { previewWelcome } = await import('../src/features/preview.js');
+  const result = await previewWelcome({
+    settings: { ...welcomeSettings(), useAi: false, template: 'Halo {user} di {server}!' },
+    name: 'Rani',
+    guildName: 'Komunitas Zypher',
+  });
+  assert.equal(result.source, 'template');
+  assert.equal(result.text, 'Halo Rani di Komunitas Zypher!');
+  assert.ok(result.note?.includes('AI dimatikan'), 'alasan fallback dijelaskan');
+});
+
+await testAsync('pratinjau: sambutan memakai template default kalau kosong', async () => {
+  const { previewWelcome, SAMPLE_MEMBER_NAME } = await import('../src/features/preview.js');
+  const result = await previewWelcome({
+    settings: { ...welcomeSettings(), useAi: false, template: null },
+    name: SAMPLE_MEMBER_NAME,
+    guildName: 'Komunitas Zypher',
+  });
+  assert.ok(result.text.includes(SAMPLE_MEMBER_NAME), 'nama contoh dipakai');
+  assert.ok(result.text.includes('Komunitas Zypher'), 'nama server dipakai');
+});
+
+await testAsync('pratinjau: perpisahan jatuh ke template tanpa mengirim apa pun', async () => {
+  const { previewGoodbye } = await import('../src/features/preview.js');
+  const result = await previewGoodbye({
+    settings: { ...goodbyeSettings(), useAi: false },
+    name: 'Budi',
+    guildName: 'Komunitas Zypher',
+  });
+  assert.equal(result.source, 'template');
+  assert.ok(result.text.includes('Budi'));
+  assert.equal(result.text.includes('{user}'), false, 'placeholder terisi');
+});
+
+await testAsync('pratinjau: tidak ada modul pratinjau yang mengirim ke Discord', async () => {
+  const source = await readFile('src/features/preview.ts', 'utf8');
+  // Kalau ini gagal, artinya pratinjau bisa mengirim pesan sungguhan — bahaya.
+  // 'discord.js' boleh disebut di komentar; yang dilarang adalah import nyata
+  // dan pemanggilan pengiriman pesan.
+  for (const forbidden of ["from 'discord.js'", '.send(', 'TextChannel']) {
+    assert.equal(source.includes(forbidden), false, `tidak boleh ada ${forbidden}`);
+  }
+});
+
+await testAsync('pratinjau: prompt hanya punya SATU sumber (dipakai bot & dashboard)', async () => {
+  const welcome = await readFile('src/features/welcome.ts', 'utf8');
+  const preview = await readFile('src/features/preview.ts', 'utf8');
+  assert.ok(welcome.includes("from './preview.js'"), 'welcome memakai prompt dari preview.js');
+  assert.equal(/export function buildWelcomePrompt/.test(welcome), false, 'tidak ada salinan di welcome.ts');
+  assert.ok(preview.includes('export function buildWelcomePrompt'));
+  assert.ok(preview.includes('export function buildGoodbyePrompt'));
+});
+
+await testAsync('pratinjau: aturan gaya agent dipakai bersama', async () => {
+  const { agentRoleInstruction } = await import('../src/features/preview.js');
+  const gallery = agentRoleInstruction('gallery');
+  const chat = agentRoleInstruction('chat');
+  assert.ok(gallery.includes('galeri'), 'ada instruksi khusus galeri');
+  assert.ok(gallery.includes('2 kalimat'), 'komentar galeri dibatasi');
+  assert.ok(chat.includes('3 kalimat'), 'obrolan dibatasi');
+
+  const agent = await readFile('src/features/agent.ts', 'utf8');
+  assert.ok(agent.includes('agentRoleInstruction'), 'bot memakai aturan yang sama');
+});
+
+await testAsync('pratinjau: pemecah sepi menolak kalau fitur mati', async () => {
+  const { previewQuietBreak } = await import('../src/features/preview.js');
+  const tanpaChannel = await previewQuietBreak({
+    settings: agentSettings({ channelId: null }),
+    guildName: 'Komunitas Zypher',
+  });
+  assert.equal(tanpaChannel.wouldFire, false);
+  assert.ok(tanpaChannel.reason.includes('Channel ngobrol belum dipilih'));
+
+  const ambangNol = await previewQuietBreak({
+    settings: agentSettings({ channelId: '444444444444444444', quietMinutes: 0 }),
+    guildName: 'Komunitas Zypher',
+  });
+  assert.equal(ambangNol.wouldFire, false);
+  assert.ok(ambangNol.reason.includes('0 menit'));
+});
+
+await testAsync('pratinjau: pesan uji kosong ditolak API', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(server.includes("'/api/preview/agent'"), 'endpoint ada');
+  assert.ok(server.includes("'/api/preview/quiet'"), 'endpoint pemecah sepi ada');
+  assert.ok(server.includes('Tulis pesan uji dulu'), 'validasi pesan kosong');
+});
+
+await testAsync('pratinjau: peran galeri tanpa channel galeri diberi catatan', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(
+    server.includes('Channel galeri belum dipilih'),
+    'admin diberi tahu bahwa mode ini belum aktif di server',
+  );
+});
+
+await testAsync('dashboard: tombol tes memakai form apa adanya', async () => {
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  assert.ok(pages.includes('async function runTest'), 'ada fungsi tes sambutan');
+  assert.ok(pages.includes('async function runAgentTest'), 'ada fungsi tes agent');
+  assert.ok(pages.includes('async function runQuietTest'), 'ada tes pemecah sepi');
+  assert.ok(pages.includes("'/api/preview/' + kind"), 'menembak endpoint sambutan/perpisahan');
+  assert.ok(pages.includes("'/api/preview/agent'"), 'menembak endpoint agent');
+  assert.ok(pages.includes("'/api/preview/quiet'"), 'menembak endpoint pemecah sepi');
+  assert.ok(pages.includes('Tes tanpa AI'), 'ada tombol tanpa AI');
+});
+
+await testAsync('dashboard: postJson terdefinisi di JS bersama', async () => {
+  // Bug nyata: tombol Simpan memanggil postJson yang tidak pernah didefinisikan.
+  const shell = await readFile('src/web/ui/shell.ts', 'utf8');
+  assert.ok(shell.includes('async function postJson'), 'postJson ada di SHARED_JS');
+  assert.ok(shell.includes('function toast'), 'toast tersedia');
+
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  assert.ok(pages.includes("await postJson('/api/agent'"), 'halaman agent memakainya');
+});
+
+
+console.log('\nBanner kartu (unggahan sendiri)');
+
+/** PNG 1x1 transparan — cukup untuk menguji deteksi format. */
+const PNG_1x1 = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
+
+await testAsync('banner: format dikenali dari isi file, bukan ekstensi', async () => {
+  const { detectImage } = await import('../src/features/banner.js');
+  const png = detectImage(PNG_1x1);
+  assert.equal(png?.mime, 'image/png', 'PNG dikenali');
+  assert.equal(png?.width, 1);
+  assert.equal(png?.height, 1);
+
+  // Teks yang dinamai .png tidak boleh lolos.
+  assert.equal(detectImage(Buffer.from('ini bukan gambar sama sekali ya')), null);
+  assert.equal(detectImage(Buffer.alloc(4)), null, 'file terlalu pendek ditolak');
+});
+
+await testAsync('banner: JPEG & WebP dikenali dari magic bytes', async () => {
+  const { detectImage } = await import('../src/features/banner.js');
+  // JPEG minimal: SOI + SOF0 dengan 640x480.
+  const jpeg = Buffer.from([
+    0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x01, 0xe0, 0x02, 0x80, 0x03, 0x01, 0x22, 0x00,
+    0x02, 0x11, 0x01, 0x03, 0x11, 0x01, 0xff, 0xd9,
+  ]);
+  const meta = detectImage(jpeg);
+  assert.equal(meta?.mime, 'image/jpeg');
+  assert.equal(meta?.width, 640);
+  assert.equal(meta?.height, 480);
+
+  const webp = Buffer.alloc(32);
+  webp.write('RIFF', 0, 'ascii');
+  webp.write('WEBP', 8, 'ascii');
+  webp.write('VP8 ', 12, 'ascii');
+  webp.writeUInt16LE(800, 26);
+  webp.writeUInt16LE(450, 28);
+  const webpMeta = detectImage(webp);
+  assert.equal(webpMeta?.mime, 'image/webp');
+  assert.equal(webpMeta?.width, 800);
+  assert.equal(webpMeta?.height, 450);
+});
+
+await testAsync('banner: nama file aman (tolak path traversal)', async () => {
+  const { isSafeBannerName } = await import('../src/features/banner.js');
+  assert.equal(isSafeBannerName('banner-abc123.png'), true);
+  assert.equal(isSafeBannerName('banner-abc123.jpg'), true);
+  assert.equal(isSafeBannerName('../../etc/passwd'), false, 'traversal ditolak');
+  assert.equal(isSafeBannerName('/etc/passwd'), false, 'path absolut ditolak');
+  assert.equal(isSafeBannerName('banner.exe'), false, 'ekstensi lain ditolak');
+  assert.equal(isSafeBannerName(null), false);
+  assert.equal(isSafeBannerName(''), false);
+});
+
+await testAsync('banner: data URI rusak / bukan gambar ditolak', async () => {
+  const { saveBanner, BannerError } = await import('../src/features/banner.js');
+
+  for (const bad of [
+    'bukan-data-uri',
+    'data:image/png;base64,%%%bukan-base64%%%',
+    `data:image/png;base64,${Buffer.from('teks biasa yang dinamai png').toString('base64')}`,
+  ]) {
+    let caught = false;
+    try {
+      await saveBanner(bad, 'abc123');
+    } catch (error) {
+      caught = error instanceof BannerError;
+    }
+    assert.equal(caught, true, `harus ditolak: ${bad.slice(0, 30)}`);
+  }
+});
+
+await testAsync('banner: gambar terlalu kecil ditolak (akan pecah sebagai latar)', async () => {
+  const { saveBanner, BannerError } = await import('../src/features/banner.js');
+  let message = '';
+  try {
+    await saveBanner(`data:image/png;base64,${PNG_1x1.toString('base64')}`, 'abc123');
+  } catch (error) {
+    message = (error as Error).message;
+  }
+  assert.ok(message.includes('terlalu kecil'), `alasan jelas: ${message}`);
+});
+
+await testAsync('banner: tersimpan, terbaca kembali, lalu terhapus', async () => {
+  const { saveBanner, readBannerDataUri, deleteBanner, bannerExists } = await import('../src/features/banner.js');
+  // PNG 400x100 supaya lolos batas lebar minimum.
+  const width = 400;
+  const header = Buffer.alloc(33);
+  PNG_1x1.copy(header, 0, 0, 16);
+  header.writeUInt32BE(width, 16);
+  header.writeUInt32BE(100, 20);
+  const png = Buffer.concat([header, PNG_1x1.subarray(33)]);
+
+  const saved = await saveBanner(`data:image/png;base64,${png.toString('base64')}`, 'testbanner01');
+  assert.equal(saved.ok, true);
+  assert.equal(saved.width, width);
+  assert.ok(saved.name?.endsWith('.png'));
+  assert.equal(bannerExists(saved.name), true, 'file ada di disk');
+
+  const uri = await readBannerDataUri(saved.name);
+  assert.ok(uri?.startsWith('data:image/png;base64,'), 'bisa dibaca sebagai data URI');
+
+  await deleteBanner(saved.name);
+  assert.equal(bannerExists(saved.name), false, 'file terhapus');
+
+  // Nama berbahaya tidak menghapus apa pun dan tidak melempar error.
+  await deleteBanner('../../etc/passwd');
+});
+
+await testAsync('banner: kolom banner_path tersimpan & bisa dikosongkan', async () => {
+  const { getWelcomeSettings, saveWelcomeSettings, getGoodbyeSettings, saveGoodbyeSettings } = await import(
+    '../src/db/repo.js'
+  );
+  const guild = '999999999999999011';
+
+  await saveWelcomeSettings(guild, { bannerPath: 'banner-abc.png', style: 'santai' });
+  const welcome = await getWelcomeSettings(guild);
+  assert.equal(welcome.bannerPath, 'banner-abc.png');
+  assert.equal(welcome.style, 'santai', 'field lain tidak ikut berubah');
+
+  await saveWelcomeSettings(guild, { bannerPath: null });
+  assert.equal((await getWelcomeSettings(guild)).bannerPath, null, 'banner bisa dihapus');
+
+  await saveGoodbyeSettings(guild, { bannerPath: 'banner-xyz.webp' });
+  assert.equal((await getGoodbyeSettings(guild)).bannerPath, 'banner-xyz.webp');
+});
+
+await testAsync('banner: default null (tanpa banner = kartu bawaan)', async () => {
+  const { getWelcomeSettings, getGoodbyeSettings } = await import('../src/db/repo.js');
+  assert.equal((await getWelcomeSettings('999999999999999012')).bannerPath, null);
+  assert.equal((await getGoodbyeSettings('999999999999999012')).bannerPath, null);
+});
+
+await testAsync('banner: kartu lebih tinggi saat banner dipakai', async () => {
+  const { cardHeight } = await import('../src/features/welcome-card.js');
+  const tanpa = cardHeight({ bannerDataUri: null });
+  const dengan = cardHeight({ bannerDataUri: 'data:image/png;base64,AAAA' });
+  assert.ok(dengan > tanpa, 'tinggi bertambah supaya teks tidak menimpa gambar');
+  assert.equal(dengan - tanpa, 110, 'selisihnya setinggi strip banner');
+});
+
+await testAsync('banner: API unggah & hapus ada untuk kedua fitur', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(server.includes("'/api/banner/welcome'"), 'endpoint sambutan');
+  assert.ok(server.includes("'/api/banner/goodbye'"), 'endpoint perpisahan');
+  assert.ok(server.includes('payload.remove === true'), 'bisa dihapus');
+  assert.ok(server.includes('await deleteBanner(current.bannerPath)'), 'file lama dibersihkan');
+  // File baru disimpan dulu, baru yang lama dihapus: kalau gagal, banner lama tetap ada.
+  // Dicari mulai dari endpoint banner supaya tidak tertangkap pemakaian di tempat lain.
+  const bannerSection = server.slice(server.indexOf("'/api/banner/welcome'"));
+  const saveIndex = bannerSection.indexOf('const saved = await saveBanner');
+  assert.ok(saveIndex > -1, 'banner baru disimpan');
+  // Cari penghapusan SETELAH penyimpanan (ada juga penghapusan di cabang hapus).
+  const deleteAfterSave = bannerSection.indexOf('await deleteBanner(current.bannerPath)', saveIndex);
+  assert.ok(deleteAfterSave > saveIndex, 'urutan aman: simpan file baru dulu, baru hapus yang lama');
+});
+
+await testAsync('banner: dashboard punya blok unggah di dua kartu', async () => {
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  assert.ok(pages.includes('function bannerBlock'), 'komponen banner ada');
+  assert.ok(pages.includes("bannerBlock('welcome'"), 'dipakai di kartu sambutan');
+  assert.ok(pages.includes("bannerBlock('goodbye'"), 'dipakai di kartu perpisahan');
+  assert.ok(pages.includes('function uploadBanner'), 'JS unggah ada');
+  assert.ok(pages.includes('async function removeBanner'), 'JS hapus ada');
+  assert.ok(pages.includes("accept=\"image/png,image/jpeg,image/webp\""), 'hanya format gambar');
+  assert.ok(pages.includes('8 * 1024 * 1024'), 'batas ukuran dicek juga di browser');
+});
+
+await testAsync('banner: data/banners tidak ikut Git', async () => {
+  const { BANNER_DIR } = await import('../src/features/banner.js');
+  assert.ok(BANNER_DIR.includes('data'), 'disimpan di folder data');
+  const gitignore = await readFile('.gitignore', 'utf8');
+  assert.ok(/^data\/$/m.test(gitignore), 'folder data diabaikan Git');
+});
+
+
+await testAsync('pratinjau: bot & dashboard memakai jalur AI yang sama', async () => {
+  // Dulu generateGreeting di welcome.ts menulis ulang prompt & pemanggilan model,
+  // sehingga hasil tombol tes bisa berbeda dari sapaan sungguhan.
+  const welcome = await readFile('src/features/welcome.ts', 'utf8');
+  const preview = await readFile('src/features/preview.ts', 'utf8');
+
+  assert.ok(welcome.includes('previewWelcome('), 'sambutan memakai previewWelcome');
+  assert.ok(welcome.includes('previewGoodbye('), 'perpisahan memakai previewGoodbye');
+  assert.equal(welcome.includes("from '../lib/llm.js'"), false, 'welcome tidak memanggil model sendiri');
+  assert.ok(preview.includes('export async function previewWelcome'));
+  assert.ok(preview.includes('export async function previewGoodbye'));
+});
+
+
+console.log('\nKonsistensi dokumen');
+
+await testAsync('dokumen: semua halaman dashboard disebut di README', async () => {
+  const shell = await readFile('src/web/ui/shell.ts', 'utf8');
+  const hrefs = [...shell.matchAll(/href: '(\/[^']*)'/g)].map((m) => m[1]);
+  const readme = await readFile('README.md', 'utf8');
+
+  assert.ok(hrefs.length >= 8, `ada ${hrefs.length} halaman di navigasi`);
+  for (const href of hrefs) {
+    assert.ok(readme.includes(`\`${href}\``), `halaman ${href} belum disebut di README`);
+  }
+});
+
+await testAsync('dokumen: intent wajib tidak ditulis "opsional"', async () => {
+  // Kesalahan ini pernah terjadi: Server Members Intent ditulis opsional padahal
+  // sambutan & perpisahan tidak jalan tanpa itu.
+  for (const file of ['README.md', 'docs/setup.md', 'docs/sambutan-agent.md']) {
+    const text = await readFile(file, 'utf8');
+    assert.equal(
+      /Server Members Intent\**\s*\*?\(?\*?opsional/i.test(text),
+      false,
+      `${file} masih menulis Server Members Intent sebagai opsional`,
+    );
+  }
+  const setup = await readFile('docs/setup.md', 'utf8');
+  assert.ok(/Server Members Intent.*wajib/is.test(setup), 'setup.md menyebut intent ini wajib');
+});
+
+await testAsync('dokumen: file di docs/ terdokumentasi & tidak ada link rusak', async () => {
+  const { readdir, stat } = await import('node:fs/promises');
+  const entries = await readdir('docs');
+  const readme = await readFile('README.md', 'utf8');
+
+  for (const entry of entries) {
+    if (entry === 'screenshots' || entry.endsWith('.png')) continue;
+    const info = await stat(`docs/${entry}`);
+    if (!info.isFile()) continue;
+    assert.ok(readme.includes(entry), `docs/${entry} belum disebut di README`);
+  }
+});
+
+await testAsync('dokumen: banner dijelaskan sebagai data yang perlu disk persisten', async () => {
+  // Banner ada di data/banners/, bukan di database. Panduan hosting harus
+  // menyebutnya, atau banner hilang saat redeploy tanpa disadari.
+  const hosting = await readFile('docs/hosting.md', 'utf8');
+  assert.ok(hosting.includes('data/banners'), 'hosting.md menyebut folder banner');
+  assert.ok(/backup/i.test(hosting), 'panduan backup ada');
+});
+
+
+
+/*
+ * Pemeriksaan terakhir: angka test di dokumentasi harus sama dengan jumlah test
+ * yang benar-benar dijalankan.
+ *
+ * Ditempatkan di akhir (bukan sebagai `testAsync`) karena `passed` baru bernilai
+ * final setelah semua test selesai. Dulu angka di dokumen tertinggal jauh
+ * (82 dan 176 padahal sudah ratusan) dan tidak ada yang menyadarinya.
+ */
+{
+  const docFile = [
+    ['README.md', /npm run smoke\s+#\s*(\d+) test/],
+    ['docs/postgres.md', /npm run smoke\s+#\s*(\d+) test/],
+    ['docs/sambutan-agent.md', /npm run smoke\s+#\s*(\d+) test/],
+  ] as const;
+
+  const stale: string[] = [];
+  for (const [file, pattern] of docFile) {
+    const text = await readFile(file, 'utf8');
+    const match = pattern.exec(text);
+    if (match && Number(match[1]) !== passed) {
+      stale.push(`${file} menulis ${match[1]} test, seharusnya ${passed}`);
+    }
+  }
+
+  // Angka smoke:pg dihitung dengan cara yang sama (panggilan `await test(`).
+  const pgSource = await readFile('scripts/smoke-pg.ts', 'utf8');
+  const pgTotal = (pgSource.match(/\bawait test\(/g) ?? []).length;
+  for (const file of ['README.md', 'docs/postgres.md']) {
+    const text = await readFile(file, 'utf8');
+    const match = /npm run smoke:pg\s+#\s*(\d+) test/.exec(text);
+    if (match && Number(match[1]) !== pgTotal) {
+      stale.push(`${file} menulis ${match[1]} test pg, seharusnya ${pgTotal}`);
+    }
+  }
+
+  if (stale.length > 0) {
+    console.error('\n  ❌ dokumen: angka test usang');
+    for (const line of stale) console.error(`     ${line}`);
+    process.exitCode = 1;
+  } else {
+    console.log('  ✅ dokumen: angka test sama dengan jumlah test yang dijalankan');
+  }
+}
 
 console.log(`\n${process.exitCode ? '❌ Ada test gagal' : '🎉 Semua test lulus'} — ${passed} test.\n`);

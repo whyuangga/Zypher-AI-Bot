@@ -23,6 +23,7 @@ function fillIfEmpty(key: string, fallback: string): void {
 
 fillIfEmpty('DISCORD_TOKEN', 'dashboard-standalone-token-000000');
 fillIfEmpty('CLIENT_ID', '123456789012345678');
+fillIfEmpty('GUILD_ID', '123456789012345678');
 fillIfEmpty('AI_API_KEY', 'dashboard-standalone-key');
 fillIfEmpty('DASHBOARD_TOKEN', 'preview-token-1234');
 fillIfEmpty('DATABASE_PATH', './data/zypher.db');

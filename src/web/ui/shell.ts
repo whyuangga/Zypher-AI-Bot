@@ -10,21 +10,18 @@ import { STYLE } from './theme.js';
 export type PageKey =
   | 'ringkasan'
   | 'panel'
+  | 'sambutan'
+  | 'agent'
   | 'dokumen'
   | 'keyword'
   | 'moderasi'
   | 'pengaturan';
 
-/** Satu server di dropdown. `name` null = bot belum pernah melihat server ini. */
-export interface GuildChoice {
-  id: string;
-  name: string | null;
-}
-
 export interface ShellOptions {
   title: string;
   guildId: string;
-  guilds: GuildChoice[];
+  /** Nama server dari Discord; null = bot belum pernah melihat server ini. */
+  guildName: string | null;
   active: PageKey;
   body: string;
   subtitle?: string;
@@ -35,6 +32,8 @@ export interface ShellOptions {
 const NAV: Array<{ key: PageKey; label: string; href: string; icon: IconName }> = [
   { key: 'ringkasan', label: 'Ringkasan', href: '/', icon: 'home' },
   { key: 'panel', label: 'Panel', href: '/panel', icon: 'sparkles' },
+  { key: 'sambutan', label: 'Sambutan', href: '/sambutan', icon: 'users' },
+  { key: 'agent', label: 'AI Agent', href: '/agent', icon: 'message' },
   { key: 'dokumen', label: 'Dokumen RAG', href: '/dokumen', icon: 'book' },
   { key: 'keyword', label: 'Keyword', href: '/keyword', icon: 'tag' },
   { key: 'moderasi', label: 'Moderasi', href: '/moderasi', icon: 'shield' },
@@ -65,6 +64,25 @@ async function api(path, options) {
   var data = await response.json().catch(function () { return {}; });
   if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
   return data;
+}
+
+/**
+ * Kirim JSON ke API dan tampilkan hasilnya sebagai toast.
+ * Tanpa ini, tombol Simpan di halaman mana pun akan ReferenceError di browser.
+ */
+async function postJson(path, payload, successMessage) {
+  try {
+    var data = await api(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (successMessage) toast('✅ ' + successMessage);
+    return data;
+  } catch (error) {
+    toast('Gagal: ' + error.message, true);
+    throw error;
+  }
 }
 
 function copyText(text, label) {
@@ -122,39 +140,26 @@ document.addEventListener('click', function (event) {
 `;
 
 /** Label server: nama Discord kalau sudah diketahui bot, kalau belum pakai ID ringkas. */
-export function guildLabel(guild: GuildChoice, guildId = ''): string {
-  const name = guild.name?.trim();
-  if (name) return guildId && name.length > 42 ? `${name.slice(0, 41)}…` : name;
-  return `Server ${guild.id.slice(-6)}`;
+export function guildLabel(name: string | null, guildId: string): string {
+  const clean = name?.trim();
+  if (clean) return clean.length > 42 ? `${clean.slice(0, 41)}…` : clean;
+  return guildId ? `Server ${guildId.slice(-6)}` : 'Server belum diatur';
 }
 
-function guildPicker(options: ShellOptions): string {
-  const known = options.guilds.some((guild) => guild.id === options.guildId);
-  const choices: GuildChoice[] =
-    options.guildId && !known ? [{ id: options.guildId, name: null }, ...options.guilds] : options.guilds;
+/**
+ * Badge server di topbar — bukan pemilih.
+ *
+ * Bot ini untuk satu server, jadi tidak ada yang bisa diganti di sini; badge
+ * hanya memberi tahu server mana yang sedang dikelola dashboard.
+ */
+function guildBadge(options: ShellOptions): string {
+  const name = guildLabel(options.guildName, options.guildId);
 
-  const optionTags = choices.length
-    ? choices
-        .map(
-          (guild) =>
-            `<option value="${esc(guild.id)}"${guild.id === options.guildId ? ' selected' : ''}>${esc(
-              guildLabel(guild),
-            )}</option>`,
-        )
-        .join('')
-    : '<option value="">Belum ada server</option>';
-
-  return `<form class="guild-picker" method="get" action="/" id="guildForm">
-  <span class="select-shell">
-    <select name="guild" onchange="this.form.submit()" aria-label="Pilih server">${optionTags}</select>
-    ${icon('chevron', 15)}
-  </span>
-  <span class="guild-manual">
-    <input type="text" name="guild_manual" placeholder="Tempel Server ID" inputmode="numeric"
-      aria-label="Server ID manual" autocomplete="off">
-    <button type="submit" class="btn-ghost btn-sm">Pakai</button>
-  </span>
-</form>`;
+  return `<span class="guild-static" title="Server bot ini (ID: ${esc(options.guildId || '—')})">
+    ${icon('users', 15)}
+    <span>${esc(name)}</span>
+    <span class="guild-static-id mono">${esc(options.guildId || '—')}</span>
+  </span>`;
 }
 
 export function appShell(options: ShellOptions): string {
@@ -166,10 +171,6 @@ export function appShell(options: ShellOptions): string {
       ${count !== undefined && count > 0 ? `<span class="nav-badge">${count}</span>` : ''}
     </a>`;
   }).join('');
-
-  const current =
-    options.guilds.find((guild) => guild.id === options.guildId) ?? { id: options.guildId, name: null };
-  const currentName = options.guildId ? guildLabel(current) : '—';
 
   const statusLine = options.status.mode === 'bot'
     ? options.status.online
@@ -221,13 +222,10 @@ export function appShell(options: ShellOptions): string {
   <div class="main">
     <header class="topbar">
       <button class="icon-btn burger" type="button" data-nav-toggle aria-label="Buka menu">${icon('menu', 18)}</button>
-      ${guildPicker(options)}
+      ${guildBadge(options)}
       <div class="topbar-right">
-        <span class="chip" title="Server yang sedang dibuka (ID: ${esc(options.guildId || '—')})">
-          ${icon('users', 14)} <span>${esc(currentName)}</span>
-        </span>
         <span class="avatar" title="Admin dashboard">${esc(
-          options.guildId ? initials(current.name ?? options.guildId) : 'AI',
+          options.guildId ? initials(options.guildName ?? options.guildId) : 'AI',
         )}</span>
         <a class="icon-btn" href="/logout" title="Keluar" aria-label="Keluar">${icon('logout', 17)}</a>
       </div>

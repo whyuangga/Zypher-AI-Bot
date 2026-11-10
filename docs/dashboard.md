@@ -145,29 +145,24 @@ Kalau panel menampilkan port tertentu (mis. `25566` di tab Startup/Network), tul
 
 ---
 
-## Pilih server
+## Server yang dikelola
 
-Dashboard menampilkan satu server pada satu waktu (query `?guild=<id>`). Pilih dari dropdown di kanan
-atas, atau **tempel Server ID** di kotak sebelahnya — berguna untuk bot yang belum pernah join server
-(database masih kosong).
+Bot ini untuk **satu server**, jadi dashboard tidak punya pemilih server: yang tampil
+selalu server yang ID-nya diisi di `GUILD_ID`. Badge di topbar menampilkan **nama server**
+(bukan ID mentah) plus ID-nya sebagai detail.
 
-**Daftar server di dropdown datang dari dua sumber:**
+Semua angka di halaman Ringkasan (Sesi DM, Dokumen, Keyword, Pesan) dihitung untuk server
+itu saja, supaya cocok dengan tabel di bawahnya.
 
-1. server yang di-join bot (didaftarkan otomatis saat login, tiap kali bot masuk server baru, dan saat
-   sesi DM pertama memakai server itu sebagai konteks);
-2. server yang sudah punya data di SQLite — sesi DM, dokumen, keyword, atau memori.
+Nama server disimpan ke tabel `guilds` saat bot login dan saat server di-rename. Kalau bot
+belum pernah jalan (mode dashboard-saja), badge menampilkan `Server 577090` — enam digit
+terakhir ID — sampai bot dijalankan sekali.
 
-Jadi database lama tetap tampil walau tabel `guilds`-nya belum pernah terisi. Semua angka di halaman
-Ringkasan (Sesi DM, Dokumen, Keyword, Pesan) juga **dihitung per server yang dipilih**, supaya
-cocok dengan tabel di bawahnya.
+Cara mendapatkan Server ID: Discord → Server Settings → Widget, atau klik kanan server
+(mode developer) → *Copy Server ID*.
 
-**Nama server:** bot menyimpan nama server Discord ke tabel `guilds` saat login, saat masuk server baru,
-dan saat server di-rename — jadi dropdown menampilkan nama, bukan deretan angka. Server yang belum
-pernah dilihat bot (mis. Anda hanya membuka mode dashboard-saja) tampil sebagai `Server 577090`
-(enam digit terakhir ID) sampai bot dijalankan sekali.
-
-Cara mendapatkan Server ID: Discord → Server Settings → Widget, atau klik kanan server (mode
-developer) → *Copy Server ID*.
+> Mau mengelola server lain? Jalankan instance sendiri: fork repo, lalu isi `GUILD_ID`
+> dengan ID server itu. Satu instance = satu server.
 
 ---
 
@@ -211,6 +206,28 @@ dijalankan ulang, termasuk menghapus riwayat `messages` milik room lama.
 > `messages` dengan kunci `dm:<user_id>` selama sesi berjalan — baris itu dihapus saat member
 > menjalankan `/akhiri` atau `/reset`.
 
+Setelah `/akhiri`, sesi boleh dimulai lagi langsung dari DM: bot membuat baris `dm_sessions`
+baru dengan server dari `GUILD_ID`. Tidak ada lagi pilihan server yang perlu diingat, karena
+bot ini hanya melayani satu server.
+
+---
+
+## Apa yang disimpan dashboard (dan apa yang tidak)
+
+Dashboard menyimpan **pengaturan**, bukan isi percakapan member:
+
+| Disimpan | Lokasi | Keterangan |
+|---|---|---|
+| Pengaturan fitur | SQLite/Postgres | sambutan, perpisahan, AI Agent, moderasi, keyword, panel |
+| Dokumen RAG | database (`rag_chunks`) | teks dokumen yang **admin sendiri** unggah |
+| Banner sambutan/perpisahan | `data/banners/` | gambar unggahan admin, nama file acak |
+| Memori member | database | **hanya** lewat perintah Discord; dashboard tidak bisa membacanya |
+| Isi percakapan | — | **tidak disimpan**; riwayat AI Agent hanya di memori proses |
+
+Banner adalah satu-satunya file yang ditulis dashboard ke disk. Tidak ada isi
+pesan member yang pernah ditulis ke sana.
+
+
 ---
 
 ## Panel chat AI (`/panel`)
@@ -236,6 +253,43 @@ Hal yang perlu diketahui:
   (untuk menghapus panel lama) di channel tujuan. Izin dicek sebelum mengirim.
 - Mematikan tombol tidak menghapus pesan panel; member masih bisa membaca penjelasannya.
 - Panel yang dikirim lewat `/panel` di Discord juga tercatat di halaman ini.
+
+---
+
+## Sambutan (`/sambutan`)
+
+Dua kartu berdampingan, satu tema "kehadiran":
+
+- **Sambutan member baru** — kirim ke DM atau channel, tulis dengan AI atau
+  template, kartu PNG opsional.
+- **Salam perpisahan** — saat member keluar. **Wajib pilih channel**: DM tidak
+  mungkin dikirim ke orang yang sudah keluar, jadi kalau channel kosong salam
+  tidak dikirim sama sekali.
+- **Banner sendiri** — unggah PNG/JPG/WebP (maks 8 MB) untuk dipakai sebagai
+  strip atas kartu PNG, atau sebagai gambar embed kalau kartu dimatikan.
+- **Pratinjau & tes** — tombol "Tes sambutan", "Tes salam perpisahan", dan
+  "Tes tanpa AI". Hasilnya menampilkan teksnya beserta sumbernya (AI / template /
+  gagal) dan kartu PNG kalau opsi kartu dicentang. Memakai isi form saat itu,
+  jadi bisa dicoba sebelum menyimpan.
+
+---
+
+## AI Agent (`/agent`)
+
+Halaman sendiri, sengaja terpisah dari sambutan karena yang diatur bukan
+"kehadiran" melainkan cara bot ikut mengobrol:
+
+- **Channel ngobrol** — bot nimbrung seperti anggota: balas mention/reply,
+  tanggapi emoji/sticker, menyapa saat sepi.
+- **Channel galeri** — bot **hanya** mengomentari gambar & video; teks biasa
+  diabaikan. Isi satu channel di kedua kolom akan ditolak.
+- Batas per jam (gabungan kedua channel), jeda minimum, dan sakelar "diam saat
+  ramai".
+
+Panel **Tes percakapan** menguji balasan bot untuk pesan contoh (mode ngobrol
+atau mode galeri) serta kalimat **pemecah sepi** — tanpa mengirim ke channel.
+
+Detail perilaku & biaya API: [sambutan-agent.md](sambutan-agent.md).
 
 ---
 
@@ -293,9 +347,9 @@ Yang **tetap** terlihat admin di dashboard: **jumlah sesi DM** dan **jumlah pesa
 Karena tidak ada channel, dashboard juga menampilkan kolom **Member** (ID member) alih-alih
 ID channel. Riwayat percakapan dihapus dari database saat member menjalankan `/akhiri`.
 
-**Konteks server.** Karena DM tidak terikat satu server, konteks (persona, dokumen RAG, memori)
-dipilih lewat `/server`. Pilihannya disimpan di tabel `dm_sessions`. Kalau member hanya ada di
-satu server, konteks dipilih otomatis saat ia mengetik pesan pertama.
+**Konteks server.** Bot ini untuk satu server, jadi konteks (persona, dokumen RAG, memori)
+selalu milik server `GUILD_ID`. Tidak ada pilihan server yang perlu diatur member; member yang
+bukan anggota server itu ditolak dengan sopan.
 
 ---
 
@@ -410,7 +464,7 @@ dan kosongkan `DASHBOARD_TOKEN`.
 | Login terus gagal | Token salah / ada spasi. Salin ulang dari `.env` tanpa tanda kutip |
 | "Terlalu banyak percobaan" | Tunggu 10 menit, atau restart bot (menghapus hitungan di memori) |
 | Halaman kosong padahal bot punya data | Server ID belum dipilih — tempel Server ID di kanan atas |
-| Server bot tidak muncul di dropdown | Restart bot (daftar server diperbarui saat login) atau tempel Server ID manual |
+| Nama server tampil sebagai `Server 577090` | Bot belum pernah login sejak `GUILD_ID` diisi — jalankan bot sekali supaya namanya tersimpan |
 | Dropdown menampilkan `Server 577090` | Nama server diambil dari Discord saat bot login. Jalankan bot sekali (`npm run dev`) — di mode dashboard-saja nama belum diketahui |
 | Panel tidak bisa dikirim dari dashboard | Halaman Panel butuh bot hidup; mode dashboard-saja hanya bisa menyimpan tombol aktif/nonaktif |
 | Angka berbeda dengan daftar di bawah | Sudah diperbaiki: angka kini per server. Update ke versi terbaru |

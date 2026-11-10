@@ -1,9 +1,18 @@
+import { config } from '../config.js';
 import { MessageFlags, PermissionFlagsBits, type ChatInputCommandInteraction } from 'discord.js';
 
 /** Pastikan command dipakai di dalam server. */
 export async function requireGuild(interaction: ChatInputCommandInteraction): Promise<boolean> {
   if (interaction.inGuild() && interaction.guild) return true;
-  await interaction.reply({ content: 'Perintah ini hanya bisa dipakai di dalam server.', flags: MessageFlags.Ephemeral });
+  await interaction.reply({
+    content: [
+      'Perintah ini hanya bisa dipakai **di dalam server**, bukan di DM —',
+      'karena ia mengubah pengaturan server (bukan percakapan pribadimu).',
+      '',
+      'Yang bisa dipakai di DM: `/akhiri` · `/reset` · `/ingat` · `/memori` · `/lupakan` · `/konsolidasi` · `/bantuan`.',
+    ].join('\n'),
+    flags: MessageFlags.Ephemeral,
+  });
   return false;
 }
 
@@ -30,25 +39,33 @@ export async function replyEphemeral(interaction: ChatInputCommandInteraction, c
 /**
  * Tentukan server konteks untuk perintah yang bisa dipakai di server maupun DM.
  *
- * - Di server: pakai server tempat perintah dijalankan.
- * - Di DM: pakai server yang tersimpan di sesi DM member (dipilih lewat `/server`).
+ * Bot ini untuk satu server, jadi konteksnya selalu `GUILD_ID` — tidak ada lagi
+ * pilihan server. Perintah di server lain seharusnya tidak pernah sampai ke sini
+ * (bot langsung keluar), tetapi pemeriksaan tetap dilakukan untuk keamanan.
  *
  * Mengembalikan `null` (setelah membalas) bila konteks tidak bisa ditentukan.
  */
 export async function resolveContextGuild(
   interaction: ChatInputCommandInteraction,
 ): Promise<string | null> {
-  if (interaction.guildId) return interaction.guildId;
+  const homeId = config.discord.homeGuildId;
+  if (interaction.guildId === homeId) return homeId;
 
+  if (interaction.guildId) {
+    await interaction.reply({
+      content: 'Bot ini hanya melayani satu server, dan ini bukan servernya.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return null;
+  }
+
+  // Di DM: tetap butuh sesi aktif supaya urutan percakapan punya konteks.
   const { getDmSession } = await import('../db/repo.js');
   const session = await getDmSession(interaction.user.id);
-  if (session) return session.guildId;
+  if (session) return homeId;
 
   await interaction.reply({
-    content: [
-      'Kamu belum punya sesi chat aktif.',
-      'Buka DM ke bot lalu kirim pesan, atau jalankan `/server` untuk memilih server konteks.',
-    ].join('\n'),
+    content: ['Kamu belum punya sesi chat aktif.', 'Buka DM ke bot lalu kirim pesan dulu.'].join('\n'),
     flags: MessageFlags.Ephemeral,
   });
   return null;

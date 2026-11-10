@@ -45,6 +45,12 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
     driver.dialect === 'pg'
       ? 'ALTER TABLE guilds ADD COLUMN IF NOT EXISTS admin_only_rooms BOOLEAN'
       : 'ALTER TABLE guilds ADD COLUMN admin_only_rooms INTEGER',
+    // Banner kartu sambutan/perpisahan (fitur unggah gambar sendiri).
+    // Database lama belum punya kolom ini, jadi ditambahkan di sini.
+    'ALTER TABLE welcome ADD COLUMN banner_path TEXT',
+    'ALTER TABLE goodbye ADD COLUMN banner_path TEXT',
+    'ALTER TABLE goodbye ADD COLUMN image_enabled INTEGER',
+    'ALTER TABLE goodbye ADD COLUMN include_avatar INTEGER',
   ];
 
   for (const statement of statements) {

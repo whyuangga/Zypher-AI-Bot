@@ -5,7 +5,7 @@ Bot ini butuh tiga hal yang sering dilupakan hosting "gratis":
 | Kebutuhan | Kenapa penting untuk bot ini |
 |---|---|
 | **Proses hidup 24/7** | Bot Discord konek lewat gateway. Kalau proses tidur/sleep, bot terlihat offline dan tidak merespons. |
-| **Disk persisten** | Semua memori, keyword, dokumen RAG, dan riwayat chat ada di satu file SQLite (`data/zypher.db`). Disk sementara = semua data hilang setiap redeploy. |
+| **Disk persisten** | Semua memori, keyword, dokumen RAG, dan riwayat chat ada di satu file SQLite (`data/zypher.db`), sedangkan **banner sambutan/perpisahan** ada di folder `data/banners/`. Disk sementara = semuanya hilang setiap redeploy. |
 | **Node.js ≥ 22 + RAM ± 256–512 MB** | `discord.js` + `node:sqlite` + streaming jawaban. 100 MB bisa jalan tapi mepet saat ada beberapa percakapan bersamaan. |
 
 Kalau hosting-mu tidak memenuhi ketiganya, bot boleh jadi "gratis" tapi bikin repot: data hilang,
@@ -126,13 +126,14 @@ melewati build karena `tsc` tidak dipasang — memang begitu yang diinginkan: `d
 > |---|---|
 > | `DISCORD_TOKEN` | `DISCORD_BOT_TOKEN` |
 > | `CLIENT_ID` | `DISCORD_CLIENT_ID` |
-> | `DEV_GUILD_ID` | `DISCORD_GUILD_ID` |
+> | `GUILD_ID` | `DEV_GUILD_ID`, `DISCORD_GUILD_ID`, `SERVER_ID` |
 
-Tempel blok ini sekaligus di **Startup → Environment → Tempel**, ganti tiga nilai pertama:
+Tempel blok ini sekaligus di **Startup → Environment → Tempel**, ganti tiga nilai pertama (`GUILD_ID` ikut wajib):
 
 ```env
 DISCORD_TOKEN=ganti-dengan-token-bot
 CLIENT_ID=ganti-dengan-angka-application-id
+GUILD_ID=ganti-dengan-id-server
 AI_API_KEY=ganti-dengan-key-groq
 NODE_OPTIONS=--max-old-space-size=384
 ```
@@ -141,7 +142,7 @@ NODE_OPTIONS=--max-old-space-size=384
 |---|---|
 | `NODE_OPTIONS=--max-old-space-size=384` | Tanpa ini V8 mengambil heap lebih besar dari container 512 MB → proses dibunuh panel padahal RAM-nya cukup |
 | `AI_FALLBACKS` | *(opsional)* mis. `gemini:gemini-3.8-flash` + `GEMINI_API_KEY` |
-| `DEV_GUILD_ID` | *(opsional)* ID server untuk pendaftaran command instan |
+| `GUILD_ID` | **wajib** — ID server tempat bot ini tinggal (bot menolak start tanpa ini) |
 | `DASHBOARD_TOKEN` | *(opsional)* menyalakan dashboard |
 
 **Jangan upload file `.env`** ke folder repo: panel bisa menimpanya saat menarik ulang kode.
@@ -299,7 +300,8 @@ Kalau Wispbyte penuh atau kamu ingin pembanding, ada opsi panel lain dengan pola
    - Start command: `npm ci && npm run build && node dist/index.js`
    - Atau upload hasil build (`dist/`, `package.json`) dan start `npm install --omit=dev && node dist/index.js`.
 3. Isi environment variables di panel (bukan file `.env` — banyak panel menyediakannya).
-4. Pastikan `data/` tersimpan di storage panel, dan unduh backup `zypher.db` berkala.
+4. Pastikan **seluruh folder `data/`** tersimpan di storage panel — isinya `zypher.db`
+   *dan* `banners/` (banner unggahan sambutan/perpisahan). Unduh backup `zypher.db` berkala.
 
 **Discloud** (free, populer di Indonesia): 100 MB RAM. Bot ini bisa jalan, tapi `discord.js` + buffer
 streaming jawaban gampang menyentuh batas RAM → risiko restart. Gunakan hanya untuk uji coba.
@@ -313,10 +315,14 @@ streaming jawaban gampang menyentuh batas RAM → risiko restart. Gunakan hanya 
 
 Masih memungkinkan, tapi **wajib** menyimpan database di luar container:
 
-1. Unduh backup tiap hari:
+1. Unduh backup tiap hari (database **dan** banner):
    ```bash
    docker compose cp bot:/app/data/zypher.db ./backup-$(date +%F).db
+   docker compose cp bot:/app/data/banners ./backup-banners-$(date +%F)
    ```
+   Database berisi pengaturan (termasuk *nama file* banner), jadi me-restore
+   database tanpa foldernya akan membuat kartu jatuh ke latar bawaan — bukan
+   error, tapi banner hilang.
 2. Atau pindahkan ke layanan dengan disk permanen (Render Disk/Railway Volume berbayar).
 3. Sadari bahwa Render free *web service* tidur saat idle → bot Discord **tidak bisa** memakai itu.
    Kalau tetap mau Render, pakai *background worker* (berbayar).

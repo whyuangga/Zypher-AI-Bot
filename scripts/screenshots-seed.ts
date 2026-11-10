@@ -32,6 +32,8 @@ rmSync(dbPath, { force: true });
 process.env.DASHBOARD_TOKEN ??= 'screenshot-token-0000';
 process.env.DISCORD_TOKEN ??= 'screenshot-standalone-token';
 process.env.CLIENT_ID ??= '123456789012345678';
+// GUILD_ID wajib: dashboard dan seed harus menunjuk server demo yang sama.
+process.env.GUILD_ID ??= '156942477750257766';
 process.env.AI_API_KEY ??= 'screenshot-key';
 
 const { exec, run, insert } = await import('../src/db/index.js');
@@ -191,6 +193,43 @@ await run(
   `INSERT INTO panels (guild_id, channel_id, message_id, enabled, updated_at)
    VALUES (?, ?, ?, 1, ?)`,
   [GUILD, '130000000000000001', '150000000000000001', now - 5 * hour],
+);
+
+/**
+ * Banner contoh untuk screenshot.
+ *
+ * Dibuat dari SVG sederhana lalu disimpan sebagai PNG memakai Chromium bila
+ * tersedia. Kalau tidak ada, banner dilewati (screenshot tetap jadi, hanya
+ * tanpa gambar) — skrip ini tidak boleh gagal hanya karena Chromium.
+ */
+const BANNER_FILE = 'banner-demo-screenshot.png';
+try {
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const { renderDemoBanner } = await import('./screenshots-banner.js');
+  const png = await renderDemoBanner();
+  if (png) {
+    mkdirSync('data/banners', { recursive: true });
+    writeFileSync(`data/banners/${BANNER_FILE}`, png);
+  }
+} catch (error) {
+  console.warn('Banner contoh dilewati:', (error as Error).message);
+}
+
+// ---- Sambutan & AI Agent (contoh pengaturan, bukan data member) ----
+await run(
+  `INSERT INTO welcome (guild_id, channel_id, enabled, use_ai, template, image_enabled, style, example, include_avatar, banner_path, updated_at)
+   VALUES (?, NULL, 1, 1, ?, 1, ?, ?, 1, ?, ?)`,
+  [GUILD, 'Halo {user}, selamat datang di {server}!', 'hangat, santai, sedikit bercanda', 'Pagi Sky! Ngapain aja hari ini?', BANNER_FILE, now - 2 * day],
+);
+await run(
+  `INSERT INTO goodbye (guild_id, channel_id, enabled, use_ai, template, style, example, image_enabled, include_avatar, banner_path, updated_at)
+   VALUES (?, ?, 1, 1, ?, ?, ?, 1, 1, ?, ?)`,
+  [GUILD, '130000000000000005', '{user} sudah keluar dari **{server}**. Semoga lancar!', 'sopan, hangat, singkat', 'Semoga urusannya lancar ya.', BANNER_FILE, now - 2 * day],
+);
+await run(
+  `INSERT INTO agent (guild_id, channel_id, gallery_channel_id, quiet_minutes, max_per_hour, react_emoji, react_images, busy_mute, cooldown_seconds, updated_at)
+   VALUES (?, ?, ?, 45, 6, 1, 1, 1, 90, ?)`,
+  [GUILD, '130000000000000009', '130000000000000010', now - 2 * day],
 );
 
 console.log(`Data demo siap di ${dbPath}`);

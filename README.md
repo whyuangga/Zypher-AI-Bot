@@ -59,11 +59,13 @@ platform Discord yang tidak bisa dilewati bot. Karena itu fitur room/thread diha
 
 | Fitur | Keterangan |
 |---|---|
-| 💬 **Chat privat via DM** | Tombol **Chat via DM** di panel mengirim DM ke member. **Tidak ada channel/thread yang dibuat**, jadi tidak ada yang bisa dibaca admin server. Konteks server (persona, dokumen, memori) dipilih lewat `/server`. Sesi ditutup dengan `/akhiri`. |
+| 💬 **Chat privat via DM** | Tombol **Chat via DM** di panel mengirim DM ke member. **Tidak ada channel/thread yang dibuat**, jadi tidak ada yang bisa dibaca admin server. Konteksnya selalu server tempat bot ini dipasang (satu bot = satu server). Sesi ditutup dengan `/akhiri`. |
 | ⚡ **Streaming jawaban** | Jawaban muncul bertahap (edit pesan tiap ±1,4 detik, menghormati rate limit Discord), bukan menunggu jeda panjang. Otomatis jatuh ke mode non-streaming kalau provider menolaknya. |
 | 💬 **Chat AI** | Konteks percakapan (20 pesan terakhir), jawaban panjang otomatis dipecah ke beberapa pesan. **Multilingual** — otomatis mengikuti bahasa user (Indonesia/Inggris). |
 | 🧠 **Memori jangka panjang** | AI otomatis menyimpan fakta penting lewat *tool calling*, plus perintah manual `/ingat`. Memori dipakai lagi di sesi berikutnya; `/konsolidasi` menggabungkan memori yang berulang. |
-| 🖥️ **Dashboard web** | `/`, `/panel`, `/dokumen`, `/keyword`, `/moderasi`, `/pengaturan` — gaya editorial gelap ([pratinjau](docs/screenshots/README.md)), **toggle fitur AI per server** (RAG, Vision, Auto Memory, Chat khusus admin, Suara balasan AI). Sidebar kiri, grafik aktivitas 7 hari, kartu statistik per server. Dropdown memakai **nama server** (bukan ID), dan panel "Chat via DM" bisa dikirim, dipindah, atau dimatikan dari `/panel`. **Dashboard tidak menyimpan isi percakapan maupun memori member.** |
+| 👋 **Sambutan & perpisahan** | Sapaan yang **digenerate AI per orang** — pakai nama panggilan + waktu setempat, jadi kalimatnya beda tiap member (bukan template seragam). Bisa disertai **kartu PNG** berisi nama & sapaan, dikirim lewat DM atau channel. Saat member keluar, bot mengucapkan **salam perpisahan** dengan nada sopan. Lihat [docs/sambutan-agent.md](docs/sambutan-agent.md). |
+| 🗣️ **AI Agent di channel** | Di **dua** channel: bot ikut ngobrol seperti anggota komunitas di channel ngobrol (balas mention/reply, tanggapi emoji/sticker, menyapa saat sepi), dan **mengomentari gambar & video** di channel galeri. **Diam saat obrolan ramai**, dibatasi N balasan per jam, dan riwayat obrolannya **hanya di memori** — tidak ditulis ke database. |
+| 🖥️ **Dashboard web** | `/`, `/panel`, `/sambutan`, `/agent`, `/dokumen`, `/keyword`, `/moderasi`, `/pengaturan` (8 halaman) — gaya editorial gelap ([pratinjau](docs/screenshots/README.md)), **toggle fitur AI per server** (RAG, Vision, Auto Memory, Chat khusus admin, Suara balasan AI). Sidebar kiri, grafik aktivitas 7 hari, kartu statistik per server. Nama server tampil di topbar (bukan ID mentah), dan panel "Chat via DM" bisa dikirim, dipindah, atau dimatikan dari `/panel`. **Dashboard tidak menyimpan isi percakapan maupun memori member.** |
 | 📚 **Dokumen RAG** | Upload `.txt`/`.md`/`.csv`/`.json`/`.pdf`/`.docx` (maks 8 MB) lewat `/dokumen tambah` atau dashboard. AI menjawab dari isi dokumen dan menyebut sumbernya (`📚 Sumber: faq.md — bagian 3`). Pencarian BM25 bawaan — **tanpa API key tambahan**. |
 | 🔑 **Keyword kustom** | Admin menulis jawaban acuan; AI memakainya sebagai **fakta** dan menyusun ulang kalimatnya agar **bervariasi setiap kali** (bukan copy-paste). |
 | 🎭 **Persona per server** | Mis. "kamu guru bahasa Inggris yang sabar" — berlaku untuk semua chat yang memakai server itu sebagai konteks. |
@@ -114,7 +116,7 @@ Deploy    Docker multi-stage + docker-compose
 3. **Bot** → **Reset Token** → salin → jadi `DISCORD_TOKEN` (jangan pernah dibagikan).
 4. Masih di **Bot**, aktifkan:
    - ✅ **Message Content Intent** ← *wajib*, tanpa ini bot tidak bisa membaca isi chat
-   - ✅ Server Members Intent *(opsional, untuk menampilkan nama tampilan member)*
+   - ✅ **Server Members Intent** ← *wajib untuk sambutan & salam perpisahan* (event `GuildMemberAdd`/`GuildMemberRemove` tidak terkirim tanpa ini). Kalau dimatikan, kedua fitur itu tidak akan pernah jalan.
 5. **OAuth2 → URL Generator**, centang `bot` + `applications.commands`, izin yang dibutuhkan:
    `Manage Channels`, `Manage Threads`, `Create Private Threads`, `View Channels`, `Send Messages`, `Manage Messages`, `Embed Links`, `Attach Files`, `Read Message History`, `Add Reactions`, `Use External Emojis`, `Moderate Members` *(untuk timeout moderasi — kalau tidak ada, timeout gagal dan hanya tercatat di log)*.
 6. Buka URL hasil generate, pilih server, authorize.
@@ -153,7 +155,7 @@ Versi lengkap dengan 3 provider cadangan (disarankan):
 ```env
 DISCORD_TOKEN=xxxxx.xxxxx.xxxxx
 CLIENT_ID=123456789012345678
-DEV_GUILD_ID=123456789012345678
+GUILD_ID=123456789012345678      # ← WAJIB: server tempat bot ini tinggal
 
 AI_API_KEY=gsk_xxxxxxxxxxxxxxxx        # ← Groq (utama)
 GEMINI_API_KEY=AIzaSy...               # ← cadangan 1
@@ -182,7 +184,7 @@ Klik **Chat via DM** → bot mengirim DM ke kamu → mulai ngobrol di DM.
 |---|---|---|
 | `DISCORD_TOKEN` | — | Token bot (**wajib**) — alias: `DISCORD_BOT_TOKEN` |
 | `CLIENT_ID` | — | Application ID (**wajib**) — alias: `DISCORD_CLIENT_ID` |
-| `DEV_GUILD_ID` | kosong | ID server testing. Terisi = command didaftarkan per-guild (instan). Kosong = global (bisa sampai 1 jam). |
+| `GUILD_ID` | — | **Wajib.** ID server tempat bot ini tinggal. Bot menolak start kalau kosong. Alias: `DEV_GUILD_ID`, `DISCORD_GUILD_ID`, `SERVER_ID` |
 | `AI_API_KEY` | — | API key Groq (**wajib**) |
 | `AI_BASE_URL` | `https://api.groq.com/openai/v1` | Endpoint OpenAI-compatible. Ganti untuk pindah provider. |
 | `AI_MODEL` | `openai/gpt-oss-120b` | Model yang dipakai (lihat [docs/models.md](docs/models.md)) |
@@ -256,6 +258,38 @@ Kalau model tidak mendukung *tool calling*, bot otomatis lanjut tanpa fitur memo
 
 ---
 
+## 1️⃣ Satu bot, satu server
+
+Bot ini **dirancang untuk satu server**. Server itu ditentukan oleh `GUILD_ID` di
+`.env` — wajib diisi, bot menolak start kalau kosong atau bukan angka.
+
+Kenapa dibuat begitu? Satu token bot membawa satu set API key (Groq, Gemini, dst).
+Kalau bot yang sama dipakai di banyak server, biaya API dan pengaturan tiap server
+tercampur dalam satu kuota, dan admin server lain ikut mengatur persona/dokumen
+milikmu. Jadi batasnya dibuat tegas.
+
+| Situasi | Yang terjadi |
+|---|---|
+| `GUILD_ID` kosong | Bot menolak start, `.env` disebut di log |
+| Bot diundang ke server lain | Bot mengirim alasan (kalau boleh menulis), lalu **keluar sendiri** |
+| Member DM bot tapi bukan anggota server itu | Ditolak dengan sopan + saran fork |
+| Admin membuka dashboard | Tidak ada pilihan server — yang tampil selalu `GUILD_ID` |
+
+### Mau memakai bot ini di servermu?
+
+Fork atau clone repo ini, lalu jalankan dengan **token dan API key milikmu sendiri**:
+
+```bash
+git clone https://github.com/whyuangga/Zypher-AI-Bot-Discord.git
+cd Zypher-AI-Bot-Discord
+cp .env.example .env
+# isi: DISCORD_TOKEN, CLIENT_ID, GUILD_ID, AI_API_KEY
+```
+
+Server lain hanya bisa memakai bot versi mereka sendiri — bukan bot ini.
+
+---
+
 ## 💬 Daftar perintah
 
 | Perintah | Akses | Fungsi |
@@ -266,9 +300,8 @@ Kalau model tidak mendukung *tool calling*, bot otomatis lanjut tanpa fitur memo
 | `/ingat fakta:` | Semua | Simpan memori manual tentang diri sendiri |
 | `/memori` | Semua | Lihat daftar memori **milik sendiri** (dengan id) |
 | `/lupakan id:` / `semua:true` | Semua | Hapus satu / semua memori sendiri |
-| `/server [nama]` | Semua | Pilih **server konteks** untuk chat DM (persona, dokumen, memori mana yang dipakai). **Tidak membuat channel apa pun** |
 | `/akhiri` | Semua | Tutup sesi DM → transkrip HTML dikirim ke DM → riwayat dihapus |
-| `/reset` | Semua | Hapus riwayat konteks DM, memori tetap |
+| `/reset` | Semua (termasuk DM) | Lupakan obrolan sebelumnya, mulai topik baru. **Sesi tetap aktif**, memori jangka panjang tetap ada |
 | `/dokumen tambah file:` | Admin | Upload dokumen teks sebagai pengetahuan AI |
 | `/dokumen daftar\|hapus` | Admin | Kelola dokumen pengetahuan |
 | `/dokumen cari pertanyaan:` | Semua | Uji potongan dokumen yang akan dipakai AI |
@@ -280,6 +313,56 @@ Lampiran di DM: **gambar** (JPG/PNG/WebP) dibaca AI bila `VISION_ENABLED=true`,
 
 Tombol di panel server: **Chat via DM** (mengirim DM pembuka) dan **Cara Kerja**.
 Tidak ada channel/thread yang dibuat — tidak ada yang bisa dibaca admin.
+
+### Sambutan, perpisahan & AI Agent (tanpa command)
+
+Fitur-fitur ini diatur **dari dashboard**, bukan lewat slash command:
+
+- **Sambutan** (`/sambutan`) — bot menyapa member baru (AI, template, atau
+  keduanya) dengan kartu PNG opsional.
+- **Salam perpisahan** (`/sambutan`, kartu kedua) — ucapan saat member keluar.
+  Wajib memilih channel; tanpa channel salam tidak dikirim.
+- **AI Agent** (`/agent`) — bot ikut menghidupkan obrolan di **channel ngobrol**,
+  dan mengomentari **gambar/video di channel galeri**. Bot diam saat obrolan
+  ramai dan dibatasi per jam.
+
+Keduanya juga bisa memakai **banner sendiri** (PNG/JPG/WebP diunggah dari
+dashboard) sebagai strip atas kartu atau gambar embed.
+
+Semua default mati, dan **kedua halaman punya tombol tes**: hasil sapaan, salam
+perpisahan, balasan agent, sampai kalimat pemecah sepi bisa dilihat langsung di
+dashboard — tanpa menunggu ada member bergabung dan tanpa mengirim pesan apa pun.
+
+Panduan lengkap: **[docs/sambutan-agent.md](docs/sambutan-agent.md)**.
+
+### `/reset` atau `/akhiri`?
+
+Dua-duanya menghapus riwayat, tapi hasilnya beda:
+
+| | `/reset` | `/akhiri` |
+|---|---|---|
+| Sesi setelah dijalankan | **tetap aktif** | ditutup |
+| Bisa langsung bertanya lagi | ✅ | perlu kirim pesan baru dulu |
+| Transkrip dikirim ke DM | ❌ | ✅ |
+| Riwayat dihapus | ✅ | ✅ |
+| Memori jangka panjang | tetap | tetap |
+
+Pakai **`/reset`** kalau mau ganti topik tapi masih ingin lanjut ngobrol.
+Pakai **`/akhiri`** kalau sudah selesai dan ingin menyimpan transkrip. Keduanya
+bisa dipakai di DM.
+
+### Setelah `/akhiri`, apakah harus klik "Chat via DM" lagi?
+
+**Tidak.** Setelah `/akhiri`, kamu cukup **menulis pesan lagi di DM yang sama** —
+bot otomatis membuka sesi baru dan mengirim satu baris pemberitahuan:
+
+> 💬 Sesi baru dimulai — konteks **Nama Server**.
+
+Riwayat lama tetap terhapus (bot mulai dari nol), memori jangka panjang tetap ada.
+
+Konteksnya tidak mungkin berpindah server, karena bot ini **hanya untuk satu
+server** (lihat [Satu bot, satu server](#-satu-bot-satu-server)). Panel dengan
+tombol **Chat via DM** hanya diperlukan **pertama kali**.
 
 ---
 
@@ -372,8 +455,8 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke          # 82 test logika inti (termasuk RAG, moderasi, vision/voice, panel)
-npm run smoke:pg       # 12 test jalur Postgres (pg-mem, tanpa server database)
+npm run smoke          # 204 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
+npm run smoke:pg       # 14 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # uji rantai fallback provider dengan server tiruan
 npm run dashboard      # nyalakan dashboard web saja, tanpa bot Discord
 npm run migrate:pg     # pindahkan data SQLite → Postgres
@@ -405,7 +488,7 @@ diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai u
 | Gejala | Penyebab & solusi |
 |---|---|
 | `ExperimentalWarning: SQLite is an experimental feature` | Normal di Node 22. Bisa diabaikan, atau jalankan dengan `NODE_OPTIONS=--disable-warning=ExperimentalWarning` (sudah di-set di Dockerfile). |
-| Slash command tidak muncul | Isi `DEV_GUILD_ID` (instan), atau tunggu hingga 1 jam untuk command global. Pastikan undangan memakai scope `applications.commands`. |
+| Slash command tidak muncul | Command didaftarkan global (bisa sampai 1 jam) saat pertama start. Pastikan undangan memakai scope `applications.commands`, dan bot berada di server `GUILD_ID`. |
 | Bot diam saja di room | **Message Content Intent** belum aktif di Developer Portal → Bot. |
 | Tombol **Chat via DM** bilang DM tertutup | Member perlu mengaktifkan **Privasi & Keamanan → Izinkan pesan langsung dari server** untuk server itu. |
 | Transkrip tidak masuk DM | User menutup DM. Bot **tidak** mengarsipkan transkrip di mana pun — file dilampirkan di room, lalu channel dihapus **60 detik** kemudian agar member sempat mengunduh. |
@@ -431,9 +514,8 @@ diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai u
 | `connect ECONNREFUSED` / `SSL required` (Postgres) | `DATABASE_URL` salah atau `sslmode=require` belum ditambahkan. Tes cepat: `DATABASE_URL=... npm run migrate:pg`. Lihat [docs/postgres.md](docs/postgres.md). |
 | Mau ganti token dashboard | `npm run token -- --write`, lalu perbarui juga variabel di panel hosting dan restart. |
 | Dashboard tidak bisa dibuka | `DASHBOARD_TOKEN` kosong atau kurang dari 12 karakter. Cek log: harus ada `🌐 Dashboard: …`. |
-| `/akhiri` di DM tidak menutup sesi — bot malah membalas seperti ngobrol biasa | Slash command tidak terdaftar untuk DM. Log harus memuat `slash command global didaftarkan (termasuk untuk DM)`. Kalau log-nya menyebut pendaftaran **per-guild**, bot masih versi lama — update lalu restart. Lihat [setup](docs/setup.md#cara-mendapatkan-dev_guild_id). |
-| `/server` membalas penjelasan tentang server, bukan menu pilihan | Sama seperti di atas — teksnya dianggap pertanyaan biasa, lalu AI menjawab dari dokumen RAG. |
-| Tombol pilihan server di embed `/server` tidak bereaksi | Sudah diperbaiki: `dm:server:<id>` sebelumnya dibuat tapi tidak punya handler. |
+| `/akhiri` di DM tidak menutup sesi — bot malah membalas seperti ngobrol biasa | Slash command tidak terdaftar untuk DM. Log harus memuat `slash command global didaftarkan (termasuk untuk DM)`. Kalau log-nya menyebut pendaftaran **per-guild**, bot masih versi lama — update lalu restart. Lihat [setup](docs/setup.md#cara-mendapatkan-guild_id). |
+| Bot keluar sendiri dari server yang baru mengundangnya | Memang begitu: bot ini untuk satu server (`GUILD_ID`). Mau versi sendiri? Fork repo, pakai token + API key sendiri. |
 | Data hilang setelah redeploy | Hosting tanpa disk persisten. Lihat [docs/hosting.md](docs/hosting.md) + unduh backup `zypher.db`. |
 | Jawaban terasa monoton | Naikkan `AI_TEMPERATURE` (mis. `0.9`) dan pastikan keyword punya jawaban acuan yang cukup detail. |
 
@@ -459,7 +541,18 @@ src/
 │   ├── moderation.ts        # filter kata terlarang + log pelanggaran
 │   ├── vision.ts            # lampiran gambar → data URI untuk model multimodal
 │   ├── panel.ts             # kirim/hapus panel "Chat via DM" (dipakai /panel & dashboard)
+│   ├── welcome.ts           # sambutan member baru + salam perpisahan (kirim & fallback)
+│   ├── welcome-card.ts      # render kartu PNG lewat Chromium (opsional, ada fallback)
+│   ├── banner.ts            # banner unggahan admin: validasi, simpan, baca, hapus
+│   ├── greeting-text.ts     # template {user}/{server} — dipakai bot & dashboard
+│   ├── preview.ts           # pratinjau & prompt bersama (sambutan, perpisahan, agent)
+│   ├── agent-core.ts        # logika murni AI Agent: kapan membalas, riwayat, sepi
+│   ├── agent.ts             # lapisan Discord AI Agent (chat & galeri)
 │   └── ui.ts                # embed & komponen
+├── events/
+│   ├── messageCreate.ts     # router pesan (DM, agent, moderasi)
+│   ├── guildMemberAdd.ts    # sambutan member baru + salam perpisahan
+│   └── interactionCreate.ts # router slash command & button
 ├── web/
 │   ├── server.ts            # dashboard: node:http, auth token, API JSON
 │   ├── ui/                  # theme, shell, ikon SVG, halaman (server-rendered)
@@ -478,7 +571,8 @@ docs/sample-transcript.html  # contoh hasil transkrip
 docs/providers.md            # provider AI free tier + contoh .env
 docs/models.md               # ID model gratis per provider + rekomendasi
 docs/rag.md                  # dokumen pengetahuan AI (RAG)
-docs/dashboard.md            # dashboard web: setup & keamanan
+docs/dashboard.md            # dashboard web: setup, halaman, keamanan
+docs/sambutan-agent.md       # sambutan, perpisahan, AI Agent, banner & pratinjau
 docs/postgres.md             # Postgres, migrasi data, multi-shard
 docs/moderation.md           # moderasi otomatis + log pelanggaran
 docs/vision-voice.md         # vision gambar, STT/TTS, /ucap
@@ -497,6 +591,9 @@ docs/hosting.md              # hosting bot gratis 24/7 + backup
 - [x] Moderasi otomatis + logging (filter kata terlarang, halaman `/moderasi`, audit log)
 - [x] Dukungan gambar (vision) & voice (STT Whisper + TTS PlayAI, `/ucap`)
 - [x] Postgres untuk multi-shard (driver async SQLite ↔ Postgres, `npm run migrate:pg`, `SHARD_COUNT`/`SHARD_INDEX`)
+- [x] Sambutan & salam perpisahan ber-AI, kartu PNG, dan banner unggahan sendiri
+- [x] AI Agent dua channel (ngobrol + galeri) dengan riwayat obrolan di memori
+- [x] Pratinjau & tombol tes di dashboard (tanpa menunggu member / tanpa kirim pesan)
 
 ---
 

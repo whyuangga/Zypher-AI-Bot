@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS keywords (
 CREATE INDEX IF NOT EXISTS idx_keywords_guild ON keywords (guild_id);
 
 -- ---------- sesi chat DM per member ----------
--- Konteks server (persona, dokumen, memori) dipilih member lewat /server.
+-- Konteks server (persona, dokumen, memori) mengikuti GUILD_ID — bot ini satu server.
 -- Tidak ada channel: percakapan berjalan di DM yang tidak bisa dibaca admin.
 CREATE TABLE IF NOT EXISTS dm_sessions (
   user_id        TEXT PRIMARY KEY,
@@ -104,6 +104,63 @@ CREATE TABLE IF NOT EXISTS mod_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_mod_logs_guild ON mod_logs (guild_id, created_at DESC);
 
+-- ---------- AI Agent: nimbrung di satu channel publik ----------
+-- channel_id NULL = fitur mati. Satu channel per server, sama seperti panel.
+CREATE TABLE IF NOT EXISTS agent (
+  guild_id           TEXT PRIMARY KEY,
+  -- channel utama untuk ngobrol
+  channel_id         TEXT,
+  -- channel galeri: komentar gambar/video + reaksi saja
+  gallery_channel_id TEXT,
+  quiet_minutes    INTEGER NOT NULL DEFAULT 45,
+  max_per_hour     INTEGER NOT NULL DEFAULT 6,
+  react_emoji      INTEGER NOT NULL DEFAULT 1,
+  react_images     INTEGER NOT NULL DEFAULT 1,
+  busy_mute        INTEGER NOT NULL DEFAULT 1,
+  cooldown_seconds INTEGER NOT NULL DEFAULT 90,
+  updated_at       INTEGER NOT NULL
+);
+
+-- Reaksi AI terhadap emoji/sticker/gambar. Hanya disimpan id pesan dan
+-- timestamp supaya bot tidak menanggapi pesan yang sama dua kali.
+CREATE TABLE IF NOT EXISTS agent_reactions (
+  message_id TEXT PRIMARY KEY,
+  created_at INTEGER NOT NULL
+);
+
+-- ---------- Salam perpisahan member ----------
+-- Melengkapi sambutan: pesan saat member keluar dengan sopan.
+-- channel_id NULL = DM (kemungkinan gagal, karena member sudah keluar).
+CREATE TABLE IF NOT EXISTS goodbye (
+  guild_id        TEXT PRIMARY KEY,
+  channel_id      TEXT,
+  enabled         INTEGER NOT NULL DEFAULT 0,
+  use_ai          INTEGER NOT NULL DEFAULT 1,
+  template        TEXT,
+  style           TEXT,
+  example         TEXT,
+  image_enabled   INTEGER NOT NULL DEFAULT 0,
+  include_avatar  INTEGER NOT NULL DEFAULT 1,
+  banner_path     TEXT,
+  updated_at      INTEGER NOT NULL
+);
+
+-- ---------- Sambutan member baru ----------
+-- channel_id NULL = sambutan dikirim ke DM member (aman untuk privasi).
+CREATE TABLE IF NOT EXISTS welcome (
+  guild_id        TEXT PRIMARY KEY,
+  channel_id      TEXT,
+  enabled         INTEGER NOT NULL DEFAULT 0,
+  use_ai          INTEGER NOT NULL DEFAULT 1,
+  template        TEXT,
+  image_enabled   INTEGER NOT NULL DEFAULT 1,
+  style           TEXT,
+  example         TEXT,
+  include_avatar  INTEGER NOT NULL DEFAULT 1,
+  banner_path     TEXT,
+  updated_at      INTEGER NOT NULL
+);
+
 -- ---------- panel chat DM (satu channel per server) ----------
 CREATE TABLE IF NOT EXISTS panels (
   guild_id   TEXT PRIMARY KEY,
@@ -157,7 +214,7 @@ CREATE TABLE IF NOT EXISTS keywords (
 CREATE INDEX IF NOT EXISTS idx_keywords_guild ON keywords (guild_id);
 
 -- ---------- sesi chat DM per member ----------
--- Konteks server (persona, dokumen, memori) dipilih member lewat /server.
+-- Konteks server (persona, dokumen, memori) mengikuti GUILD_ID — bot ini satu server.
 -- Tidak ada channel: percakapan berjalan di DM yang tidak bisa dibaca admin.
 CREATE TABLE IF NOT EXISTS dm_sessions (
   user_id        TEXT PRIMARY KEY,
@@ -220,6 +277,57 @@ CREATE TABLE IF NOT EXISTS mod_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_mod_logs_guild ON mod_logs (guild_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS agent (
+  guild_id           TEXT PRIMARY KEY,
+  -- channel utama untuk ngobrol
+  channel_id         TEXT,
+  -- channel galeri: komentar gambar/video + reaksi saja
+  gallery_channel_id TEXT,
+  quiet_minutes    INTEGER NOT NULL DEFAULT 45,
+  max_per_hour     INTEGER NOT NULL DEFAULT 6,
+  react_emoji      INTEGER NOT NULL DEFAULT 1,
+  react_images     INTEGER NOT NULL DEFAULT 1,
+  busy_mute        INTEGER NOT NULL DEFAULT 1,
+  cooldown_seconds INTEGER NOT NULL DEFAULT 90,
+  updated_at       BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_reactions (
+  message_id TEXT PRIMARY KEY,
+  created_at BIGINT NOT NULL
+);
+
+-- ---------- Salam perpisahan member ----------
+-- Belum ada di dialek Postgres sebelum fitur goodbye; sekarang disamakan.
+CREATE TABLE IF NOT EXISTS goodbye (
+  guild_id        TEXT PRIMARY KEY,
+  channel_id      TEXT,
+  enabled         INTEGER NOT NULL DEFAULT 0,
+  use_ai          INTEGER NOT NULL DEFAULT 1,
+  template        TEXT,
+  style           TEXT,
+  example         TEXT,
+  image_enabled   INTEGER NOT NULL DEFAULT 0,
+  include_avatar  INTEGER NOT NULL DEFAULT 1,
+  banner_path     TEXT,
+  updated_at      BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS welcome (
+  guild_id        TEXT PRIMARY KEY,
+  channel_id      TEXT,
+  enabled         INTEGER NOT NULL DEFAULT 0,
+  use_ai          INTEGER NOT NULL DEFAULT 1,
+  template        TEXT,
+  image_enabled   INTEGER NOT NULL DEFAULT 1,
+  style           TEXT,
+  example         TEXT,
+  include_avatar  INTEGER NOT NULL DEFAULT 1,
+  banner_path     TEXT,
+  updated_at      BIGINT NOT NULL
+);
+
+-- ---------- panel chat DM (satu channel per server) ----------
 CREATE TABLE IF NOT EXISTS panels (
   guild_id   TEXT PRIMARY KEY,
   channel_id TEXT,

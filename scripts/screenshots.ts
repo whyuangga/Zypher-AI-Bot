@@ -27,7 +27,6 @@ import { join } from 'node:path';
 const BASE_URL = process.env.SCREENSHOT_URL ?? `http://127.0.0.1:${process.env.DASHBOARD_PORT ?? 8899}`;
 const TOKEN = process.env.DASHBOARD_TOKEN ?? '';
 const OUT_DIR = process.env.SCREENSHOT_DIR ?? 'docs/screenshots';
-const GUILD = process.env.SCREENSHOT_GUILD ?? '';
 
 if (!TOKEN) {
   console.error('DASHBOARD_TOKEN kosong — isi DASHBOARD_TOKEN (sama dengan yang dipakai dashboard).');
@@ -38,6 +37,8 @@ if (!TOKEN) {
 const PAGES: Array<[string, string, string]> = [
   ['ringkasan', '/', 'Ringkasan'],
   ['panel', '/panel', 'Panel'],
+  ['sambutan', '/sambutan', 'Sambutan & Perpisahan'],
+  ['agent', '/agent', 'AI Agent'],
   ['dokumen', '/dokumen', 'Dokumen RAG'],
   ['keyword', '/keyword', 'Keyword'],
   ['moderasi', '/moderasi', 'Moderasi'],
@@ -83,7 +84,27 @@ async function resolveBrowser(): Promise<{ path: string; args: string[] }> {
 }
 
 const browserInfo = await resolveBrowser();
-const puppeteer = await import('puppeteer-core');
+// `puppeteer-core` adalah alat dev di sandbox — TIDAK ada di package.json, jadi
+// namanya dimuat lewat variabel agar `tsc` tetap lolos tanpa paket ini terpasang.
+const puppeteerModule = 'puppeteer-core';
+// Tipe minimal supaya tidak butuh deklarasi paket saat typecheck.
+interface MinimalPage {
+  setViewport(options: { width: number; height: number; deviceScaleFactor?: number }): Promise<void>;
+  goto(url: string, options?: Record<string, unknown>): Promise<unknown>;
+  evaluate(expression: string): Promise<unknown>;
+  type(selector: string, text: string): Promise<void>;
+  click(selector: string): Promise<void>;
+  waitForNavigation(options?: Record<string, unknown>): Promise<unknown>;
+  screenshot(options: Record<string, unknown>): Promise<Buffer>;
+  url(): string;
+}
+interface MinimalBrowser {
+  newPage(): Promise<MinimalPage>;
+  close(): Promise<void>;
+}
+const puppeteer = (await import(puppeteerModule)) as unknown as {
+  default: { launch(options: Record<string, unknown>): Promise<MinimalBrowser> };
+};
 
 mkdirSync(OUT_DIR, { recursive: true });
 
@@ -116,7 +137,8 @@ try {
   console.log(`Login OK — ${page.url()}`);
 
   for (const [slugPath, path, title] of PAGES) {
-    const url = GUILD ? `${BASE_URL}${path}?guild=${GUILD}` : `${BASE_URL}${path}`;
+    // Dashboard hanya punya satu server (GUILD_ID) — tidak ada query ?guild= lagi.
+    const url = `${BASE_URL}${path}`;
 
     for (const [size, width, height] of VIEWPORTS) {
       await page.setViewport({ width, height, deviceScaleFactor: 2 });

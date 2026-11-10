@@ -70,6 +70,16 @@ const optionalId = z
   .optional()
   .transform((value) => (value && value.trim() !== '' ? value.trim() : undefined));
 
+/**
+ * ID server tempat bot ini tinggal. **Wajib** — bot ini memang dirancang untuk
+ * satu server. Kalau mau dipakai di server lain: fork repo, pakai API key sendiri.
+ */
+const requiredGuildId = z
+  .string({ required_error: 'GUILD_ID wajib diisi (ID server Discord kamu)' })
+  .min(1, 'GUILD_ID wajib diisi (ID server Discord kamu)')
+  .transform((value) => value.trim())
+  .refine((value) => /^\d{17,20}$/.test(value), 'GUILD_ID harus angka 17–20 digit (ID server, bukan nama)');
+
 const optionalSecret = z
   .string()
   .optional()
@@ -92,8 +102,11 @@ const schema = z.object({
   DISCORD_BOT_TOKEN: optionalSecret,
   CLIENT_ID: optionalSecret,
   DISCORD_CLIENT_ID: optionalSecret,
+  GUILD_ID: requiredGuildId,
+  // Alias lama: banyak template panel hosting memakai nama ini.
   DEV_GUILD_ID: optionalId,
   DISCORD_GUILD_ID: optionalId,
+  SERVER_ID: optionalId,
   AI_API_KEY: z.string().min(10, 'AI_API_KEY wajib diisi — ambil di https://console.groq.com/keys'),
   AI_BASE_URL: z.string().url().default('https://api.groq.com/openai/v1'),
   AI_MODEL: z.string().default('openai/gpt-oss-120b'),
@@ -206,7 +219,9 @@ const schemaWithAliases = schema
     ...value,
     DISCORD_TOKEN: value.DISCORD_TOKEN ?? value.DISCORD_BOT_TOKEN,
     CLIENT_ID: value.CLIENT_ID ?? value.DISCORD_CLIENT_ID,
-    DEV_GUILD_ID: value.DEV_GUILD_ID ?? value.DISCORD_GUILD_ID,
+    // Urutan: GUILD_ID resmi dulu, lalu alias lama (template panel hosting).
+    // Hasilnya selalu GUILD_ID yang sudah divalidasi 17–20 digit.
+    GUILD_ID: value.GUILD_ID ?? value.DEV_GUILD_ID ?? value.DISCORD_GUILD_ID ?? value.SERVER_ID,
   }));
 
 const parsed = schemaWithAliases.safeParse(process.env);
@@ -226,7 +241,8 @@ export const config = {
   discord: {
     token: env.DISCORD_TOKEN ?? '',
     clientId: env.CLIENT_ID ?? '',
-    devGuildId: env.DEV_GUILD_ID,
+    /** Server tunggal tempat bot ini tinggal. Selalu terisi (wajib di .env). */
+    homeGuildId: env.GUILD_ID,
   },
   ai: {
     apiKey: env.AI_API_KEY,
@@ -305,6 +321,8 @@ export const config = {
     maxBytes: env.VOICE_MAX_MB * 1024 * 1024,
   },
   features: {
+    // Zona waktu untuk jam di prompt sambutan & statistik dashboard.
+    timeZone: 'Asia/Jakarta',
     autoMemory: env.AUTO_MEMORY,
     rateLimitPerMinute: env.RATE_LIMIT_PER_MINUTE,
     maxInputChars: env.MAX_INPUT_CHARS,
@@ -314,7 +332,7 @@ export const config = {
     modLogChannel: env.MODLOG_CHANNEL_ID,
     staffRole: env.STAFF_ROLE_ID,
   },
-  isDev: Boolean(env.DEV_GUILD_ID),
+  isDev: Boolean(env.GUILD_ID),
 } as const;
 
 export type Config = typeof config;

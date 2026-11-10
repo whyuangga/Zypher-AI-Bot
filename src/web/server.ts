@@ -25,7 +25,13 @@ import {
   getModerationSettings,
   getPanel,
   listDocuments,
-  listGuilds,
+  getGuildName,
+  getAgentSettings,
+  saveAgentSettings,
+  getWelcomeSettings,
+  saveWelcomeSettings,
+  getGoodbyeSettings,
+  saveGoodbyeSettings,
   listKeywords,
   listMemories,
   listModerationLogs,
@@ -44,6 +50,21 @@ import {
 import { invalidateModerationCache } from '../features/moderation.js';
 import { listPanelChannels, PanelError, panelState, publishPanel, removePanel } from '../features/panel.js';
 import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
+import {
+  previewAgentReply,
+  previewGoodbye,
+  previewQuietBreak,
+  previewWelcome,
+  SAMPLE_MEMBER_NAME,
+} from '../features/preview.js';
+import { renderWelcomeCard } from '../features/welcome-card.js';
+import {
+  BannerError,
+  bannerExists,
+  deleteBanner,
+  readBannerDataUri,
+  saveBanner,
+} from '../features/banner.js';
 import { MAX_BINARY_BYTES } from '../lib/chunker.js';
 import { embeddingModelName } from '../features/rag-embed.js';
 import { errorMessage, logger } from '../lib/logger.js';
@@ -56,13 +77,14 @@ import {
   panelPage,
   pengaturanPage,
   ringkasanPage,
+  welcomePage,
+  agentPage,
 } from './ui/pages.js';
 import { dbLabel, dialect } from '../db/index.js';
 import { parseLoginLink } from './login-link.js';
 import { dashboardStatus } from './status.js';
 
 const SESSION_COOKIE = 'zp_session';
-const GUILD_COOKIE = 'zp_guild';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const LOGIN_WINDOW_MS = 10 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 8;
@@ -272,20 +294,15 @@ function hasSession(request: IncomingMessage): boolean {
   return true;
 }
 
-async function resolveGuild(request: IncomingMessage, url: URL): Promise<string> {
-  // Form header punya dua kolom: dropdown `guild` dan kotak ketik `guild_manual`.
-  // Yang diketik manual menang, supaya ID server yang belum terdaftar di database
-  // tetap bisa dibuka.
-  const manual = url.searchParams.get('guild_manual')?.trim();
-  if (manual) return manual;
-
-  const fromQuery = url.searchParams.get('guild')?.trim();
-  if (fromQuery) return fromQuery;
-
-  const fromCookie = parseCookies(request.headers.cookie)[GUILD_COOKIE];
-  if (fromCookie) return fromCookie;
-
-  return (await listGuilds())[0]?.id ?? '';
+/**
+ * Server yang dikelola dashboard.
+ *
+ * Bot ini untuk satu server, jadi tidak ada lagi pemilih server: nilainya selalu
+ * `GUILD_ID` dari `.env`. Kalau kosong, bot memang tidak pernah sampai ke sini
+ * karena config menolak start.
+ */
+function resolveGuild(): string {
+  return config.discord.homeGuildId;
 }
 
 /* ------------------------------------------------------------------ */
@@ -395,17 +412,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
 
-  let guildId = await resolveGuild(request, url);
-  // Mode dashboard-saja (bot belum pernah join server): izinkan ID dikirim header.
-  if (!guildId) {
-    const header = request.headers['x-guild'];
-    const value = Array.isArray(header) ? header[0] : header;
-    if (value && value.trim()) guildId = value.trim();
-  }
-  const guildCookie = guildId ? `${GUILD_COOKIE}=${encodeURIComponent(guildId)}; Path=/; SameSite=Lax` : undefined;
-  if (url.searchParams.get('guild') && guildCookie) {
-    response.setHeader('set-cookie', guildCookie);
-  }
+  const guildId = resolveGuild();
 
   /* ---------------- halaman ---------------- */
 
@@ -427,7 +434,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       200,
       ringkasanPage({
         guildId,
-        guilds: await listGuilds(),
+        guildName: await getGuildName(guildId),
         // Angka di dashboard harus mencerminkan server yang sedang dipilih.
         // Dulu ini global, jadi user melihat "1 ROOM AI" sementara daftar room
         // di bawahnya kosong — dua bagian halaman seolah saling bertentangan.
@@ -464,13 +471,101 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
 
+  if ((path === '/sambutan' || path === '/agent') && method === 'GET') {
+    const [welcome, goodbye, agent, guildName] = await Promise.all([
+      getWelcomeSettings(guildId),
+      getGoodbyeSettings(guildId),
+      getAgentSettings(guildId),
+      getGuildName(guildId),
+    ]);
+
+    // Daftar channel hanya tersedia saat bot online — di mode dashboard-saja,
+    // pilihan yang sudah tersimpan tetap ditampilkan agar tidak hilang.
+    let channels: Array<{ id: string; name: string }> = [];
+    if (botClient?.isReady()) {
+      channels = await listPanelChannels(botClient, guildId).catch((error: unknown) => {
+        logger.warn(`Gagal membaca daftar channel — ${errorMessage(error)}`);
+        return [];
+      });
+    }
+
+    const status = dashboardStatus();
+    const counts = await navCounts(guildId);
+
+    if (path === '/sambutan') {
+      sendHtml(
+        response,
+        200,
+        welcomePage({
+          guildId,
+          guildName,
+          welcome: {
+            enabled: welcome.enabled,
+            useAi: welcome.useAi,
+            channelId: welcome.channelId,
+            template: welcome.template,
+            imageEnabled: welcome.imageEnabled,
+            includeAvatar: welcome.includeAvatar,
+            style: welcome.style,
+            example: welcome.example,
+            bannerPath: welcome.bannerPath,
+            bannerPreview: await readBannerDataUri(welcome.bannerPath),
+          },
+          goodbye: {
+            enabled: goodbye.enabled,
+            useAi: goodbye.useAi,
+            channelId: goodbye.channelId,
+            template: goodbye.template,
+            style: goodbye.style,
+            example: goodbye.example,
+            bannerPath: goodbye.bannerPath,
+            bannerPreview: await readBannerDataUri(goodbye.bannerPath),
+            imageEnabled: goodbye.imageEnabled,
+            includeAvatar: goodbye.includeAvatar,
+          },
+          channels,
+          botOnline: status.online,
+          sampleName: SAMPLE_MEMBER_NAME,
+          status,
+          counts,
+        }),
+      );
+      return;
+    }
+
+    sendHtml(
+      response,
+      200,
+      agentPage({
+        guildId,
+        guildName,
+        agent: {
+          channelId: agent.channelId,
+          galleryChannelId: agent.galleryChannelId,
+          quietMinutes: agent.quietMinutes,
+          maxPerHour: agent.maxPerHour,
+          reactEmoji: agent.reactEmoji,
+          reactImages: agent.reactImages,
+          busyMute: agent.busyMute,
+          cooldownSeconds: agent.cooldownSeconds,
+        },
+        channels,
+        botOnline: status.online,
+        sampleName: SAMPLE_MEMBER_NAME,
+        status,
+        counts,
+      }),
+    );
+    return;
+  }
+
   if (path === '/dokumen' && method === 'GET') {
     sendHtml(
       response,
       200,
       dokumenPage({
         guildId,
-        guilds: await listGuilds(),
+        guildName: await getGuildName(guildId),
         documents: guildId
           ? (await listDocuments(guildId)).map((document) => ({
               id: document.id,
@@ -495,7 +590,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       200,
       keywordPage({
         guildId,
-        guilds: await listGuilds(),
+        guildName: await getGuildName(guildId),
         keywords: guildId
           ? (await listKeywords(guildId)).map((keyword) => ({
               id: keyword.id,
@@ -518,7 +613,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       200,
       moderasiPage({
         guildId,
-        guilds: await listGuilds(),
+        guildName: await getGuildName(guildId),
         enabled: stored ? stored.enabled : config.moderation.enabled,
         words: stored ? stored.words : config.moderation.words,
         action: stored ? stored.action : config.moderation.action,
@@ -551,7 +646,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       200,
       panelPage({
         guildId,
-        guilds: await listGuilds(),
+        guildName: await getGuildName(guildId),
         enabled: state?.enabled ?? true,
         channelId: state?.channelId ?? null,
         messageId: state?.messageId ?? null,
@@ -572,7 +667,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       200,
       pengaturanPage({
         guildId,
-        guilds: await listGuilds(),
+        guildName: await getGuildName(guildId),
         persona: settings?.persona ?? null,
         model: settings?.model ?? null,
         defaultModel: config.ai.model,
@@ -781,6 +876,373 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
 
+  if (path === '/api/welcome' && method === 'POST') {
+    const raw = await readBody(request, 16 * 1024);
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      sendJson(response, 400, { error: 'Format JSON tidak valid.' });
+      return;
+    }
+
+    const channelId = typeof payload.channelId === 'string' ? payload.channelId.trim() : '';
+    if (channelId && !/^\d{17,20}$/.test(channelId)) {
+      sendJson(response, 400, { error: 'Channel ID tidak valid.' });
+      return;
+    }
+    const template = typeof payload.template === 'string' ? payload.template.trim().slice(0, 1000) : '';
+    const style = typeof payload.style === 'string' ? payload.style.trim().slice(0, 300) : '';
+    const example = typeof payload.example === 'string' ? payload.example.trim().slice(0, 300) : '';
+
+    const current = await getWelcomeSettings(guildId);
+    const bool = (value: unknown, fallback: boolean): boolean =>
+      value === undefined || value === null ? fallback : Boolean(value);
+    /** String opsional: tidak dikirim = pakai nilai lama, dikirim kosong = null. */
+    const optionalText = (key: string, current: string | null, max = 300): string | null => {
+      if (!(key in payload)) return current;
+      const value = typeof payload[key] === 'string' ? (payload[key] as string).trim() : '';
+      return value ? value.slice(0, max) : null;
+    };
+
+    await saveWelcomeSettings(guildId, {
+      enabled: bool(payload.enabled, current.enabled),
+      channelId: 'channelId' in payload ? channelId || null : current.channelId,
+      useAi: bool(payload.useAi, current.useAi),
+      template: 'template' in payload ? template || null : current.template,
+      style: 'style' in payload ? style || null : current.style,
+      example: 'example' in payload ? example || null : current.example,
+      imageEnabled: bool(payload.imageEnabled, current.imageEnabled),
+      includeAvatar: bool(payload.includeAvatar, current.includeAvatar),
+    });
+
+    sendJson(response, 200, { ok: true, welcome: await getWelcomeSettings(guildId) });
+    return;
+  }
+
+  if (path === '/api/goodbye' && method === 'POST') {
+    const raw = await readBody(request, 16 * 1024);
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      sendJson(response, 400, { error: 'Format JSON tidak valid.' });
+      return;
+    }
+
+    const channelId = typeof payload.channelId === 'string' ? payload.channelId.trim() : '';
+    if (channelId && !/^\d{17,20}$/.test(channelId)) {
+      sendJson(response, 400, { error: 'Channel ID tidak valid.' });
+      return;
+    }
+
+    const current = await getGoodbyeSettings(guildId);
+    const bool = (value: unknown, fallback: boolean): boolean =>
+      value === undefined || value === null ? fallback : Boolean(value);
+    /** String opsional: tidak dikirim = pakai nilai lama, dikirim kosong = null. */
+    const optionalText = (key: string, current: string | null, max = 300): string | null => {
+      if (!(key in payload)) return current;
+      const value = typeof payload[key] === 'string' ? (payload[key] as string).trim() : '';
+      return value ? value.slice(0, max) : null;
+    };
+
+    await saveGoodbyeSettings(guildId, {
+      enabled: bool(payload.enabled, current.enabled),
+      channelId: 'channelId' in payload ? channelId || null : current.channelId,
+      useAi: bool(payload.useAi, current.useAi),
+      template: optionalText('template', current.template, 1000),
+      style: optionalText('style', current.style),
+      example: optionalText('example', current.example),
+      imageEnabled: bool(payload.imageEnabled, current.imageEnabled),
+      includeAvatar: bool(payload.includeAvatar, current.includeAvatar),
+    });
+
+    sendJson(response, 200, { ok: true, goodbye: await getGoodbyeSettings(guildId) });
+    return;
+  }
+
+  if (path === '/api/agent' && method === 'POST') {
+    const raw = await readBody(request, 16 * 1024);
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      sendJson(response, 400, { error: 'Format JSON tidak valid.' });
+      return;
+    }
+
+    const channelId = typeof payload.channelId === 'string' ? payload.channelId.trim() : '';
+    const galleryChannelId =
+      typeof payload.galleryChannelId === 'string' ? payload.galleryChannelId.trim() : '';
+    for (const value of [channelId, galleryChannelId]) {
+      if (value && !/^\d{17,20}$/.test(value)) {
+        sendJson(response, 400, { error: 'Channel ID tidak valid.' });
+        return;
+      }
+    }
+    // Satu channel tidak boleh dipakai untuk dua peran sekaligus — obrolan
+    // akan menang dan galeri tidak pernah jalan, membingungkan admin.
+    if (channelId && galleryChannelId && channelId === galleryChannelId) {
+      sendJson(response, 400, { error: 'Channel ngobrol dan galeri harus berbeda.' });
+      return;
+    }
+
+    const clamp = (value: unknown, min: number, max: number, fallback: number): number => {
+      const number = Math.round(Number(value));
+      if (!Number.isFinite(number)) return fallback;
+      return Math.min(max, Math.max(min, number));
+    };
+
+    // Field yang tidak dikirim dibiarkan seperti sebelumnya — tanpa ini,
+    // permintaan sebagian (mis. hanya ganti channel) akan mematikan toggle lain.
+    const current = await getAgentSettings(guildId);
+    const bool = (value: unknown, fallback: boolean): boolean =>
+      value === undefined || value === null ? fallback : Boolean(value);
+    /** String opsional: tidak dikirim = pakai nilai lama, dikirim kosong = null. */
+    const optionalText = (key: string, current: string | null, max = 300): string | null => {
+      if (!(key in payload)) return current;
+      const value = typeof payload[key] === 'string' ? (payload[key] as string).trim() : '';
+      return value ? value.slice(0, max) : null;
+    };
+
+    await saveAgentSettings(guildId, {
+      channelId: channelId || null,
+      galleryChannelId: galleryChannelId || null,
+      quietMinutes: clamp(payload.quietMinutes, 0, 1440, current.quietMinutes),
+      maxPerHour: clamp(payload.maxPerHour, 1, 60, current.maxPerHour),
+      cooldownSeconds: clamp(payload.cooldownSeconds, 0, 3600, current.cooldownSeconds),
+      busyMute: bool(payload.busyMute, current.busyMute),
+      reactEmoji: bool(payload.reactEmoji, current.reactEmoji),
+      reactImages: bool(payload.reactImages, current.reactImages),
+    });
+
+    sendJson(response, 200, { ok: true, agent: await getAgentSettings(guildId) });
+    return;
+  }
+
+  /* ------------------------------ banner ----------------------------- */
+  // Banner dipakai dua fitur (sambutan & perpisahan); yang menentukan file mana
+  // tersimpan adalah tabel pengaturan masing-masing. Body berupa JSON berisi
+  // data URI, bukan multipart — tidak perlu parser tambahan dan ukurannya sudah
+  // dibatasi (8 MB) sebelum diproses.
+
+  if ((path === '/api/banner/welcome' || path === '/api/banner/goodbye') && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const kind = path.endsWith('/welcome') ? 'welcome' : 'goodbye';
+    const payload = await readJsonBody(request, response, 12 * 1024 * 1024);
+    if (!payload) return;
+
+    const current =
+      kind === 'welcome' ? await getWelcomeSettings(guildId) : await getGoodbyeSettings(guildId);
+
+    // Hapus banner.
+    if (payload.remove === true) {
+      await deleteBanner(current.bannerPath);
+      if (kind === 'welcome') await saveWelcomeSettings(guildId, { bannerPath: null });
+      else await saveGoodbyeSettings(guildId, { bannerPath: null });
+      sendJson(response, 200, { ok: true, banner: null });
+      return;
+    }
+
+    const dataUri = typeof payload.dataUri === 'string' ? payload.dataUri : '';
+    if (!dataUri) {
+      sendJson(response, 400, { error: 'Tidak ada gambar yang dikirim.' });
+      return;
+    }
+
+    try {
+      const saved = await saveBanner(dataUri, randomBytes(8).toString('hex'));
+      // File lama dihapus setelah file baru tersimpan — kalau penyimpanan gagal,
+      // banner lama tetap dipakai (tidak ada kondisi "tidak punya banner").
+      await deleteBanner(current.bannerPath);
+      if (kind === 'welcome') await saveWelcomeSettings(guildId, { bannerPath: saved.name });
+      else await saveGoodbyeSettings(guildId, { bannerPath: saved.name });
+
+      // Kembalikan data URI-nya supaya dashboard bisa langsung menampilkan.
+      const preview = await readBannerDataUri(saved.name);
+      sendJson(response, 200, {
+        ok: true,
+        banner: saved,
+        preview,
+        note: 'Banner tersimpan. Tekan Simpan untuk memastikan pengaturan lain ikut tersimpan.',
+      });
+      return;
+    } catch (error) {
+      if (error instanceof BannerError) {
+        sendJson(response, 400, { error: error.message });
+        return;
+      }
+      throw error;
+    }
+  }
+
+  /* ---------------------------- pratinjau ---------------------------- */
+  // Endpoint pratinjau sengaja tidak menyentuh Discord sama sekali: admin bisa
+  // mencoba sapaan berkali-kali tanpa mengirim pesan ke channel mana pun.
+  // Yang dikembalikan adalah hasil persis seperti yang akan dikirim bot.
+
+  if (path === '/api/preview/goodbye' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const payload = await readJson(request, response);
+    if (!payload) return;
+
+    const current = await getGoodbyeSettings(guildId);
+    const settings = {
+      ...current,
+      useAi: payload.useAi === undefined ? current.useAi : Boolean(payload.useAi),
+      template: textField(payload, 'template', current.template, 1000),
+      style: textField(payload, 'style', current.style),
+      example: textField(payload, 'example', current.example),
+    };
+
+    const name = previewName(payload, SAMPLE_MEMBER_NAME);
+    const guildName = (await getGuildName(guildId)) ?? 'Server ini';
+    const result = await previewGoodbye({
+      settings,
+      name,
+      guildName,
+      templateOnly: payload.templateOnly === true,
+    });
+
+    // Kartu perpisahan (opsional) — memakai renderer yang sama dengan sambutan.
+    if (payload.withCard === true) {
+      const png = await renderWelcomeCard({
+        userName: name,
+        guildName,
+        message: result.text.slice(0, 200),
+        avatarDataUri: null,
+        bannerDataUri: await readBannerDataUri(settings.bannerPath),
+        kicker: 'SAMPAI JUMPA',
+      }).catch(() => null);
+      result.card = Boolean(png);
+      result.cardBytes = png?.byteLength ?? 0;
+      result.cardDataUri = png ? `data:image/png;base64,${png.toString('base64')}` : undefined;
+    }
+    sendJson(response, 200, { ok: true, ...result });
+    return;
+  }
+
+  if (path === '/api/preview/welcome' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const payload = await readJson(request, response);
+    if (!payload) return;
+
+    const current = await getWelcomeSettings(guildId);
+    const settings = {
+      ...current,
+      useAi: payload.useAi === undefined ? current.useAi : Boolean(payload.useAi),
+      template: textField(payload, 'template', current.template, 1000),
+      style: textField(payload, 'style', current.style),
+      example: textField(payload, 'example', current.example),
+    };
+
+    const name = previewName(payload, SAMPLE_MEMBER_NAME);
+    const guildName = (await getGuildName(guildId)) ?? 'Server ini';
+    const withCard = payload.withCard === true;
+
+    const result = await previewWelcome({
+      settings,
+      name,
+      guildName,
+      templateOnly: payload.templateOnly === true,
+      withCard,
+      // Banner unggahan ikut dirender supaya admin melihat hasil akhirnya.
+      bannerDataUri: await readBannerDataUri(settings.bannerPath),
+      kicker: 'SELAMAT DATANG',
+      // Renderer disuntikkan supaya modul pratinjau tidak bergantung Chromium.
+      renderCard: withCard
+        ? (input) =>
+            renderWelcomeCard({
+              userName: input.name,
+              guildName: input.guildName,
+              message: input.text,
+              avatarDataUri: null,
+              bannerDataUri: input.bannerDataUri ?? null,
+              kicker: input.kicker,
+            })
+        : undefined,
+    });
+
+    // Kalau kartu diminta tapi Chromium tidak ada, admin perlu tahu alasannya.
+    if (withCard && !result.card) {
+      result.note = [result.note, 'Kartu PNG tidak tersedia — sambutan tetap terkirim sebagai embed teks.']
+        .filter(Boolean)
+        .join(' ');
+    }
+    sendJson(response, 200, { ok: true, ...result });
+    return;
+  }
+
+  if (path === '/api/preview/agent' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const payload = await readJson(request, response);
+    if (!payload) return;
+
+    const current = await getAgentSettings(guildId);
+    const message = typeof payload.message === 'string' ? payload.message.trim().slice(0, 1500) : '';
+    if (!message) {
+      sendJson(response, 400, { error: 'Tulis pesan uji dulu.' });
+      return;
+    }
+
+    const role = payload.role === 'gallery' ? 'gallery' : payload.role === 'chat' ? 'chat' : undefined;
+    const guild = await getGuildSettings(guildId);
+    const result = await previewAgentReply({
+      settings: current,
+      guildName: (await getGuildName(guildId)) ?? 'Server ini',
+      userName: previewName(payload, SAMPLE_MEMBER_NAME),
+      message,
+      role,
+      botName: botClient?.user?.username ?? 'Zypher AI',
+      persona: guild?.persona ?? null,
+    });
+
+    // Beri tahu admin kalau channel peran yang diuji belum diatur — biar tidak
+    // bingung kenapa bot tidak membalas di server sungguhan.
+    if (role === 'gallery' && !current.galleryChannelId) {
+      result.note = [result.note, 'Channel galeri belum dipilih — di server sungguhan bot tidak akan membalas mode ini.']
+        .filter(Boolean)
+        .join(' ');
+    }
+    if (role === 'chat' && !current.channelId) {
+      result.note = [result.note, 'Channel ngobrol belum dipilih — di server sungguhan bot tidak akan membalas.']
+        .filter(Boolean)
+        .join(' ');
+    }
+    sendJson(response, 200, { ok: true, ...result });
+    return;
+  }
+
+  if (path === '/api/preview/quiet' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const payload = await readJson(request, response);
+    if (!payload) return;
+
+    const current = await getAgentSettings(guildId);
+    const result = await previewQuietBreak({
+      settings: current,
+      guildName: (await getGuildName(guildId)) ?? 'Server ini',
+      force: payload.force === true,
+    });
+    sendJson(response, 200, { ok: true, ...result });
+    return;
+  }
+
   if (path === '/api/moderasi' && method === 'POST') {
     if (!guildId) {
       sendJson(response, 400, { error: 'Server belum dipilih.' });
@@ -985,3 +1447,47 @@ export function pruneSessions(): void {
   }
 }
 
+/* ------------------------------ bantuan ------------------------------ */
+
+/** Baca + parse JSON body; `null` = respons error sudah dikirim. */
+async function readJson(
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<Record<string, unknown> | null> {
+  return readJsonBody(request, response, 32 * 1024);
+}
+
+/** Sama seperti `readJson`, tapi batas ukurannya bisa diatur (mis. gambar). */
+async function readJsonBody(
+  request: IncomingMessage,
+  response: ServerResponse,
+  limit: number,
+): Promise<Record<string, unknown> | null> {
+  const raw = await readBody(request, limit);
+  try {
+    const parsed = JSON.parse(raw || '{}') as unknown;
+    if (!parsed || typeof parsed !== 'object') throw new Error('bukan objek');
+    return parsed as Record<string, unknown>;
+  } catch {
+    sendJson(response, 400, { error: 'Format JSON tidak valid.' });
+    return null;
+  }
+}
+
+/** Field teks opsional: tidak dikirim = nilai lama, dikirim kosong = null. */
+function textField(
+  payload: Record<string, unknown>,
+  key: string,
+  current: string | null,
+  max = 300,
+): string | null {
+  if (!(key in payload)) return current;
+  const value = typeof payload[key] === 'string' ? (payload[key] as string).trim() : '';
+  return value ? value.slice(0, max) : null;
+}
+
+/** Nama yang dipakai pratinjau — diketik admin, kalau kosong pakai nama default. */
+function previewName(payload: Record<string, unknown>, fallback: string): string {
+  const value = typeof payload.name === 'string' ? payload.name.trim() : '';
+  return (value || fallback).slice(0, 60);
+}
