@@ -16,6 +16,8 @@ export interface GuildSettings {
   name: string | null;
   persona: string | null;
   model: string | null;
+  /** Otomatis membalas jawaban room dengan suara (TTS). `null` = memakai default `.env`. */
+  ttsReplyInRoom: boolean | null;
   createdAt: number;
 }
 
@@ -120,6 +122,7 @@ interface GuildRow {
   name: string | null;
   persona: string | null;
   model: string | null;
+  tts_reply_in_room: number | boolean | null;
   created_at: number;
 }
 interface MemoryRow {
@@ -177,6 +180,10 @@ const toGuild = (row: GuildRow): GuildSettings => ({
   name: row.name ?? null,
   persona: row.persona,
   model: row.model,
+  ttsReplyInRoom:
+    row.tts_reply_in_room === null || row.tts_reply_in_room === undefined
+      ? null
+      : Boolean(row.tts_reply_in_room),
   createdAt: Number(row.created_at),
 });
 
@@ -259,6 +266,15 @@ export async function setPersona(guildId: string, persona: string | null): Promi
 export async function setGuildModel(guildId: string, model: string | null): Promise<void> {
   await ensureGuild(guildId);
   await run('UPDATE guilds SET model = ? WHERE guild_id = ?', [model, guildId]);
+}
+
+/**
+ * Simpan toggle "RAG suara di room" per server.
+ * `null` = pakai default dari .env (TTS_REPLY_IN_ROOM).
+ */
+export async function setGuildTtsReplyInRoom(guildId: string, enabled: boolean | null): Promise<void> {
+  await ensureGuild(guildId);
+  await run('UPDATE guilds SET tts_reply_in_room = ? WHERE guild_id = ?', [enabled === null ? null : enabled ? 1 : 0, guildId]);
 }
 
 /**

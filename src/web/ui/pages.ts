@@ -848,6 +848,10 @@ export function pengaturanPage(
     defaultModel: string;
     embedModel: string | null;
     ragEnabled: boolean;
+    /** Null = pakai default .env; boolean = sudah di-set per server. */
+    ttsReplyInRoom: boolean | null;
+    /** Default dari .env (TTS_REPLY_IN_ROOM). */
+    ttsReplyInRoomDefault: boolean;
     stats: { messages: number; rooms: number; documents: number };
   },
 ): string {
@@ -878,6 +882,27 @@ export function pengaturanPage(
 </div>`,
   });
 
+  const voiceCard = card({
+    title: 'Suara di room AI',
+    hint: options.ttsReplyInRoom === null ? `default .env: ${options.ttsReplyInRoomDefault ? 'aktif' : 'nonaktif'}` : 'diset per server',
+    body: `<div class=\"card-pad\" style=\"padding-top:6px;display:grid;gap:12px\">
+  <div class=\"toggle-row\">
+    <div>
+      <div class=\"cell-title\">RAG suara di room</div>
+      <div class=\"cell-sub\">Jawaban AI di room otomatis dibacakan (TTS)</div>
+    </div>
+    <label class=\"switch\">
+      <input type=\"checkbox\" id=\"ttsReplyInRoom\"${(options.ttsReplyInRoom ?? options.ttsReplyInRoomDefault) ? ' checked' : ''}>
+      <span class=\"slider\"></span>
+    </label>
+  </div>
+  <p class=\"hint\">Nonaktifkan jika server ingin jawaban tetap teks saja. Bila belum di-set (default), memakai TTS_REPLY_IN_ROOM dari .env.</p>
+  <button class=\"btn-primary\" type=\"button\" onclick=\"saveSettings({ ttsReplyInRoom: document.getElementById('ttsReplyInRoom').checked })\"
+    ${icon('check', 16)} Simpan toggle suara
+  </button>
+</div>`,
+  });
+
   const infoCard = card({
     title: 'Info server',
     body: `<div class="list">
@@ -901,6 +926,7 @@ export function pengaturanPage(
     subtitle: 'Perilaku AI dan informasi server. Perubahan langsung berlaku untuk pesan berikutnya.',
   })}
 <div class="grid cols-2-even">${personaCard}${modelCard}</div>
+<div class="mt">${voiceCard}</div>
 <div class="mt">${infoCard}</div>
 <script>
 async function saveSettings(payload) {

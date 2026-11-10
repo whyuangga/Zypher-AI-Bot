@@ -30,6 +30,9 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
     driver.dialect === 'pg'
       ? 'ALTER TABLE guilds ADD COLUMN IF NOT EXISTS name TEXT'
       : 'ALTER TABLE guilds ADD COLUMN name TEXT',
+    driver.dialect === 'pg'
+      ? 'ALTER TABLE guilds ADD COLUMN IF NOT EXISTS tts_reply_in_room BOOLEAN'
+      : 'ALTER TABLE guilds ADD COLUMN tts_reply_in_room INTEGER',
   ];
 
   for (const statement of statements) {

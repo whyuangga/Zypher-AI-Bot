@@ -4,11 +4,12 @@
  */
 export const SCHEMA_SQLITE = /* sql */ `
 CREATE TABLE IF NOT EXISTS guilds (
-  guild_id    TEXT PRIMARY KEY,
-  name        TEXT,
-  persona     TEXT,
-  model       TEXT,
-  created_at  INTEGER NOT NULL
+  guild_id       TEXT PRIMARY KEY,
+  name           TEXT,
+  persona        TEXT,
+  model          TEXT,
+  tts_reply_in_room INTEGER,
+  created_at     INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS memories (
@@ -135,11 +136,12 @@ CREATE TABLE IF NOT EXISTS panels (
  */
 export const SCHEMA_PG = /* sql */ `
 CREATE TABLE IF NOT EXISTS guilds (
-  guild_id    TEXT PRIMARY KEY,
-  name        TEXT,
-  persona     TEXT,
-  model       TEXT,
-  created_at  BIGINT NOT NULL
+  guild_id          TEXT PRIMARY KEY,
+  name              TEXT,
+  persona           TEXT,
+  model             TEXT,
+  tts_reply_in_room BOOLEAN,
+  created_at        BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS memories (

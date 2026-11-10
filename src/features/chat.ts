@@ -212,6 +212,7 @@ export async function handleRoomMessage(message: Message): Promise<void> {
 
   const room = await getRoomByChannel(message.channelId);
   if (!room) return;
+  const settings = await getGuildSettings(message.guildId);
 
   // Hanya pesan pemilik room yang dibalas. Staff boleh membaca, tidak memicu AI.
   if (message.author.id !== room.userId) return;
@@ -288,8 +289,10 @@ export async function handleRoomMessage(message: Message): Promise<void> {
     await streamer.finish(sourceNote ? `${result.text}\n\n-# ${sourceNote}` : result.text);
 
     // Balas dengan suara juga: voice note (selalu) atau semua jawaban room
-    // (TTS_REPLY_IN_ROOM=true). Gagal TTS tidak boleh menghapus jawaban teks.
-    if (voice.text || config.voice.ttsReplyInRoom) await replyWithSpeech(message, result.text);
+    // (TTS_REPLY_IN_ROOM=true di .env, atau toggle per server di dashboard).
+    // Gagal TTS tidak boleh menghapus jawaban teks.
+    const ttsSetting = settings?.ttsReplyInRoom ?? config.voice.ttsReplyInRoom;
+    if (voice.text || ttsSetting) await replyWithSpeech(message, result.text);
   } catch (error) {
     logger.error('Gagal menjawab pesan room AI', errorMessage(error));
     const note = `Maaf, ada gangguan: ${errorMessage(error).slice(0, 200)}\nCoba lagi sebentar lagi ya.`;

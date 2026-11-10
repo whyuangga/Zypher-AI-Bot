@@ -39,6 +39,7 @@ import {
   listTranscripts,
   messagesPerDay,
   setGuildModel,
+  setGuildTtsReplyInRoom,
   setModerationSettings,
   setPanelEnabled,
   setPersona,
@@ -632,6 +633,8 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         defaultModel: config.ai.model,
         embedModel: embeddingModelName(),
         ragEnabled: config.rag.enabled,
+        ttsReplyInRoom: settings?.ttsReplyInRoom ?? null,
+        ttsReplyInRoomDefault: config.voice.ttsReplyInRoom,
         stats: {
           rooms: guildId ? await countGuildRows(guildId, 'rooms') : 0,
           messages: guildId ? await countGuildMessages(guildId) : 0,
@@ -834,7 +837,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     }
 
     const raw = await readBody(request, 32 * 1024);
-    let payload: { persona?: unknown; model?: unknown };
+    let payload: { persona?: unknown; model?: unknown; ttsReplyInRoom?: unknown };
     try {
       payload = JSON.parse(raw) as { persona?: unknown; model?: unknown };
     } catch {
@@ -860,8 +863,21 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       await setGuildModel(guildId, model || null);
     }
 
+    if (payload.ttsReplyInRoom !== undefined) {
+      if (typeof payload.ttsReplyInRoom !== 'boolean') {
+        sendJson(response, 400, { error: 'ttsReplyInRoom harus boolean.' });
+        return;
+      }
+      await setGuildTtsReplyInRoom(guildId, payload.ttsReplyInRoom);
+    }
+
     const settings = await getGuildSettings(guildId);
-    sendJson(response, 200, { ok: true, persona: settings?.persona ?? null, model: settings?.model ?? null });
+    sendJson(response, 200, {
+      ok: true,
+      persona: settings?.persona ?? null,
+      model: settings?.model ?? null,
+      ttsReplyInRoom: settings?.ttsReplyInRoom ?? null,
+    });
     return;
   }
 

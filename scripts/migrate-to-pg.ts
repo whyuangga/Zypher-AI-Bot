@@ -26,7 +26,7 @@ interface TablePlan {
 
 /** Urutan penting: tabel induk dulu supaya foreign key tidak protes. */
 const TABLES: TablePlan[] = [
-  { name: 'guilds', columns: ['guild_id', 'name', 'persona', 'model', 'created_at'] },
+  { name: 'guilds', columns: ['guild_id', 'name', 'persona', 'model', 'tts_reply_in_room', 'created_at'] },
   {
     name: 'memories',
     columns: ['id', 'guild_id', 'user_id', 'content', 'source', 'created_at'],
