@@ -26,6 +26,8 @@ Semua gambar diambil dari build terbaru dengan **data demo**:
 | `ringkasan-mobile.png` | Ringkasan | HP 390px |
 | `panel-desktop.png` | Panel (kirim/hapus panel) | Desktop 1440px |
 | `panel-mobile.png` | Panel | HP 390px |
+| `sambutan-desktop.png` | Sambutan member & AI Agent | Desktop 1440px |
+| `sambutan-mobile.png` | Sambutan & Agent | HP 390px |
 | `dokumen-desktop.png` | Dokumen RAG (upload PDF/DOCX) | Desktop 1440px |
 | `dokumen-mobile.png` | Dokumen RAG | HP 390px |
 | `keyword-desktop.png` | Keyword template | Desktop 1440px |
@@ -36,7 +38,7 @@ Semua gambar diambil dari build terbaru dengan **data demo**:
 | `pengaturan-mobile.png` | Pengaturan | HP 390px |
 | `login-mobile.png` | Login | HP 390px |
 
-Total 13 file: 6 halaman × 2 ukuran layar + halaman login (hanya HP).
+Total 15 file: 7 halaman × 2 ukuran layar + halaman login (hanya HP).
 
 ## Cara membuat ulang
 

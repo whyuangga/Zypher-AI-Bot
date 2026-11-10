@@ -1,4 +1,5 @@
 import type { Message } from 'discord.js';
+import { handleAgentMessage } from '../features/agent.js';
 import { handleDmMessage } from '../features/dm.js';
 import { moderateMessage } from '../features/moderation.js';
 import { errorMessage, logger } from '../lib/logger.js';
@@ -15,9 +16,12 @@ export async function onMessageCreate(message: Message): Promise<void> {
     // Multi-shard: instance ini hanya menangani server yang jadi porsinya.
     if (!ownsGuild(message.guildId)) return;
 
-    // Moderasi berjalan untuk semua channel teks di server. AI tidak lagi
-    // menjawab di channel/thread server — percakapan hanya lewat DM.
+    // Moderasi berjalan untuk semua channel teks di server.
     await moderateMessage(message);
+
+    // AI Agent: hanya aktif di satu channel yang dipilih admin, dan hanya
+    // di sana AI boleh membalas di channel publik. Channel lain tidak disentuh.
+    await handleAgentMessage(message);
   } catch (error) {
     logger.error('Error pada messageCreate', errorMessage(error));
   }

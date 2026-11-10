@@ -9,8 +9,11 @@ import {
 import { config } from './config.js';
 import { closeDatabase } from './db/index.js';
 import { ensureGuild, setGuildName } from './db/repo.js';
+import { onGuildMemberAdd } from './events/guildMemberAdd.js';
 import { onInteractionCreate } from './events/interactionCreate.js';
 import { onMessageCreate } from './events/messageCreate.js';
+import { handleQuietChannel, pruneAgentState } from './features/agent.js';
+import { getAgentSettings } from './db/repo.js';
 import { errorMessage, logger } from './lib/logger.js';
 import { startRateLimitJanitor } from './lib/ratelimit.js';
 import { registerCommands } from './lib/register.js';
@@ -23,6 +26,10 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent, // privileged — aktifkan di Developer Portal
     GatewayIntentBits.DirectMessages,
+    // Sambutan member baru.
+    GatewayIntentBits.GuildMembers, // privileged — aktifkan di Developer Portal
+    // Reaksi AI terhadap emoji/sticker/gambar di channel agent.
+    GatewayIntentBits.GuildMessageReactions,
   ],
 });
 
@@ -113,6 +120,39 @@ async function leaveOtherGuilds(client: Client): Promise<void> {
   }
 }
 
+// Member baru bergabung → sambutan (AI atau template, sesuai pengaturan).
+client.on(Events.GuildMemberAdd, (member) => {
+  void onGuildMemberAdd(member);
+});
+
+/**
+ * Timer "channel sepi".
+ *
+ * Dicek tiap menit, tapi keputusan menyapa ada di `shouldBreakSilence()`
+ * supaya tidak pernah menyapa lebih cepat dari `quietMinutes`. Hanya server
+ * rumah yang diperiksa — bot ini memang satu server.
+ */
+const QUIET_CHECK_MS = 60_000;
+let quietTimer: NodeJS.Timeout | undefined;
+
+function startQuietWatcher(target: Client): void {
+  quietTimer = setInterval(() => {
+    void (async () => {
+      try {
+        const guildId = config.discord.homeGuildId;
+        const settings = await getAgentSettings(guildId);
+        // Fitur mati atau timer tidak diaktifkan: tidak perlu memanggil model.
+        if (!settings.channelId || settings.quietMinutes <= 0) return;
+        await handleQuietChannel(target, guildId);
+        pruneAgentState();
+      } catch (error) {
+        logger.warn('Pemeriksaan channel sepi gagal', errorMessage(error));
+      }
+    })();
+  }, QUIET_CHECK_MS);
+  quietTimer.unref?.();
+}
+
 // Bot diundang ke server: kalau bukan server rumah, tolak dengan sopan.
 client.on(Events.GuildCreate, (guild) => {
   if (guild.id === config.discord.homeGuildId) {
@@ -150,6 +190,7 @@ async function shutdown(signal: string): Promise<void> {
 
   logger.warn(`Menerima ${signal} — mematikan bot…`);
   try {
+    if (quietTimer) clearInterval(quietTimer);
     markBotOnline(false);
     stopDashboard();
     client.destroy();
@@ -165,6 +206,9 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 startRateLimitJanitor();
+
+// Timer dipasang setelah login (butuh client yang sudah siap).
+client.once(Events.ClientReady, () => startQuietWatcher(client));
 // Dashboard dinyalakan sebelum login Discord supaya tetap bisa dipakai memantau bot.
 // Client dioper supaya halaman Panel bisa mengirim/menghapus panel dari browser.
 startDashboard(client);

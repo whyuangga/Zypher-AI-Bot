@@ -238,6 +238,19 @@ Hal yang perlu diketahui:
 
 ---
 
+## Sambutan & Agent (`/sambutan`)
+
+Halaman untuk dua fitur kehadiran:
+
+- **Sambutan member baru** — kirim ke DM atau channel, tulis dengan AI atau
+  template, kartu PNG opsional.
+- **AI Agent** — pilih satu channel tempat bot boleh nimbrung, beserta batas
+  per jam, jeda, dan aturan "diam saat ramai".
+
+Detail perilaku & biaya API: [sambutan-agent.md](sambutan-agent.md).
+
+---
+
 ## Moderasi (`/moderasi`)
 
 Semua yang bisa diatur lewat `.env` juga bisa diatur di sini — dan nilai dashboard **menang**

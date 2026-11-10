@@ -913,6 +913,221 @@ async function saveFeatureToggles() {
 export { SHARED_JS };
 
 /* ------------------------------------------------------------------ */
+/*  Sambutan & AI Agent                                                */
+/* ------------------------------------------------------------------ */
+
+export interface SambutanOptions extends PageContext {
+  welcome: {
+    enabled: boolean;
+    useAi: boolean;
+    channelId: string | null;
+    template: string | null;
+    imageEnabled: boolean;
+    includeAvatar: boolean;
+    style: string | null;
+    example: string | null;
+  };
+  agent: {
+    channelId: string | null;
+    quietMinutes: number;
+    maxPerHour: number;
+    reactEmoji: boolean;
+    reactImages: boolean;
+    busyMute: boolean;
+    cooldownSeconds: number;
+  };
+  channels: Array<{ id: string; name: string }>;
+  botOnline: boolean;
+}
+
+/** Opsi channel: kosong = DM / fitur mati. */
+function channelOptions(
+  channels: Array<{ id: string; name: string }>,
+  selected: string | null,
+  emptyLabel: string,
+): string {
+  const options = [`<option value=""${selected ? '' : ' selected'}>${esc(emptyLabel)}</option>`];
+  for (const channel of channels) {
+    options.push(
+      `<option value="${esc(channel.id)}"${channel.id === selected ? ' selected' : ''}>#${esc(channel.name)}</option>`,
+    );
+  }
+  // Channel yang tersimpan tapi tidak ada di cache (bot offline) tetap ditampilkan.
+  if (selected && !channels.some((channel) => channel.id === selected)) {
+    options.push(`<option value="${esc(selected)}" selected>#${esc(selected)}</option>`);
+  }
+  return options.join('');
+}
+
+export function sambutanPage(options: SambutanOptions): string {
+  const welcomeStatus = options.welcome.enabled ? badge('Aktif', 'ok') : badge('Nonaktif', 'warn');
+  const agentStatus = options.agent.channelId ? badge('Aktif', 'ok') : badge('Nonaktif', 'warn');
+
+  const welcomeCard = card({
+    title: 'Sambutan member baru',
+    hint: 'satu pesan per member baru',
+    right: welcomeStatus,
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+  <label class="check-row" style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-2)">
+    <input type="checkbox" id="welcomeEnabled" ${options.welcome.enabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Sapa setiap member yang baru bergabung</span>
+  </label>
+
+  <div>
+    <label class="field" for="welcomeChannel">Kirim ke</label>
+    <span class="select-shell" style="width:100%">
+      <select id="welcomeChannel" style="width:100%">
+        ${channelOptions(options.channels, options.welcome.channelId, 'DM member (disarankan)')}
+      </select>
+      ${icon('chevron', 15)}
+    </span>
+    <p class="hint">DM lebih sopan dan tidak membanjiri channel. Pilih channel kalau ingin disambut ramai-ramai.</p>
+  </div>
+
+  <label class="check-row" style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-2)">
+    <input type="checkbox" id="welcomeUseAi" ${options.welcome.useAi ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Tulis sapaan dengan AI — kalimatnya beda tiap orang</span>
+  </label>
+
+  <div>
+    <label class="field" for="welcomeTemplate">Template (dipakai kalau AI mati / gagal)</label>
+    <textarea id="welcomeTemplate" rows="3" placeholder="Halo {user}, selamat datang di **{server}**!">${esc(
+      options.welcome.template ?? '',
+    )}</textarea>
+    <p class="hint"><code>{user}</code> diganti nama panggilan, <code>{server}</code> diganti nama server.</p>
+  </div>
+
+  <div class="grid cols-2-even" style="gap:14px">
+    <div>
+      <label class="field" for="welcomeStyle">Gaya sapaan</label>
+      <input type="text" id="welcomeStyle" value="${esc(options.welcome.style ?? '')}" placeholder="hangat, santai, sedikit bercanda">
+    </div>
+    <div>
+      <label class="field" for="welcomeExample">Contoh nada</label>
+      <input type="text" id="welcomeExample" value="${esc(options.welcome.example ?? '')}" placeholder="Pagi Sky! Ngapain aja hari ini?">
+    </div>
+  </div>
+
+  <label class="check-row" style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-2)">
+    <input type="checkbox" id="welcomeImage" ${options.welcome.imageEnabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Kirim kartu sambutan (gambar PNG berisi nama &amp; sapaan)</span>
+  </label>
+  <label class="check-row" style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-2)">
+    <input type="checkbox" id="welcomeAvatar" ${options.welcome.includeAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Tampilkan avatar member di kartu</span>
+  </label>
+
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <button class="btn-primary" type="button" onclick="saveWelcome()">${icon('check', 16)} Simpan sambutan</button>
+  </div>
+</div>`,
+  });
+
+  const agentCard = card({
+    title: 'AI Agent di channel',
+    hint: 'satu channel per server',
+    right: agentStatus,
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+  <div class="notice">${icon('alert', 16)}<span>Di channel ini AI membalas <b>di depan semua orang</b>. Percakapan pribadi tetap hanya di DM. Sebaiknya sediakan channel khusus seperti <code>#ngobrol-ai</code>.</span></div>
+
+  <div>
+    <label class="field" for="agentChannel">Channel tempat AI boleh nimbrung</label>
+    <span class="select-shell" style="width:100%">
+      <select id="agentChannel" style="width:100%">
+        ${channelOptions(options.channels, options.agent.channelId, 'Mati — AI tidak membalas di channel')}
+      </select>
+      ${icon('chevron', 15)}
+    </span>
+    <p class="hint">Channel lain tidak disentuh sama sekali. Membersihkan pilihan ini mematikan fitur.</p>
+  </div>
+
+  <div class="grid cols-2-even" style="gap:14px">
+    <div>
+      <label class="field" for="agentQuiet">Sapa saat sepi setelah (menit)</label>
+      <input type="text" id="agentQuiet" class="mono" inputmode="numeric" value="${options.agent.quietMinutes}">
+      <p class="hint">0 = jangan pernah menyapa duluan.</p>
+    </div>
+    <div>
+      <label class="field" for="agentMax">Batas balasan per jam</label>
+      <input type="text" id="agentMax" class="mono" inputmode="numeric" value="${options.agent.maxPerHour}">
+      <p class="hint">Pengaman biaya API. 1–60.</p>
+    </div>
+  </div>
+
+  <div>
+    <label class="field" for="agentCooldown">Jeda minimum antar balasan (detik)</label>
+    <input type="text" id="agentCooldown" class="mono" inputmode="numeric" value="${options.agent.cooldownSeconds}">
+    <p class="hint">Supaya bot tidak mendominasi obrolan. 0 = tanpa jeda.</p>
+  </div>
+
+  <label class="check-row" style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-2)">
+    <input type="checkbox" id="agentBusy" ${options.agent.busyMute ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Diam saat obrolan sedang ramai (beberapa member aktif bersamaan)</span>
+  </label>
+  <label class="check-row" style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-2)">
+    <input type="checkbox" id="agentEmoji" ${options.agent.reactEmoji ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Tanggapi emoji &amp; sticker member</span>
+  </label>
+  <label class="check-row" style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-2)">
+    <input type="checkbox" id="agentImages" ${options.agent.reactImages ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Tanggapi gambar yang dikirim member (butuh Vision aktif)</span>
+  </label>
+
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <button class="btn-primary" type="button" onclick="saveAgent()">${icon('check', 16)} Simpan agent</button>
+    <span class="hint" style="margin:0">${options.botOnline ? 'Berlaku untuk pesan berikutnya.' : 'Bot sedang offline — pengaturan tetap tersimpan.'}</span>
+  </div>
+</div>`,
+  });
+
+  const body = `${pageHead({
+    kicker: '03 — Kehadiran',
+    title: 'Sambutan & Agent',
+    subtitle: 'Bot menyapa member baru dan ikut ngobrol di satu channel pilihanmu. Dua-duanya mati secara default.',
+  })}
+<div class="grid cols-2-even mt">${welcomeCard}${agentCard}</div>
+
+<script>
+async function saveWelcome() {
+  const payload = {
+    enabled: document.getElementById('welcomeEnabled').checked,
+    channelId: document.getElementById('welcomeChannel').value || null,
+    useAi: document.getElementById('welcomeUseAi').checked,
+    template: document.getElementById('welcomeTemplate').value.trim() || null,
+    style: document.getElementById('welcomeStyle').value.trim() || null,
+    example: document.getElementById('welcomeExample').value.trim() || null,
+    imageEnabled: document.getElementById('welcomeImage').checked,
+    includeAvatar: document.getElementById('welcomeAvatar').checked,
+  };
+  await postJson('/api/welcome', payload, 'Sambutan disimpan.');
+}
+
+async function saveAgent() {
+  const payload = {
+    channelId: document.getElementById('agentChannel').value || null,
+    quietMinutes: Number(document.getElementById('agentQuiet').value) || 0,
+    maxPerHour: Number(document.getElementById('agentMax').value) || 6,
+    cooldownSeconds: Number(document.getElementById('agentCooldown').value) || 0,
+    busyMute: document.getElementById('agentBusy').checked,
+    reactEmoji: document.getElementById('agentEmoji').checked,
+    reactImages: document.getElementById('agentImages').checked,
+  };
+  await postJson('/api/agent', payload, 'Pengaturan agent disimpan.');
+}
+</script>`;
+
+  return appShell({
+    title: 'Sambutan & Agent',
+    guildId: options.guildId,
+    guildName: options.guildName,
+    active: 'sambutan',
+    body,
+    counts: options.counts,
+    status: options.status,
+  });
+}
+
+/* ------------------------------------------------------------------ */
 /*  Moderasi                                                           */
 /* ------------------------------------------------------------------ */
 

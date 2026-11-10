@@ -321,6 +321,8 @@ export const config = {
     maxBytes: env.VOICE_MAX_MB * 1024 * 1024,
   },
   features: {
+    // Zona waktu untuk jam di prompt sambutan & statistik dashboard.
+    timeZone: 'Asia/Jakarta',
     autoMemory: env.AUTO_MEMORY,
     rateLimitPerMinute: env.RATE_LIMIT_PER_MINUTE,
     maxInputChars: env.MAX_INPUT_CHARS,

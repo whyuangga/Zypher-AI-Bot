@@ -1586,4 +1586,383 @@ test('rantai provider: utama di depan, fallback hanya yang ada key-nya', () => {
   assert.equal(chain[1]?.name, 'gemini');
 });
 
+/* ------------------------------------------------------------------ */
+/*  Sambutan member baru & AI Agent                                    */
+/* ------------------------------------------------------------------ */
+
+console.log('\nAI Agent di channel');
+
+const agentSettings = (patch: Record<string, unknown> = {}) => ({
+  guildId: GUILD,
+  channelId: '444444444444444444',
+  quietMinutes: 45,
+  maxPerHour: 6,
+  reactEmoji: true,
+  reactImages: true,
+  busyMute: true,
+  cooldownSeconds: 90,
+  updatedAt: 0,
+  ...patch,
+});
+
+await testAsync('agent: channel selain yang diaktifkan tidak disentuh', async () => {
+  const { shouldReply, emptyState } = await import('../src/features/agent-core.js');
+  const decision = shouldReply({
+    settings: agentSettings(),
+    state: emptyState(),
+    channelId: '999999999999999999',
+    fromBot: false,
+    summoned: false,
+    now: Date.now(),
+  });
+  assert.equal(decision.reply, false);
+  assert.equal(decision.reason, 'other-channel');
+});
+
+await testAsync('agent: mati saat channel belum diatur', async () => {
+  const { shouldReply, emptyState } = await import('../src/features/agent-core.js');
+  const decision = shouldReply({
+    settings: agentSettings({ channelId: null }),
+    state: emptyState(),
+    channelId: '444444444444444444',
+    fromBot: false,
+    summoned: true,
+    now: Date.now(),
+  });
+  assert.equal(decision.reply, false);
+  assert.equal(decision.reason, 'disabled');
+});
+
+await testAsync('agent: diam saat obrolan ramai, tapi tetap jawab kalau dipanggil', async () => {
+  const { shouldReply, recordTrace, emptyState } = await import('../src/features/agent-core.js');
+  const now = Date.now();
+  let state = emptyState();
+  // Tiga member berbeda bicara dalam 30 detik terakhir → ramai.
+  state = recordTrace(state, 'user-a', now - 30_000);
+  state = recordTrace(state, 'user-b', now - 20_000);
+  state = recordTrace(state, 'user-c', now - 5_000);
+
+  const nimbrung = shouldReply({
+    settings: agentSettings({ cooldownSeconds: 0 }),
+    state,
+    channelId: '444444444444444444',
+    fromBot: false,
+    summoned: false,
+    now,
+  });
+  assert.equal(nimbrung.reply, false);
+  assert.equal(nimbrung.reason, 'busy');
+
+  // Dipanggil langsung → tetap menjawab meski ramai.
+  const dipanggil = shouldReply({
+    settings: agentSettings({ cooldownSeconds: 0 }),
+    state,
+    channelId: '444444444444444444',
+    fromBot: false,
+    summoned: true,
+    now,
+  });
+  assert.equal(dipanggil.reply, true, 'mention/reply harus selalu dijawab');
+});
+
+await testAsync('agent: satu member sendirian tetap dilayani', async () => {
+  const { shouldReply, recordTrace, emptyState } = await import('../src/features/agent-core.js');
+  const now = Date.now();
+  let state = emptyState();
+  state = recordTrace(state, 'user-a', now - 3000);
+  state = recordTrace(state, 'user-a', now - 1000);
+
+  const decision = shouldReply({
+    settings: agentSettings({ cooldownSeconds: 0 }),
+    state,
+    channelId: '444444444444444444',
+    fromBot: false,
+    summoned: false,
+    now,
+  });
+  assert.equal(decision.reply, true, 'satu orang ngobrol = bot boleh menanggapi');
+});
+
+await testAsync('agent: jatah per jam membatasi walau dipanggil', async () => {
+  const { shouldReply, recordReply, emptyState } = await import('../src/features/agent-core.js');
+  const now = Date.now();
+  let state = emptyState();
+  for (let i = 0; i < 6; i += 1) state = recordReply(state, now - i * 1000);
+
+  const decision = shouldReply({
+    settings: agentSettings({ maxPerHour: 6, cooldownSeconds: 0 }),
+    state,
+    channelId: '444444444444444444',
+    fromBot: false,
+    summoned: true,
+    now,
+  });
+  assert.equal(decision.reply, false);
+  assert.equal(decision.reason, 'hourly-limit', 'pengaman biaya API tetap berlaku');
+});
+
+await testAsync('agent: jatah per jam dihitung ulang setelah 1 jam', async () => {
+  const { shouldReply, recordReply, emptyState } = await import('../src/features/agent-core.js');
+  const now = Date.now();
+  let state = emptyState();
+  for (let i = 0; i < 6; i += 1) state = recordReply(state, now - 3_700_000 - i * 1000);
+
+  const decision = shouldReply({
+    settings: agentSettings({ maxPerHour: 6, cooldownSeconds: 0 }),
+    state,
+    channelId: '444444444444444444',
+    fromBot: false,
+    summoned: true,
+    now,
+  });
+  assert.equal(decision.reply, true, 'balasan lama tidak lagi dihitung');
+});
+
+await testAsync('agent: cooldown mencegah bot membalas beruntun', async () => {
+  const { shouldReply, recordReply, emptyState } = await import('../src/features/agent-core.js');
+  const now = Date.now();
+  const state = recordReply(emptyState(), now - 10_000);
+
+  const decision = shouldReply({
+    settings: agentSettings({ cooldownSeconds: 90 }),
+    state,
+    channelId: '444444444444444444',
+    fromBot: false,
+    summoned: false,
+    now,
+  });
+  assert.equal(decision.reply, false);
+  assert.equal(decision.reason, 'cooldown');
+});
+
+await testAsync('agent: tidak pernah membalas pesan bot lain', async () => {
+  const { shouldReply, emptyState } = await import('../src/features/agent-core.js');
+  const decision = shouldReply({
+    settings: agentSettings({ cooldownSeconds: 0 }),
+    state: emptyState(),
+    channelId: '444444444444444444',
+    fromBot: true,
+    summoned: true,
+    now: Date.now(),
+  });
+  assert.equal(decision.reply, false);
+  assert.equal(decision.reason, 'from-bot');
+});
+
+await testAsync('agent: menyapa saat sepi hanya setelah batas waktu', async () => {
+  const { shouldBreakSilence, recordTrace, emptyState } = await import('../src/features/agent-core.js');
+  const now = Date.now();
+  const settings = agentSettings({ quietMinutes: 45, cooldownSeconds: 0 });
+
+  // 10 menit lalu masih ada obrolan → belum sepi.
+  assert.equal(
+    shouldBreakSilence(settings, recordTrace(emptyState(), 'u1', now - 10 * 60_000), now),
+    false,
+  );
+  // 50 menit tanpa pesan → sepi, boleh menyapa.
+  assert.equal(
+    shouldBreakSilence(settings, recordTrace(emptyState(), 'u1', now - 50 * 60_000), now),
+    true,
+  );
+  // quietMinutes 0 = tidak pernah menyapa sendiri.
+  assert.equal(
+    shouldBreakSilence(agentSettings({ quietMinutes: 0 }), recordTrace(emptyState(), 'u1', now - 50 * 60_000), now),
+    false,
+  );
+});
+
+await testAsync('agent: tidak bicara ke channel yang belum pernah ada obrolan', async () => {
+  const { shouldBreakSilence, emptyState } = await import('../src/features/agent-core.js');
+  assert.equal(shouldBreakSilence(agentSettings(), emptyState(), Date.now()), false);
+});
+
+await testAsync('agent: settings tersimpan per server', async () => {
+  const { getAgentSettings, saveAgentSettings } = await import('../src/db/repo.js');
+  const guild = '777777777777777777';
+  assert.equal((await getAgentSettings(guild)).channelId, null, 'default: mati');
+
+  await saveAgentSettings(guild, { channelId: '888888888888888888', maxPerHour: 9, reactImages: false });
+  const saved = await getAgentSettings(guild);
+  assert.equal(saved.channelId, '888888888888888888');
+  assert.equal(saved.maxPerHour, 9);
+  assert.equal(saved.reactImages, false);
+
+  // Matikan lagi dengan channelId null.
+  await saveAgentSettings(guild, { channelId: null });
+  assert.equal((await getAgentSettings(guild)).channelId, null);
+});
+
+await testAsync('agent: pesan yang sama tidak ditanggapi dua kali', async () => {
+  const { hasAgentReaction, markAgentReaction } = await import('../src/db/repo.js');
+  const messageId = 'agent-msg-1';
+  assert.equal(await hasAgentReaction(messageId), false);
+  await markAgentReaction(messageId);
+  assert.equal(await hasAgentReaction(messageId), true);
+  // Idempotent.
+  await markAgentReaction(messageId);
+  assert.equal(await hasAgentReaction(messageId), true);
+});
+
+console.log('\nSambutan member baru');
+
+await testAsync('sambutan: default mati, jadi server lama tidak berubah perilakunya', async () => {
+  const { getWelcomeSettings } = await import('../src/db/repo.js');
+  const settings = await getWelcomeSettings('666666666666666666');
+  assert.equal(settings.enabled, false);
+  assert.equal(settings.channelId, null);
+  assert.equal(settings.useAi, true, 'kalau dinyalakan, default-nya memakai AI');
+  assert.equal(settings.imageEnabled, true);
+});
+
+await testAsync('sambutan: template mengisi {user} dan {server}', async () => {
+  const { fillTemplate } = await import('../src/features/welcome.js');
+  const member = {
+    displayName: 'Sky',
+    user: { username: 'sky123' },
+    guild: { name: 'Komunitas Zypher' },
+  } as unknown as Parameters<typeof fillTemplate>[1];
+
+  assert.equal(
+    fillTemplate('Halo {user}, selamat datang di {server}!', member),
+    'Halo Sky, selamat datang di Komunitas Zypher!',
+  );
+  // Nama panggilan (nickname) dipakai, bukan username.
+  const tanpaNick = { ...member, displayName: '' } as typeof member;
+  assert.ok(fillTemplate('Hai {user}', tanpaNick).includes('sky123'));
+});
+
+await testAsync('sambutan: prompt melarang pembuka khas bot & membatasi panjang', async () => {
+  const { buildWelcomePrompt } = await import('../src/features/welcome.js');
+  const member = {
+    displayName: 'Sky',
+    user: { username: 'sky123' },
+    guild: { name: 'Komunitas Zypher' },
+  } as unknown as Parameters<typeof buildWelcomePrompt>[1];
+
+  const prompt = buildWelcomePrompt(
+    { guildId: GUILD, channelId: null, enabled: true, useAi: true, template: null, imageEnabled: true, style: 'santai', example: null, includeAvatar: true, updatedAt: 0 },
+    member,
+    'pagi',
+  );
+  assert.ok(prompt.includes('Sky'), 'menyebut nama panggilan');
+  assert.ok(/[Jj]angan memakai pembuka khas AI/.test(prompt), 'melarang pembuka khas bot');
+  assert.ok(prompt.includes('220 karakter'), 'membatasi panjang sapaan');
+  assert.ok(prompt.includes('pagi'), 'menyebut waktu');
+});
+
+await testAsync('sambutan: settings tersimpan dan bisa dimatikan lagi', async () => {
+  const { getWelcomeSettings, saveWelcomeSettings } = await import('../src/db/repo.js');
+  const guild = '666666666666666667';
+  await saveWelcomeSettings(guild, { enabled: true, channelId: null, template: 'Halo {user}' });
+
+  const saved = await getWelcomeSettings(guild);
+  assert.equal(saved.enabled, true);
+  assert.equal(saved.template, 'Halo {user}');
+  assert.equal(saved.channelId, null, 'null = kirim lewat DM');
+
+  await saveWelcomeSettings(guild, { enabled: false });
+  assert.equal((await getWelcomeSettings(guild)).enabled, false);
+  // Field lain tidak ikut terhapus saat patch sebagian.
+  assert.equal((await getWelcomeSettings(guild)).template, 'Halo {user}');
+});
+
+await testAsync('sambutan: bot lain tidak disambut', async () => {
+  const source = await readFile('src/features/welcome.ts', 'utf8');
+  assert.ok(source.includes('if (member.user.bot) return'), 'member bot dilewati');
+});
+
+await testAsync('sambutan: hanya untuk server rumah', async () => {
+  const source = await readFile('src/events/guildMemberAdd.ts', 'utf8');
+  assert.ok(source.includes('config.discord.homeGuildId'), 'memeriksa GUILD_ID');
+});
+
+await testAsync('kartu sambutan membungkus teks panjang tanpa melewati lebar', async () => {
+  const { wrap } = await import('../src/features/welcome-card.js');
+  const panjang = 'Halo Sky, selamat datang di komunitas kami! Semoga betah dan seru-seruan bareng yang lain ya.';
+  const lines = wrap(panjang, 52, 3);
+  assert.ok(lines.length <= 3, 'maksimal 3 baris');
+  for (const line of lines) assert.ok(line.length <= 52, `baris "${line}" terlalu panjang`);
+
+  const pendek = wrap('Halo J!', 52, 3);
+  assert.deepEqual(pendek, ['Halo J!']);
+
+  // Teks yang dipotong diberi elipsis.
+  const terpotong = wrap('kata '.repeat(80), 20, 2);
+  assert.ok(terpotong[terpotong.length - 1]?.endsWith('…'), 'penanda potongan');
+});
+
+await testAsync('dashboard: halaman Sambutan & Agent terdaftar di navigasi', async () => {
+  const shell = await readFile('src/web/ui/shell.ts', 'utf8');
+  assert.ok(shell.includes("'sambutan'"), 'key halaman ada');
+  assert.ok(shell.includes("href: '/sambutan'"), 'menu sidebar ada');
+
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(server.includes("path === '/sambutan'"), 'route halaman ada');
+  assert.ok(server.includes("path === '/api/welcome'"), 'API sambutan ada');
+  assert.ok(server.includes("path === '/api/agent'"), 'API agent ada');
+});
+
+await testAsync('dashboard: input angka agent dibatasi sebelum disimpan', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  // Tanpa clamp, nilai 0/9999 dari form bisa mematikan pengaman biaya.
+  assert.ok(server.includes('clamp(payload.maxPerHour, 1, 60'), 'batas per jam dijaga');
+  assert.ok(server.includes('clamp(payload.quietMinutes, 0, 1440'), 'batas menit sepi dijaga');
+  // Bentuk di sumber: /^\\d{17,20}$/ (backslash literal di file .ts).
+  assert.ok(server.includes('\\d{17,20}'), 'channel ID divalidasi 17–20 digit');
+});
+
+await testAsync('privasi: agent tidak menyimpan transkrip ke database', async () => {
+  const source = await readFile('src/features/agent.ts', 'utf8');
+  // State hanya di memori (Map) — tidak boleh ada INSERT ke tabel pesan.
+  assert.ok(source.includes('const channels = new Map'), 'state di memori');
+  assert.equal(
+    /appendMessage|INSERT INTO messages/.test(source),
+    false,
+    'tidak menyimpan isi obrolan channel ke database',
+  );
+});
+
+await testAsync('privasi: sambutan default dikirim lewat DM, bukan channel', async () => {
+  const welcome = await readFile('src/features/welcome.ts', 'utf8');
+  assert.ok(welcome.includes('member.send'), 'ada jalur DM');
+  assert.ok(
+    /settings\.channelId\s*&&\s*settings\.channelId !== member\.guild\.id/.test(welcome) ||
+      welcome.includes('settings.channelId && settings.channelId !== member.guild.id'),
+    'channel hanya dipakai kalau admin memilihnya',
+  );
+});
+
+await testAsync('bot: intent GuildMembers & reaksi ditambahkan', async () => {
+  const source = await readFile('src/bot.ts', 'utf8');
+  assert.ok(source.includes('GatewayIntentBits.GuildMembers'), 'intent member baru');
+  assert.ok(source.includes('Events.GuildMemberAdd'), 'handler member baru terpasang');
+  assert.ok(source.includes('startQuietWatcher'), 'timer channel sepi terpasang');
+});
+
+
+await testAsync('settings agent: patch sebagian tidak mereset field lain', async () => {
+  const { getAgentSettings, saveAgentSettings } = await import('../src/db/repo.js');
+  const guild = '777777777777777778';
+  await saveAgentSettings(guild, { channelId: '101010101010101010', reactImages: false, maxPerHour: 12 });
+
+  // Permintaan kedua hanya mengirim satu field (mis. dari API lain).
+  await saveAgentSettings(guild, { quietMinutes: 20 });
+  const saved = await getAgentSettings(guild);
+  assert.equal(saved.maxPerHour, 12, 'nilai lama tidak ikut terhapus');
+  assert.equal(saved.reactImages, false, 'toggle lama dipertahankan');
+  assert.equal(saved.quietMinutes, 20, 'field baru tersimpan');
+});
+
+await testAsync('API agent & sambutan mempertahankan nilai yang tidak dikirim', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  // Tanpa pola ini, menyimpan sebagian akan mematikan toggle lain diam-diam.
+  const agentBlock = server.slice(server.indexOf("path === '/api/agent'"), server.indexOf("path === '/api/moderasi'"));
+  assert.ok(agentBlock.includes('current.reactImages'), 'nilai lama dipakai sebagai fallback');
+  assert.ok(agentBlock.includes('bool('), 'ada helper yang membedakan "tidak dikirim" vs "false"');
+
+  const welcomeBlock = server.slice(server.indexOf("path === '/api/welcome'"), server.indexOf("path === '/api/agent'"));
+  assert.ok(welcomeBlock.includes("'template' in payload"), 'template hanya diubah kalau dikirim');
+});
+
+
 console.log(`\n${process.exitCode ? '❌ Ada test gagal' : '🎉 Semua test lulus'} — ${passed} test.\n`);

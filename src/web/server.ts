@@ -26,6 +26,10 @@ import {
   getPanel,
   listDocuments,
   getGuildName,
+  getAgentSettings,
+  saveAgentSettings,
+  getWelcomeSettings,
+  saveWelcomeSettings,
   listKeywords,
   listMemories,
   listModerationLogs,
@@ -56,6 +60,7 @@ import {
   panelPage,
   pengaturanPage,
   ringkasanPage,
+  sambutanPage,
 } from './ui/pages.js';
 import { dbLabel, dialect } from '../db/index.js';
 import { parseLoginLink } from './login-link.js';
@@ -448,6 +453,57 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
 
+  if (path === '/sambutan' && method === 'GET') {
+    const [welcome, agent, guildName] = await Promise.all([
+      getWelcomeSettings(guildId),
+      getAgentSettings(guildId),
+      getGuildName(guildId),
+    ]);
+
+    // Daftar channel hanya tersedia saat bot online — di mode dashboard-saja,
+    // pilihan yang sudah tersimpan tetap ditampilkan agar tidak hilang.
+    let channels: Array<{ id: string; name: string }> = [];
+    if (botClient?.isReady()) {
+      channels = await listPanelChannels(botClient, guildId).catch((error: unknown) => {
+        logger.warn(`Sambutan: gagal membaca daftar channel — ${errorMessage(error)}`);
+        return [];
+      });
+    }
+
+    sendHtml(
+      response,
+      200,
+      sambutanPage({
+        guildId,
+        guildName,
+        welcome: {
+          enabled: welcome.enabled,
+          useAi: welcome.useAi,
+          channelId: welcome.channelId,
+          template: welcome.template,
+          imageEnabled: welcome.imageEnabled,
+          includeAvatar: welcome.includeAvatar,
+          style: welcome.style,
+          example: welcome.example,
+        },
+        agent: {
+          channelId: agent.channelId,
+          quietMinutes: agent.quietMinutes,
+          maxPerHour: agent.maxPerHour,
+          reactEmoji: agent.reactEmoji,
+          reactImages: agent.reactImages,
+          busyMute: agent.busyMute,
+          cooldownSeconds: agent.cooldownSeconds,
+        },
+        channels,
+        botOnline: dashboardStatus().online,
+        status: dashboardStatus(),
+        counts: await navCounts(guildId),
+      }),
+    );
+    return;
+  }
+
   if (path === '/dokumen' && method === 'GET') {
     sendHtml(
       response,
@@ -762,6 +818,86 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       autoMemory: settings?.autoMemory ?? null,
       adminOnlyRooms: settings?.adminOnlyRooms ?? null,
     });
+    return;
+  }
+
+  if (path === '/api/welcome' && method === 'POST') {
+    const raw = await readBody(request, 16 * 1024);
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      sendJson(response, 400, { error: 'Format JSON tidak valid.' });
+      return;
+    }
+
+    const channelId = typeof payload.channelId === 'string' ? payload.channelId.trim() : '';
+    if (channelId && !/^\d{17,20}$/.test(channelId)) {
+      sendJson(response, 400, { error: 'Channel ID tidak valid.' });
+      return;
+    }
+    const template = typeof payload.template === 'string' ? payload.template.trim().slice(0, 1000) : '';
+    const style = typeof payload.style === 'string' ? payload.style.trim().slice(0, 300) : '';
+    const example = typeof payload.example === 'string' ? payload.example.trim().slice(0, 300) : '';
+
+    const current = await getWelcomeSettings(guildId);
+    const bool = (value: unknown, fallback: boolean): boolean =>
+      value === undefined || value === null ? fallback : Boolean(value);
+
+    await saveWelcomeSettings(guildId, {
+      enabled: bool(payload.enabled, current.enabled),
+      channelId: 'channelId' in payload ? channelId || null : current.channelId,
+      useAi: bool(payload.useAi, current.useAi),
+      template: 'template' in payload ? template || null : current.template,
+      style: 'style' in payload ? style || null : current.style,
+      example: 'example' in payload ? example || null : current.example,
+      imageEnabled: bool(payload.imageEnabled, current.imageEnabled),
+      includeAvatar: bool(payload.includeAvatar, current.includeAvatar),
+    });
+
+    sendJson(response, 200, { ok: true, welcome: await getWelcomeSettings(guildId) });
+    return;
+  }
+
+  if (path === '/api/agent' && method === 'POST') {
+    const raw = await readBody(request, 16 * 1024);
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      sendJson(response, 400, { error: 'Format JSON tidak valid.' });
+      return;
+    }
+
+    const channelId = typeof payload.channelId === 'string' ? payload.channelId.trim() : '';
+    if (channelId && !/^\d{17,20}$/.test(channelId)) {
+      sendJson(response, 400, { error: 'Channel ID tidak valid.' });
+      return;
+    }
+
+    const clamp = (value: unknown, min: number, max: number, fallback: number): number => {
+      const number = Math.round(Number(value));
+      if (!Number.isFinite(number)) return fallback;
+      return Math.min(max, Math.max(min, number));
+    };
+
+    // Field yang tidak dikirim dibiarkan seperti sebelumnya — tanpa ini,
+    // permintaan sebagian (mis. hanya ganti channel) akan mematikan toggle lain.
+    const current = await getAgentSettings(guildId);
+    const bool = (value: unknown, fallback: boolean): boolean =>
+      value === undefined || value === null ? fallback : Boolean(value);
+
+    await saveAgentSettings(guildId, {
+      channelId: channelId || null,
+      quietMinutes: clamp(payload.quietMinutes, 0, 1440, current.quietMinutes),
+      maxPerHour: clamp(payload.maxPerHour, 1, 60, current.maxPerHour),
+      cooldownSeconds: clamp(payload.cooldownSeconds, 0, 3600, current.cooldownSeconds),
+      busyMute: bool(payload.busyMute, current.busyMute),
+      reactEmoji: bool(payload.reactEmoji, current.reactEmoji),
+      reactImages: bool(payload.reactImages, current.reactImages),
+    });
+
+    sendJson(response, 200, { ok: true, agent: await getAgentSettings(guildId) });
     return;
   }
 

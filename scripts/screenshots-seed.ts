@@ -195,6 +195,18 @@ await run(
   [GUILD, '130000000000000001', '150000000000000001', now - 5 * hour],
 );
 
+// ---- Sambutan & AI Agent (contoh pengaturan, bukan data member) ----
+await run(
+  `INSERT INTO welcome (guild_id, channel_id, enabled, use_ai, template, image_enabled, style, example, include_avatar, updated_at)
+   VALUES (?, NULL, 1, 1, ?, 1, ?, ?, 1, ?)`,
+  [GUILD, 'Halo {user}, selamat datang di {server}!', 'hangat, santai, sedikit bercanda', 'Pagi Sky! Ngapain aja hari ini?', now - 2 * day],
+);
+await run(
+  `INSERT INTO agent (guild_id, channel_id, quiet_minutes, max_per_hour, react_emoji, react_images, busy_mute, cooldown_seconds, updated_at)
+   VALUES (?, ?, 45, 6, 1, 1, 1, 90, ?)`,
+  [GUILD, '130000000000000009', now - 2 * day],
+);
+
 console.log(`Data demo siap di ${dbPath}`);
 console.log('  server   : ' + GUILD_NAME + ' (' + GUILD + ')');
 console.log('  sesi DM  : ' + sessions.length);

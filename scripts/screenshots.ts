@@ -37,6 +37,7 @@ if (!TOKEN) {
 const PAGES: Array<[string, string, string]> = [
   ['ringkasan', '/', 'Ringkasan'],
   ['panel', '/panel', 'Panel'],
+  ['sambutan', '/sambutan', 'Sambutan & Agent'],
   ['dokumen', '/dokumen', 'Dokumen RAG'],
   ['keyword', '/keyword', 'Keyword'],
   ['moderasi', '/moderasi', 'Moderasi'],
@@ -82,7 +83,27 @@ async function resolveBrowser(): Promise<{ path: string; args: string[] }> {
 }
 
 const browserInfo = await resolveBrowser();
-const puppeteer = await import('puppeteer-core');
+// `puppeteer-core` adalah alat dev di sandbox — TIDAK ada di package.json, jadi
+// namanya dimuat lewat variabel agar `tsc` tetap lolos tanpa paket ini terpasang.
+const puppeteerModule = 'puppeteer-core';
+// Tipe minimal supaya tidak butuh deklarasi paket saat typecheck.
+interface MinimalPage {
+  setViewport(options: { width: number; height: number; deviceScaleFactor?: number }): Promise<void>;
+  goto(url: string, options?: Record<string, unknown>): Promise<unknown>;
+  evaluate(expression: string): Promise<unknown>;
+  type(selector: string, text: string): Promise<void>;
+  click(selector: string): Promise<void>;
+  waitForNavigation(options?: Record<string, unknown>): Promise<unknown>;
+  screenshot(options: Record<string, unknown>): Promise<Buffer>;
+  url(): string;
+}
+interface MinimalBrowser {
+  newPage(): Promise<MinimalPage>;
+  close(): Promise<void>;
+}
+const puppeteer = (await import(puppeteerModule)) as unknown as {
+  default: { launch(options: Record<string, unknown>): Promise<MinimalBrowser> };
+};
 
 mkdirSync(OUT_DIR, { recursive: true });
 
