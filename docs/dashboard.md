@@ -22,11 +22,27 @@ Isi satu variabel di `.env`:
 DASHBOARD_TOKEN=rahasia-panjang-minimal-12-karakter
 ```
 
-Buat token acak dengan:
+Buat token acak dengan salah satu cara:
 
 ```bash
-openssl rand -hex 16
+npm run token -- --write      # tulis langsung ke .env (disarankan)
+openssl rand -hex 16          # tulis manual
 ```
+
+`npm run token` memakai `crypto.randomBytes` + rejection sampling (tanpa bias), dan bisa dipanggil
+ulang kapan saja untuk rotasi:
+
+```bash
+npm run token                       # cetak token hex 48 karakter
+npm run token -- --base64           # base64url, lebih rapat
+npm run token -- --length=64        # atur panjang (16–128)
+npm run token -- --write            # ganti DASHBOARD_TOKEN di .env secara otomatis
+```
+
+> **Soal generator token online:** sebagian besar berjalan lokal di browser (tidak mengirim token ke
+> server) sehingga aman-aman saja, tapi banyak yang memakai `Math.random()` — bukan *cryptographic
+> random*. Untuk password admin, `crypto.randomBytes` adalah pilihan yang benar. Dan apa pun
+> generatornya: **jangan pernah menempelkan token ke chat publik atau issue.**
 
 Lalu jalankan bot seperti biasa (`npm run dev`, `npm start`, atau `docker compose up -d`) dan buka:
 

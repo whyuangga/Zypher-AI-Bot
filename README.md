@@ -314,6 +314,7 @@ npm run smoke          # 42 test logika inti (termasuk RAG & chunking)
 npm run test:fallback  # uji rantai fallback provider dengan server tiruan
 npm run dashboard      # nyalakan dashboard web saja, tanpa bot Discord
 npm run bundle         # bikin zypher-deploy.zip untuk panel hosting
+npm run token -- --write   # bikin & pasang DASHBOARD_TOKEN acak di .env
 ```
 
 `npm run doctor` adalah langkah pertama saat ada masalah AI: ia mengirim request sungguhan ke provider
@@ -352,6 +353,7 @@ diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai u
 | Jawaban muncul sekaligus, bukan streaming | Normal bila provider/model menolak `stream: true` — bot otomatis memakai mode non-streaming di provider tersebut (lihat log). |
 | AI tidak menjawab dari dokumen | Cek `/dokumen cari pertanyaan:...`. Kalau kosong, kata kuncinya tidak ada di dokumen — tambahkan sinonim atau pakai istilah yang dipakai member. |
 | "Format PDF belum didukung" | Konversi dulu ke `.txt`/`.md`. Lihat [docs/rag.md](docs/rag.md). |
+| Mau ganti token dashboard | `npm run token -- --write`, lalu perbarui juga variabel di panel hosting dan restart. |
 | Dashboard tidak bisa dibuka | `DASHBOARD_TOKEN` kosong atau kurang dari 12 karakter. Cek log: harus ada `🌐 Dashboard: …`. |
 | Data hilang setelah redeploy | Hosting tanpa disk persisten. Lihat [docs/hosting.md](docs/hosting.md) + unduh backup `zypher.db`. |
 | Jawaban terasa monoton | Naikkan `AI_TEMPERATURE` (mis. `0.9`) dan pastikan keyword punya jawaban acuan yang cukup detail. |
