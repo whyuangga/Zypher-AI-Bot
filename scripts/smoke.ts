@@ -1197,7 +1197,50 @@ test('pengaturanPage menampilkan toggle fitur', () => {
   assert.ok(page.includes('Dokumen RAG'), 'toggle RAG ada');
   assert.ok(page.includes('Vision'), 'toggle Vision ada');
   assert.ok(page.includes('Auto Memory'), 'toggle Auto Memory ada');
-  assert.ok(page.includes('Admin Only Rooms'), 'toggle Admin Only Rooms ada');
+  assert.ok(page.includes('Chat khusus admin'), 'toggle chat khusus admin ada');
+});
+
+console.log('\nScreenshot dokumentasi');
+test('screenshot: tidak ada file yang membocorkan halaman privasi', async () => {
+  const { readdir } = await import('node:fs/promises');
+  const files = await readdir('docs/screenshots');
+  const names = files.filter((f) => f.endsWith('.png'));
+
+  // Halaman memori & transkrip sudah dihapus dari dashboard — screenshot-nya
+  // juga tidak boleh ada di repo.
+  assert.equal(
+    names.some((f) => f.startsWith('memori-') || f.startsWith('transkrip-')),
+    false,
+    'tidak ada screenshot memori/transkrip',
+  );
+
+  // Setiap halaman yang masih ada harus punya versi desktop + mobile.
+  const pages = ['ringkasan', 'panel', 'dokumen', 'keyword', 'moderasi', 'pengaturan'];
+  for (const slug of pages) {
+    assert.ok(names.includes(`${slug}-desktop.png`), `screenshot ${slug}-desktop.png ada`);
+    assert.ok(names.includes(`${slug}-mobile.png`), `screenshot ${slug}-mobile.png ada`);
+  }
+  assert.ok(names.includes('login-mobile.png'), 'screenshot login ada');
+});
+
+test('screenshot: README hanya menyebut file yang benar-benar ada', async () => {
+  const { readdir } = await import('node:fs/promises');
+  const files = await readdir('docs/screenshots');
+  const readme = await readFile('docs/screenshots/README.md', 'utf8');
+
+  for (const match of readme.matchAll(/`([a-z-]+\.png)`/g)) {
+    assert.ok(files.includes(match[1]), `${match[1]} yang disebut README benar-benar ada`);
+  }
+
+  // Dokumentasi tidak boleh mengklaim halaman yang sudah dihapus.
+  assert.equal(readme.includes('memori-mobile.png'), false, 'README tanpa screenshot memori');
+  assert.equal(readme.includes('transkrip-'), false, 'README tanpa screenshot transkrip');
+});
+
+test('screenshot: seed menolak database non-demo', async () => {
+  const source = await readFile('scripts/screenshots-seed.ts', 'utf8');
+  assert.ok(source.includes("dbPath.includes('screenshot')"), 'seed memeriksa nama database');
+  assert.ok(source.includes("'[pertanyaan member]'"), 'isi pesan demo berupa penanda, bukan kalimat asli');
 });
 
 console.log('\nVision & voice');

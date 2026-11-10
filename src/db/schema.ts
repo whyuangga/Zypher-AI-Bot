@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS mod_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_mod_logs_guild ON mod_logs (guild_id, created_at DESC);
 
--- ---------- panel room AI (satu channel per server) ----------
+-- ---------- panel chat DM (satu channel per server) ----------
 CREATE TABLE IF NOT EXISTS panels (
   guild_id   TEXT PRIMARY KEY,
   channel_id TEXT,

@@ -13,7 +13,7 @@ Yang bisa dilakukan:
 | `/dokumen` | Upload dokumen RAG (file atau tempel teks), daftar dokumen, hapus dokumen, **uji pencarian** |
 | `/keyword` | Tambah & hapus template jawaban owner (FAQ, harga, aturan) |
 | `/moderasi` | Filter kata terlarang per server, tindakan (hapus/tegur/timeout), log pelanggaran |
-| `/pengaturan` | Persona AI & model per server, **toggle fitur AI** (RAG, Vision, Auto Memory, Admin Only Rooms, Suara otomatis), info server + salin Server ID |
+| `/pengaturan` | Persona AI & model per server, **toggle fitur AI** (RAG, Vision, Auto Memory, Chat khusus admin, Suara balasan AI), info server + salin Server ID |
 | `/healthz` | JSON status untuk monitoring (tanpa login) — termasuk engine database |
 
 Tampilan memakai gaya **editorial gelap** (hangat, bukan hitam-putih murni) dengan palet pemilik proyek:
@@ -33,6 +33,10 @@ Sidebar di kiri, grafik 7 hari tanpa library chart — semua CSS/SVG dibuat lang
 jadi tidak ada bundler yang harus jalan di panel hosting.
 
 Pratinjau tampilan ada di [`docs/screenshots/`](screenshots/README.md) (desktop 1440px + mobile 390px).
+Gambar-gambar itu dibuat oleh skrip (`npm run screenshots`), bukan manual — lihat
+[cara membuat ulang](screenshots/README.md#cara-membuat-ulang). Data demo dipisah
+dari database asli (`npm run screenshots:seed`), dan skrip seed menolak jalan
+kalau `DATABASE_PATH` bukan database demo.
 
 ---
 
@@ -304,7 +308,7 @@ Semua fitur AI bisa di-toggle per server dari dashboard `/pengaturan` — tidak 
 | **Dokumen RAG** | AI boleh jawab dari dokumen yang di-upload | `RAG_ENABLED=true` |
 | **Vision (Gambar)** | AI boleh baca gambar yang dikirim member | `VISION_ENABLED=false` |
 | **Auto Memory** | AI boleh ingat fakta otomatis dari percakapan | `AUTO_MEMORY=true` |
-| **Admin Only Rooms** | Hanya admin yang boleh memulai chat AI | `ADMIN_ONLY_ROOMS=false` |
+| **Chat khusus admin** | Hanya admin yang boleh memulai chat AI | `ADMIN_ONLY_ROOMS=false` |
 | **Suara di room** | Jawaban AI di room otomatis dibacakan (TTS) | `TTS_REPLY_IN_ROOM=true` |
 
 Bila belum di-set (default), memakai nilai dari `.env`. Setelah di-set, nilai di database dipakai — overriding `.env`.

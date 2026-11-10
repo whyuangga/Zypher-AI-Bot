@@ -132,7 +132,7 @@ export function dmServerPickerRow(
   return row;
 }
 
-/** Tombol kirim panel di server (menggantikan tombol "Buat Room AI"). */
+/** Tombol kirim panel di server (tombol "Chat via DM"). */
 export function panelEmbedDm(botName: string): EmbedBuilder {
   return new EmbedBuilder()
     .setColor(BRAND_COLOR)

@@ -104,8 +104,10 @@ export async function resolveModeration(guildId: string): Promise<EffectiveModer
 }
 
 /**
- * Channel yang ikut moderasi: channel teks biasa dan thread (room AI berupa
- * private thread, jadi tanpa ini moderasi tidak jalan di room member).
+ * Channel yang ikut moderasi: channel teks biasa dan thread.
+ *
+ * Percakapan AI sudah pindah ke DM, jadi moderasi hanya menyaring pesan di
+ * channel publik server — bukan percakapan privat member.
  */
 function isModeratableChannel(channel: {
   type: ChannelType;
@@ -135,7 +137,7 @@ const ACTION_LABEL: Record<ModerationAction, string> = {
 export async function moderateMessage(message: Message): Promise<boolean> {
   if (message.author.bot || message.system) return false;
   if (!message.inGuild()) return false;
-  // Room AI sekarang berupa private thread; moderasi harus tetap jalan di sana.
+  // Thread publik tetap dimoderasi; DM tidak (pesan DM tidak pernah sampai ke sini).
   if (!isModeratableChannel(message.channel)) return false;
   if (isStaff(message)) return false;
 
