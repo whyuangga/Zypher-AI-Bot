@@ -6,7 +6,7 @@ import {
   type GuildMember,
 } from 'discord.js';
 import { config } from '../config.js';
-import { getRoomByChannel } from '../db/repo.js';
+import { getPanel, getRoomByChannel } from '../db/repo.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { canManageRoom, createAiRoom, endAiRoom, replyRoomHelp } from './rooms.js';
 import { endConfirmRow } from './ui.js';
@@ -20,6 +20,17 @@ async function resolveMember(interaction: ButtonInteraction): Promise<GuildMembe
 async function handleCreate(interaction: ButtonInteraction): Promise<void> {
   if (!interaction.inGuild() || !interaction.guild) {
     await interaction.reply({ content: 'Room AI hanya bisa dibuat di dalam server.', flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  // Panel bisa dimatikan dari dashboard tanpa menghapus pesannya — jadi tombol
+  // yang masih terlihat pun tidak lagi membuat room.
+  const panel = await getPanel(interaction.guild.id).catch(() => null);
+  if (panel && !panel.enabled) {
+    await interaction.reply({
+      content: '🔒 Pembuatan room AI sedang dinonaktifkan admin server.',
+      flags: MessageFlags.Ephemeral,
+    });
     return;
   }
 

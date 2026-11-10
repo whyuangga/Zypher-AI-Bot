@@ -5,6 +5,7 @@
 export const SCHEMA_SQLITE = /* sql */ `
 CREATE TABLE IF NOT EXISTS guilds (
   guild_id    TEXT PRIMARY KEY,
+  name        TEXT,
   persona     TEXT,
   model       TEXT,
   created_at  INTEGER NOT NULL
@@ -114,6 +115,15 @@ CREATE TABLE IF NOT EXISTS mod_logs (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_mod_logs_guild ON mod_logs (guild_id, created_at DESC);
+
+-- ---------- panel room AI (satu channel per server) ----------
+CREATE TABLE IF NOT EXISTS panels (
+  guild_id   TEXT PRIMARY KEY,
+  channel_id TEXT,
+  message_id TEXT,
+  enabled    INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL
+);
 `;
 
 /**
@@ -126,6 +136,7 @@ CREATE INDEX IF NOT EXISTS idx_mod_logs_guild ON mod_logs (guild_id, created_at 
 export const SCHEMA_PG = /* sql */ `
 CREATE TABLE IF NOT EXISTS guilds (
   guild_id    TEXT PRIMARY KEY,
+  name        TEXT,
   persona     TEXT,
   model       TEXT,
   created_at  BIGINT NOT NULL
@@ -232,4 +243,12 @@ CREATE TABLE IF NOT EXISTS mod_logs (
   created_at BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_mod_logs_guild ON mod_logs (guild_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS panels (
+  guild_id   TEXT PRIMARY KEY,
+  channel_id TEXT,
+  message_id TEXT,
+  enabled    INTEGER NOT NULL DEFAULT 1,
+  updated_at BIGINT NOT NULL
+);
 `;

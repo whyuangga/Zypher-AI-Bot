@@ -15,7 +15,7 @@ import {
   relativeTime,
   statCard,
 } from './base.js';
-import { appShell, pageHead, SHARED_JS, type PageKey } from './shell.js';
+import { appShell, guildLabel, pageHead, SHARED_JS, type GuildChoice, type PageKey } from './shell.js';
 import { STYLE } from './theme.js';
 
 export interface ShellStatus {
@@ -26,7 +26,7 @@ export interface ShellStatus {
 
 export interface PageContext {
   guildId: string;
-  guilds: string[];
+  guilds: GuildChoice[];
   status: ShellStatus;
   counts?: Partial<Record<PageKey, number>>;
 }
@@ -198,7 +198,11 @@ export function ringkasanPage(data: DashboardData): string {
   const body = `${pageHead({
     kicker: '01 — Ikhtisar',
     title: 'Ringkasan',
-    subtitle: `Server <span class="mono">${esc(data.guildId || '—')}</span> · data langsung dari ${esc(data.storage ?? 'SQLite')} bot`,
+    subtitle: `${
+      data.guilds.find((guild) => guild.id === data.guildId)?.name
+        ? `${esc(data.guilds.find((guild) => guild.id === data.guildId)?.name ?? '')} · <span class="mono">${esc(data.guildId)}</span>`
+        : `Server <span class="mono">${esc(data.guildId || '—')}</span>`
+    } · data langsung dari ${esc(data.storage ?? 'SQLite')} bot`,
     actions: `<a class="btn-primary" href="/dokumen">${icon('upload', 16)} Upload dokumen</a>`,
   })}
 ${stats}
@@ -206,6 +210,165 @@ ${stats}
 <div class="grid cols-2 mt">${roomsCard}${docsCard}</div>`;
 
   return appShell({ title: 'Ringkasan', guildId: data.guildId, guilds: data.guilds, active: 'ringkasan', body, counts: data.counts, status: data.status });
+}
+
+/* ------------------------------------------------------------------ */
+/*  Panel room AI                                                      */
+/* ------------------------------------------------------------------ */
+
+export interface PanelOptions extends PageContext {
+  /** Tombol "Buat Room AI" aktif atau tidak. */
+  enabled: boolean;
+  /** Channel panel aktif (null = belum pernah dikirim). */
+  channelId: string | null;
+  messageId: string | null;
+  updatedAt: number | null;
+  /** Channel teks server ini — hanya terisi saat bot online. */
+  channels: Array<{ id: string; name: string }>;
+  botOnline: boolean;
+}
+
+export function panelPage(options: PanelOptions): string {
+  const status = options.enabled ? badge('Panel aktif', 'ok') : badge('Panel nonaktif', 'warn');
+  const hasPanel = Boolean(options.messageId);
+
+  const channelField = options.channels.length
+    ? `<span class="select-shell" style="width:100%">
+    <select id="panelChannel" style="width:100%">
+      <option value="">— pilih channel —</option>
+      ${options.channels
+        .map(
+          (channel) =>
+            `<option value="${esc(channel.id)}"${channel.id === options.channelId ? ' selected' : ''}>#${esc(
+              channel.name,
+            )}</option>`,
+        )
+        .join('')}
+    </select>
+    ${icon('chevron', 15)}
+  </span>`
+    : `<input type="text" id="panelChannel" class="mono" inputmode="numeric" placeholder="123456789012345678"
+    value="${esc(options.channelId ?? '')}" spellcheck="false">`;
+
+  const offlineNotice = options.botOnline
+    ? ''
+    : `<div class="notice">${icon('alert', 16)}<span>Bot Discord sedang offline. Panel hanya bisa dikirim atau dihapus saat bot berjalan — di mode dashboard saja, pengaturan di bawah tetap tersimpan.</span></div>`;
+
+  const panelCard = card({
+    title: 'Panel room AI',
+    hint: 'satu channel per server',
+    right: status,
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+  <div>
+    <label class="field" for="panelChannel">Channel panel</label>
+    ${channelField}
+    <p class="hint">${
+      options.channels.length
+        ? 'Hanya channel teks yang muncul di daftar ini.'
+        : 'Daftar channel muncul saat bot online. Untuk sekarang, tempel Channel ID (Discord → Settings → Advanced → Developer Mode → klik kanan channel → Copy Channel ID).'
+    }</p>
+  </div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <button class="btn-primary" type="button" id="sendPanel" onclick="sendPanel()">
+      ${icon('upload', 16)} ${hasPanel ? 'Kirim ulang panel' : 'Kirim panel'}
+    </button>
+    <button class="btn-danger" type="button" id="removePanel" onclick="removePanelAction()" ${hasPanel ? '' : 'disabled'}>
+      ${icon('trash', 15)} Hapus panel
+    </button>
+  </div>
+  <p class="hint" style="margin:0">Mengirim panel ke channel lain otomatis menghapus panel lama — tidak akan pernah ada dua panel aktif.</p>
+</div>`,
+  });
+
+  const toggleCard = card({
+    title: 'Tombol Buat Room AI',
+    hint: 'berlaku untuk panel yang sudah terkirim',
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+  <label class="check-row" style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-2)">
+    <input type="checkbox" id="panelEnabled" ${options.enabled ? 'checked' : ''} onchange="togglePanel()"
+      style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Izinkan member membuat room lewat panel</span>
+  </label>
+  <div class="list">
+    <div class="kv"><span>Channel</span><b>${options.channelId ? `<span class="mono">…${esc(options.channelId.slice(-6))}</span>` : '—'}</b></div>
+    <div class="kv"><span>Pesan panel</span><b>${options.messageId ? `<span class="mono">…${esc(options.messageId.slice(-6))}</span>` : 'belum dikirim'}</b></div>
+    <div class="kv"><span>Diperbarui</span><b>${options.updatedAt ? esc(relativeTime(options.updatedAt)) : '—'}</b></div>
+  </div>
+  <p class="hint" style="margin:0">Dimatikan = tombol <b>Buat Room AI</b> menjawab "sedang dinonaktifkan admin". Pesan panelnya tetap bisa dibaca member, dan <code>/panel</code> di Discord tetap menyimpan catatan ke halaman ini.</p>
+</div>`,
+  });
+
+  const body = `${pageHead({
+    kicker: '02 — Pintu masuk',
+    title: 'Panel',
+    subtitle: 'Tombol "Buat Room AI" untuk member. Kirim, pindahkan, atau hapus panel dari sini tanpa perlu mengetik perintah di Discord.',
+    actions: status,
+  })}
+${options.botOnline ? '' : `<div class="mt">${offlineNotice}</div>`}
+<div class="grid cols-2-even">${panelCard}${toggleCard}</div>
+<script>
+function panelChannelValue() {
+  var el = document.getElementById('panelChannel');
+  return el ? el.value.trim() : '';
+}
+
+async function panelApi(payload) {
+  return api('/api/panel', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+async function sendPanel() {
+  var channelId = panelChannelValue();
+  if (!channelId) { toast('Pilih channel dulu', true); return; }
+  var button = document.getElementById('sendPanel');
+  button.disabled = true;
+  try {
+    await panelApi({ guild: ${JSON.stringify(options.guildId)}, action: 'send', channelId: channelId });
+    toast('✅ Panel terkirim');
+    setTimeout(function () { location.reload(); }, 400);
+  } catch (error) {
+    toast('Gagal mengirim: ' + error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function removePanelAction() {
+  var ok = await askConfirm('Hapus panel?', 'Pesan panel akan dihapus dari Discord, jadi tombol "Buat Room AI" tidak bisa diklik lagi. Member tetap bisa memakai room yang sedang aktif.');
+  if (!ok) return;
+  try {
+    await panelApi({ guild: ${JSON.stringify(options.guildId)}, action: 'remove' });
+    toast('Panel dihapus');
+    setTimeout(function () { location.reload(); }, 400);
+  } catch (error) {
+    toast('Gagal menghapus: ' + error.message, true);
+  }
+}
+
+async function togglePanel() {
+  var enabled = document.getElementById('panelEnabled').checked;
+  try {
+    await panelApi({ guild: ${JSON.stringify(options.guildId)}, action: 'toggle', enabled: enabled });
+    toast(enabled ? '✅ Panel diaktifkan' : 'Panel dinonaktifkan');
+  } catch (error) {
+    toast('Gagal menyimpan: ' + error.message, true);
+    document.getElementById('panelEnabled').checked = !enabled;
+  }
+}
+</script>`;
+
+  return appShell({
+    title: 'Panel',
+    guildId: options.guildId,
+    guilds: options.guilds,
+    active: 'panel',
+    body,
+    counts: options.counts,
+    status: options.status,
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -314,7 +477,7 @@ export function dokumenPage(options: PageContext & { documents: DocumentRowView[
   });
 
   const body = `${pageHead({
-    kicker: '02 — Basis pengetahuan',
+    kicker: '03 — Basis pengetahuan',
     title: 'Dokumen RAG',
     subtitle: 'Rujukan jawaban AI. Nama yang sama akan menggantikan versi lama.',
     actions: options.embedModel
@@ -496,7 +659,7 @@ export function keywordPage(options: PageContext & { keywords: KeywordRowView[] 
   });
 
   const body = `${pageHead({
-    kicker: '03 — Template jawaban',
+    kicker: '04 — Template jawaban',
     title: 'Keyword',
     subtitle: 'Template jawaban owner. AI memvariasikan kalimatnya, isinya tetap sama.',
     actions: badge(`${options.keywords.length} aktif`, 'brand'),
@@ -623,7 +786,7 @@ export function memoriPage(options: PageContext & { groups: MemoryGroupView[] })
   });
 
   const body = `${pageHead({
-    kicker: '04 — Ingatan AI',
+    kicker: '05 — Ingatan AI',
     title: 'Memori',
     subtitle: 'Fakta yang diingat AI tentang tiap member, lintas percakapan.',
     actions: badge(`${total} fakta`, total ? 'ok' : 'neutral'),
@@ -715,7 +878,7 @@ export function pengaturanPage(
   });
 
   const body = `${pageHead({
-    kicker: '06 — Konfigurasi',
+    kicker: '07 — Konfigurasi',
     title: 'Pengaturan',
     subtitle: 'Perilaku AI dan informasi server. Perubahan langsung berlaku untuk pesan berikutnya.',
   })}
@@ -845,7 +1008,7 @@ export function transkripPage(options: TranskripOptions): string {
   });
 
   const body = `${pageHead({
-    kicker: '05 — Arsip sesi',
+    kicker: '06 — Arsip sesi',
     title: 'Transkrip',
     subtitle: 'Salinan HTML setiap room AI yang sudah ditutup. Unduh untuk arsip, hapus kalau sudah tidak perlu.',
     actions: badge(`${total} arsip`, total ? 'brand' : 'neutral'),
@@ -1009,7 +1172,7 @@ export function moderasiPage(options: ModerasiOptions): string {
   });
 
   const body = `${pageHead({
-    kicker: '07 — Keamanan',
+    kicker: '08 — Keamanan',
     title: 'Moderasi',
     subtitle: 'Saring kata terlarang otomatis tanpa perlu bot moderasi tambahan. Pengaturan disimpan per server.',
     actions: status,

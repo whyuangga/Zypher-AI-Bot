@@ -89,7 +89,31 @@ await test('guild dibuat sekali (idempotent)', async () => {
   await repo.ensureGuild(GUILD);
   const settings = await repo.getGuildSettings(GUILD);
   assert.equal(settings?.guildId, GUILD);
-  assert.equal((await repo.listGuildIds()).includes(GUILD), true);
+  assert.equal((await repo.listGuilds()).some((guild) => guild.id === GUILD), true);
+});
+
+await test('nama server tersimpan & muncul di daftar server', async () => {
+  await repo.setGuildName(GUILD, 'Server pg-mem');
+  assert.equal((await repo.getGuildSettings(GUILD))?.name, 'Server pg-mem');
+  const listed = (await repo.listGuilds()).find((guild) => guild.id === GUILD);
+  assert.equal(listed?.name, 'Server pg-mem');
+});
+
+await test('panel: upsert pesan + toggle aktif/nonaktif', async () => {
+  const initial = await repo.getPanel(GUILD);
+  assert.equal(initial.enabled, true);
+  assert.equal(initial.messageId, null);
+
+  await repo.setPanelMessage(GUILD, CHANNEL, '1500000000000000001');
+  await repo.setPanelMessage(GUILD, CHANNEL, '1500000000000000002');
+  const state = await repo.getPanel(GUILD);
+  assert.equal(state.channelId, CHANNEL);
+  assert.equal(state.messageId, '1500000000000000002');
+
+  assert.equal((await repo.setPanelEnabled(GUILD, false)).enabled, false);
+  assert.equal((await repo.getPanel(GUILD)).enabled, false);
+  // Mematikan panel tidak menghapus referensi pesannya.
+  assert.equal((await repo.getPanel(GUILD)).channelId, CHANNEL);
 });
 
 await test('persona tersimpan & terbaca', async () => {

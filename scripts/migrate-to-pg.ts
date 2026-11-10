@@ -26,7 +26,7 @@ interface TablePlan {
 
 /** Urutan penting: tabel induk dulu supaya foreign key tidak protes. */
 const TABLES: TablePlan[] = [
-  { name: 'guilds', columns: ['guild_id', 'persona', 'model', 'created_at'] },
+  { name: 'guilds', columns: ['guild_id', 'name', 'persona', 'model', 'created_at'] },
   {
     name: 'memories',
     columns: ['id', 'guild_id', 'user_id', 'content', 'source', 'created_at'],
@@ -81,6 +81,7 @@ const TABLES: TablePlan[] = [
     columns: ['id', 'guild_id', 'channel_id', 'user_id', 'user_name', 'content', 'matched', 'action', 'created_at'],
     identity: true,
   },
+  { name: 'panels', columns: ['guild_id', 'channel_id', 'message_id', 'enabled', 'updated_at'] },
 ];
 
 const sourcePath = resolve(process.env.DATABASE_PATH?.trim() || './data/zypher.db');
@@ -100,6 +101,21 @@ async function target(): Promise<Driver> {
     return createPostgresDriver({ pool: new Pool() });
   }
   return createPostgresDriver({ url: databaseUrl });
+}
+
+/**
+ * Kolom yang benar-benar ada di tabel SQLite sumber.
+ *
+ * `PRAGMA table_info` mengembalikan daftar kolom (termasuk tipe & default).
+ * Tabel yang belum ada → hasil kosong, dan pemanggil melewatinya.
+ */
+async function sourceColumns(driver: Driver, table: string): Promise<Set<string>> {
+  try {
+    const rows = await driver.all<{ name: string }>(`PRAGMA table_info(${table})`);
+    return new Set(rows.map((row) => String(row.name)));
+  } catch {
+    return new Set<string>();
+  }
 }
 
 function normalize(value: unknown): string | number | bigint | boolean | Uint8Array | null {
@@ -125,22 +141,37 @@ async function main(): Promise<void> {
   let total = 0;
 
   for (const table of TABLES) {
+    // Database lama bisa belum punya kolom baru (mis. `guilds.name`). SQLite
+    // menolak SELECT kolom yang tidak ada, jadi kolomnya disaring dulu —
+    // tanpa ini seluruh tabel (termasuk persona) akan terlewat.
+    const available = await sourceColumns(source, table.name);
+    if (available.size === 0) {
+      console.log(`   ${table.name.padEnd(12)} dilewati (tabel belum ada di sumber)`);
+      continue;
+    }
+    const columns = table.columns.filter((column) => available.has(column));
+    const skipped = table.columns.filter((column) => !available.has(column));
+
     let rows: Array<Record<string, unknown>>;
     try {
-      rows = await source.all<Record<string, unknown>>(`SELECT ${table.columns.join(', ')} FROM ${table.name}`);
+      rows = await source.all<Record<string, unknown>>(`SELECT ${columns.join(', ')} FROM ${table.name}`);
     } catch (error) {
       console.warn(`⚠️  Tabel ${table.name} dilewati (${(error as Error).message})`);
       continue;
     }
 
-    const placeholders = `(${table.columns.map(() => '?').join(', ')})`;
-    const statement = `INSERT INTO ${table.name} (${table.columns.join(', ')}) VALUES ${placeholders} ON CONFLICT DO NOTHING`;
+    const placeholders = `(${columns.map(() => '?').join(', ')})`;
+    const statement = `INSERT INTO ${table.name} (${columns.join(', ')}) VALUES ${placeholders} ON CONFLICT DO NOTHING`;
 
     let inserted = 0;
     for (const row of rows) {
-      const values = table.columns.map((column) => normalize(row[column]));
+      const values = columns.map((column) => normalize(row[column]));
       const result = await destination.run(statement, values);
       inserted += result.changes;
+    }
+
+    if (skipped.length > 0) {
+      console.log(`   ${table.name.padEnd(12)} kolom baru tidak ada di sumber: ${skipped.join(', ')}`);
     }
 
     if (table.identity) {

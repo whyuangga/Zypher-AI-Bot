@@ -19,12 +19,15 @@ const { addMemory, listMemories, deleteMemory, clearMemories, addKeyword, listKe
 const { createRoom, getRoomByChannel, getRoomByUser, appendMessage, getHistory, clearHistory, deleteRoom, touchRoom } =
   await import('../src/db/repo.js');
 const { setPersona, getGuildSettings } = await import('../src/db/repo.js');
-const { listGuildIds, countGuildRows, countGuildMessages, listMemoryOwners, listGuildMemories, messagesPerDay } =
+const { listGuilds, countGuildRows, countGuildMessages, listMemoryOwners, listGuildMemories, messagesPerDay } =
   await import('../src/db/repo.js');
 const { insertTranscript, listTranscripts, getTranscript, deleteTranscript, countTranscripts } = await import(
   '../src/db/repo.js'
 );
-const { ringkasanPage, keywordPage, memoriPage, transkripPage, moderasiPage } = await import('../src/web/ui/pages.js');
+const { setGuildName, getPanel, setPanelMessage, setPanelEnabled } = await import('../src/db/repo.js');
+const { ringkasanPage, keywordPage, memoriPage, transkripPage, moderasiPage, panelPage } = await import(
+  '../src/web/ui/pages.js'
+);
 const {
   setModerationSettings,
   getModerationSettings,
@@ -246,7 +249,10 @@ await testAsync('server yang hanya punya data tetap muncul di daftar server', as
   // Dashboard dulu menampilkan "(belum ada server)" dan semua panel kosong.
   const dataOnlyGuild = '444444444444444444';
   await addKeyword(dataOnlyGuild, 'jam buka', 'Setiap hari 08.00–22.00 WIB.', USER);
-  assert.ok((await listGuildIds()).includes(dataOnlyGuild), 'guild dengan data harus ikut terdaftar');
+  assert.ok(
+    (await listGuilds()).some((guild) => guild.id === dataOnlyGuild),
+    'guild dengan data harus ikut terdaftar',
+  );
 });
 await testAsync('createRoom mendaftarkan server ke tabel guilds', async () => {
   const freshGuild = '555555555555555555';
@@ -254,6 +260,50 @@ await testAsync('createRoom mendaftarkan server ke tabel guilds', async () => {
   await createRoom('666666666666666666', freshGuild, USER);
   assert.ok(await getGuildSettings(freshGuild), 'server harus punya baris guilds setelah room dibuat');
 });
+await testAsync('nama server tersimpan dan dipakai daftar server dashboard', async () => {
+  const named = '1567780679515770900';
+  await setGuildName(named, '  Server Uji  ');
+  assert.equal((await getGuildSettings(named))?.name, 'Server Uji');
+
+  const listed = (await listGuilds()).find((guild) => guild.id === named);
+  assert.equal(listed?.name, 'Server Uji');
+
+  // Server tanpa nama (database lama) tetap muncul, hanya namanya null.
+  const unnamed = (await listGuilds()).find((guild) => guild.id === '555555555555555555');
+  assert.equal(unnamed?.name, null);
+});
+
+await testAsync('panel: default aktif, simpan pesan, pindah channel, toggle', async () => {
+  const guild = '121212121212121212';
+  const initial = await getPanel(guild);
+  assert.equal(initial.enabled, true, 'tanpa baris di tabel = panel aktif');
+  assert.equal(initial.messageId, null);
+
+  await setPanelMessage(guild, '1400000000000000001', '1500000000000000001');
+  let state = await getPanel(guild);
+  assert.equal(state.channelId, '1400000000000000001');
+  assert.equal(state.messageId, '1500000000000000001');
+  assert.equal(state.enabled, true, 'kirim panel tidak boleh mematikan tombolnya');
+
+  // Pindah channel: satu baris per server, referensi pesan diganti (bukan ditambah).
+  await setPanelMessage(guild, '1400000000000000002', '1500000000000000002');
+  state = await getPanel(guild);
+  assert.equal(state.channelId, '1400000000000000002');
+
+  await setPanelEnabled(guild, false);
+  state = await getPanel(guild);
+  assert.equal(state.enabled, false);
+  assert.equal(state.messageId, '1500000000000000002', 'mematikan panel tidak menghapus pesannya');
+
+  await setPanelEnabled(guild, true);
+  assert.equal((await getPanel(guild)).enabled, true);
+
+  await setPanelMessage(guild, null, null);
+  state = await getPanel(guild);
+  assert.equal(state.messageId, null);
+  assert.equal(state.enabled, true, 'enable/disable terpisah dari keberadaan pesan');
+});
+
 await testAsync('statistik dashboard dipisah per server', async () => {
   const guildA = '777777777777777777';
   const guildB = '888888888888888888';
@@ -313,7 +363,7 @@ test('link tanpa token dan path lain tidak dianggap login link', () => {
 console.log('\nHalaman dashboard');
 const pageContext = {
   guildId: '1569424777750257766',
-  guilds: ['1569424777750257766'],
+  guilds: [{ id: '1569424777750257766', name: 'Server Demo' }],
   status: { online: true, mode: 'bot' as const, uptimeSeconds: 3600 },
 };
 await testAsync('ringkasan merender sidebar, kartu statistik, dan grafik', async () => {
@@ -621,7 +671,7 @@ await testAsync('transkrip bisa dihapus', async () => {
 test('halaman transkrip merender arsip + tombol unduh', () => {
   const html = transkripPage({
     guildId: 'g-tr',
-    guilds: ['g-tr'],
+    guilds: [{ id: 'g-tr', name: 'Server Transkrip' }],
     items: [
       {
         id: 7,
@@ -722,7 +772,7 @@ await testAsync('moderasi: log pelanggaran tercatat, terisolasi per server, bisa
 test('halaman moderasi merender pengaturan + log', () => {
   const html = moderasiPage({
     guildId: 'g-mod',
-    guilds: ['g-mod'],
+    guilds: [{ id: 'g-mod', name: 'Server Moderasi' }],
     enabled: true,
     words: ['anjing', 'bangsat'],
     action: 'timeout',
@@ -749,6 +799,116 @@ test('halaman moderasi merender pengaturan + log', () => {
   assert.match(html, /value="timeout" selected/);
   assert.match(html, /Bagas/);
   assert.match(html, /\/api\/moderasi/);
+});
+
+test('halaman panel: dropdown channel saat bot online, peringatan saat offline', () => {
+  const online = panelPage({
+    guildId: 'g-panel',
+    guilds: [{ id: 'g-panel', name: 'Server Panel' }],
+    enabled: true,
+    channelId: '1400000000000000001',
+    messageId: '1500000000000000001',
+    updatedAt: Date.now() - 60_000,
+    channels: [
+      { id: '1400000000000000001', name: 'umum' },
+      { id: '1400000000000000002', name: 'pengumuman' },
+    ],
+    botOnline: true,
+    status: { online: true, mode: 'bot', uptimeSeconds: 600 },
+  });
+
+  assert.match(online, /id="panelChannel"/);
+  assert.match(online, /value="1400000000000000001" selected>#umum/);
+  assert.match(online, /value="1400000000000000002">#pengumuman/);
+  assert.match(online, /Kirim ulang panel/);
+  assert.match(online, /id="panelEnabled" checked/);
+  assert.match(online, /\/api\/panel/);
+  assert.doesNotMatch(online, /class="notice"/);
+
+  const offline = panelPage({
+    guildId: 'g-panel',
+    guilds: [{ id: 'g-panel', name: 'Server Panel' }],
+    enabled: false,
+    channelId: null,
+    messageId: null,
+    updatedAt: null,
+    channels: [],
+    botOnline: false,
+    status: { online: false, mode: 'standalone', uptimeSeconds: 30 },
+  });
+
+  assert.match(offline, /Bot Discord sedang offline/);
+  assert.match(offline, /input type="text" id="panelChannel"/);
+  assert.match(offline, /Panel nonaktif/);
+  assert.match(offline, /id="removePanel"[^>]*disabled/);
+});
+
+console.log('\nLayanan panel (client tiruan)');
+await testAsync('publishPanel mengirim panel & menghapus panel lama', async () => {
+  const { ChannelType } = await import('discord.js');
+  const { publishPanel, removePanel, PanelError } = await import('../src/features/panel.js');
+
+  const guild = '131313131313131313';
+  await setPanelMessage(guild, '1400000000000000001', '1500000000000000001');
+
+  const deleted: string[] = [];
+  const sent: Array<{ channelId: string }> = [];
+
+  const makeChannel = (id: string, name: string) => ({
+    id,
+    name,
+    type: ChannelType.GuildText,
+    isTextBased: () => true,
+    permissionsFor: () => ({ has: () => true }),
+    send: async () => {
+      sent.push({ channelId: id });
+      return { id: `16000000000000000${sent.length}` };
+    },
+    messages: {
+      fetch: async (messageId: string) => ({
+        delete: async () => {
+          deleted.push(`${id}:${messageId}`);
+        },
+      }),
+    },
+  });
+
+  const channels = new Map([
+    ['1400000000000000001', makeChannel('1400000000000000001', 'umum')],
+    ['1400000000000000002', makeChannel('1400000000000000002', 'pengumuman')],
+  ]);
+
+  const fakeGuild = {
+    id: guild,
+    members: { me: { id: 'bot' } },
+    channels: {
+      fetch: async (id?: string) => (id ? channels.get(id) ?? null : channels),
+    },
+  };
+  const fakeClient = {
+    isReady: () => true,
+    guilds: { fetch: async () => fakeGuild },
+  } as unknown as Parameters<typeof publishPanel>[0];
+
+  // Pindah channel: panel lama di #umum harus dihapus, bukan dibiarkan dobel.
+  const result = await publishPanel(fakeClient, guild, '1400000000000000002');
+  assert.equal(result.channelId, '1400000000000000002');
+  assert.equal(result.removedPrevious, true);
+  assert.deepEqual(deleted, ['1400000000000000001:1500000000000000001']);
+
+  const state = await getPanel(guild);
+  assert.equal(state.channelId, '1400000000000000002');
+  assert.equal(state.messageId, result.messageId);
+
+  const removal = await removePanel(fakeClient, guild);
+  assert.equal(removal.removed, true);
+  assert.equal((await getPanel(guild)).messageId, null);
+
+  // Client yang belum siap (mode dashboard-saja) harus menolak dengan pesan jelas.
+  await assert.rejects(
+    () => publishPanel({ isReady: () => false } as unknown as Parameters<typeof publishPanel>[0], guild, '1400000000000000002'),
+    (error: unknown) => error instanceof PanelError && /offline/i.test(error.message),
+  );
 });
 
 console.log('\nVision & voice');

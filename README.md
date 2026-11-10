@@ -30,7 +30,7 @@ Chat bebas → AI menjawab, mengingat fakta, memakai keyword admin
 | ⚡ **Streaming jawaban** | Jawaban muncul bertahap (edit pesan tiap ±1,4 detik, menghormati rate limit Discord), bukan menunggu jeda panjang. Otomatis jatuh ke mode non-streaming kalau provider menolaknya. |
 | 💬 **Chat AI** | Konteks percakapan (20 pesan terakhir), jawaban panjang otomatis dipecah ke beberapa pesan. |
 | 🧠 **Memori jangka panjang** | AI otomatis menyimpan fakta penting lewat *tool calling*, plus perintah manual `/ingat`. Memori dipakai lagi di sesi berikutnya. |
-| 🖥️ **Dashboard web** | `/`, `/dokumen`, `/keyword`, `/memori`, `/transkrip`, `/moderasi`, `/pengaturan` — gaya editorial gelap (latar `#0D0D0F`, teks Wafer `#E2D1CC`, aksen Kimberly, tombol solid tanpa gradient): sidebar kiri, grafik aktivitas 7 hari, kartu statistik per server. Aktif kalau `DASHBOARD_TOKEN` diisi; tanpa framework, satu proses dengan bot. |
+| 🖥️ **Dashboard web** | `/`, `/panel`, `/dokumen`, `/keyword`, `/memori`, `/transkrip`, `/moderasi`, `/pengaturan` — gaya editorial gelap (latar `#0D0D0F`, teks Wafer `#E2D1CC`, aksen Kimberly, tombol solid tanpa gradient): sidebar kiri, grafik aktivitas 7 hari, kartu statistik per server. Dropdown memakai **nama server** (bukan ID), dan panel "Buat Room AI" bisa dikirim, dipindah, atau dimatikan dari halaman `/panel`. Aktif kalau `DASHBOARD_TOKEN` diisi; tanpa framework, satu proses dengan bot. |
 | 📚 **Dokumen RAG** | Upload `.txt`/`.md`/`.csv`/`.json`/`.pdf`/`.docx` (maks 8 MB) lewat `/dokumen tambah` atau dashboard. AI menjawab dari isi dokumen dan menyebut sumbernya (`📚 Sumber: faq.md`). Pencarian BM25 bawaan — **tanpa API key tambahan**. |
 | 🔑 **Keyword kustom** | Admin menulis jawaban acuan; AI memakainya sebagai **fakta** dan menyusun ulang kalimatnya agar **bervariasi setiap kali** (bukan copy-paste). |
 | 🎭 **Persona per server** | Mis. "kamu guru bahasa Inggris yang sabar" — berlaku untuk semua room di server itu. |
@@ -228,7 +228,7 @@ Kalau model tidak mendukung *tool calling*, bot otomatis lanjut tanpa fitur memo
 
 | Perintah | Akses | Fungsi |
 |---|---|---|
-| `/panel [channel]` | Admin | Kirim panel tombol pembuat room AI |
+| `/panel [channel]` | Admin | Kirim panel tombol pembuat room AI (alternatif: dashboard → **Panel**) |
 | `/bantuan` | Semua | Panduan singkat (ephemeral) |
 | `/tanya pertanyaan:` | Semua | Tanya AI cepat tanpa room, jawaban hanya terlihat oleh penanya |
 | `/ucap teks:` | Semua | Ubah teks jadi pesan suara (butuh `VOICE_ENABLED` + `TTS_ENABLED`) |
@@ -338,8 +338,8 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke          # 78 test logika inti (termasuk RAG, moderasi, vision/voice)
-npm run smoke:pg       # 10 test jalur Postgres (pg-mem, tanpa server database)
+npm run smoke          # 82 test logika inti (termasuk RAG, moderasi, vision/voice, panel)
+npm run smoke:pg       # 12 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # uji rantai fallback provider dengan server tiruan
 npm run dashboard      # nyalakan dashboard web saja, tanpa bot Discord
 npm run migrate:pg     # pindahkan data SQLite → Postgres
@@ -390,6 +390,9 @@ diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai u
 | Error `model ... does not support image input` | `VISION_MODEL` bukan model vision, atau provider tidak mendukung `image_url`. Ganti model atau matikan `VISION_ENABLED`. |
 | Voice note tidak ditranskrip | `VOICE_ENABLED` belum aktif, file > `VOICE_MAX_MB`, atau provider menolak endpoint `/audio/transcriptions`. Cek log: nama provider ikut dicatat. |
 | Balasan suara tidak muncul | `TTS_ENABLED=false`, kuota TTS habis, atau model suara tidak ada di provider. Jawaban teks tetap dikirim — tidak ada yang hilang. |
+| Panel "Buat Room AI" masih muncul padahal fitur room mau dimatikan | Dashboard → **Panel** → *Hapus panel* (menghapus pesannya) atau matikan centang *Izinkan member membuat room* (pesan tetap ada, tombol ditolak). Tanpa dashboard: hapus pesan panelnya di Discord — tombolnya ikut hilang. |
+| Panel tidak bisa dikirim dari dashboard | Halaman Panel butuh bot hidup; mode dashboard-saja (`npm run dashboard`) hanya bisa menyimpan tombol aktif/nonaktif. Cek juga izin bot: View Channel, Send Messages, Embed Links, Manage Messages. |
+| Dropdown server menampilkan `Server 577090` | Nama server diambil dari Discord saat bot login. Jalankan bot sekali; setelah itu nama (dan rename berikutnya) tersimpan otomatis. |
 | Moderasi tidak bereaksi | Pastikan dulu: moderasi aktif di `/moderasi` (menang atas `.env`), daftar kata tidak kosong, dan pengirimnya bukan staff/Manage Messages. Bot juga perlu izin **Manage Messages** untuk menghapus dan **Moderate Members** untuk timeout. |
 | `connect ECONNREFUSED` / `SSL required` (Postgres) | `DATABASE_URL` salah atau `sslmode=require` belum ditambahkan. Tes cepat: `DATABASE_URL=... npm run migrate:pg`. Lihat [docs/postgres.md](docs/postgres.md). |
 | Mau ganti token dashboard | `npm run token -- --write`, lalu perbarui juga variabel di panel hosting dan restart. |
@@ -418,6 +421,7 @@ src/
 │   ├── buttons.ts           # router button interaction
 │   ├── moderation.ts        # filter kata terlarang + log pelanggaran
 │   ├── vision.ts            # lampiran gambar → data URI untuk model multimodal
+│   ├── panel.ts             # kirim/hapus panel room AI (dipakai /panel & dashboard)
 │   └── ui.ts                # embed & komponen
 ├── web/
 │   ├── server.ts            # dashboard: node:http, auth token, API JSON

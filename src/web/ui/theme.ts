@@ -416,6 +416,14 @@ textarea.mono { font-family: var(--font-mono); font-size: 12.5px; }
 .empty p { margin: 0; font-size: 12.5px; max-width: 380px; }
 
 /* ---------------- misc ---------------- */
+/* Kotak informasi (mis. bot offline di halaman Panel) — tenang, bukan alarm. */
+.notice {
+  display: flex; gap: 10px; align-items: flex-start; font-size: 12.5px; line-height: 1.5;
+  color: var(--text-2); padding: 12px 14px; border-radius: var(--r-sm);
+  border: 1px solid rgba(220, 192, 143, .28); background: var(--warn-soft);
+}
+.notice svg { color: var(--warn); flex: 0 0 16px; margin-top: 1px; }
+
 .list { display: flex; flex-direction: column; }
 .list-row {
   display: flex; gap: 12px; align-items: flex-start; padding: 16px 24px; border-bottom: 1px solid var(--line);

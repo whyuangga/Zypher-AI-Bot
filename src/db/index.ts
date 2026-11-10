@@ -18,11 +18,35 @@ import { SCHEMA_PG, SCHEMA_SQLITE } from './schema.js';
 let active: Promise<Driver> | null = null;
 let activeLabel = '';
 
+/**
+ * Kolom yang ditambahkan setelah rilis pertama.
+ *
+ * `CREATE TABLE IF NOT EXISTS` tidak menyentuh tabel yang sudah ada, jadi
+ * database lama (sebelum kolom `guilds.name` ada) perlu di-ALTER sekali.
+ * Semuanya idempotent: kalau kolomnya sudah ada, error diabaikan.
+ */
+async function migrateExistingDatabase(driver: Driver): Promise<void> {
+  const statements = [
+    driver.dialect === 'pg'
+      ? 'ALTER TABLE guilds ADD COLUMN IF NOT EXISTS name TEXT'
+      : 'ALTER TABLE guilds ADD COLUMN name TEXT',
+  ];
+
+  for (const statement of statements) {
+    try {
+      await driver.exec(statement);
+    } catch {
+      // Kolom sudah ada (SQLite tidak punya IF NOT EXISTS untuk ALTER TABLE).
+    }
+  }
+}
+
 async function initDriver(): Promise<Driver> {
   if (config.database.url) {
     logger.info('Menghubungkan database Postgres…');
     const driver = await createPostgresDriver({ url: config.database.url });
     await driver.exec(SCHEMA_PG);
+    await migrateExistingDatabase(driver);
     activeLabel = driver.label;
     logger.info('Database siap: PostgreSQL (DATABASE_URL)');
     return driver;
@@ -31,6 +55,7 @@ async function initDriver(): Promise<Driver> {
   const path = config.database.path === ':memory:' ? ':memory:' : resolve(config.database.path);
   const driver = createSqliteDriver(path);
   await driver.exec(SCHEMA_SQLITE);
+  await migrateExistingDatabase(driver);
   activeLabel = driver.label;
   logger.info(`Database siap: ${path}`);
   return driver;

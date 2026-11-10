@@ -45,7 +45,9 @@ Yang dilakukan skrip ini:
 
 1. Membuat skema Postgres kalau belum ada.
 2. Menyalin tabel satu per satu: `guilds` → `memories` → `keywords` → `rooms` →
-   `messages` → `documents` → `chunks` → `transcripts` → `moderation` → `mod_logs`.
+   `messages` → `documents` → `chunks` → `transcripts` → `moderation` → `mod_logs` → `panels`.
+   Kolom yang belum ada di SQLite lama (mis. `guilds.name`) dilewati, dan tabel yang belum ada
+   dicatat sebagai dilewati — data lain tetap tersalin.
 3. **Idempotent**: baris yang sudah ada dilewati (`ON CONFLICT DO NOTHING`), jadi aman
    dijalankan ulang kalau migrasi terputus.
 4. Menyetel ulang sequence ID (`setval`) supaya ID baru tidak bertabrakan dengan data lama.
@@ -121,8 +123,8 @@ di database (berguna untuk admin yang mau melihat keseluruhan).
 ### Uji tanpa server Postgres
 
 ```bash
-npm run smoke      # 78 test, jalur SQLite
-npm run smoke:pg   # 10 test, jalur Postgres lewat pg-mem (in-memory)
+npm run smoke      # 82 test, jalur SQLite
+npm run smoke:pg   # 12 test, jalur Postgres lewat pg-mem (in-memory)
 ```
 
 `smoke:pg` membuat database Postgres palsu di memori, menjalankan skema asli, lalu menguji

@@ -6,6 +6,7 @@
  * jadi server Discord tetap bisa dipakai tanpa membuka port apa pun.
  */
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import type { Client } from 'discord.js';
 import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
@@ -26,8 +27,9 @@ import {
   getTranscript,
   getGuildSettings,
   getModerationSettings,
+  getPanel,
   listDocuments,
-  listGuildIds,
+  listGuilds,
   listGuildMemories,
   listKeywords,
   listMemoryOwners,
@@ -38,9 +40,11 @@ import {
   messagesPerDay,
   setGuildModel,
   setModerationSettings,
+  setPanelEnabled,
   setPersona,
 } from '../db/repo.js';
 import { invalidateModerationCache } from '../features/moderation.js';
+import { listPanelChannels, PanelError, panelState, publishPanel, removePanel } from '../features/panel.js';
 import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
 import { MAX_BINARY_BYTES } from '../lib/chunker.js';
 import { embeddingModelName } from '../features/rag-embed.js';
@@ -52,6 +56,7 @@ import {
   loginPage,
   memoriPage,
   moderasiPage,
+  panelPage,
   pengaturanPage,
   ringkasanPage,
   transkripPage,
@@ -68,6 +73,13 @@ const LOGIN_MAX_ATTEMPTS = 8;
 
 const sessions = new Map<string, number>();
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+
+/**
+ * Client Discord milik bot (kalau dashboard jalan di proses yang sama).
+ * `null` di mode dashboard-saja — halaman Panel tetap bisa dibuka, tapi aksi
+ * yang butuh Discord akan menampilkan pesan yang jelas.
+ */
+let botClient: Client | null = null;
 
 /* ------------------------------------------------------------------ */
 /*  Util                                                               */
@@ -277,7 +289,7 @@ async function resolveGuild(request: IncomingMessage, url: URL): Promise<string>
   const fromCookie = parseCookies(request.headers.cookie)[GUILD_COOKIE];
   if (fromCookie) return fromCookie;
 
-  return (await listGuildIds())[0] ?? '';
+  return (await listGuilds())[0]?.id ?? '';
 }
 
 /* ------------------------------------------------------------------ */
@@ -421,7 +433,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       200,
       ringkasanPage({
         guildId,
-        guilds: await listGuildIds(),
+        guilds: await listGuilds(),
         // Angka di dashboard harus mencerminkan server yang sedang dipilih.
         // Dulu ini global, jadi user melihat "1 ROOM AI" sementara daftar room
         // di bawahnya kosong — dua bagian halaman seolah saling bertentangan.
@@ -466,7 +478,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       200,
       dokumenPage({
         guildId,
-        guilds: await listGuildIds(),
+        guilds: await listGuilds(),
         documents: guildId
           ? (await listDocuments(guildId)).map((document) => ({
               id: document.id,
@@ -491,7 +503,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       200,
       keywordPage({
         guildId,
-        guilds: await listGuildIds(),
+        guilds: await listGuilds(),
         keywords: guildId
           ? (await listKeywords(guildId)).map((keyword) => ({
               id: keyword.id,
@@ -527,7 +539,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       200,
       memoriPage({
         guildId,
-        guilds: await listGuildIds(),
+        guilds: await listGuilds(),
         groups,
         status: dashboardStatus(),
         counts: await navCounts(guildId),
@@ -543,7 +555,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       200,
       transkripPage({
         guildId,
-        guilds: await listGuildIds(),
+        guilds: await listGuilds(),
         items,
         status: dashboardStatus(),
         counts: await navCounts(guildId),
@@ -559,7 +571,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       200,
       moderasiPage({
         guildId,
-        guilds: await listGuildIds(),
+        guilds: await listGuilds(),
         enabled: stored ? stored.enabled : config.moderation.enabled,
         words: stored ? stored.words : config.moderation.words,
         action: stored ? stored.action : config.moderation.action,
@@ -573,6 +585,39 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
 
+  if (path === '/panel' && method === 'GET') {
+    const status = dashboardStatus();
+    const state = guildId ? await getPanel(guildId) : null;
+
+    // Daftar channel hanya bisa diambil saat bot online. Di mode dashboard-saja
+    // admin masih bisa menempel Channel ID secara manual.
+    let channels: Array<{ id: string; name: string }> = [];
+    if (guildId && botClient?.isReady()) {
+      channels = await listPanelChannels(botClient, guildId).catch((error: unknown) => {
+        logger.warn(`Panel: gagal membaca daftar channel — ${errorMessage(error)}`);
+        return [];
+      });
+    }
+
+    sendHtml(
+      response,
+      200,
+      panelPage({
+        guildId,
+        guilds: await listGuilds(),
+        enabled: state?.enabled ?? true,
+        channelId: state?.channelId ?? null,
+        messageId: state?.messageId ?? null,
+        updatedAt: state?.updatedAt ?? null,
+        channels,
+        botOnline: status.online && status.mode === 'bot',
+        status,
+        counts: await navCounts(guildId),
+      }),
+    );
+    return;
+  }
+
   if (path === '/pengaturan' && method === 'GET') {
     const settings = guildId ? await getGuildSettings(guildId) : null;
     sendHtml(
@@ -580,7 +625,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       200,
       pengaturanPage({
         guildId,
-        guilds: await listGuildIds(),
+        guilds: await listGuilds(),
         persona: settings?.persona ?? null,
         model: settings?.model ?? null,
         defaultModel: config.ai.model,
@@ -869,6 +914,54 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
 
+  if (path === '/api/panel' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+
+    const raw = await readBody(request, 16 * 1024);
+    let payload: { action?: unknown; channelId?: unknown; enabled?: unknown };
+    try {
+      payload = JSON.parse(raw) as typeof payload;
+    } catch {
+      sendJson(response, 400, { error: 'Format JSON tidak valid.' });
+      return;
+    }
+
+    const action = payload.action === 'remove' || payload.action === 'toggle' ? payload.action : 'send';
+
+    try {
+      if (action === 'send') {
+        const channelId = typeof payload.channelId === 'string' ? payload.channelId.trim() : '';
+        if (!/^\d{15,25}$/.test(channelId)) {
+          sendJson(response, 400, { error: 'Channel ID tidak valid. Salin ID channel teks (mode Developer → Copy Channel ID).' });
+          return;
+        }
+        const result = await publishPanel(botClient as Client, guildId, channelId);
+        sendJson(response, 200, { ok: true, ...result, panel: await getPanel(guildId) });
+        return;
+      }
+
+      if (action === 'remove') {
+        const result = await removePanel(botClient as Client, guildId);
+        sendJson(response, 200, { ok: true, ...result, panel: await getPanel(guildId) });
+        return;
+      }
+
+      const enabled = Boolean(payload.enabled);
+      const panel = await setPanelEnabled(guildId, enabled);
+      sendJson(response, 200, { ok: true, panel });
+      return;
+    } catch (error) {
+      if (error instanceof PanelError) {
+        sendJson(response, 400, { error: error.message });
+        return;
+      }
+      throw error;
+    }
+  }
+
   const keywordMatch = /^\/api\/keyword\/(\d+)$/.exec(path);
   if (keywordMatch && method === 'DELETE') {
     const id = Number(keywordMatch[1]);
@@ -886,7 +979,11 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
 
 let server: Server | null = null;
 
-export function startDashboard(): Server | null {
+export function startDashboard(client?: Client | null): Server | null {
+  // Client boleh datang belakangan (bot login setelah dashboard hidup): yang
+  // disimpan adalah referensinya, dan setiap aksi mengecek `client.isReady()`.
+  if (client) botClient = client;
+
   if (!config.dashboard.token) {
     logger.info('Dashboard web nonaktif (DASHBOARD_TOKEN kosong).');
     return null;
