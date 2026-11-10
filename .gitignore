@@ -14,5 +14,4 @@ npm-debug.log*
 *.zip
 zypher-deploy.zip
 
-# screenshot pratinjau (tidak ikut di-commit)
 dashboard-shots/
