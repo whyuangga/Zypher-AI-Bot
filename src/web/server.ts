@@ -40,6 +40,10 @@ import {
   messagesPerDay,
   setGuildModel,
   setGuildTtsReplyInRoom,
+  setGuildRagEnabled,
+  setGuildVisionEnabled,
+  setGuildAutoMemory,
+  setGuildAdminOnlyRooms,
   setModerationSettings,
   setPanelEnabled,
   setPersona,
@@ -635,6 +639,14 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         ragEnabled: config.rag.enabled,
         ttsReplyInRoom: settings?.ttsReplyInRoom ?? null,
         ttsReplyInRoomDefault: config.voice.ttsReplyInRoom,
+        ragEnabledSetting: settings?.ragEnabled ?? null,
+        ragEnabledDefault: config.rag.enabled,
+        visionEnabledSetting: settings?.visionEnabled ?? null,
+        visionEnabledDefault: config.vision.enabled,
+        autoMemorySetting: settings?.autoMemory ?? null,
+        autoMemoryDefault: config.features.autoMemory,
+        adminOnlyRoomsSetting: settings?.adminOnlyRooms ?? null,
+        adminOnlyRoomsDefault: config.features.adminOnlyRooms,
         stats: {
           rooms: guildId ? await countGuildRows(guildId, 'rooms') : 0,
           messages: guildId ? await countGuildMessages(guildId) : 0,
@@ -837,7 +849,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     }
 
     const raw = await readBody(request, 32 * 1024);
-    let payload: { persona?: unknown; model?: unknown; ttsReplyInRoom?: unknown };
+    let payload: { persona?: unknown; model?: unknown; ttsReplyInRoom?: unknown; ragEnabled?: unknown; visionEnabled?: unknown; autoMemory?: unknown; adminOnlyRooms?: unknown };
     try {
       payload = JSON.parse(raw) as { persona?: unknown; model?: unknown };
     } catch {
@@ -871,12 +883,48 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       await setGuildTtsReplyInRoom(guildId, payload.ttsReplyInRoom);
     }
 
+    if (payload.ragEnabled !== undefined) {
+      if (typeof payload.ragEnabled !== 'boolean') {
+        sendJson(response, 400, { error: 'ragEnabled harus boolean.' });
+        return;
+      }
+      await setGuildRagEnabled(guildId, payload.ragEnabled);
+    }
+
+    if (payload.visionEnabled !== undefined) {
+      if (typeof payload.visionEnabled !== 'boolean') {
+        sendJson(response, 400, { error: 'visionEnabled harus boolean.' });
+        return;
+      }
+      await setGuildVisionEnabled(guildId, payload.visionEnabled);
+    }
+
+    if (payload.autoMemory !== undefined) {
+      if (typeof payload.autoMemory !== 'boolean') {
+        sendJson(response, 400, { error: 'autoMemory harus boolean.' });
+        return;
+      }
+      await setGuildAutoMemory(guildId, payload.autoMemory);
+    }
+
+    if (payload.adminOnlyRooms !== undefined) {
+      if (typeof payload.adminOnlyRooms !== 'boolean') {
+        sendJson(response, 400, { error: 'adminOnlyRooms harus boolean.' });
+        return;
+      }
+      await setGuildAdminOnlyRooms(guildId, payload.adminOnlyRooms);
+    }
+
     const settings = await getGuildSettings(guildId);
     sendJson(response, 200, {
       ok: true,
       persona: settings?.persona ?? null,
       model: settings?.model ?? null,
       ttsReplyInRoom: settings?.ttsReplyInRoom ?? null,
+      ragEnabled: settings?.ragEnabled ?? null,
+      visionEnabled: settings?.visionEnabled ?? null,
+      autoMemory: settings?.autoMemory ?? null,
+      adminOnlyRooms: settings?.adminOnlyRooms ?? null,
     });
     return;
   }

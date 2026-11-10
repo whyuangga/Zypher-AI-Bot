@@ -75,7 +75,7 @@ async function generateAnswer(
   // saat ada gambar dan modelnya dipaksa ke `VISION_MODEL`.
   const hasImages = (context.images?.length ?? 0) > 0;
   const tools: ChatTool[] | undefined =
-    !hasImages && context.allowTools && config.features.autoMemory ? memoryTools : undefined;
+    !hasImages && context.allowTools && (settings?.autoMemory ?? config.features.autoMemory) ? memoryTools : undefined;
   const model = hasImages ? config.vision.model : (settings?.model ?? context.model ?? undefined);
 
   const userMessage: ChatMessage = hasImages

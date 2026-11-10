@@ -852,6 +852,14 @@ export function pengaturanPage(
     ttsReplyInRoom: boolean | null;
     /** Default dari .env (TTS_REPLY_IN_ROOM). */
     ttsReplyInRoomDefault: boolean;
+    ragEnabledSetting: boolean | null;
+    ragEnabledDefault: boolean;
+    visionEnabledSetting: boolean | null;
+    visionEnabledDefault: boolean;
+    autoMemorySetting: boolean | null;
+    autoMemoryDefault: boolean;
+    adminOnlyRoomsSetting: boolean | null;
+    adminOnlyRoomsDefault: boolean;
     stats: { messages: number; rooms: number; documents: number };
   },
 ): string {
@@ -903,6 +911,56 @@ export function pengaturanPage(
 </div>`,
   });
 
+  const featureCard = card({
+    title: 'Fitur AI',
+    hint: 'Atur fitur AI per server — tidak perlu edit .env',
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:10px">
+  <div class="toggle-row">
+    <div>
+      <div class="cell-title">Dokumen RAG</div>
+      <div class="cell-sub">AI boleh jawab dari dokumen yang di-upload</div>
+    </div>
+    <label class="switch">
+      <input type="checkbox" id="ragEnabled"${(options.ragEnabledSetting ?? options.ragEnabledDefault) ? ' checked' : ''}>
+      <span class="slider"></span>
+    </label>
+  </div>
+  <div class="toggle-row">
+    <div>
+      <div class="cell-title">Vision (Gambar)</div>
+      <div class="cell-sub">AI boleh baca gambar yang dikirim member</div>
+    </div>
+    <label class="switch">
+      <input type="checkbox" id="visionEnabled"${(options.visionEnabledSetting ?? options.visionEnabledDefault) ? ' checked' : ''}>
+      <span class="slider"></span>
+    </label>
+  </div>
+  <div class="toggle-row">
+    <div>
+      <div class="cell-title">Auto Memory</div>
+      <div class="cell-sub">AI boleh ingat fakta otomatis dari percakapan</div>
+    </div>
+    <label class="switch">
+      <input type="checkbox" id="autoMemory"${(options.autoMemorySetting ?? options.autoMemoryDefault) ? ' checked' : ''}>
+      <span class="slider"></span>
+    </label>
+  </div>
+  <div class="toggle-row">
+    <div>
+      <div class="cell-title">Admin Only Rooms</div>
+      <div class="cell-sub">Hanya admin yang boleh buat room AI</div>
+    </div>
+    <label class="switch">
+      <input type="checkbox" id="adminOnlyRooms"${(options.adminOnlyRoomsSetting ?? options.adminOnlyRoomsDefault) ? ' checked' : ''}>
+      <span class="slider"></span>
+    </label>
+  </div>
+  <button class="btn-primary" type="button" onclick="saveFeatureToggles()">
+    ${icon('check', 16)} Simpan toggle fitur
+  </button>
+</div>`,
+  });
+
   const infoCard = card({
     title: 'Info server',
     body: `<div class="list">
@@ -927,6 +985,7 @@ export function pengaturanPage(
   })}
 <div class="grid cols-2-even">${personaCard}${modelCard}</div>
 <div class="mt">${voiceCard}</div>
+<div class="mt">${featureCard}</div>
 <div class="mt">${infoCard}</div>
 <script>
 async function saveSettings(payload) {
@@ -938,6 +997,26 @@ async function saveSettings(payload) {
       body: JSON.stringify(payload),
     });
     toast('✅ Pengaturan disimpan');
+  } catch (error) {
+    toast('Gagal menyimpan: ' + error.message, true);
+  }
+}
+
+async function saveFeatureToggles() {
+  const payload = {
+    guild: ${JSON.stringify(options.guildId)},
+    ragEnabled: document.getElementById('ragEnabled').checked,
+    visionEnabled: document.getElementById('visionEnabled').checked,
+    autoMemory: document.getElementById('autoMemory').checked,
+    adminOnlyRooms: document.getElementById('adminOnlyRooms').checked,
+  };
+  try {
+    await api('/api/pengaturan', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    toast('✅ Toggle fitur disimpan');
   } catch (error) {
     toast('Gagal menyimpan: ' + error.message, true);
   }

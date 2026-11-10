@@ -18,6 +18,14 @@ export interface GuildSettings {
   model: string | null;
   /** Otomatis membalas jawaban room dengan suara (TTS). `null` = memakai default `.env`. */
   ttsReplyInRoom: boolean | null;
+  /** AI boleh jawab dari dokumen. `null` = memakai RAG_ENABLED dari .env. */
+  ragEnabled: boolean | null;
+  /** AI boleh baca gambar. `null` = memakai VISION_ENABLED dari .env. */
+  visionEnabled: boolean | null;
+  /** AI boleh ingat otomatis. `null` = memakai AUTO_MEMORY dari .env. */
+  autoMemory: boolean | null;
+  /** Hanya admin yang boleh buat room. `null` = memakai ADMIN_ONLY_ROOMS dari .env. */
+  adminOnlyRooms: boolean | null;
   createdAt: number;
 }
 
@@ -123,6 +131,10 @@ interface GuildRow {
   persona: string | null;
   model: string | null;
   tts_reply_in_room: number | boolean | null;
+  rag_enabled: number | boolean | null;
+  vision_enabled: number | boolean | null;
+  auto_memory: number | boolean | null;
+  admin_only_rooms: number | boolean | null;
   created_at: number;
 }
 interface MemoryRow {
@@ -184,6 +196,14 @@ const toGuild = (row: GuildRow): GuildSettings => ({
     row.tts_reply_in_room === null || row.tts_reply_in_room === undefined
       ? null
       : Boolean(row.tts_reply_in_room),
+  ragEnabled:
+    row.rag_enabled === null || row.rag_enabled === undefined ? null : Boolean(row.rag_enabled),
+  visionEnabled:
+    row.vision_enabled === null || row.vision_enabled === undefined ? null : Boolean(row.vision_enabled),
+  autoMemory:
+    row.auto_memory === null || row.auto_memory === undefined ? null : Boolean(row.auto_memory),
+  adminOnlyRooms:
+    row.admin_only_rooms === null || row.admin_only_rooms === undefined ? null : Boolean(row.admin_only_rooms),
   createdAt: Number(row.created_at),
 });
 
@@ -275,6 +295,30 @@ export async function setGuildModel(guildId: string, model: string | null): Prom
 export async function setGuildTtsReplyInRoom(guildId: string, enabled: boolean | null): Promise<void> {
   await ensureGuild(guildId);
   await run('UPDATE guilds SET tts_reply_in_room = ? WHERE guild_id = ?', [enabled === null ? null : enabled ? 1 : 0, guildId]);
+}
+
+/** AI boleh jawab dari dokumen. `null` = pakai RAG_ENABLED dari .env. */
+export async function setGuildRagEnabled(guildId: string, enabled: boolean | null): Promise<void> {
+  await ensureGuild(guildId);
+  await run('UPDATE guilds SET rag_enabled = ? WHERE guild_id = ?', [enabled === null ? null : enabled ? 1 : 0, guildId]);
+}
+
+/** AI boleh baca gambar. `null` = pakai VISION_ENABLED dari .env. */
+export async function setGuildVisionEnabled(guildId: string, enabled: boolean | null): Promise<void> {
+  await ensureGuild(guildId);
+  await run('UPDATE guilds SET vision_enabled = ? WHERE guild_id = ?', [enabled === null ? null : enabled ? 1 : 0, guildId]);
+}
+
+/** AI boleh ingat otomatis. `null` = pakai AUTO_MEMORY dari .env. */
+export async function setGuildAutoMemory(guildId: string, enabled: boolean | null): Promise<void> {
+  await ensureGuild(guildId);
+  await run('UPDATE guilds SET auto_memory = ? WHERE guild_id = ?', [enabled === null ? null : enabled ? 1 : 0, guildId]);
+}
+
+/** Hanya admin yang boleh buat room. `null` = pakai ADMIN_ONLY_ROOMS dari .env. */
+export async function setGuildAdminOnlyRooms(guildId: string, enabled: boolean | null): Promise<void> {
+  await ensureGuild(guildId);
+  await run('UPDATE guilds SET admin_only_rooms = ? WHERE guild_id = ?', [enabled === null ? null : enabled ? 1 : 0, guildId]);
 }
 
 /**

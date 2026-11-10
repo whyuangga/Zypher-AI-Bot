@@ -6,6 +6,7 @@ import {
   type GuildMember,
 } from 'discord.js';
 import { config } from '../config.js';
+import { getGuildSettings } from '../db/repo.js';
 import { getPanel, getRoomByChannel } from '../db/repo.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { canManageRoom, createAiRoom, endAiRoom, replyRoomHelp } from './rooms.js';
@@ -40,7 +41,8 @@ async function handleCreate(interaction: ButtonInteraction): Promise<void> {
     return;
   }
 
-  if (config.features.adminOnlyRooms && !member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+  const settings = await getGuildSettings(interaction.guildId);
+  if ((settings?.adminOnlyRooms ?? config.features.adminOnlyRooms) && !member.permissions.has(PermissionFlagsBits.ManageGuild)) {
     await interaction.reply({
       content: '🔒 Room AI saat ini hanya bisa dibuat oleh admin server.',
       flags: MessageFlags.Ephemeral,

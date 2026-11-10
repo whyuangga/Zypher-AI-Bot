@@ -15,7 +15,7 @@ Yang bisa dilakukan:
 | `/memori` | Fakta yang diingat AI per user, dikelompokkan per member, bisa dihapus + **konsolidasi AI** (gabung duplikat, hapus noise) |
 | `/transkrip` | Arsip HTML tiap sesi AI yang sudah ditutup — unduh, lihat ringkasan, hapus |
 | `/moderasi` | Filter kata terlarang per server, tindakan (hapus/tegur/timeout), log pelanggaran |
-| `/pengaturan` | Persona AI & model per server, info server + salin Server ID |
+| `/pengaturan` | Persona AI & model per server, **toggle fitur AI** (RAG, Vision, Auto Memory, Admin Only Rooms, Suara di room), info server + salin Server ID |
 | `/healthz` | JSON status untuk monitoring (tanpa login) — termasuk engine database |
 
 Tampilan memakai gaya **editorial gelap** (hangat, bukan hitam-putih murni) dengan palet pemilik proyek:
@@ -264,6 +264,22 @@ Endpoint halaman Panel:
 Penjelasan cara pencocokan kata, pengecualian staff, dan pengiriman log ke channel ada di
 [docs/moderation.md](moderation.md). Perubahan dari dashboard langsung dipakai pada pesan
 berikutnya (cache pengaturan hanya 15 detik dan di-reset saat menyimpan).
+
+---
+
+## Toggle fitur AI per server
+
+Semua fitur AI bisa di-toggle per server dari dashboard `/pengaturan` — tidak perlu edit `.env`:
+
+| Toggle | Arti | Default .env |
+|---|---|---|
+| **Dokumen RAG** | AI boleh jawab dari dokumen yang di-upload | `RAG_ENABLED=true` |
+| **Vision (Gambar)** | AI boleh baca gambar yang dikirim member | `VISION_ENABLED=false` |
+| **Auto Memory** | AI boleh ingat fakta otomatis dari percakapan | `AUTO_MEMORY=true` |
+| **Admin Only Rooms** | Hanya admin yang boleh buat room AI | `ADMIN_ONLY_ROOMS=false` |
+| **Suara di room** | Jawaban AI di room otomatis dibacakan (TTS) | `TTS_REPLY_IN_ROOM=true` |
+
+Bila belum di-set (default), memakai nilai dari `.env`. Setelah di-set, nilai di database dipakai — overriding `.env`.
 
 ---
 

@@ -30,6 +30,7 @@ const { setGuildName, getPanel, setPanelMessage, setPanelEnabled } = await impor
 const { ringkasanPage, keywordPage, memoriPage, transkripPage, moderasiPage, panelPage } = await import(
   '../src/web/ui/pages.js'
 );
+const { pengaturanPage } = await import('../src/web/ui/pages.js');
 const {
   setModerationSettings,
   getModerationSettings,
@@ -1000,6 +1001,70 @@ test('config voice.ttsEnabled default true', () => {
 });
 test('config voice.sttModel default whisper-large-v3', () => {
   assert.equal(config.voice.sttModel, 'whisper-large-v3');
+});
+
+console.log('\nToggle fitur per server');
+test('setGuildRagEnabled menyimpan boolean', async () => {
+  const { setGuildRagEnabled, getGuildSettings } = await import('../src/db/repo.js');
+  const guild = '131313131313131313';
+  await setGuildRagEnabled(guild, true);
+  assert.equal((await getGuildSettings(guild))?.ragEnabled, true);
+  await setGuildRagEnabled(guild, false);
+  assert.equal((await getGuildSettings(guild))?.ragEnabled, false);
+  await setGuildRagEnabled(guild, null);
+  assert.equal((await getGuildSettings(guild))?.ragEnabled, null);
+});
+test('setGuildVisionEnabled menyimpan boolean', async () => {
+  const { setGuildVisionEnabled, getGuildSettings } = await import('../src/db/repo.js');
+  const guild = '131313131313131313';
+  await setGuildVisionEnabled(guild, true);
+  assert.equal((await getGuildSettings(guild))?.visionEnabled, true);
+  await setGuildVisionEnabled(guild, null);
+  assert.equal((await getGuildSettings(guild))?.visionEnabled, null);
+});
+test('setGuildAutoMemory menyimpan boolean', async () => {
+  const { setGuildAutoMemory, getGuildSettings } = await import('../src/db/repo.js');
+  const guild = '131313131313131313';
+  await setGuildAutoMemory(guild, true);
+  assert.equal((await getGuildSettings(guild))?.autoMemory, true);
+  await setGuildAutoMemory(guild, null);
+  assert.equal((await getGuildSettings(guild))?.autoMemory, null);
+});
+test('setGuildAdminOnlyRooms menyimpan boolean', async () => {
+  const { setGuildAdminOnlyRooms, getGuildSettings } = await import('../src/db/repo.js');
+  const guild = '131313131313131313';
+  await setGuildAdminOnlyRooms(guild, true);
+  assert.equal((await getGuildSettings(guild))?.adminOnlyRooms, true);
+  await setGuildAdminOnlyRooms(guild, null);
+  assert.equal((await getGuildSettings(guild))?.adminOnlyRooms, null);
+});
+test('pengaturanPage menampilkan toggle fitur', () => {
+  const page = pengaturanPage({
+    guildId: '123',
+    guilds: [],
+    persona: null,
+    model: null,
+    defaultModel: 'test',
+    embedModel: null,
+    ragEnabled: false,
+    ttsReplyInRoom: null,
+    ttsReplyInRoomDefault: true,
+    ragEnabledSetting: null,
+    ragEnabledDefault: true,
+    visionEnabledSetting: null,
+    visionEnabledDefault: false,
+    autoMemorySetting: null,
+    autoMemoryDefault: true,
+    adminOnlyRoomsSetting: null,
+    adminOnlyRoomsDefault: false,
+    stats: { messages: 0, rooms: 0, documents: 0 },
+    status: { online: false, mode: 'standalone', uptimeSeconds: 0 },
+    counts: {},
+  });
+  assert.ok(page.includes('Dokumen RAG'), 'toggle RAG ada');
+  assert.ok(page.includes('Vision'), 'toggle Vision ada');
+  assert.ok(page.includes('Auto Memory'), 'toggle Auto Memory ada');
+  assert.ok(page.includes('Admin Only Rooms'), 'toggle Admin Only Rooms ada');
 });
 
 console.log('\nVision & voice');
