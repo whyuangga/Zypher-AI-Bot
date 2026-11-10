@@ -3,19 +3,21 @@ import { config } from '../config.js';
 import { synthesizeSpeech } from '../lib/audio.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { requireGuild } from './helpers.js';
-import type { Command } from './types.js';
+import { dmCapable, type Command } from './types.js';
 
 /**
  * `/ucap` — ubah teks jadi pesan suara.
  * Berguna untuk aksesibilitas dan untuk mengecek kualitas suara TTS.
  */
 export const ucapCommand: Command = {
-  data: new SlashCommandBuilder()
-    .setName('ucap')
-    .setDescription('Ubah teks jadi pesan suara (text-to-speech)')
-    .addStringOption((option) =>
-      option.setName('teks').setDescription('Teks yang ingin diucapkan').setRequired(true).setMaxLength(1000),
+  data: dmCapable(
+    new SlashCommandBuilder()
+      .setName('ucap')
+      .setDescription('Ubah teks jadi pesan suara (text-to-speech)')
+      .addStringOption((option) =>
+        option.setName('teks').setDescription('Teks yang ingin diucapkan').setRequired(true).setMaxLength(1000),
     ),
+  ),
 
   async execute(interaction) {
     if (!(await requireGuild(interaction))) return;

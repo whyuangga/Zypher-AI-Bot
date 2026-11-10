@@ -1197,7 +1197,124 @@ test('pengaturanPage menampilkan toggle fitur', () => {
   assert.ok(page.includes('Dokumen RAG'), 'toggle RAG ada');
   assert.ok(page.includes('Vision'), 'toggle Vision ada');
   assert.ok(page.includes('Auto Memory'), 'toggle Auto Memory ada');
-  assert.ok(page.includes('Admin Only Rooms'), 'toggle Admin Only Rooms ada');
+  assert.ok(page.includes('Chat khusus admin'), 'toggle chat khusus admin ada');
+});
+
+console.log('\nSlash command di DM');
+
+test('semua command didaftarkan untuk DM (user install + konteks BotDM)', async () => {
+  const { commands } = await import('../src/commands/index.js');
+
+  for (const command of commands) {
+    const json = command.data.toJSON() as {
+      contexts?: number[];
+      integration_types?: number[];
+      name: string;
+    };
+
+    // Discord hanya menampilkan command di DM bila integration type-nya
+    // UserInstall (1) dan konteksnya memuat BotDM (1). Tanpa ini teks
+    // "/akhiri" dikirim sebagai pesan biasa dan dijawab AI.
+    assert.ok(
+      json.integration_types?.includes(1),
+      `/${json.name} harus mengizinkan user install`,
+    );
+    assert.ok(json.contexts?.includes(1), `/${json.name} harus mengizinkan konteks BotDM`);
+    assert.ok(json.contexts?.includes(0), `/${json.name} tetap harus jalan di server`);
+  }
+
+  assert.ok(commands.length > 0, 'ada command yang terdaftar');
+  // /tanya sudah dihapus — chat hanya lewat DM, tanpa perintah pembuka room.
+  assert.equal(commands.some((c) => c.data.name === 'tanya'), false, '/tanya tidak ada lagi');
+  assert.ok(commands.some((c) => c.data.name === 'akhiri'), '/akhiri terdaftar');
+  assert.ok(commands.some((c) => c.data.name === 'server'), '/server terdaftar');
+});
+
+test('register: global SELALU didaftarkan, bukan hanya saat DEV_GUILD_ID kosong', async () => {
+  const source = await readFile('src/lib/register.ts', 'utf8');
+  // Command per-guild tidak muncul di DM — global wajib, bukan opsional.
+  assert.ok(source.includes('application.commands.set(body)'), 'mendaftarkan command global');
+  assert.equal(
+    /if\s*\(config\.discord\.devGuildId\)\s*\{\s*[\s\S]{0,200}?application\.commands\.set/.test(source),
+    false,
+    'pendaftaran global tidak boleh bergantung pada DEV_GUILD_ID',
+  );
+});
+
+test('tombol dm:server:<id> punya handler', async () => {
+  const source = await readFile('src/features/buttons.ts', 'utf8');
+  // Tanpa handler, tombol pilihan server diam saja saat diklik.
+  assert.ok(source.includes("'dm:server:'"), 'prefix dm:server ditangani');
+  assert.ok(source.includes('handleDmServerPick'), 'ada fungsi handler-nya');
+  assert.ok(source.includes('listGuildChoices'), 'memverifikasi keanggotaan sebelum memilih server');
+});
+
+test('embed /server menjelaskan bahwa tidak ada channel yang dibuat', async () => {
+  const { dmServerPickerEmbed } = await import('../src/features/dm.js');
+  const embed = dmServerPickerEmbed(
+    [
+      { id: '1', name: 'Server A' },
+      { id: '2', name: 'Server B' },
+    ],
+    null,
+  ).toJSON();
+
+  const text = `${embed.title ?? ''}\n${embed.description ?? ''}`;
+  assert.ok(/bukan perintah untuk membuat channel/i.test(text), 'menjelaskan /server bukan pembuat channel');
+  assert.ok(/tidak ada channel/i.test(text), 'menegaskan tidak ada channel dibuat');
+  assert.ok(text.includes('Server A') && text.includes('Server B'), 'menampilkan daftar server');
+});
+
+test('endDmSession melaporkan kegagalan kirim transkrip', async () => {
+  const source = await readFile('src/features/dm.ts', 'utf8');
+  assert.ok(source.includes('delivered'), 'ada penanda delivered');
+  assert.ok(
+    source.includes('delivered = false'),
+    'kegagalan kirim transkrip tidak ditelan diam-diam',
+  );
+});
+
+console.log('\nScreenshot dokumentasi');
+test('screenshot: tidak ada file yang membocorkan halaman privasi', async () => {
+  const { readdir } = await import('node:fs/promises');
+  const files = await readdir('docs/screenshots');
+  const names = files.filter((f) => f.endsWith('.png'));
+
+  // Halaman memori & transkrip sudah dihapus dari dashboard — screenshot-nya
+  // juga tidak boleh ada di repo.
+  assert.equal(
+    names.some((f) => f.startsWith('memori-') || f.startsWith('transkrip-')),
+    false,
+    'tidak ada screenshot memori/transkrip',
+  );
+
+  // Setiap halaman yang masih ada harus punya versi desktop + mobile.
+  const pages = ['ringkasan', 'panel', 'dokumen', 'keyword', 'moderasi', 'pengaturan'];
+  for (const slug of pages) {
+    assert.ok(names.includes(`${slug}-desktop.png`), `screenshot ${slug}-desktop.png ada`);
+    assert.ok(names.includes(`${slug}-mobile.png`), `screenshot ${slug}-mobile.png ada`);
+  }
+  assert.ok(names.includes('login-mobile.png'), 'screenshot login ada');
+});
+
+test('screenshot: README hanya menyebut file yang benar-benar ada', async () => {
+  const { readdir } = await import('node:fs/promises');
+  const files = await readdir('docs/screenshots');
+  const readme = await readFile('docs/screenshots/README.md', 'utf8');
+
+  for (const match of readme.matchAll(/`([a-z-]+\.png)`/g)) {
+    assert.ok(files.includes(match[1]), `${match[1]} yang disebut README benar-benar ada`);
+  }
+
+  // Dokumentasi tidak boleh mengklaim halaman yang sudah dihapus.
+  assert.equal(readme.includes('memori-mobile.png'), false, 'README tanpa screenshot memori');
+  assert.equal(readme.includes('transkrip-'), false, 'README tanpa screenshot transkrip');
+});
+
+test('screenshot: seed menolak database non-demo', async () => {
+  const source = await readFile('scripts/screenshots-seed.ts', 'utf8');
+  assert.ok(source.includes("dbPath.includes('screenshot')"), 'seed memeriksa nama database');
+  assert.ok(source.includes("'[pertanyaan member]'"), 'isi pesan demo berupa penanda, bukan kalimat asli');
 });
 
 console.log('\nVision & voice');

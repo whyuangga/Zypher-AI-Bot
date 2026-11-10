@@ -1,18 +1,20 @@
 import { ChannelType, MessageFlags, SlashCommandBuilder } from 'discord.js';
 import { PanelError, publishPanel } from '../features/panel.js';
 import { requireAdmin } from './helpers.js';
-import type { Command } from './types.js';
+import { dmCapable, type Command } from './types.js';
 
 export const panelCommand: Command = {
-  data: new SlashCommandBuilder()
-    .setName('panel')
-    .setDescription('Kirim panel "Chat via DM" ke sebuah channel (admin)')
-    .addChannelOption((option) =>
-      option
-        .setName('channel')
-        .setDescription('Channel tujuan panel (default: channel ini)')
-        .addChannelTypes(ChannelType.GuildText),
+  data: dmCapable(
+    new SlashCommandBuilder()
+      .setName('panel')
+      .setDescription('Kirim panel "Chat via DM" ke sebuah channel (admin)')
+      .addChannelOption((option) =>
+        option
+          .setName('channel')
+          .setDescription('Channel tujuan panel (default: channel ini)')
+          .addChannelTypes(ChannelType.GuildText),
     ),
+  ),
 
   async execute(interaction) {
     if (!(await requireAdmin(interaction))) return;

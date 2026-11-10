@@ -1,12 +1,14 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { clearHistory, countHistory, getDmSession } from '../db/repo.js';
 import { replyEphemeral, requireGuild } from './helpers.js';
-import type { Command } from './types.js';
+import { dmCapable, type Command } from './types.js';
 
 export const resetCommand: Command = {
-  data: new SlashCommandBuilder()
-    .setName('reset')
-    .setDescription('Hapus riwayat percakapan DM ini (memori jangka panjang tetap disimpan)'),
+  data: dmCapable(
+    new SlashCommandBuilder()
+      .setName('reset')
+      .setDescription('Hapus riwayat percakapan DM ini (memori jangka panjang tetap disimpan)'),
+  ),
 
   async execute(interaction) {
     if (!(await requireGuild(interaction))) return;

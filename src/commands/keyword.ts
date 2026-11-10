@@ -3,40 +3,42 @@ import { addKeyword, deleteKeyword, listKeywords } from '../db/repo.js';
 import { BRAND_COLOR } from '../features/ui.js';
 import { truncate } from '../lib/text.js';
 import { replyEphemeral, requireAdmin, requireGuild } from './helpers.js';
-import type { Command } from './types.js';
+import { dmCapable, type Command } from './types.js';
 
 export const keywordCommand: Command = {
-  data: new SlashCommandBuilder()
-    .setName('keyword')
-    .setDescription('Kelola jawaban acuan yang divariasikan oleh AI (admin)')
-    .addSubcommand((sub) =>
-      sub
-        .setName('tambah')
-        .setDescription('Tambah jawaban acuan baru')
-        .addStringOption((option) =>
-          option
-            .setName('trigger')
-            .setDescription('Pemicu/pertanyaan acuan, mis. "server ini apa"')
-            .setRequired(true)
-            .setMaxLength(120),
-        )
-        .addStringOption((option) =>
-          option
-            .setName('jawaban')
-            .setDescription('Isi jawaban acuan. AI akan memvariasikan bahasanya.')
-            .setRequired(true)
-            .setMaxLength(1000),
-        ),
+  data: dmCapable(
+    new SlashCommandBuilder()
+      .setName('keyword')
+      .setDescription('Kelola jawaban acuan yang divariasikan oleh AI (admin)')
+      .addSubcommand((sub) =>
+        sub
+          .setName('tambah')
+          .setDescription('Tambah jawaban acuan baru')
+          .addStringOption((option) =>
+            option
+              .setName('trigger')
+              .setDescription('Pemicu/pertanyaan acuan, mis. "server ini apa"')
+              .setRequired(true)
+              .setMaxLength(120),
+          )
+          .addStringOption((option) =>
+            option
+              .setName('jawaban')
+              .setDescription('Isi jawaban acuan. AI akan memvariasikan bahasanya.')
+              .setRequired(true)
+              .setMaxLength(1000),
+          ),
     )
-    .addSubcommand((sub) => sub.setName('daftar').setDescription('Lihat semua keyword yang tersimpan'))
-    .addSubcommand((sub) =>
-      sub
-        .setName('hapus')
-        .setDescription('Hapus keyword berdasarkan id')
-        .addIntegerOption((option) =>
-          option.setName('id').setDescription('Id keyword (lihat di /keyword daftar)').setRequired(true).setMinValue(1),
-        ),
+      .addSubcommand((sub) => sub.setName('daftar').setDescription('Lihat semua keyword yang tersimpan'))
+      .addSubcommand((sub) =>
+        sub
+          .setName('hapus')
+          .setDescription('Hapus keyword berdasarkan id')
+          .addIntegerOption((option) =>
+            option.setName('id').setDescription('Id keyword (lihat di /keyword daftar)').setRequired(true).setMinValue(1),
+          ),
     ),
+  ),
 
   async execute(interaction) {
     if (!(await requireGuild(interaction)) || !interaction.guildId) return;

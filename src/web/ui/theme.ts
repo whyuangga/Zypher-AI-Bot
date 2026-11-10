@@ -222,7 +222,7 @@ code {
 .card-head .right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
 .grid { display: grid; gap: 14px; }
-.stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .cols-2 { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); align-items: start; }
 .cols-2-even { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
 .mt { margin-top: 14px; }
@@ -308,7 +308,7 @@ tbody tr:hover { background: rgba(226, 209, 204, .04); }
   background: transparent; border: 1px solid var(--line); color: var(--text-2);
   font-family: var(--font-mono); font-size: 10.5px; font-weight: 400;
 }
-.cell-title { font-weight: 500; color: var(--text); }
+.cell-title { font-weight: 500; color: var(--text); overflow-wrap: break-word; }
 .cell-sub { color: var(--text-3); font-size: 12px; }
 /* hanya tabel transkrip yang perlu satu baris — tabel lain butuh wrap normal */
 .table-stack .cell-sub {
@@ -369,7 +369,7 @@ input[type=text], input[type=password], input[type=search], input[type=url], sel
   transition: border-color .15s, background .15s;
 }
 input:focus, select:focus, textarea:focus {
-  outline: none; border-color: var(--brand-line); background: var(--surface-2);
+  outline: none; border-color: var(--brand-line); background: var(--bg-soft);
 }
 input::placeholder, textarea::placeholder { color: var(--text-3); }
 textarea { min-height: 120px; resize: vertical; line-height: 1.6; }
@@ -514,7 +514,7 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
 .pw-toggle:hover { color: var(--text); background: rgba(226, 209, 204, .06); }
 
 /* ---------------- skeleton ---------------- */
-.sk { background: var(--surface-2); border-radius: var(--r-sm); height: 12px; animation: sk 1.4s ease-in-out infinite; }
+.sk { background: var(--bg-soft); border-radius: var(--r-sm); height: 12px; animation: sk 1.4s ease-in-out infinite; }
 @keyframes sk { 0%, 100% { opacity: .45; } 50% { opacity: .9; } }
 
 /* ---------------- responsive ---------------- */
@@ -559,10 +559,10 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   .card-head { flex-wrap: wrap; row-gap: 4px; }
 }
 @media (max-width: 520px) {
-  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-  .stat { padding: 16px 14px 18px; gap: 18px; }
-  .stat-value { font-size: 40px; }
-  .stat-foot { font-size: 11px; }
+  .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .stat { padding: 13px 11px 15px; gap: 14px; }
+  .stat-value { font-size: 30px; }
+  .stat-foot { font-size: 10px; line-height: 1.35; }
   .page-head { display: block; }
   .page-head h1 { font-size: 31px; }
   .page-actions { width: 100%; margin-top: 16px; }
@@ -599,13 +599,40 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
     text-transform: uppercase; color: var(--text-3); margin-right: 5px;
   }
   .table-stack td.cell-date { flex: 0 0 auto; margin-left: auto; }
-  .table-stack td.cell-aksi { flex: 1 1 100%; }
+  /* Tombol hapus menempel di kanan baris terakhir, bukan turun ke baris sendiri. */
+  .table-stack td.cell-aksi { flex: 0 0 auto; margin-left: 0; }
   .table-stack .row-actions { justify-content: flex-start; }
-  /* Tabel log moderasi: cuplikan pesan dapat satu baris penuh, tombol hapus
-     menempel di baris terakhir bersama waktu. */
-  .table-mod td[data-label="Pesan"] { flex: 1 1 100%; }
-  .table-mod td.cell-aksi { flex: 0 0 auto; margin-left: 0; }
 }
+
+/* Baris toggle: label di kiri, switch di kanan (flex supaya tidak turun baris). */
+.toggle-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; width: 100%;
+}
+.toggle-row > div { min-width: 0; }
+
+/* Switch: input asli dipakai untuk aksesibilitas, tampilannya kotak geser. */
+.switch {
+  position: relative; display: inline-flex; flex: 0 0 auto;
+  width: 40px; height: 22px; cursor: pointer;
+}
+.switch input {
+  position: absolute; opacity: 0; width: 100%; height: 100%;
+  margin: 0; cursor: pointer; z-index: 1;
+}
+.switch .slider {
+  position: absolute; inset: 0; border-radius: 999px;
+  background: var(--bg-soft); border: 1px solid var(--line);
+  transition: background .15s ease, border-color .15s ease;
+}
+.switch .slider::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--text-3); transition: transform .15s ease, background .15s ease;
+}
+.switch input:checked + .slider { background: var(--brand-soft); border-color: var(--brand); }
+.switch input:checked + .slider::after { transform: translateX(18px); background: var(--brand); }
+.switch input:focus-visible + .slider { outline: 2px solid var(--brand); outline-offset: 2px; }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; transition-duration: .01ms !important; }

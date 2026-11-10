@@ -212,11 +212,11 @@ ${stats}
 }
 
 /* ------------------------------------------------------------------ */
-/*  Panel room AI                                                      */
+/*  Panel chat DM                                                      */
 /* ------------------------------------------------------------------ */
 
 export interface PanelOptions extends PageContext {
-  /** Tombol "Buat Room AI" aktif atau tidak. */
+  /** Tombol "Chat via DM" aktif atau tidak. */
   enabled: boolean;
   /** Channel panel aktif (null = belum pernah dikirim). */
   channelId: string | null;
@@ -254,7 +254,7 @@ export function panelPage(options: PanelOptions): string {
     : `<div class="notice">${icon('alert', 16)}<span>Bot Discord sedang offline. Panel hanya bisa dikirim atau dihapus saat bot berjalan — di mode dashboard saja, pengaturan di bawah tetap tersimpan.</span></div>`;
 
   const panelCard = card({
-    title: 'Panel room AI',
+    title: 'Panel chat DM',
     hint: 'satu channel per server',
     right: status,
     body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
@@ -280,27 +280,27 @@ export function panelPage(options: PanelOptions): string {
   });
 
   const toggleCard = card({
-    title: 'Tombol Buat Room AI',
+    title: 'Tombol Chat via DM',
     hint: 'berlaku untuk panel yang sudah terkirim',
     body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
   <label class="check-row" style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-2)">
     <input type="checkbox" id="panelEnabled" ${options.enabled ? 'checked' : ''} onchange="togglePanel()"
       style="width:16px;height:16px;accent-color:var(--accent)">
-    <span>Izinkan member membuat room lewat panel</span>
+    <span>Izinkan member memulai chat lewat panel</span>
   </label>
   <div class="list">
     <div class="kv"><span>Channel</span><b>${options.channelId ? `<span class="mono">…${esc(options.channelId.slice(-6))}</span>` : '—'}</b></div>
     <div class="kv"><span>Pesan panel</span><b>${options.messageId ? `<span class="mono">…${esc(options.messageId.slice(-6))}</span>` : 'belum dikirim'}</b></div>
     <div class="kv"><span>Diperbarui</span><b>${options.updatedAt ? esc(relativeTime(options.updatedAt)) : '—'}</b></div>
   </div>
-  <p class="hint" style="margin:0">Dimatikan = tombol <b>Buat Room AI</b> menjawab "sedang dinonaktifkan admin". Pesan panelnya tetap bisa dibaca member, dan <code>/panel</code> di Discord tetap menyimpan catatan ke halaman ini.</p>
+  <p class="hint" style="margin:0">Dimatikan = tombol <b>Chat via DM</b> menjawab "sedang dinonaktifkan admin". Pesan panelnya tetap bisa dibaca member, dan <code>/panel</code> di Discord tetap menyimpan catatan ke halaman ini.</p>
 </div>`,
   });
 
   const body = `${pageHead({
     kicker: '02 — Pintu masuk',
     title: 'Panel',
-    subtitle: 'Tombol "Buat Room AI" untuk member. Kirim, pindahkan, atau hapus panel dari sini tanpa perlu mengetik perintah di Discord.',
+    subtitle: 'Tombol "Chat via DM" untuk member. Kirim, pindahkan, atau hapus panel dari sini tanpa perlu mengetik perintah di Discord.',
     actions: status,
   })}
 ${options.botOnline ? '' : `<div class="mt">${offlineNotice}</div>`}
@@ -336,7 +336,7 @@ async function sendPanel() {
 }
 
 async function removePanelAction() {
-  var ok = await askConfirm('Hapus panel?', 'Pesan panel akan dihapus dari Discord, jadi tombol "Buat Room AI" tidak bisa diklik lagi. Member tetap bisa memakai room yang sedang aktif.');
+  var ok = await askConfirm('Hapus panel?', 'Pesan panel akan dihapus dari Discord, jadi tombol "Chat via DM" tidak bisa diklik lagi.');
   if (!ok) return;
   try {
     await panelApi({ guild: ${JSON.stringify(options.guildId)}, action: 'remove' });
@@ -388,10 +388,10 @@ export function dokumenPage(options: PageContext & { documents: DocumentRowView[
     ? options.documents
         .map(
           (document) => `<tr>
-  <td>
+  <td class="cell-main-cell">
     <div class="cell-main">
       <span class="avatar-sm">${icon('file', 15)}</span>
-      <span>
+      <span style="min-width:0">
         <div class="cell-title">${esc(document.name)}</div>
         <div class="cell-sub">${badge(document.source === 'dashboard' ? 'dashboard' : document.source, 'brand', false)}</div>
       </span>
@@ -401,8 +401,8 @@ export function dokumenPage(options: PageContext & { documents: DocumentRowView[
     <div class="cell-title">${formatNumber(document.chunkCount)}&nbsp;potongan</div>
     <div class="cell-sub">${formatNumber(document.chars)}&nbsp;karakter</div>
   </td>
-  <td><span class="cell-sub">${esc(formatDate(document.createdAt))}</span></td>
-  <td class="num">
+  <td class="cell-date" data-label="Ditambahkan"><span class="cell-sub">${esc(formatDate(document.createdAt))}</span></td>
+  <td class="num cell-aksi">
     <button class="btn-danger btn-sm btn-icon" type="button"
       onclick="removeDoc(${document.id}, ${esc(JSON.stringify(document.name))})"
       title="Hapus dokumen" aria-label="Hapus ${esc(document.name)}">${icon('trash', 15)}</button>
@@ -464,7 +464,7 @@ export function dokumenPage(options: PageContext & { documents: DocumentRowView[
     title: 'Dokumen tersimpan',
     hint: `${options.documents.length} dokumen`,
     body: rows
-      ? `<div class="table-wrap"><table>
+      ? `<div class="table-wrap"><table class="table-stack">
   <thead><tr><th>Nama</th><th>Indeks</th><th>Ditambahkan</th><th></th></tr></thead>
   <tbody>${rows}</tbody>
 </table></div>`
@@ -744,7 +744,7 @@ export function pengaturanPage(
     hint: 'gaya bicara bot di server ini',
     body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:12px">
   <textarea id="persona" placeholder="Contoh: Kamu asisten komunitas yang ramah, menjawab singkat, dan memakai bahasa Indonesia santai.">${esc(options.persona ?? '')}</textarea>
-  <p class="hint">Kosongkan untuk memakai persona bawaan. Persona berlaku untuk semua room di server ini.</p>
+  <p class="hint">Kosongkan untuk memakai persona bawaan. Persona berlaku untuk semua percakapan di server ini.</p>
   <button class="btn-primary" type="button" id="savePersona" onclick="saveSettings({ persona: document.getElementById('persona').value })">
     ${icon('check', 16)} Simpan persona
   </button>
@@ -767,13 +767,13 @@ export function pengaturanPage(
   });
 
   const voiceCard = card({
-    title: 'Suara di room AI',
+    title: 'Suara balasan AI',
     hint: options.ttsReplyInRoom === null ? `default .env: ${options.ttsReplyInRoomDefault ? 'aktif' : 'nonaktif'}` : 'diset per server',
     body: `<div class=\"card-pad\" style=\"padding-top:6px;display:grid;gap:12px\">
   <div class=\"toggle-row\">
     <div>
-      <div class=\"cell-title\">RAG suara di room</div>
-      <div class=\"cell-sub\">Jawaban AI di room otomatis dibacakan (TTS)</div>
+      <div class=\"cell-title\">Suara pada balasan AI</div>
+      <div class=\"cell-sub\">Jawaban AI di DM otomatis dibacakan (TTS)</div>
     </div>
     <label class=\"switch\">
       <input type=\"checkbox\" id=\"ttsReplyInRoom\"${(options.ttsReplyInRoom ?? options.ttsReplyInRoomDefault) ? ' checked' : ''}>
@@ -823,8 +823,8 @@ export function pengaturanPage(
   </div>
   <div class="toggle-row">
     <div>
-      <div class="cell-title">Admin Only Rooms</div>
-      <div class="cell-sub">Hanya admin yang boleh buat room AI</div>
+      <div class="cell-title">Chat khusus admin</div>
+      <div class="cell-sub">Hanya admin yang boleh memulai chat AI</div>
     </div>
     <label class="switch">
       <input type="checkbox" id="adminOnlyRooms"${(options.adminOnlyRoomsSetting ?? options.adminOnlyRoomsDefault) ? ' checked' : ''}>
@@ -844,7 +844,7 @@ export function pengaturanPage(
   <div class="kv"><span>Mode</span><b>${options.status.mode === 'bot' ? 'Bot + dashboard' : 'Dashboard saja'}</b></div>
   <div class="kv"><span>Dokumen RAG</span>${options.ragEnabled ? badge('Aktif', 'ok') : badge('Nonaktif', 'warn')}</div>
   <div class="kv"><span>Embedding</span><b class="mono">${esc(options.embedModel ?? 'tidak dipakai')}</b></div>
-  <div class="kv"><span>Room AI</span><b>${formatNumber(options.stats.rooms)}</b></div>
+  <div class="kv"><span>Sesi DM</span><b>${formatNumber(options.stats.rooms)}</b></div>
   <div class="kv"><span>Pesan tersimpan</span><b>${formatNumber(options.stats.messages)}</b></div>
 </div>
 <div class="card-pad">
@@ -1005,7 +1005,7 @@ export function moderasiPage(options: ModerasiOptions): string {
       <span class="avatar-sm">${esc(initials(log.userId))}</span>
       <span style="min-width:0">
         <div class="cell-title">${esc(log.userName)}</div>
-        <div class="cell-sub">#${esc(log.channelId)}</div>
+        <div class="cell-sub">#${esc(log.userId)}</div>
       </span>
     </div>
   </td>

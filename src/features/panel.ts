@@ -1,5 +1,5 @@
 /**
- * Panel "Buat Room AI": kirim, pindahkan, dan hapus dari dashboard.
+ * Panel "Chat via DM": kirim, pindahkan, dan hapus dari dashboard.
  *
  * Aturan produknya sederhana: **satu panel per server**, di satu channel.
  * Mengirim panel ke channel lain otomatis menghapus panel lama supaya member

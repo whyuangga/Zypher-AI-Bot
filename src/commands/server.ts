@@ -5,7 +5,7 @@ import {
   listGuildChoices,
 } from '../features/dm.js';
 import { getDmSession, setDmSession } from '../db/repo.js';
-import type { Command } from './types.js';
+import { dmCapable, type Command } from './types.js';
 
 /**
  * `/server` — pilih server konteks untuk percakapan DM.
@@ -15,12 +15,14 @@ import type { Command } from './types.js';
  * ke server itu.
  */
 export const serverCommand: Command = {
-  data: new SlashCommandBuilder()
-    .setName('server')
-    .setDescription('Pilih server konteks untuk chat AI di DM')
-    .addStringOption((option) =>
-      option.setName('nama').setDescription('Nama server (opsional, kalau ingin langsung memilih)'),
+  data: dmCapable(
+    new SlashCommandBuilder()
+      .setName('server')
+      .setDescription('Pilih server konteks AI (persona/dokumen/memori) — tidak membuat channel')
+      .addStringOption((option) =>
+        option.setName('nama').setDescription('Nama server (opsional, kalau ingin langsung memilih)'),
     ),
+  ),
 
   async execute(interaction) {
     const choices = await listGuildChoices(interaction.client, interaction.user.id);

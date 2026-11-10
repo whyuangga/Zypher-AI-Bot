@@ -2,12 +2,14 @@ import { MessageFlags, SlashCommandBuilder, type User } from 'discord.js';
 import { consolidateMemories } from '../features/memory.js';
 import { listMemories } from '../db/repo.js';
 import { replyEphemeral, resolveContextGuild } from './helpers.js';
-import type { Command } from './types.js';
+import { dmCapable, type Command } from './types.js';
 
 export const konsolidasiCommand: Command = {
-  data: new SlashCommandBuilder()
-    .setName('konsolidasi')
-    .setDescription('AI meninjau memori kamu dan menggabungkan fakta yang berulang'),
+  data: dmCapable(
+    new SlashCommandBuilder()
+      .setName('konsolidasi')
+      .setDescription('AI meninjau memori kamu dan menggabungkan fakta yang berulang'),
+  ),
 
   async execute(interaction) {
     const guildId = await resolveContextGuild(interaction);

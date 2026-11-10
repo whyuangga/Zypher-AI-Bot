@@ -252,7 +252,7 @@ export async function setGuildModel(guildId: string, model: string | null): Prom
 }
 
 /**
- * Simpan toggle "RAG suara di room" per server.
+ * Simpan toggle "suara pada balasan AI" per server.
  * `null` = pakai default dari .env (TTS_REPLY_IN_ROOM).
  */
 export async function setGuildTtsReplyInRoom(guildId: string, enabled: boolean | null): Promise<void> {

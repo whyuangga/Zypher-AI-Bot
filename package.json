@@ -1,7 +1,7 @@
 {
   "name": "zypher-ai-bot",
   "version": "1.0.0",
-  "description": "Discord AI bot — private AI rooms, long-term memory, custom keyword answers, and session transcripts.",
+  "description": "Discord AI bot \u2014 private AI rooms, long-term memory, custom keyword answers, and session transcripts.",
   "private": true,
   "type": "module",
   "engines": {
@@ -21,7 +21,9 @@
     "bundle": "tsx scripts/bundle.ts",
     "token": "tsx scripts/token.ts",
     "smoke:pg": "tsx scripts/smoke-pg.ts",
-    "migrate:pg": "tsx scripts/migrate-to-pg.ts"
+    "migrate:pg": "tsx scripts/migrate-to-pg.ts",
+    "screenshots": "tsx scripts/screenshots.ts",
+    "screenshots:seed": "tsx scripts/screenshots-seed.ts"
   },
   "keywords": [
     "discord",

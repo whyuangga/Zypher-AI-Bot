@@ -59,8 +59,19 @@ yang benar (`https://api.groq.com/openai/v1` dan `openai/gpt-oss-120b`).
 ### Cara mendapatkan `DEV_GUILD_ID`
 
 Di Discord: **Settings → Advanced → Developer Mode: ON** → klik kanan nama server → **Copy Server ID**.
-Kalau diisi, slash command langsung muncul (instan). Kalau kosong, command didaftarkan global dan bisa
-butuh sampai **1 jam** untuk tampil.
+
+Ini **opsional** dan hanya mempercepat: command didaftarkan instan di server itu untuk pengujian.
+Command **global tetap selalu didaftarkan**, karena itulah satu-satunya cara slash command muncul
+di DM bot — dan seluruh percakapan AI berjalan di DM.
+
+> ⚠️ **Kalau `/akhiri` dan `/server` tidak muncul di DM**, hampir selalu ini penyebabnya:
+> versi lama hanya mendaftarkan command per-guild saat `DEV_GUILD_ID` diisi. Teks `/akhiri` lalu
+> dikirim sebagai pesan biasa dan dijawab AI sebagai pertanyaan ("Baik, sampai jumpa lagi! 👋")
+> — chat tidak berakhir dan transkrip tidak pernah terkirim.
+>
+> Perbaikannya: update bot, lalu **restart sekali**. Setelah restart, teks di DM mulai dikenali
+> sebagai command. Kalau masih belum muncul, tunggu hingga 1 jam (cache global Discord) atau
+> **kick lalu invite ulang** bot dengan scope `bot applications.commands`.
 
 ---
 
