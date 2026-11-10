@@ -699,4 +699,43 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   border-radius: 8px;
   border: 1px solid var(--line);
 }
+
+/* Banner unggahan: kotak pratinjau di kiri, tombol di kanan.
+   Ukurannya dibuat mirip kartu (900x320) tapi lebih pendek supaya tidak makan
+   tempat di form. */
+.banner-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.banner-preview {
+  flex: 1 1 260px;
+  min-height: 96px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  background: rgba(109, 140, 255, 0.03);
+  overflow: hidden;
+}
+.banner-preview img {
+  display: block;
+  width: 100%;
+  max-height: 150px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+.banner-preview span {
+  font-size: 12px;
+  color: var(--text-3);
+  text-align: center;
+}
+.banner-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 `;

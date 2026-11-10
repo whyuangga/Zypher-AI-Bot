@@ -144,6 +144,39 @@ Setiap balasan = satu panggilan model (kadang dua, kalau AI memakai tool memori)
 Dengan batas 6/jam, maksimal ~144 panggilan per hari per server. Naikkan batasnya
 dengan sadar; turunkan kalau kuota terasa cepat habis.
 
+### Banner sendiri (unggahan)
+
+Kedua fitur bisa memakai **gambar banner sendiri** — misalnya foto komunitas,
+logo, atau ilustrasi. Unggah dari dashboard, tepat di bawah opsi kartu.
+
+| | |
+|---|---|
+| Format | PNG, JPG, WebP |
+| Ukuran file | maksimal 8 MB |
+| Ukuran gambar | minimal 300px lebar; **disarankan 900×320** |
+| Tempat penyimpanan | `data/banners/` (tidak ikut Git) |
+
+**Bagaimana banner dipakai**
+
+- **Kartu menyala** → banner menjadi **strip di bagian atas kartu**, dan teks
+  (nama, sapaan) di area gelap di bawahnya. Kartu otomatis jadi lebih tinggi.
+- **Kartu mati** → banner tetap dipakai sebagai **gambar embed**, jadi unggahan
+  tidak sia-sia.
+- **Belum ada banner** → kartu memakai latar gradien bawaan seperti sebelumnya.
+
+Banner sengaja **tidak** dipasang sebagai latar penuh di belakang teks: hampir
+semua gambar punya teks atau logo sendiri, dan hasilnya pasti bertabrakan dengan
+nama member. Strip memberi batas jelas antara gambar dan teks.
+
+**Kalau mengganti banner**, file lama dihapus otomatis setelah file baru
+tersimpan — jadi tidak ada sampah menumpuk dan tidak ada kondisi "banner hilang"
+kalau unggahan baru gagal. Tombol **Hapus** mengembalikan kartu ke latar bawaan.
+
+**Keamanan unggahan**: format ditentukan dari **isi file** (magic bytes), bukan
+dari ekstensi atau MIME yang dikirim browser; nama file dibuat acak oleh server;
+gambar yang bukan PNG/JPG/WebP sah ditolak. Semua ini diuji otomatis.
+
+
 ---
 
 ## Pratinjau & tombol tes (tanpa menunggu member)

@@ -151,7 +151,17 @@ export interface WelcomePreviewOptions {
   /** Render kartu PNG juga — memakan waktu, jadi opsional. */
   withCard?: boolean;
   /** Pemanggil menyediakan renderer supaya modul ini tidak bergantung Chromium. */
-  renderCard?: (input: { name: string; text: string; guildName: string }) => Promise<Buffer | null>;
+  renderCard?: (input: {
+    name: string;
+    text: string;
+    guildName: string;
+    bannerDataUri?: string | null;
+    kicker?: string;
+  }) => Promise<Buffer | null>;
+  /** Banner unggahan admin (data URI) untuk ikut dirender di kartu. */
+  bannerDataUri?: string | null;
+  /** Judul kecil di kartu: "SELAMAT DATANG" atau "SAMPAI JUMPA". */
+  kicker?: string;
 }
 
 /** Hasil sambutan seperti yang akan diterima member — tanpa mengirim apa pun. */
@@ -183,7 +193,13 @@ export async function previewWelcome(options: WelcomePreviewOptions): Promise<Pr
 
   if (options.withCard && options.renderCard) {
     try {
-      const buffer = await options.renderCard({ name, text: finalText, guildName });
+      const buffer = await options.renderCard({
+        name,
+        text: finalText,
+        guildName,
+        bannerDataUri: options.bannerDataUri ?? null,
+        kicker: options.kicker,
+      });
       result.card = Boolean(buffer);
       result.cardBytes = buffer?.byteLength ?? 0;
       result.cardDataUri = buffer ? `data:image/png;base64,${buffer.toString('base64')}` : undefined;

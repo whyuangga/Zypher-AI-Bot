@@ -16,6 +16,15 @@ import { errorMessage, logger } from '../lib/logger.js';
 const CARD_WIDTH = 900;
 const CARD_HEIGHT = 320;
 
+/**
+ * Tinggi strip banner di bagian atas kartu.
+ *
+ * Kalau banner dipakai, kartu jadi lebih tinggi supaya teks tetap punya ruang
+ * dan tidak menimpa gambar. 110px cukup untuk menampilkan potongan gambar yang
+ * masih bisa dikenali pada lebar 900px.
+ */
+const BANNER_HEIGHT = 110;
+
 /** Lokasi font yang dipakai kartu (self-host, tidak boleh ambil dari internet). */
 const FONT_DIR = join(process.cwd(), 'assets', 'fonts');
 
@@ -87,39 +96,58 @@ export function wrap(text: string, perLine: number, maxLines: number): string[] 
   return lines;
 }
 
-interface CardInput {
+export interface CardInput {
   userName: string;
   guildName: string;
   message: string;
   /** PNG/JPG yang sudah diunduh, dalam bentuk data URI. */
   avatarDataUri: string | null;
+  /** Banner unggahan admin (data URI) — dipakai sebagai latar kartu. */
+  bannerDataUri?: string | null;
+  /**
+   * Judul kecil di atas nama server. Sambutan: "SELAMAT DATANG",
+   * perpisahan: "SAMPAI JUMPA".
+   */
+  kicker?: string;
+}
+
+/** Tinggi kartu untuk input tertentu (banner membuat kartu lebih tinggi). */
+export function cardHeight(input: { bannerDataUri?: string | null }): number {
+  return CARD_HEIGHT + (input.bannerDataUri ? BANNER_HEIGHT : 0);
 }
 
 function buildSvg(input: CardInput): string {
+  // Kalau ada banner, semua teks digeser ke bawah selebar strip banner.
+  const offset = input.bannerDataUri ? BANNER_HEIGHT : 0;
+  const height = CARD_HEIGHT + offset;
   const name = input.userName.slice(0, 28);
   const lines = wrap(input.message, 52, 3);
   const hasAvatar = Boolean(input.avatarDataUri);
   const avatar = hasAvatar
-    ? `<circle cx="126" cy="172" r="70" fill="none" stroke="#716c98" stroke-width="2" opacity="0.5"/>
-  <image href="${input.avatarDataUri}" x="60" y="106" width="132" height="132" clip-path="url(#avatarClip)" preserveAspectRatio="xMidYMid slice"/>`
+    ? `<circle cx="126" cy="${172 + offset}" r="70" fill="none" stroke="#716c98" stroke-width="2" opacity="0.5"/>
+  <image href="${input.avatarDataUri}" x="60" y="${106 + offset}" width="132" height="132" clip-path="url(#avatarClip)" preserveAspectRatio="xMidYMid slice"/>`
     : '';
   // Tanpa avatar, teks dirapatkan ke kiri supaya tidak ada ruang kosong besar.
   const textX = hasAvatar ? 232 : 60;
   const textLines = lines
     .map(
       (line, index) =>
-        `<text x="${textX}" y="${202 + index * 38}" font-family="General Sans, sans-serif" font-size="26" fill="#e2d1cc" opacity="0.94">${escapeXml(
+        `<text x="${textX}" y="${202 + offset + index * 38}" font-family="General Sans, sans-serif" font-size="26" fill="#e2d1cc" opacity="0.94">${escapeXml(
           line,
         )}</text>`,
     )
     .join('\n  ');
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_WIDTH}" height="${CARD_HEIGHT}" viewBox="0 0 ${CARD_WIDTH} ${CARD_HEIGHT}">
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_WIDTH}" height="${height}" viewBox="0 0 ${CARD_WIDTH} ${height}">
   <defs>
-    <clipPath id="avatarClip"><circle cx="126" cy="172" r="66"/></clipPath>
+    <clipPath id="avatarClip"><circle cx="126" cy="${172 + offset}" r="66"/></clipPath>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#17141d"/>
       <stop offset="100%" stop-color="#0d0d0f"/>
+    </linearGradient>
+    <linearGradient id="fadeDown" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#141119" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#141119" stop-opacity="1"/>
     </linearGradient>
     <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0%" stop-color="#716c98"/>
@@ -127,16 +155,29 @@ function buildSvg(input: CardInput): string {
     </linearGradient>
   </defs>
 
-  <rect width="${CARD_WIDTH}" height="${CARD_HEIGHT}" fill="url(#bg)"/>
+  <rect width="${CARD_WIDTH}" height="${height}" fill="url(#bg)"/>
+  ${
+    // Banner dipasang sebagai STRIP di bagian atas, bukan latar penuh.
+    // Alasannya: dengan latar penuh, teks milik banner (judul, logo) akan
+    // bertabrakan dengan nama member dan sapaan — tidak ada penempatan yang
+    // aman untuk semua gambar. Strip membuat batas jelas: gambar di atas,
+    // teks di area gelap di bawahnya.
+    input.bannerDataUri
+      ? `<image href="${input.bannerDataUri}" x="0" y="0" width="${CARD_WIDTH}" height="${BANNER_HEIGHT}" preserveAspectRatio="xMidYMid slice"/>
+  <rect x="0" y="${BANNER_HEIGHT - 44}" width="${CARD_WIDTH}" height="44" fill="url(#fadeDown)"/>`
+      : ''
+  }
   <rect x="0" y="0" width="${CARD_WIDTH}" height="4" fill="url(#accent)"/>
 
-  <text x="60" y="62" font-family="General Sans, sans-serif" font-size="15" letter-spacing="4" fill="#716c98">SELAMAT DATANG</text>
-  <text x="60" y="94" font-family="General Sans, sans-serif" font-size="34" font-weight="500" fill="#e2d1cc">${escapeXml(
+  <text x="60" y="${62 + offset}" font-family="General Sans, sans-serif" font-size="15" letter-spacing="4" fill="#d0b2b7">${escapeXml(
+    (input.kicker ?? 'SELAMAT DATANG').toUpperCase().slice(0, 24),
+  )}</text>
+  <text x="60" y="${94 + offset}" font-family="General Sans, sans-serif" font-size="34" font-weight="500" fill="#e2d1cc">${escapeXml(
     input.guildName.slice(0, 40),
   )}</text>
 
   ${avatar}
-  <text x="${textX}" y="160" font-family="General Sans, sans-serif" font-size="40" font-weight="500" fill="#ffffff">${escapeXml(
+  <text x="${textX}" y="${160 + offset}" font-family="General Sans, sans-serif" font-size="40" font-weight="500" fill="#ffffff">${escapeXml(
     name,
   )}</text>
   ${textLines}
@@ -164,6 +205,7 @@ export async function renderWelcomeCard(input: CardInput): Promise<Buffer | null
       }>;
     };
     const svg = buildSvg(input);
+    const height = cardHeight(input);
 
     // Font di-embed sebagai data URI supaya kartu tidak bergantung pada
     // font yang terpasang di server.
@@ -193,13 +235,13 @@ export async function renderWelcomeCard(input: CardInput): Promise<Buffer | null
 
     try {
       const page = await browser.newPage();
-      await page.setViewport({ width: CARD_WIDTH, height: CARD_HEIGHT, deviceScaleFactor: 2 });
+      await page.setViewport({ width: CARD_WIDTH, height, deviceScaleFactor: 2 });
       await page.setContent(
         `<html><body style="margin:0">${svgWithFonts}</body></html>`,
         { waitUntil: 'load' },
       );
       await page.evaluate('document.fonts.ready');
-      const png = await page.screenshot({ type: 'png', clip: { x: 0, y: 0, width: CARD_WIDTH, height: CARD_HEIGHT } });
+      const png = await page.screenshot({ type: 'png', clip: { x: 0, y: 0, width: CARD_WIDTH, height } });
       return Buffer.from(png);
     } finally {
       await browser.close();

@@ -926,6 +926,10 @@ export interface WelcomePageOptions extends PageContext {
     includeAvatar: boolean;
     style: string | null;
     example: string | null;
+    /** Nama file banner (null = latar bawaan). */
+    bannerPath: string | null;
+    /** Banner tersimpan sebagai data URI, untuk langsung ditampilkan. */
+    bannerPreview: string | null;
   };
   goodbye: {
     enabled: boolean;
@@ -934,6 +938,10 @@ export interface WelcomePageOptions extends PageContext {
     template: string | null;
     style: string | null;
     example: string | null;
+    bannerPath: string | null;
+    bannerPreview: string | null;
+    imageEnabled: boolean;
+    includeAvatar: boolean;
   };
   channels: Array<{ id: string; name: string }>;
   botOnline: boolean;
@@ -961,6 +969,47 @@ function channelOptions(
 }
 
 const CHECK_ROW = 'style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-2)"';
+
+/**
+ * Blok unggah banner.
+ *
+ * Banner dipakai sebagai latar kartu PNG; kalau kartu dimatikan, banner tetap
+ * dipakai sebagai gambar embed. Karena itu blok ini muncul di kedua kartu
+ * (sambutan & perpisahan) dengan nama field yang berbeda.
+ *
+ * File dibaca di browser lalu dikirim sebagai data URI: tidak perlu parser
+ * multipart di server, dan pratinjaunya bisa langsung tampil tanpa menunggu.
+ */
+function bannerBlock(
+  kind: 'welcome' | 'goodbye',
+  currentPath: string | null,
+  preview: string | null,
+): string {
+  const label = kind === 'welcome' ? 'sambutan' : 'perpisahan';
+  // Server sudah mengirim data URI banner yang tersimpan, jadi halaman bisa
+  // langsung menampilkannya tanpa permintaan tambahan.
+
+  return `<div>
+    <label class="field">Banner ${label} <span class="hint" style="margin:0;text-transform:none;letter-spacing:0">(opsional)</span></label>
+    <div class="banner-row">
+      <div class="banner-preview" id="bannerBox-${kind}">
+        <img id="bannerImg-${kind}" alt="Banner ${label}"${preview ? ` src="${esc(preview)}"` : ' hidden'}>
+        <span id="bannerEmpty-${kind}"${preview ? ' hidden' : ''}>Belum ada banner — kartu memakai latar bawaan.</span>
+      </div>
+      <div class="banner-actions">
+        <input type="file" id="bannerFile-${kind}" accept="image/png,image/jpeg,image/webp" hidden
+               onchange="uploadBanner('${kind}', this)">
+        <button class="btn-ghost" type="button" onclick="document.getElementById('bannerFile-${kind}').click()">
+          Pilih gambar
+        </button>
+        <button class="btn-ghost" type="button" id="bannerClear-${kind}" onclick="removeBanner('${kind}')"${currentPath ? '' : ' hidden'}>
+          Hapus
+        </button>
+      </div>
+    </div>
+    <p class="hint">PNG, JPG, atau WebP — maksimal 8 MB, minimal 300px lebar. Disarankan 900×320 agar pas di kartu.</p>
+  </div>`;
+}
 
 export function welcomePage(options: WelcomePageOptions): string {
   const welcomeStatus = options.welcome.enabled ? badge('Aktif', 'ok') : badge('Nonaktif', 'warn');
@@ -1020,6 +1069,8 @@ export function welcomePage(options: WelcomePageOptions): string {
     <span>Tampilkan avatar member di kartu</span>
   </label>
 
+  ${bannerBlock('welcome', options.welcome.bannerPath, options.welcome.bannerPreview)}
+
   <div><button class="btn-primary" type="button" onclick="saveWelcome()">${icon('check', 16)} Simpan sambutan</button></div>
 </div>`,
   });
@@ -1070,6 +1121,17 @@ export function welcomePage(options: WelcomePageOptions): string {
     </div>
   </div>
 
+  <label class="check-row" ${CHECK_ROW}>
+    <input type="checkbox" id="goodbyeImage" ${options.goodbye.imageEnabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Kirim kartu perpisahan (gambar PNG)</span>
+  </label>
+  <label class="check-row" ${CHECK_ROW}>
+    <input type="checkbox" id="goodbyeAvatar" ${options.goodbye.includeAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Tampilkan avatar member di kartu</span>
+  </label>
+
+  ${bannerBlock('goodbye', options.goodbye.bannerPath, options.goodbye.bannerPreview)}
+
   <div><button class="btn-primary" type="button" onclick="saveGoodbye()">${icon('check', 16)} Simpan salam</button></div>
 </div>`,
   });
@@ -1104,6 +1166,7 @@ export function welcomePage(options: WelcomePageOptions): string {
   <div class="preview-box" id="outGoodbye" hidden>
     <div class="preview-meta" id="metaGoodbye"></div>
     <div class="preview-text" id="textGoodbye"></div>
+    <img id="cardGoodbye" class="preview-img" alt="Kartu perpisahan" hidden>
   </div>
 
   <p class="hint" style="margin:0">Yang diuji adalah <b>isi pesannya</b>, bukan pengirimannya. Tombol ini memakai form di atas apa adanya, jadi kamu bisa mencoba gaya lain sebelum menyimpan.</p>
@@ -1132,6 +1195,69 @@ async function saveWelcome() {
   }, 'Sambutan disimpan.');
 }
 
+/**
+ * Baca file di browser, kirim sebagai data URI, lalu tampilkan hasilnya.
+ *
+ * Validasi ukuran dilakukan di sini juga supaya file 50 MB tidak dikirim
+ * percuma — server tetap memeriksa ulang isinya.
+ */
+function uploadBanner(kind, input) {
+  var file = input.files && input.files[0];
+  if (!file) return;
+  if (file.size > 8 * 1024 * 1024) {
+    toast('Gambar terlalu besar — maksimal 8 MB.', true);
+    input.value = '';
+    return;
+  }
+
+  var reader = new FileReader();
+  reader.onload = async function () {
+    try {
+      var data = await api('/api/banner/' + kind, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ dataUri: reader.result }),
+      });
+      showBanner(kind, data.preview || null);
+      toast('✅ Banner ' + (kind === 'welcome' ? 'sambutan' : 'perpisahan') + ' tersimpan');
+    } catch (error) {
+      toast('Gagal mengunggah: ' + error.message, true);
+    } finally {
+      input.value = '';
+    }
+  };
+  reader.onerror = function () {
+    toast('Gagal membaca file.', true);
+    input.value = '';
+  };
+  reader.readAsDataURL(file);
+}
+
+async function removeBanner(kind) {
+  try {
+    await api('/api/banner/' + kind, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ remove: true }),
+    });
+    showBanner(kind, null);
+    toast('Banner dihapus');
+  } catch (error) {
+    toast('Gagal menghapus: ' + error.message, true);
+  }
+}
+
+function showBanner(kind, src) {
+  var image = document.getElementById('bannerImg-' + kind);
+  var empty = document.getElementById('bannerEmpty-' + kind);
+  var clear = document.getElementById('bannerClear-' + kind);
+  image.hidden = !src;
+  empty.hidden = !!src;
+  clear.hidden = !src;
+  if (src) image.src = src;
+  else image.removeAttribute('src');
+}
+
 async function saveGoodbye() {
   await postJson('/api/goodbye', {
     enabled: document.getElementById('goodbyeEnabled').checked,
@@ -1140,6 +1266,8 @@ async function saveGoodbye() {
     template: document.getElementById('goodbyeTemplate').value.trim() || null,
     style: document.getElementById('goodbyeStyle').value.trim() || null,
     example: document.getElementById('goodbyeExample').value.trim() || null,
+    imageEnabled: document.getElementById('goodbyeImage').checked,
+    includeAvatar: document.getElementById('goodbyeAvatar').checked,
   }, 'Salam perpisahan disimpan.');
 }
 
@@ -1172,6 +1300,7 @@ async function runTest(kind, templateOnly) {
         template: document.getElementById('goodbyeTemplate').value.trim(),
         style: document.getElementById('goodbyeStyle').value.trim(),
         example: document.getElementById('goodbyeExample').value.trim(),
+        withCard: document.getElementById('goodbyeImage').checked,
         templateOnly: !!templateOnly,
       };
 
@@ -1190,13 +1319,11 @@ async function runTest(kind, templateOnly) {
       + (data.note ? ' — ' + data.note : '')
       + (data.card ? ' · kartu ' + Math.round((data.cardBytes || 0) / 1024) + ' KB' : '');
 
-    var image = document.getElementById('cardWelcome');
-    if (kind === 'welcome') {
-      // Kartu dikirim sebagai data URI di respons yang sama — tidak perlu
-      // endpoint gambar tambahan dan tidak ada yang disimpan ke disk.
-      image.hidden = !data.cardDataUri;
-      if (data.cardDataUri) image.src = data.cardDataUri;
-    }
+    // Kartu dikirim sebagai data URI di respons yang sama — tidak perlu
+    // endpoint gambar tambahan dan tidak ada yang disimpan ke disk.
+    var image = document.getElementById(kind === 'welcome' ? 'cardWelcome' : 'cardGoodbye');
+    image.hidden = !data.cardDataUri;
+    if (data.cardDataUri) image.src = data.cardDataUri;
     state.textContent = 'Selesai';
     toast('✅ Pratinjau siap — belum ada yang dikirim');
   } catch (error) {

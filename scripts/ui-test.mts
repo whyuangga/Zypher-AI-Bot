@@ -63,6 +63,23 @@ await page.waitForFunction(() => document.getElementById('outGoodbye')?.hidden =
 const goodbye = await page.evaluate(() => document.getElementById('textGoodbye')?.textContent);
 console.log('tes perpisahan (tanpa AI):', goodbye);
 
+/* ---------------- unggah banner ---------------- */
+await page.goto(`${BASE}/sambutan`, { waitUntil: 'networkidle2' });
+const fileInput = await page.$('#bannerFile-welcome');
+if (fileInput) {
+  await (fileInput as unknown as { uploadFile(path: string): Promise<void> }).uploadFile('/tmp/banner-uji.png');
+  await page.waitForFunction(() => document.getElementById('bannerImg-welcome')?.hidden === false, {
+    timeout: 25000,
+  });
+  const banner = await page.evaluate(() => {
+    const image = document.getElementById('bannerImg-welcome') as HTMLImageElement;
+    return { shown: !image.hidden, src: image.src.slice(0, 30), width: image.naturalWidth };
+  });
+  console.log('unggah banner:', JSON.stringify(banner));
+} else {
+  errors.push('input banner tidak ditemukan');
+}
+
 /* ---------------- halaman AI Agent ---------------- */
 await page.goto(`${BASE}/agent`, { waitUntil: 'networkidle2' });
 await page.click('#testChat');

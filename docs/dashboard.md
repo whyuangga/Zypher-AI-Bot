@@ -247,6 +247,8 @@ Dua kartu berdampingan, satu tema "kehadiran":
 - **Salam perpisahan** — saat member keluar. **Wajib pilih channel**: DM tidak
   mungkin dikirim ke orang yang sudah keluar, jadi kalau channel kosong salam
   tidak dikirim sama sekali.
+- **Banner sendiri** — unggah PNG/JPG/WebP (maks 8 MB) untuk dipakai sebagai
+  strip atas kartu PNG, atau sebagai gambar embed kalau kartu dimatikan.
 - **Pratinjau & tes** — tombol "Tes sambutan", "Tes salam perpisahan", dan
   "Tes tanpa AI". Hasilnya menampilkan teksnya beserta sumbernya (AI / template /
   gagal) dan kartu PNG kalau opsi kartu dicentang. Memakai isi form saat itu,

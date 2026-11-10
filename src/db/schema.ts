@@ -139,21 +139,10 @@ CREATE TABLE IF NOT EXISTS goodbye (
   template        TEXT,
   style           TEXT,
   example         TEXT,
+  image_enabled   INTEGER NOT NULL DEFAULT 0,
+  include_avatar  INTEGER NOT NULL DEFAULT 1,
+  banner_path     TEXT,
   updated_at      INTEGER NOT NULL
-);
-
--- ---------- Salam perpisahan member ----------
--- Melengkapi sambutan: pesan saat member keluar dengan sopan.
--- channel_id NULL = DM (kemungkinan gagal, karena member sudah keluar).
-CREATE TABLE IF NOT EXISTS goodbye (
-  guild_id        TEXT PRIMARY KEY,
-  channel_id      TEXT,
-  enabled         INTEGER NOT NULL DEFAULT 0,
-  use_ai          INTEGER NOT NULL DEFAULT 1,
-  template        TEXT,
-  style           TEXT,
-  example         TEXT,
-  updated_at      BIGINT NOT NULL
 );
 
 -- ---------- Sambutan member baru ----------
@@ -168,6 +157,7 @@ CREATE TABLE IF NOT EXISTS welcome (
   style           TEXT,
   example         TEXT,
   include_avatar  INTEGER NOT NULL DEFAULT 1,
+  banner_path     TEXT,
   updated_at      INTEGER NOT NULL
 );
 
@@ -307,6 +297,22 @@ CREATE TABLE IF NOT EXISTS agent_reactions (
   created_at BIGINT NOT NULL
 );
 
+-- ---------- Salam perpisahan member ----------
+-- Belum ada di dialek Postgres sebelum fitur goodbye; sekarang disamakan.
+CREATE TABLE IF NOT EXISTS goodbye (
+  guild_id        TEXT PRIMARY KEY,
+  channel_id      TEXT,
+  enabled         INTEGER NOT NULL DEFAULT 0,
+  use_ai          INTEGER NOT NULL DEFAULT 1,
+  template        TEXT,
+  style           TEXT,
+  example         TEXT,
+  image_enabled   INTEGER NOT NULL DEFAULT 0,
+  include_avatar  INTEGER NOT NULL DEFAULT 1,
+  banner_path     TEXT,
+  updated_at      BIGINT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS welcome (
   guild_id        TEXT PRIMARY KEY,
   channel_id      TEXT,
@@ -317,6 +323,7 @@ CREATE TABLE IF NOT EXISTS welcome (
   style           TEXT,
   example         TEXT,
   include_avatar  INTEGER NOT NULL DEFAULT 1,
+  banner_path     TEXT,
   updated_at      BIGINT NOT NULL
 );
 

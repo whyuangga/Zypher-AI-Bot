@@ -1616,6 +1616,7 @@ const welcomeSettings = (patch: Record<string, unknown> = {}) => ({
   example: null,
   imageEnabled: false,
   includeAvatar: true,
+  bannerPath: null,
   updatedAt: 0,
   ...patch,
 });
@@ -1628,6 +1629,9 @@ const goodbyeSettings = (patch: Record<string, unknown> = {}) => ({
   template: null,
   style: null,
   example: null,
+  imageEnabled: false,
+  includeAvatar: true,
+  bannerPath: null,
   updatedAt: 0,
   ...patch,
 });
@@ -1863,7 +1867,7 @@ await testAsync('sambutan: prompt melarang pembuka khas bot & membatasi panjang'
   const member = { name: 'Sky', guildName: 'Komunitas Zypher' };
 
   const prompt = buildWelcomePrompt(
-    { guildId: GUILD, channelId: null, enabled: true, useAi: true, template: null, imageEnabled: true, style: 'santai', example: null, includeAvatar: true, updatedAt: 0 },
+    { ...welcomeSettings({ style: 'santai' }) },
     member,
     'pagi',
   );
@@ -2093,7 +2097,7 @@ await testAsync('goodbye: prompt tidak menanyakan alasan keluar & singkat', asyn
   const member = { name: 'Sky', guildName: 'Komunitas Zypher' };
 
   const prompt = buildGoodbyePrompt(
-    { guildId: GUILD, channelId: '123', enabled: true, useAi: true, template: null, style: null, example: null, updatedAt: 0 },
+    { ...goodbyeSettings({ channelId: '123' }) },
     member,
   );
   assert.ok(/[Jj]angan menanyakan alasan keluar/.test(prompt), 'melarang menanyakan alasan');
@@ -2275,6 +2279,183 @@ await testAsync('dashboard: postJson terdefinisi di JS bersama', async () => {
 
   const pages = await readFile('src/web/ui/pages.ts', 'utf8');
   assert.ok(pages.includes("await postJson('/api/agent'"), 'halaman agent memakainya');
+});
+
+
+console.log('\nBanner kartu (unggahan sendiri)');
+
+/** PNG 1x1 transparan — cukup untuk menguji deteksi format. */
+const PNG_1x1 = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
+
+await testAsync('banner: format dikenali dari isi file, bukan ekstensi', async () => {
+  const { detectImage } = await import('../src/features/banner.js');
+  const png = detectImage(PNG_1x1);
+  assert.equal(png?.mime, 'image/png', 'PNG dikenali');
+  assert.equal(png?.width, 1);
+  assert.equal(png?.height, 1);
+
+  // Teks yang dinamai .png tidak boleh lolos.
+  assert.equal(detectImage(Buffer.from('ini bukan gambar sama sekali ya')), null);
+  assert.equal(detectImage(Buffer.alloc(4)), null, 'file terlalu pendek ditolak');
+});
+
+await testAsync('banner: JPEG & WebP dikenali dari magic bytes', async () => {
+  const { detectImage } = await import('../src/features/banner.js');
+  // JPEG minimal: SOI + SOF0 dengan 640x480.
+  const jpeg = Buffer.from([
+    0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x01, 0xe0, 0x02, 0x80, 0x03, 0x01, 0x22, 0x00,
+    0x02, 0x11, 0x01, 0x03, 0x11, 0x01, 0xff, 0xd9,
+  ]);
+  const meta = detectImage(jpeg);
+  assert.equal(meta?.mime, 'image/jpeg');
+  assert.equal(meta?.width, 640);
+  assert.equal(meta?.height, 480);
+
+  const webp = Buffer.alloc(32);
+  webp.write('RIFF', 0, 'ascii');
+  webp.write('WEBP', 8, 'ascii');
+  webp.write('VP8 ', 12, 'ascii');
+  webp.writeUInt16LE(800, 26);
+  webp.writeUInt16LE(450, 28);
+  const webpMeta = detectImage(webp);
+  assert.equal(webpMeta?.mime, 'image/webp');
+  assert.equal(webpMeta?.width, 800);
+  assert.equal(webpMeta?.height, 450);
+});
+
+await testAsync('banner: nama file aman (tolak path traversal)', async () => {
+  const { isSafeBannerName } = await import('../src/features/banner.js');
+  assert.equal(isSafeBannerName('banner-abc123.png'), true);
+  assert.equal(isSafeBannerName('banner-abc123.jpg'), true);
+  assert.equal(isSafeBannerName('../../etc/passwd'), false, 'traversal ditolak');
+  assert.equal(isSafeBannerName('/etc/passwd'), false, 'path absolut ditolak');
+  assert.equal(isSafeBannerName('banner.exe'), false, 'ekstensi lain ditolak');
+  assert.equal(isSafeBannerName(null), false);
+  assert.equal(isSafeBannerName(''), false);
+});
+
+await testAsync('banner: data URI rusak / bukan gambar ditolak', async () => {
+  const { saveBanner, BannerError } = await import('../src/features/banner.js');
+
+  for (const bad of [
+    'bukan-data-uri',
+    'data:image/png;base64,%%%bukan-base64%%%',
+    `data:image/png;base64,${Buffer.from('teks biasa yang dinamai png').toString('base64')}`,
+  ]) {
+    let caught = false;
+    try {
+      await saveBanner(bad, 'abc123');
+    } catch (error) {
+      caught = error instanceof BannerError;
+    }
+    assert.equal(caught, true, `harus ditolak: ${bad.slice(0, 30)}`);
+  }
+});
+
+await testAsync('banner: gambar terlalu kecil ditolak (akan pecah sebagai latar)', async () => {
+  const { saveBanner, BannerError } = await import('../src/features/banner.js');
+  let message = '';
+  try {
+    await saveBanner(`data:image/png;base64,${PNG_1x1.toString('base64')}`, 'abc123');
+  } catch (error) {
+    message = (error as Error).message;
+  }
+  assert.ok(message.includes('terlalu kecil'), `alasan jelas: ${message}`);
+});
+
+await testAsync('banner: tersimpan, terbaca kembali, lalu terhapus', async () => {
+  const { saveBanner, readBannerDataUri, deleteBanner, bannerExists } = await import('../src/features/banner.js');
+  // PNG 400x100 supaya lolos batas lebar minimum.
+  const width = 400;
+  const header = Buffer.alloc(33);
+  PNG_1x1.copy(header, 0, 0, 16);
+  header.writeUInt32BE(width, 16);
+  header.writeUInt32BE(100, 20);
+  const png = Buffer.concat([header, PNG_1x1.subarray(33)]);
+
+  const saved = await saveBanner(`data:image/png;base64,${png.toString('base64')}`, 'testbanner01');
+  assert.equal(saved.ok, true);
+  assert.equal(saved.width, width);
+  assert.ok(saved.name?.endsWith('.png'));
+  assert.equal(bannerExists(saved.name), true, 'file ada di disk');
+
+  const uri = await readBannerDataUri(saved.name);
+  assert.ok(uri?.startsWith('data:image/png;base64,'), 'bisa dibaca sebagai data URI');
+
+  await deleteBanner(saved.name);
+  assert.equal(bannerExists(saved.name), false, 'file terhapus');
+
+  // Nama berbahaya tidak menghapus apa pun dan tidak melempar error.
+  await deleteBanner('../../etc/passwd');
+});
+
+await testAsync('banner: kolom banner_path tersimpan & bisa dikosongkan', async () => {
+  const { getWelcomeSettings, saveWelcomeSettings, getGoodbyeSettings, saveGoodbyeSettings } = await import(
+    '../src/db/repo.js'
+  );
+  const guild = '999999999999999011';
+
+  await saveWelcomeSettings(guild, { bannerPath: 'banner-abc.png', style: 'santai' });
+  const welcome = await getWelcomeSettings(guild);
+  assert.equal(welcome.bannerPath, 'banner-abc.png');
+  assert.equal(welcome.style, 'santai', 'field lain tidak ikut berubah');
+
+  await saveWelcomeSettings(guild, { bannerPath: null });
+  assert.equal((await getWelcomeSettings(guild)).bannerPath, null, 'banner bisa dihapus');
+
+  await saveGoodbyeSettings(guild, { bannerPath: 'banner-xyz.webp' });
+  assert.equal((await getGoodbyeSettings(guild)).bannerPath, 'banner-xyz.webp');
+});
+
+await testAsync('banner: default null (tanpa banner = kartu bawaan)', async () => {
+  const { getWelcomeSettings, getGoodbyeSettings } = await import('../src/db/repo.js');
+  assert.equal((await getWelcomeSettings('999999999999999012')).bannerPath, null);
+  assert.equal((await getGoodbyeSettings('999999999999999012')).bannerPath, null);
+});
+
+await testAsync('banner: kartu lebih tinggi saat banner dipakai', async () => {
+  const { cardHeight } = await import('../src/features/welcome-card.js');
+  const tanpa = cardHeight({ bannerDataUri: null });
+  const dengan = cardHeight({ bannerDataUri: 'data:image/png;base64,AAAA' });
+  assert.ok(dengan > tanpa, 'tinggi bertambah supaya teks tidak menimpa gambar');
+  assert.equal(dengan - tanpa, 110, 'selisihnya setinggi strip banner');
+});
+
+await testAsync('banner: API unggah & hapus ada untuk kedua fitur', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(server.includes("'/api/banner/welcome'"), 'endpoint sambutan');
+  assert.ok(server.includes("'/api/banner/goodbye'"), 'endpoint perpisahan');
+  assert.ok(server.includes('payload.remove === true'), 'bisa dihapus');
+  assert.ok(server.includes('await deleteBanner(current.bannerPath)'), 'file lama dibersihkan');
+  // File baru disimpan dulu, baru yang lama dihapus: kalau gagal, banner lama tetap ada.
+  // Dicari mulai dari endpoint banner supaya tidak tertangkap pemakaian di tempat lain.
+  const bannerSection = server.slice(server.indexOf("'/api/banner/welcome'"));
+  const saveIndex = bannerSection.indexOf('const saved = await saveBanner');
+  assert.ok(saveIndex > -1, 'banner baru disimpan');
+  // Cari penghapusan SETELAH penyimpanan (ada juga penghapusan di cabang hapus).
+  const deleteAfterSave = bannerSection.indexOf('await deleteBanner(current.bannerPath)', saveIndex);
+  assert.ok(deleteAfterSave > saveIndex, 'urutan aman: simpan file baru dulu, baru hapus yang lama');
+});
+
+await testAsync('banner: dashboard punya blok unggah di dua kartu', async () => {
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  assert.ok(pages.includes('function bannerBlock'), 'komponen banner ada');
+  assert.ok(pages.includes("bannerBlock('welcome'"), 'dipakai di kartu sambutan');
+  assert.ok(pages.includes("bannerBlock('goodbye'"), 'dipakai di kartu perpisahan');
+  assert.ok(pages.includes('function uploadBanner'), 'JS unggah ada');
+  assert.ok(pages.includes('async function removeBanner'), 'JS hapus ada');
+  assert.ok(pages.includes("accept=\"image/png,image/jpeg,image/webp\""), 'hanya format gambar');
+  assert.ok(pages.includes('8 * 1024 * 1024'), 'batas ukuran dicek juga di browser');
+});
+
+await testAsync('banner: data/banners tidak ikut Git', async () => {
+  const { BANNER_DIR } = await import('../src/features/banner.js');
+  assert.ok(BANNER_DIR.includes('data'), 'disimpan di folder data');
+  const gitignore = await readFile('.gitignore', 'utf8');
+  assert.ok(/^data\/$/m.test(gitignore), 'folder data diabaikan Git');
 });
 
 

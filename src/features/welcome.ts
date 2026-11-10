@@ -29,6 +29,7 @@ import { errorMessage, logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
 import { renderWelcomeCard } from './welcome-card.js';
 import { buildWelcomePrompt, partOfDay, previewGoodbye, previewWelcome } from './preview.js';
+import { readBannerDataUri } from './banner.js';
 import { DEFAULT_GOODBYE_TEMPLATE, DEFAULT_WELCOME_TEMPLATE, fillText } from './greeting-text.js';
 
 /** Isi placeholder template tanpa AI. */
@@ -121,13 +122,30 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
   // Kartu hanya dibuat kalau memang akan dipakai — proses render memakan
   // waktu (~1 detik) dan tidak perlu kalau admin mematikannya.
   const attachment = settings.imageEnabled
-    ? await buildCard(settings, member, text, usedAi)
+    ? await buildCard(
+        {
+          member,
+          text,
+          includeAvatar: settings.includeAvatar,
+          bannerPath: settings.bannerPath,
+          kicker: 'SELAMAT DATANG',
+          filePrefix: 'selamat-datang',
+        },
+        usedAi,
+      )
     : null;
 
   const embed = new EmbedBuilder()
     .setColor(0x6d8cff)
     .setDescription(text)
     .setFooter({ text: `Member baru · ${member.guild.name}` });
+
+  // Tanpa kartu, banner tetap dipakai sebagai gambar embed — supaya unggahan
+  // admin tidak sia-sia saat kartu PNG dimatikan.
+  if (!attachment) {
+    const banner = await readBannerDataUri(settings.bannerPath);
+    if (banner) embed.setImage(banner);
+  }
 
   try {
     if (channel) {
@@ -166,24 +184,37 @@ async function fetchChannel(
 }
 
 async function buildCard(
-  settings: WelcomeSettings,
-  member: GuildMember,
-  text: string,
+  options: {
+    member: GuildMember;
+    text: string;
+    includeAvatar: boolean;
+    bannerPath: string | null;
+    kicker: string;
+    filePrefix: string;
+  },
   usedAi: boolean,
 ): Promise<AttachmentBuilder | null> {
-  const avatar = settings.includeAvatar ? await avatarDataUri(member) : null;
+  const { member } = options;
+  const [avatar, banner] = await Promise.all([
+    options.includeAvatar ? avatarDataUri(member) : Promise.resolve(null),
+    readBannerDataUri(options.bannerPath),
+  ]);
+
   const png = await renderWelcomeCard({
-    userName: member.displayName || member.user.username,
+    userName: memberName(member),
     guildName: member.guild.name,
-    message: truncate(text, 200),
+    message: truncate(options.text, 200),
     avatarDataUri: avatar,
+    bannerDataUri: banner,
+    kicker: options.kicker,
   });
   if (!png) return null;
 
   // Nama file diberi penanda AI/template supaya mudah dibedakan saat diuji.
   const suffix = usedAi ? 'ai' : 'template';
-  return new AttachmentBuilder(png, { name: `selamat-datang-${suffix}.png` });
+  return new AttachmentBuilder(png, { name: `${options.filePrefix}-${suffix}.png` });
 }
+
 
 
 /* ------------------------------------------------------------------ */
@@ -222,8 +253,37 @@ export async function goodbyeMember(member: GuildMember): Promise<boolean> {
   const greeting = settings.useAi ? await generateGoodbye(settings, member) : null;
   const text = greeting ?? fillGoodbyeTemplate(settings.template?.trim() || DEFAULT_GOODBYE_TEMPLATE, member);
 
+  // Kartu perpisahan opsional, memakai renderer yang sama dengan sambutan.
+  const attachment = settings.imageEnabled
+    ? await buildCard(
+        {
+          member,
+          text,
+          includeAvatar: settings.includeAvatar,
+          bannerPath: settings.bannerPath,
+          kicker: 'SAMPAI JUMPA',
+          filePrefix: 'sampai-jumpa',
+        },
+        Boolean(greeting),
+      )
+    : null;
+
+  const embed = new EmbedBuilder()
+    .setColor(0x716c98)
+    .setDescription(text)
+    .setFooter({ text: `Member keluar · ${member.guild.name}` });
+
+  if (!attachment) {
+    const banner = await readBannerDataUri(settings.bannerPath);
+    if (banner) embed.setImage(banner);
+  }
+
   try {
-    await channel.send({ content: text, allowedMentions: { parse: [] } });
+    await channel.send({
+      embeds: attachment ? [] : [embed],
+      files: attachment ? [attachment] : [],
+      allowedMentions: { parse: [] },
+    });
     logger.info(`Salam perpisahan untuk ${member.user.tag} terkirim${greeting ? ' (AI)' : ' (template)'}.`);
     return true;
   } catch (error) {

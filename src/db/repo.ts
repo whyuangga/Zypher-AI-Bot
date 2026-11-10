@@ -725,6 +725,8 @@ export interface WelcomeSettings {
   /** Contoh kalimat yang ditiru nada bicaranya. */
   example: string | null;
   includeAvatar: boolean;
+  /** Nama file banner di data/banners (null = pakai latar bawaan). */
+  bannerPath: string | null;
   updatedAt: number;
 }
 
@@ -738,6 +740,7 @@ interface WelcomeRow {
   style: string | null;
   example: string | null;
   include_avatar: number | boolean;
+  banner_path: string | null;
   updated_at: number;
 }
 
@@ -750,6 +753,7 @@ export const WELCOME_DEFAULTS = {
   style: null,
   example: null,
   includeAvatar: true,
+  bannerPath: null,
 } as const;
 
 export async function getWelcomeSettings(guildId: string): Promise<WelcomeSettings> {
@@ -768,6 +772,7 @@ export async function getWelcomeSettings(guildId: string): Promise<WelcomeSettin
     style: row.style,
     example: row.example,
     includeAvatar: Boolean(row.include_avatar),
+    bannerPath: row.banner_path ?? null,
     updatedAt: Number(row.updated_at),
   };
 }
@@ -779,8 +784,8 @@ export async function saveWelcomeSettings(
   const current = await getWelcomeSettings(guildId);
   const next = { ...current, ...patch };
   await run(
-    `INSERT INTO welcome (guild_id, channel_id, enabled, use_ai, template, image_enabled, style, example, include_avatar, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO welcome (guild_id, channel_id, enabled, use_ai, template, image_enabled, style, example, include_avatar, banner_path, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (guild_id) DO UPDATE SET
        channel_id = excluded.channel_id,
        enabled = excluded.enabled,
@@ -790,6 +795,7 @@ export async function saveWelcomeSettings(
        style = excluded.style,
        example = excluded.example,
        include_avatar = excluded.include_avatar,
+       banner_path = excluded.banner_path,
        updated_at = excluded.updated_at`,
     [
       guildId,
@@ -801,6 +807,7 @@ export async function saveWelcomeSettings(
       next.style,
       next.example,
       next.includeAvatar ? 1 : 0,
+      next.bannerPath,
       Date.now(),
     ],
   );
@@ -816,6 +823,11 @@ export interface GoodbyeSettings {
   template: string | null;
   style: string | null;
   example: string | null;
+  /** Kartu perpisahan PNG (opsional). */
+  imageEnabled: boolean;
+  includeAvatar: boolean;
+  /** Nama file banner di data/banners (null = pakai latar bawaan). */
+  bannerPath: string | null;
   updatedAt: number;
 }
 
@@ -827,6 +839,9 @@ interface GoodbyeRow {
   template: string | null;
   style: string | null;
   example: string | null;
+  image_enabled: number | boolean;
+  include_avatar: number | boolean;
+  banner_path: string | null;
   updated_at: number;
 }
 
@@ -837,6 +852,9 @@ export const GOODBYE_DEFAULTS = {
   template: null,
   style: null,
   example: null,
+  imageEnabled: false,
+  includeAvatar: true,
+  bannerPath: null,
 } as const;
 
 export async function getGoodbyeSettings(guildId: string): Promise<GoodbyeSettings> {
@@ -851,6 +869,9 @@ export async function getGoodbyeSettings(guildId: string): Promise<GoodbyeSettin
     template: row.template,
     style: row.style,
     example: row.example,
+    imageEnabled: Boolean(row.image_enabled),
+    includeAvatar: Boolean(row.include_avatar),
+    bannerPath: row.banner_path ?? null,
     updatedAt: Number(row.updated_at),
   };
 }
@@ -862,8 +883,8 @@ export async function saveGoodbyeSettings(
   const current = await getGoodbyeSettings(guildId);
   const next = { ...current, ...patch };
   await run(
-    `INSERT INTO goodbye (guild_id, channel_id, enabled, use_ai, template, style, example, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO goodbye (guild_id, channel_id, enabled, use_ai, template, style, example, image_enabled, include_avatar, banner_path, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (guild_id) DO UPDATE SET
        channel_id = excluded.channel_id,
        enabled = excluded.enabled,
@@ -871,6 +892,9 @@ export async function saveGoodbyeSettings(
        template = excluded.template,
        style = excluded.style,
        example = excluded.example,
+       image_enabled = excluded.image_enabled,
+       include_avatar = excluded.include_avatar,
+       banner_path = excluded.banner_path,
        updated_at = excluded.updated_at`,
     [
       guildId,
@@ -880,6 +904,9 @@ export async function saveGoodbyeSettings(
       next.template,
       next.style,
       next.example,
+      next.imageEnabled ? 1 : 0,
+      next.includeAvatar ? 1 : 0,
+      next.bannerPath,
       Date.now(),
     ],
   );

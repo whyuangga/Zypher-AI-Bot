@@ -58,6 +58,13 @@ import {
   SAMPLE_MEMBER_NAME,
 } from '../features/preview.js';
 import { renderWelcomeCard } from '../features/welcome-card.js';
+import {
+  BannerError,
+  bannerExists,
+  deleteBanner,
+  readBannerDataUri,
+  saveBanner,
+} from '../features/banner.js';
 import { MAX_BINARY_BYTES } from '../lib/chunker.js';
 import { embeddingModelName } from '../features/rag-embed.js';
 import { errorMessage, logger } from '../lib/logger.js';
@@ -501,6 +508,8 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
             includeAvatar: welcome.includeAvatar,
             style: welcome.style,
             example: welcome.example,
+            bannerPath: welcome.bannerPath,
+            bannerPreview: await readBannerDataUri(welcome.bannerPath),
           },
           goodbye: {
             enabled: goodbye.enabled,
@@ -509,6 +518,10 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
             template: goodbye.template,
             style: goodbye.style,
             example: goodbye.example,
+            bannerPath: goodbye.bannerPath,
+            bannerPreview: await readBannerDataUri(goodbye.bannerPath),
+            imageEnabled: goodbye.imageEnabled,
+            includeAvatar: goodbye.includeAvatar,
           },
           channels,
           botOnline: status.online,
@@ -940,6 +953,8 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       template: optionalText('template', current.template, 1000),
       style: optionalText('style', current.style),
       example: optionalText('example', current.example),
+      imageEnabled: bool(payload.imageEnabled, current.imageEnabled),
+      includeAvatar: bool(payload.includeAvatar, current.includeAvatar),
     });
 
     sendJson(response, 200, { ok: true, goodbye: await getGoodbyeSettings(guildId) });
@@ -1005,6 +1020,65 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
 
+  /* ------------------------------ banner ----------------------------- */
+  // Banner dipakai dua fitur (sambutan & perpisahan); yang menentukan file mana
+  // tersimpan adalah tabel pengaturan masing-masing. Body berupa JSON berisi
+  // data URI, bukan multipart — tidak perlu parser tambahan dan ukurannya sudah
+  // dibatasi (8 MB) sebelum diproses.
+
+  if ((path === '/api/banner/welcome' || path === '/api/banner/goodbye') && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const kind = path.endsWith('/welcome') ? 'welcome' : 'goodbye';
+    const payload = await readJsonBody(request, response, 12 * 1024 * 1024);
+    if (!payload) return;
+
+    const current =
+      kind === 'welcome' ? await getWelcomeSettings(guildId) : await getGoodbyeSettings(guildId);
+
+    // Hapus banner.
+    if (payload.remove === true) {
+      await deleteBanner(current.bannerPath);
+      if (kind === 'welcome') await saveWelcomeSettings(guildId, { bannerPath: null });
+      else await saveGoodbyeSettings(guildId, { bannerPath: null });
+      sendJson(response, 200, { ok: true, banner: null });
+      return;
+    }
+
+    const dataUri = typeof payload.dataUri === 'string' ? payload.dataUri : '';
+    if (!dataUri) {
+      sendJson(response, 400, { error: 'Tidak ada gambar yang dikirim.' });
+      return;
+    }
+
+    try {
+      const saved = await saveBanner(dataUri, randomBytes(8).toString('hex'));
+      // File lama dihapus setelah file baru tersimpan — kalau penyimpanan gagal,
+      // banner lama tetap dipakai (tidak ada kondisi "tidak punya banner").
+      await deleteBanner(current.bannerPath);
+      if (kind === 'welcome') await saveWelcomeSettings(guildId, { bannerPath: saved.name });
+      else await saveGoodbyeSettings(guildId, { bannerPath: saved.name });
+
+      // Kembalikan data URI-nya supaya dashboard bisa langsung menampilkan.
+      const preview = await readBannerDataUri(saved.name);
+      sendJson(response, 200, {
+        ok: true,
+        banner: saved,
+        preview,
+        note: 'Banner tersimpan. Tekan Simpan untuk memastikan pengaturan lain ikut tersimpan.',
+      });
+      return;
+    } catch (error) {
+      if (error instanceof BannerError) {
+        sendJson(response, 400, { error: error.message });
+        return;
+      }
+      throw error;
+    }
+  }
+
   /* ---------------------------- pratinjau ---------------------------- */
   // Endpoint pratinjau sengaja tidak menyentuh Discord sama sekali: admin bisa
   // mencoba sapaan berkali-kali tanpa mengirim pesan ke channel mana pun.
@@ -1027,12 +1101,29 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       example: textField(payload, 'example', current.example),
     };
 
+    const name = previewName(payload, SAMPLE_MEMBER_NAME);
+    const guildName = (await getGuildName(guildId)) ?? 'Server ini';
     const result = await previewGoodbye({
       settings,
-      name: previewName(payload, SAMPLE_MEMBER_NAME),
-      guildName: (await getGuildName(guildId)) ?? 'Server ini',
+      name,
+      guildName,
       templateOnly: payload.templateOnly === true,
     });
+
+    // Kartu perpisahan (opsional) — memakai renderer yang sama dengan sambutan.
+    if (payload.withCard === true) {
+      const png = await renderWelcomeCard({
+        userName: name,
+        guildName,
+        message: result.text.slice(0, 200),
+        avatarDataUri: null,
+        bannerDataUri: await readBannerDataUri(settings.bannerPath),
+        kicker: 'SAMPAI JUMPA',
+      }).catch(() => null);
+      result.card = Boolean(png);
+      result.cardBytes = png?.byteLength ?? 0;
+      result.cardDataUri = png ? `data:image/png;base64,${png.toString('base64')}` : undefined;
+    }
     sendJson(response, 200, { ok: true, ...result });
     return;
   }
@@ -1064,6 +1155,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       guildName,
       templateOnly: payload.templateOnly === true,
       withCard,
+      // Banner unggahan ikut dirender supaya admin melihat hasil akhirnya.
+      bannerDataUri: await readBannerDataUri(settings.bannerPath),
+      kicker: 'SELAMAT DATANG',
       // Renderer disuntikkan supaya modul pratinjau tidak bergantung Chromium.
       renderCard: withCard
         ? (input) =>
@@ -1072,6 +1166,8 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
               guildName: input.guildName,
               message: input.text,
               avatarDataUri: null,
+              bannerDataUri: input.bannerDataUri ?? null,
+              kicker: input.kicker,
             })
         : undefined,
     });
@@ -1358,7 +1454,16 @@ async function readJson(
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<Record<string, unknown> | null> {
-  const raw = await readBody(request, 32 * 1024);
+  return readJsonBody(request, response, 32 * 1024);
+}
+
+/** Sama seperti `readJson`, tapi batas ukurannya bisa diatur (mis. gambar). */
+async function readJsonBody(
+  request: IncomingMessage,
+  response: ServerResponse,
+  limit: number,
+): Promise<Record<string, unknown> | null> {
+  const raw = await readBody(request, limit);
   try {
     const parsed = JSON.parse(raw || '{}') as unknown;
     if (!parsed || typeof parsed !== 'object') throw new Error('bukan objek');
