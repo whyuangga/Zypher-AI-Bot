@@ -64,22 +64,40 @@ Kalau tidak login 14 hari, server **dimatikan**; setelah 30 hari filenya dipinda
    - `nodejs_26` sah-sah saja untuk project ini (tanpa modul native), tapi `nodejs_22` paling teruji.
 3. Beri nama, buat, tunggu server muncul.
 
-### 2a. Deploy lewat Git (disarankan, update tinggal Reinstall)
+### 2a. Deploy lewat Git (disarankan)
 
 Panel Wispbyte bisa menarik kode langsung dari GitHub. Di tab **Startup**:
 
 | Kolom | Isi |
 |---|---|
 | **Git Repo Address** | `https://github.com/whyuangga/Zypher-AI-Bot` |
-| **Branch** | `main` |
-| **Install Command** | `npm install && npm run build` |
-| **Startup Command** | `node dist/index.js` |
+| **Install Branch** | `main` |
+| **Auto Update** | nyala |
+| **JS file** | `dist/index.js` |
+| **Perintah startup** | **biarkan `Default`** |
 
-Lalu **Reinstall Server** supaya panel clone repo, install dependency, dan **compile TypeScript**.
+Lalu **Reinstall Server** (atau **Mulai**).
 
-> Kenapa `npm install && npm run build`, bukan `npm install --omit=dev`? Repo ini TypeScript —
-> kalau dev dependency tidak dipasang, `tsc` tidak ada dan `dist/` tidak pernah terbentuk,
-> sehingga `node dist/index.js` gagal dengan `Cannot find module`.
+> **Kenapa perintah startup tidak perlu diubah?** Repo ini punya hook `prepare` di `package.json`:
+> setiap `npm install` otomatis menjalankan `tsc`, jadi `dist/index.js` sudah ada tepat sebelum panel
+> memanggil `node ${JS_FILE}`. Log akan menampilkan:
+>
+> ```
+> [prepare] TypeScript & sumber tersedia — membangun dist/ …
+> [prepare] ✅ build selesai — dist/index.js siap dijalankan.
+> ```
+>
+> Hook ini juga aman di dua situasi lain: `npm install --omit=dev` (paket ZIP) → build dilewati karena
+> `tsc` tidak dipasang, dan `npm ci` di dalam Dockerfile → dilewati karena `tsconfig.json` belum di-COPY.
+
+**Kalau panel-mu versi lama** dan `prepare` tidak jalan (log tidak menampilkan baris `[prepare]`),
+pakai perintah startup manual ini (isi kolom **Perintah startup → Edit**):
+
+```bash
+cd /home/container; if [[ ! -d .git && "${USER_UPLOAD}" != "1" ]]; then git clone -b "${BRANCH}" "${GIT_ADDRESS}" .; fi; if [[ -d .git && "${AUTO_UPDATE}" == "1" ]]; then git pull; fi; if [ -f package.json ]; then /usr/local/bin/npm install; fi; /usr/local/bin/npm run build && /usr/local/bin/node dist/index.js
+```
+
+Blok `git clone` sengaja dipertahankan supaya **Reinstall** tetap bisa menarik kode dari GitHub.
 
 ### 2b. Deploy lewat ZIP (kalau panel tidak punya opsi git)
 
@@ -88,13 +106,16 @@ npm install
 npm run bundle        # menghasilkan zypher-deploy.zip (±0,1 MB: dist/ + package files)
 ```
 
-Lalu **Files → Upload** → **Extract**, startup command:
+Lalu **Files → Upload** → **Extract**, dan set:
 
-```bash
-npm install --omit=dev && node dist/index.js
-```
+| Kolom | Isi |
+|---|---|
+| **JS file** | `dist/index.js` |
+| **User Uploaded Files** | nyala (supaya panel tidak meng-clone repo) |
+| **Perintah startup** | `cd /home/container && /usr/local/bin/npm install --omit=dev && /usr/local/bin/node dist/index.js` |
 
-Pastikan folder `dist/` ada di **root** server (bukan di dalam subfolder).
+Pastikan folder `dist/` ada di **root** server (bukan di dalam subfolder). Hook `prepare` akan
+melewati build karena `tsc` tidak dipasang — memang begitu yang diinginkan: `dist/` sudah ikut di ZIP.
 
 ### 3. Isi environment variable di panel
 
@@ -172,6 +193,11 @@ INFO     Port diambil dari WEB_PORT=16954
 
 > **Konsol Wispbyte bukan shell.** Mengetik `npm run apa-saja` di sana hanya masuk ke stdin proses
 > bot, bukan dijalankan. Tidak masalah di sini: bot mendaftarkan slash command otomatis setiap start.
+
+> **Jalankan `npm run doctor` di laptop, bukan di panel.** Panel memblokir install-script npm
+> (`npm warn install-scripts … esbuild … blocked`), dan `tsx` butuh esbuild. Akibatnya perintah
+> berbasis `tsx` (`doctor`, `dev`, `token`, `bundle`) tidak jalan di panel. Bot sendiri tidak
+> terpengaruh — ia berjalan dari `dist/` hasil `tsc`, yang tidak memerlukan esbuild.
 
 Kalau muncul `❌ Node.js kamu versi 20…` → kembali ke langkah 1 dan ganti image ke `nodejs_22`.
 

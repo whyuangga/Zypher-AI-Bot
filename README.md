@@ -294,8 +294,9 @@ Cocok untuk Wispbyte / Bot-Hosting / Pterodactyl. Build dulu di laptop, lalu upl
 npm run bundle        # menghasilkan zypher-deploy.zip (dist/ + package.json)
 ```
 
-Di panel: upload ZIP → extract → startup command
-`npm install --omit=dev && node dist/index.js` → isi env var → Start.
+Atau clone langsung dari GitHub: `npm install` sudah otomatis menjalankan `tsc` lewat hook
+`prepare`, jadi panel Pterodactyl cukup diarahkan ke `dist/index.js` tanpa perintah build manual.
+
 Panduan per-langkah (termasuk syarat **Node.js 22**): **[docs/hosting.md](docs/hosting.md)**.
 
 ### Platform PaaS
@@ -319,6 +320,8 @@ npm run dashboard      # nyalakan dashboard web saja, tanpa bot Discord
 npm run bundle         # bikin zypher-deploy.zip untuk panel hosting
 npm run token -- --write   # bikin & pasang DASHBOARD_TOKEN acak di .env
 ```
+
+> `npm install` juga menjalankan `tsc` (hook `prepare`), jadi `dist/` selalu siap setelah install.
 
 `npm run doctor` adalah langkah pertama saat ada masalah AI: ia mengirim request sungguhan ke provider
 utama dan setiap fallback, lalu menampilkan latensi, isi balasan, dan dukungan streaming per provider.
