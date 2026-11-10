@@ -143,8 +143,8 @@ Klik **Buat Room AI** → channel privat muncul → mulai ngobrol.
 
 | Variabel | Default | Fungsi |
 |---|---|---|
-| `DISCORD_TOKEN` | — | Token bot (**wajib**) |
-| `CLIENT_ID` | — | Application ID (**wajib**) |
+| `DISCORD_TOKEN` | — | Token bot (**wajib**) — alias: `DISCORD_BOT_TOKEN` |
+| `CLIENT_ID` | — | Application ID (**wajib**) — alias: `DISCORD_CLIENT_ID` |
 | `DEV_GUILD_ID` | kosong | ID server testing. Terisi = command didaftarkan per-guild (instan). Kosong = global (bisa sampai 1 jam). |
 | `AI_API_KEY` | — | API key Groq (**wajib**) |
 | `AI_BASE_URL` | `https://api.groq.com/openai/v1` | Endpoint OpenAI-compatible. Ganti untuk pindah provider. |
@@ -160,6 +160,9 @@ Klik **Buat Room AI** → channel privat muncul → mulai ngobrol.
 | `EMBED_MODEL`, `EMBED_BASE_URL`, `EMBED_API_KEY` | kosong | Embeddings opsional untuk pencarian semantik (lihat [docs/rag.md](docs/rag.md)) |
 | `DASHBOARD_TOKEN` | kosong | Token login dashboard web. **Kosong = dashboard mati** |
 | `DASHBOARD_PORT` | `3000` | Port dashboard. Alias dari panel: `WEB_PORT`, `PORT`, `SERVER_PORT` (nilai `0` = belum diisi) |
+| `WEB_ENABLED` | `true` | `false` = matikan dashboard walau token terisi |
+| `PUBLIC_URL` | kosong | Alamat publik dashboard yang ditampilkan di log |
+| `NODE_OPTIONS` | — | Set di **panel hosting** (bukan `.env`): `--max-old-space-size=384` untuk container 512 MB |
 | `DATABASE_PATH` | `./data/zypher.db` | Lokasi file SQLite |
 | `AUTO_MEMORY` | `true` | Simpan memori otomatis lewat tool calling |
 | `RATE_LIMIT_PER_MINUTE` | `12` | Batas request AI per user/menit |

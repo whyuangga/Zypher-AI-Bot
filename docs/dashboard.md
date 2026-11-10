@@ -81,6 +81,13 @@ Bot menerima semuanya — tidak perlu rename:
 | 4 | `SERVER_PORT` | — |
 | default | `3000` | `0.0.0.0` |
 
+Variabel tambahan yang juga dibaca:
+
+| Variabel | Fungsi |
+|---|---|
+| `WEB_ENABLED` | `false` = matikan dashboard walau `DASHBOARD_TOKEN` terisi |
+| `PUBLIC_URL` / `WEB_PUBLIC_URL` | Alamat publik lengkap (mis. `http://78.154.103.15:16954`) — dipakai apa adanya di log |
+
 **Nilai `0` atau kosong dianggap "belum diisi"** (Wispbyte mengirim `WEB_PORT=0` sebagai default),
 jadi bot otomatis memakai 3000 — bukan memilih port acak.
 

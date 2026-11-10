@@ -48,6 +48,18 @@ const portish = z
     return parsed === 0 ? undefined : parsed;
   });
 
+/** Boolean opsional: tidak diisi = `undefined` (biar bisa dibedakan dari `false`). */
+const optionalBool = z
+  .string()
+  .optional()
+  .transform((value) => {
+    if (value === undefined || value.trim() === '') return undefined;
+    const normalized = value.trim().toLowerCase();
+    if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
+    return undefined;
+  });
+
 const optionalHost = z
   .string()
   .optional()
@@ -73,9 +85,15 @@ const optionalToken = z
   });
 
 const schema = z.object({
-  DISCORD_TOKEN: z.string().min(20, 'DISCORD_TOKEN tidak valid — salin ulang dari Discord Developer Portal'),
-  CLIENT_ID: z.string().regex(/^\d{17,20}$/, 'CLIENT_ID harus berupa angka (Application ID)'),
+  // Nama utama. Alias (DISCORD_BOT_TOKEN, DISCORD_CLIENT_ID, DISCORD_GUILD_ID) diterima
+  // karena banyak template bot di panel hosting memakai nama itu — salah nama = bot
+  // mati dengan pesan "belum diisi" padahal kolomnya sudah terisi.
+  DISCORD_TOKEN: optionalSecret,
+  DISCORD_BOT_TOKEN: optionalSecret,
+  CLIENT_ID: optionalSecret,
+  DISCORD_CLIENT_ID: optionalSecret,
   DEV_GUILD_ID: optionalId,
+  DISCORD_GUILD_ID: optionalId,
   AI_API_KEY: z.string().min(10, 'AI_API_KEY wajib diisi — ambil di https://console.groq.com/keys'),
   AI_BASE_URL: z.string().url().default('https://api.groq.com/openai/v1'),
   AI_MODEL: z.string().default('openai/gpt-oss-120b'),
@@ -107,8 +125,12 @@ const schema = z.object({
   // Alias yang dikirim panel hosting (Wispbyte, Railway, Render, dsb).
   WEB_PORT: portish,
   WEB_HOST: optionalHost,
+  WEB_ENABLED: optionalBool,
   PORT: portish,
   SERVER_PORT: portish,
+  // Alamat publik dashboard, mis. http://78.154.103.15:16954 — dipakai di log.
+  PUBLIC_URL: optionalHost,
+  WEB_PUBLIC_URL: optionalHost,
   DATABASE_PATH: z.string().default('./data/zypher.db'),
   AUTO_MEMORY: booleanish(true),
   RATE_LIMIT_PER_MINUTE: numberish(12, 0, 240),
@@ -119,7 +141,46 @@ const schema = z.object({
   ADMIN_ONLY_ROOMS: booleanish(false),
 });
 
-const parsed = schema.safeParse(process.env);
+const schemaWithAliases = schema
+  .superRefine((value, ctx) => {
+    const token = value.DISCORD_TOKEN ?? value.DISCORD_BOT_TOKEN;
+    if (!token) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['DISCORD_TOKEN'],
+        message: 'wajib diisi — salin dari Developer Portal → Bot → Reset Token',
+      });
+    } else if (token.length < 20) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['DISCORD_TOKEN'],
+        message: 'tidak valid — token bot panjangnya jauh lebih dari 20 karakter',
+      });
+    }
+
+    const clientId = value.CLIENT_ID ?? value.DISCORD_CLIENT_ID;
+    if (!clientId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['CLIENT_ID'],
+        message: 'wajib diisi — Application ID dari Developer Portal → General Information',
+      });
+    } else if (!/^\d{17,20}$/.test(clientId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['CLIENT_ID'],
+        message: 'harus berupa angka 17–20 digit (Application ID), bukan token',
+      });
+    }
+  })
+  .transform((value) => ({
+    ...value,
+    DISCORD_TOKEN: value.DISCORD_TOKEN ?? value.DISCORD_BOT_TOKEN,
+    CLIENT_ID: value.CLIENT_ID ?? value.DISCORD_CLIENT_ID,
+    DEV_GUILD_ID: value.DEV_GUILD_ID ?? value.DISCORD_GUILD_ID,
+  }));
+
+const parsed = schemaWithAliases.safeParse(process.env);
 
 if (!parsed.success) {
   const issues = parsed.error.issues
@@ -134,8 +195,8 @@ const env = parsed.data;
 
 export const config = {
   discord: {
-    token: env.DISCORD_TOKEN,
-    clientId: env.CLIENT_ID,
+    token: env.DISCORD_TOKEN ?? '',
+    clientId: env.CLIENT_ID ?? '',
     devGuildId: env.DEV_GUILD_ID,
   },
   ai: {
@@ -175,10 +236,14 @@ export const config = {
 
     return {
       token: env.DASHBOARD_TOKEN,
+      /** `WEB_ENABLED=false` mematikan dashboard walau token diisi (gaya panel). */
+      enabled: env.WEB_ENABLED !== false && Boolean(env.DASHBOARD_TOKEN),
       port: found?.[1] ?? 3000,
       /** Nama variabel yang menentukan port — dipakai untuk log diagnostik. */
       portSource: found?.[0] ?? 'default',
       host: env.DASHBOARD_HOST ?? env.WEB_HOST ?? '0.0.0.0',
+      /** Kalau diisi, log memakai alamat ini apa adanya (berguna di panel hosting). */
+      publicUrl: (env.PUBLIC_URL ?? env.WEB_PUBLIC_URL)?.replace(/\/+$/, '') ?? undefined,
     };
   })(),
   database: {

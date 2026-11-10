@@ -35,125 +35,145 @@ bot mati tiap beberapa menit, atau harus keep-alive hack.
 
 ## Rekomendasi #1 — Wispbyte (paling cepat, benar-benar gratis)
 
-<https://wispbyte.com/id/> — panel hosting yang memang dibuat untuk bot Discord.
+<https://wispbyte.com/id/> — panel berbasis Pterodactyl yang memang dibuat untuk bot Discord.
 
 | | Paket gratis |
 |---|---|
 | RAM | **512 MB** |
-| Disk | **1 GB** (persisten, file tidak hilang saat restart) |
+| Disk | **1 GB** (persisten — `data/zypher.db` aman saat restart) |
+| CPU | **35%**, plus 1 core penuh di ~90 detik pertama (khusus `npm install`) |
 | Harga | €0 — tanpa kartu, tanpa koin, **tanpa tombol perpanjang** |
-| Uptime | 24/7, dengan syarat **login panel minimal sekali setiap 14 hari** |
-| CPU | 1 core penuh di ~90 detik pertama (khusus `npm install`), lalu shared |
+| Uptime | 24/7, syarat **login panel minimal sekali setiap 14 hari** |
 | Runtime | Node.js, Bun, Python, Java, C#, Rust, Lua + image database |
 | Lokasi | Node gratis: Bacău, Rumania |
 | Batas | Satu bot Discord per server, satu akun gratis per orang |
 
-Jujur soal trade-off-nya: 512 MB cukup untuk bot ini (bot ini ±120–200 MB saat jalan), tapi **jangan**
-menjalankan `tsc`/`npm run dev` di sana — build di laptop, upload hasilnya. Node Rumania berarti latensi
-WebSocket ±150 ms; untuk chat teks tidak terasa, tapi bukan tempat untuk bot musik/voice.
+Trade-off jujurnya: 512 MB cukup untuk bot ini (±120–200 MB saat jalan), tapi **jangan** menjalankan
+`tsc`/`npm run dev` di server. Node Rumania berarti latensi WebSocket ±150 ms — tidak terasa untuk chat
+teks, tapi jangan berharap bot musik/voice.
 
-Kalau akun tidak login 14 hari server **dimatikan**, dan setelah 30 hari filenya dipindah ke storage
-— tidak dihapus, bisa dipulihkan saat login lagi.
+Kalau tidak login 14 hari, server **dimatikan**; setelah 30 hari filenya dipindah ke storage
+(tidak dihapus, bisa dipulihkan). Perlakukan batas 14 hari ini serius.
 
-### Langkah deploy
+### 1. Buat server
 
-**1. Daftar & buat server**
+1. Daftar di <https://wispbyte.com/client> → **Create Server** → paket **Free**.
+2. Pilih **egg: Node.js** → image **`nodejs_22`**.
+   - **Jangan `nodejs_19`/`nodejs_20`** — bot ini butuh `node:sqlite` yang baru ada di Node 22.
+     Di Node lama, `npm install` cuma memberi *warning*, lalu bot mati saat start.
+   - `nodejs_26` sah-sah saja untuk project ini (tanpa modul native), tapi `nodejs_22` paling teruji.
+3. Beri nama, buat, tunggu server muncul.
 
-1. Buka <https://wispbyte.com/client> → register (email/Discord/Google/GitHub).
-2. **Create Server** → pilih paket **Free** → Docker image **Node.js**.
-3. Tunggu server muncul di dashboard.
+### 2a. Deploy lewat Git (disarankan, update tinggal Reinstall)
 
-**2. Pastikan Node.js-nya 22 atau lebih baru** ⚠️
+Panel Wispbyte bisa menarik kode langsung dari GitHub. Di tab **Startup**:
 
-Buka **Console**, jalankan:
+| Kolom | Isi |
+|---|---|
+| **Git Repo Address** | `https://github.com/whyuangga/Zypher-AI-Bot` |
+| **Branch** | `main` |
+| **Install Command** | `npm install && npm run build` |
+| **Startup Command** | `node dist/index.js` |
 
-```bash
-node -v
-```
+Lalu **Reinstall Server** supaya panel clone repo, install dependency, dan **compile TypeScript**.
 
-Bot ini butuh **v22 atau lebih baru** (memakai `node:sqlite` bawaan Node). Kalau hasilnya v20 atau
-lebih lama: buka **Startup → Docker Image** dan pilih versi Node 22/24. Kalau pilihannya tidak ada,
-tanya di [forum komunitas](https://wispbyte.com/community) — jangan dilanjutkan, bot tidak akan jalan.
+> Kenapa `npm install && npm run build`, bukan `npm install --omit=dev`? Repo ini TypeScript —
+> kalau dev dependency tidak dipasang, `tsc` tidak ada dan `dist/` tidak pernah terbentuk,
+> sehingga `node dist/index.js` gagal dengan `Cannot find module`.
 
-**3. Build & bungkus di laptop**
+### 2b. Deploy lewat ZIP (kalau panel tidak punya opsi git)
 
 ```bash
 npm install
-npm run bundle        # menghasilkan zypher-deploy.zip (±0,1 MB)
+npm run bundle        # menghasilkan zypher-deploy.zip (±0,1 MB: dist/ + package files)
 ```
 
-ZIP itu berisi `dist/` (JavaScript hasil build) + `package.json` + `package-lock.json` —
-tanpa TypeScript, tanpa `node_modules`, jadi server tidak perlu compile apa pun.
-
-**4. Upload**
-
-**Files → Upload** `zypher-deploy.zip` → **Extract/Unzip**. Pastikan folder `dist/` ada di root server
-(bukan di dalam subfolder), lalu hapus file ZIP-nya supaya disk lega.
-
-**5. Atur startup**
-
-**Startup → Startup command:**
+Lalu **Files → Upload** → **Extract**, startup command:
 
 ```bash
 npm install --omit=dev && node dist/index.js
 ```
 
-Kalau panel menyediakan kolom *Additional Node.js Packages*, isi dengan:
+Pastikan folder `dist/` ada di **root** server (bukan di dalam subfolder).
 
+### 3. Isi environment variable di panel
+
+> ⚠️ **Nama variabel harus persis.** Salah nama = dianggap kosong, dan gejalanya "belum diisi"
+> padahal kolomnya sudah terisi. Bot ini menerima beberapa alias untuk variabel Discord:
+>
+> | Nama utama | Alias yang juga dibaca |
+> |---|---|
+> | `DISCORD_TOKEN` | `DISCORD_BOT_TOKEN` |
+> | `CLIENT_ID` | `DISCORD_CLIENT_ID` |
+> | `DEV_GUILD_ID` | `DISCORD_GUILD_ID` |
+
+Tempel blok ini sekaligus di **Startup → Environment → Tempel**, ganti tiga nilai pertama:
+
+```env
+DISCORD_TOKEN=ganti-dengan-token-bot
+CLIENT_ID=ganti-dengan-angka-application-id
+AI_API_KEY=ganti-dengan-key-groq
+NODE_OPTIONS=--max-old-space-size=384
 ```
-discord.js dotenv openai zod
-```
 
-**6. Isi environment variables**
-
-Di panel (bukan file `.env` — panel menyuntikkan nilainya langsung ke proses):
-
-| Variabel | Nilai |
+| Variabel | Kenapa penting |
 |---|---|
-| `DISCORD_TOKEN` | token bot |
-| `CLIENT_ID` | Application ID |
-| `AI_API_KEY` | key Groq (`gsk_...`) |
-| `DEV_GUILD_ID` | *(opsional)* ID server untuk command instan |
-| `AI_FALLBACKS` | *(opsional)* `gemini:gemini-3.8-flash` |
-| `GEMINI_API_KEY` | *(opsional)* |
+| `NODE_OPTIONS=--max-old-space-size=384` | Tanpa ini V8 mengambil heap lebih besar dari container 512 MB → proses dibunuh panel padahal RAM-nya cukup |
+| `AI_FALLBACKS` | *(opsional)* mis. `gemini:gemini-3.8-flash` + `GEMINI_API_KEY` |
+| `DEV_GUILD_ID` | *(opsional)* ID server untuk pendaftaran command instan |
+| `DASHBOARD_TOKEN` | *(opsional)* menyalakan dashboard |
 
-Biarkan `DATABASE_PATH` tidak diisi — default `./data/zypher.db` sudah tersimpan di disk server-mu.
+**Jangan upload file `.env`** ke folder repo: panel bisa menimpanya saat menarik ulang kode.
+Semua variabel dari tab Startup.
 
-**7. Start dan verifikasi**
+> ⚠️ **Setelah menyimpan variabel, scroll dan periksa yang lain.** Pengalaman paling sering:
+> menambah satu baris lalu menyimpan, dan baris lain ikut terhapus.
+
+### 4. Dashboard (kalau panel memberi port publik)
+
+Bot ini **sudah menerima nama variabel panel apa adanya** — tidak perlu rename:
+
+```env
+WEB_ENABLED=true
+WEB_PORT=16954
+WEB_HOST=0.0.0.0
+DASHBOARD_TOKEN=ganti-dengan-token-48-karakter
+PUBLIC_URL=http://78.154.103.15:16954
+```
+
+- **`WEB_PORT`** → angka setelah titik dua di **Console → Server info → Address**
+  (contoh `78.154.103.15:16954` → port `16954`).
+  `0` berarti "belum diisi" → bot memakai 3000 dan menulis port sebenarnya di log.
+- **`PUBLIC_URL`** *(opsional)* → alamat yang sama dengan Address, diawali `http://`.
+  Kalau diisi, log dashboard menampilkan URL persis ini.
+- **`WEB_ENABLED=false`** → mematikan dashboard walau token terisi.
+
+Buat tokennya di laptop, jangan di situs online:
+
+```bash
+npm run token            # crypto.randomBytes, 48 karakter hex
+```
+
+Setelah start, log menampilkan URL yang bisa dibuka:
+
+```
+INFO  🌐 Dashboard: http://78.154.103.15:16954 (login pakai DASHBOARD_TOKEN)
+INFO     Port diambil dari WEB_PORT=16954
+```
+
+### 5. Start & verifikasi
 
 **Console → Start**, lalu tunggu:
 
 ```
 🤖 Login sebagai NamaBot#1234 (1 server)
+✅ 10 slash command didaftarkan …
 ```
 
-Kalau muncul `❌ Node.js kamu versi 20…`, kembali ke langkah 2. Kalau `Cannot find module 'discord.js'`,
-berarti langkah 5 belum dijalankan atau `npm install` gagal karena RAM — coba lagi, atau upload folder
-`node_modules` dari laptop.
+> **Konsol Wispbyte bukan shell.** Mengetik `npm run apa-saja` di sana hanya masuk ke stdin proses
+> bot, bukan dijalankan. Tidak masalah di sini: bot mendaftarkan slash command otomatis setiap start.
 
-### Dashboard di Wispbyte
-
-Kalau panelmu memberi port publik, isi environment variable ini:
-
-| Variabel | Nilai |
-|---|---|
-| `DASHBOARD_TOKEN` | token acak, mis. hasil `openssl rand -hex 16` |
-| `WEB_HOST` | `0.0.0.0` (nama dari panel) |
-| `WEB_PORT` | port dari panel, **atau** `DASHBOARD_PORT=<port>` |
-
-Bot menerima `DASHBOARD_PORT` → `WEB_PORT` → `PORT` → `SERVER_PORT` (prioritas kiri ke kanan), dan
-**nilai `0` dianggap belum diisi** — jadi `WEB_PORT=0` tidak membuat bot memilih port acak; ia jatuh ke
-3000. Setelah start, log menunjukkan port yang benar-benar dipakai:
-
-```
-INFO  🌐 Dashboard: http://localhost:25566 (login pakai DASHBOARD_TOKEN)
-INFO     Port diambil dari WEB_PORT=25566
-```
-
-Kalau panel **tidak** meneruskan port HTTP, cukup kosongkan `DASHBOARD_TOKEN` — semua fitur bot tetap
-jalan penuh dan dokumen tetap bisa dikelola lewat `/dokumen tambah` di Discord.
-
----
+Kalau muncul `❌ Node.js kamu versi 20…` → kembali ke langkah 1 dan ganti image ke `nodejs_22`.
 
 ## Rekomendasi #2 — Oracle Cloud Always Free
 

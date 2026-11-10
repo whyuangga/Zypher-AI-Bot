@@ -382,6 +382,11 @@ export function startDashboard(): Server | null {
     return null;
   }
 
+  if (!config.dashboard.enabled) {
+    logger.info('Dashboard web nonaktif (WEB_ENABLED=false).');
+    return null;
+  }
+
   if (server) return server;
 
   server = createServer((request, response) => {
@@ -408,7 +413,8 @@ export function startDashboard(): Server | null {
     const actualPort = typeof address === 'object' && address ? address.port : config.dashboard.port;
     const shownHost = config.dashboard.host === '0.0.0.0' ? 'localhost' : config.dashboard.host;
 
-    logger.info(`🌐 Dashboard: http://${shownHost}:${actualPort} (login pakai DASHBOARD_TOKEN)`);
+    const url = config.dashboard.publicUrl ?? `http://${shownHost}:${actualPort}`;
+    logger.info(`🌐 Dashboard: ${url} (login pakai DASHBOARD_TOKEN)`);
     if (config.dashboard.portSource !== 'default') {
       logger.info(`   Port diambil dari ${config.dashboard.portSource}=${config.dashboard.port}`);
     }
