@@ -1,7 +1,7 @@
 {
   "name": "zypher-ai-bot",
   "version": "1.0.0",
-  "description": "Discord AI bot \u2014 private AI rooms, long-term memory, custom keyword answers, and session transcripts.",
+  "description": "Discord AI bot — private AI rooms, long-term memory, custom keyword answers, and session transcripts.",
   "private": true,
   "type": "module",
   "engines": {
@@ -13,6 +13,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.check.json",
+    "typecheck:strict": "tsc -p tsconfig.check.json --noUnusedLocals --noUnusedParameters",
+    "verify": "npm run typecheck:strict && npm run smoke && npm run test:fallback",
     "smoke": "tsx scripts/smoke.ts",
     "test:fallback": "tsx scripts/fallback-check.ts",
     "models": "tsx scripts/list-models.ts",

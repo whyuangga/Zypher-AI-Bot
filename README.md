@@ -189,7 +189,8 @@ Klik **Chat via DM** → bot mengirim DM ke kamu → mulai ngobrol di DM.
 | `AI_BASE_URL` | `https://api.groq.com/openai/v1` | Endpoint OpenAI-compatible. Ganti untuk pindah provider. |
 | `AI_MODEL` | `openai/gpt-oss-120b` | Model yang dipakai (lihat [docs/models.md](docs/models.md)) |
 | `AI_TEMPERATURE` | `0.8` | Kreativitas (0–2). Naikkan kalau variasi jawaban terasa monoton. |
-| `AI_MAX_TOKENS` | `700` | Panjang maksimal jawaban |
+| `AI_MAX_TOKENS` | `4096` | Jatah maksimum jawaban (64–8192). Kalau provider menolak angkanya, bot otomatis menurunkannya sendiri dan mengingat batas itu. |
+| `AI_BREVITY_TOKENS` | `1024` | Jatah untuk jawaban pendek: sapaan agent, sambutan, salam perpisahan, pemecah sepi |
 | `AI_HISTORY_LIMIT` | `20` | Jumlah pesan terakhir sebagai konteks |
 | `AI_FALLBACKS` | kosong | Provider cadangan, mis. `gemini:gemini-3.8-flash,openrouter:...` |
 | `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, `GROQ_API_KEY` | kosong | Key untuk provider cadangan |
@@ -237,6 +238,14 @@ AI_FALLBACKS=gemini:gemini-3.8-flash,openrouter:google/gemma-4-31b-it:free
 GEMINI_API_KEY=AIza...
 OPENROUTER_API_KEY=sk-or-v1-...
 ```
+
+Rantai fallback bekerja begini:
+
+- Provider utama dicoba lebih dulu, lalu cadangan sesuai urutan di `AI_FALLBACKS`.
+- Rate limit (`429`) langsung pindah provider — tidak menunggu backoff yang pasti sia-sia.
+- Balasan kosong dianggap gagal, jadi provider berikutnya dicoba (khas model reasoning yang menghabiskan jatah untuk berpikir).
+- Provider yang menolak `AI_MAX_TOKENS` dicoba ulang di tempat dengan batas yang disebutkan provider, dan batas itu diingat untuk permintaan berikutnya.
+- Kalau semua provider gagal, user menerima penjelasan singkat — bukan jawaban kosong.
 
 ```env
 # OpenAI
@@ -455,9 +464,10 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke          # 229 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
+npm run smoke          # 233 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
 npm run smoke:pg       # 14 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # uji rantai fallback provider dengan server tiruan
+npm run verify         # semuanya sekaligus: typecheck ketat + smoke + test:fallback
 npm run dashboard      # nyalakan dashboard web saja, tanpa bot Discord
 npm run migrate:pg     # pindahkan data SQLite → Postgres
 npm run bundle         # bikin zypher-deploy.zip untuk panel hosting
@@ -477,9 +487,16 @@ riwayat room, escape XSS pada transkrip, chunking pesan, rate limit, parsing `AI
 dokumen RAG, tokenizer/BM25, ingest–cari–hapus dokumen di database sungguhan (in-memory), serta
 rendering tiap halaman dashboard (sidebar, kartu statistik, grafik 7 hari, empty state, escape XSS).
 
-`npm run test:fallback` menyalakan dua server OpenAI-compatible tiruan (provider utama selalu 429) dan
-memeriksa 10 hal: pindah provider, payload utuh, berhenti saat prompt kepanjangan, **delta streaming
-diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai utuh** (memori tetap jalan).
+`npm run test:fallback` menyalakan dua server OpenAI-compatible tiruan — tanpa jaringan, tanpa API key —
+dan memeriksa 15 hal: pindah provider saat 429, payload utuh, berhenti saat prompt kepanjangan (tanpa
+retry sia-sia), **delta streaming diterima bertahap**, **tool call yang datang sebagai delta tetap
+terangkai utuh**, **plafon `max_tokens` yang ditolak diulang di provider yang sama** (bukan langsung
+lompat fallback) lalu diingat, serta **balasan kosong** yang memicu provider berikutnya sampai error
+yang jelas kalau semua provider kosong.
+
+**CI otomatis** (`.github/workflows/ci.yml`) menjalankan typecheck ketat (`--noUnusedLocals`),
+`smoke`, `test:fallback`, dan `build` untuk setiap pull request — jadi regresi seperti import mati
+atau rantai fallback yang rusak ketahuan sebelum di-merge, bukan setelah bot diam di server.
 
 ---
 

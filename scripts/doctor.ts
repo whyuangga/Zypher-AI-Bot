@@ -26,7 +26,6 @@ const BOLD = '\x1b[1m';
 const GREEN = '\x1b[32m';
 const YELLOW = '\x1b[33m';
 const RED = '\x1b[31m';
-const CYAN = '\x1b[36m';
 
 interface CheckResult {
   chat: { ok: boolean; ms: number; detail: string };

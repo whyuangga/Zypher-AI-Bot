@@ -443,7 +443,7 @@ export async function endDmSession(user: User, botName: string): Promise<{ messa
           },
         ],
         temperature: 0.3,
-        maxTokens: 220,
+        maxTokens: config.ai.brevityTokens,
       });
       summary = result.message.content?.trim() ?? null;
     } catch (error) {

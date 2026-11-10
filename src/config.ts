@@ -111,7 +111,14 @@ const schema = z.object({
   AI_BASE_URL: z.string().url().default('https://api.groq.com/openai/v1'),
   AI_MODEL: z.string().default('openai/gpt-oss-120b'),
   AI_TEMPERATURE: numberish(0.8, 0, 2),
-  AI_MAX_TOKENS: numberish(700, 64, 8192),
+  AI_MAX_TOKENS: numberish(4096, 64, 8192),
+  // Jatah token untuk jawaban pendek (sambutan, salam, pemecah sepi, agent).
+  //
+  // Dulu tiap pemanggil menulis angka kecil sendiri-sendiri (80-220) tanpa
+  // memandang AI_MAX_TOKENS. Untuk model reasoning itu jatah yang habis
+  // sebelum sempat menulis jawaban, jadi hasilnya "teks kosong" terus.
+  // Sekarang satu nilai, dan bisa dinaikkan tanpa menyentuh kode.
+  AI_BREVITY_TOKENS: numberish(1024, 64, 8192),
   AI_HISTORY_LIMIT: numberish(20, 0, 100),
   // Daftar provider cadangan: "gemini:gemini-3.8-flash,openrouter:google/gemma-4-31b-it:free"
   AI_FALLBACKS: z.string().optional(),
@@ -249,6 +256,7 @@ export const config = {
     model: env.AI_MODEL,
     temperature: env.AI_TEMPERATURE,
     maxTokens: env.AI_MAX_TOKENS,
+    brevityTokens: env.AI_BREVITY_TOKENS,
     historyLimit: env.AI_HISTORY_LIMIT,
     fallbacks: env.AI_FALLBACKS?.trim() || undefined,
     providerKeys: {

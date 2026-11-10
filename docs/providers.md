@@ -162,6 +162,8 @@ npm run test:fallback
 ```
 
 Skrip ini menyalakan dua server tiruan (satu selalu 429) dan memastikan bot benar-benar berpindah provider.
+Selain itu ia memeriksa plafon `max_tokens` (ditolak → diulang di provider yang sama, lalu diingat),
+balasan kosong (dilewati ke provider berikutnya), dan tool call saat streaming (tidak dianggap kosong).
 
 ## Cara menguji setelah ganti provider
 

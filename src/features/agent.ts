@@ -176,7 +176,7 @@ async function composeReply(
   );
 
   const payload: ChatMessage[] = [{ role: 'system', content: systemPrompt }, ...history, userMessage];
-  let result = await chat({ messages: payload, tools, model, maxTokens: 220 });
+  let result = await chat({ messages: payload, tools, model, maxTokens: config.ai.brevityTokens });
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
     const toolCalls = result.message.tool_calls;
@@ -199,7 +199,7 @@ async function composeReply(
       { role: 'assistant', content: result.message.content ?? null, tool_calls: toolCalls } as ChatMessage,
       ...toolMessages,
     );
-    result = await chat({ messages: payload, tools, model, maxTokens: 220 });
+    result = await chat({ messages: payload, tools, model, maxTokens: config.ai.brevityTokens });
   }
 
   const text = (result.message.content ?? '').trim();
@@ -348,7 +348,7 @@ export async function handleQuietChannel(
         },
         { role: 'user', content: buildQuietPrompt(channel.guild.name) },
       ],
-      maxTokens: 80,
+      maxTokens: config.ai.brevityTokens,
       temperature: 0.9,
     });
 
