@@ -2,6 +2,7 @@ import { MessageFlags, type Interaction } from 'discord.js';
 import { commandMap } from '../commands/index.js';
 import { handleButton } from '../features/buttons.js';
 import { errorMessage, logger } from '../lib/logger.js';
+import { ownsGuild } from '../lib/shard.js';
 
 async function reportFailure(interaction: Interaction, error: unknown): Promise<void> {
   const message = `⚠️ Terjadi kesalahan: ${errorMessage(error).slice(0, 200)}`;
@@ -21,6 +22,9 @@ async function reportFailure(interaction: Interaction, error: unknown): Promise<
 
 export async function onInteractionCreate(interaction: Interaction): Promise<void> {
   try {
+    // Multi-shard: abaikan interaksi dari server yang bukan porsi instance ini.
+    if (interaction.guildId && !ownsGuild(interaction.guildId)) return;
+
     if (interaction.isChatInputCommand()) {
       const command = commandMap.get(interaction.commandName);
       if (!command) {

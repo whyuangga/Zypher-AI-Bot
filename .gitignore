@@ -13,3 +13,5 @@ npm-debug.log*
 *.tsbuildinfo
 *.zip
 zypher-deploy.zip
+
+dashboard-shots/

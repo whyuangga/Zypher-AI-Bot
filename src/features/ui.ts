@@ -101,6 +101,9 @@ export function helpEmbed(botName: string): EmbedBuilder {
         value: [
           '`/reset` — hapus riwayat chat di room ini',
           '`/tanya pertanyaan:<teks>` — tanya AI cepat tanpa room',
+          'Kirim gambar di room AI → AI membacanya *(butuh vision aktif)*',
+          'Kirim voice note di room AI → AI transkrip & jawab dengan suara',
+          '`/ucap teks:<teks>` — ubah teks jadi pesan suara',
         ].join('\n'),
       },
       {
@@ -109,7 +112,7 @@ export function helpEmbed(botName: string): EmbedBuilder {
           '`/dokumen tambah file:<lampiran>` — jadikan dokumen sebagai pengetahuan AI *(admin)*',
           '`/dokumen daftar` · `/dokumen hapus id:<nomor>` *(admin)*',
           '`/dokumen cari pertanyaan:<teks>` — cek potongan yang akan dipakai AI',
-          'Format: `.txt`, `.md`, `.csv`, `.json`, `.html`. AI menyebut sumbernya saat menjawab.',
+          'Format: `.txt`, `.md`, `.csv`, `.json`, `.html`, `.pdf`, `.docx`. AI menyebut sumbernya saat menjawab.',
         ].join('\n'),
       },
       {

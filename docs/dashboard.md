@@ -8,9 +8,32 @@ Yang bisa dilakukan:
 
 | Halaman | Isi |
 |---|---|
-| `/` | Statistik (room, dokumen, potongan, keyword, memori, pesan), status fitur, room terbaru, dokumen terbaru |
+| `/` | 4 kartu statistik, **grafik aktivitas 7 hari**, status sistem, room terbaru, dokumen terbaru |
 | `/dokumen` | Upload dokumen RAG (file atau tempel teks), daftar dokumen, hapus dokumen, **uji pencarian** |
-| `/healthz` | JSON status untuk monitoring (tanpa login) |
+| `/keyword` | Tambah & hapus template jawaban owner (FAQ, harga, aturan) |
+| `/memori` | Fakta yang diingat AI per user, dikelompokkan per member, bisa dihapus |
+| `/transkrip` | Arsip HTML tiap sesi AI yang sudah ditutup — unduh, lihat ringkasan, hapus |
+| `/moderasi` | Filter kata terlarang per server, tindakan (hapus/tegur/timeout), log pelanggaran |
+| `/pengaturan` | Persona AI & model per server, info server + salin Server ID |
+| `/healthz` | JSON status untuk monitoring (tanpa login) — termasuk engine database |
+
+Tampilan memakai gaya **editorial gelap** (hangat, bukan hitam-putih murni) dengan palet pemilik proyek:
+
+| Peran | Warna | Hex |
+|---|---|---|
+| Latar | near-black | `#0D0D0F` |
+| Teks utama | Wafer | `#E2D1CC` |
+| Teks sekunder | Cold Turkey | `#D0B2B7` |
+| Aksen (aktif, fokus, badge) | Kimberly | `#716C98` |
+| Garis / permukaan gelap | Don Juan | `#55434E` (diturunkan jadi `rgba`) |
+
+Hurufnya **General Sans** (Fontshare) yang di-*self-host* dari `assets/fonts/` —
+tidak ada permintaan ke CDN, jadi panel tanpa akses internet keluar tetap tampil benar.
+Garis rambut 1px, label kapital ber-spasi lebar, dan tombol solid (tanpa gradient).
+Sidebar di kiri, grafik 7 hari tanpa library chart — semua CSS/SVG dibuat langsung dari server,
+jadi tidak ada bundler yang harus jalan di panel hosting.
+
+Pratinjau tampilan ada di [`docs/screenshots/`](screenshots/README.md) (desktop 1440px + mobile 390px).
 
 ---
 
@@ -106,6 +129,19 @@ Kalau panel menampilkan port tertentu (mis. `25566` di tab Startup/Network), tul
 
 ---
 
+## Tampilan & navigasi
+
+- **Sidebar** berisi Ringkasan, Dokumen RAG, Keyword, Memori, Pengaturan, dan pintu ke Health check.
+  Di layar HP sidebar jadi menu geser (tombol ☰ di kiri atas).
+- **Topbar** berisi pemilih server, chip Server ID aktif, dan tombol keluar.
+- **Kartu statistik** dan **grafik 7 hari** dihitung per server yang dipilih.
+- Aksi destruktif (hapus dokumen/keyword/memori) memakai dialog konfirmasi, bukan `confirm()` bawaan browser.
+- Semua notifikasi muncul sebagai *toast* di kanan bawah.
+
+> Grafik memakai zona waktu **Asia/Jakarta**, jadi batang "Hari ini" mengikuti tanggal WIB — bukan UTC server.
+
+---
+
 ## Pilih server
 
 Dashboard menampilkan satu server pada satu waktu (query `?guild=<id>`). Pilih dari dropdown di kanan
@@ -130,7 +166,8 @@ developer) → *Copy Server ID*.
 ## Upload dokumen dari dashboard
 
 1. Buka `/dokumen`.
-2. **Upload dari komputer**: pilih `.txt`/`.md`/`.csv`/`.json`/… (maks 5 MB) → *Upload dokumen*.
+2. **Upload dari komputer**: pilih `.txt`/`.md`/`.csv`/`.json`/`.pdf`/`.docx`/… (maks 8 MB) → *Upload dokumen*.
+   PDF dan DOCX diekstrak otomatis jadi teks (lihat [rag.md](rag.md#pdf--docx)).
 3. **Atau tempel teks**: beri nama file, tempel isinya, simpan.
 
 Setelah tersimpan, halaman menampilkan jumlah potongan. Nama yang sama akan menggantikan versi lama.
@@ -140,6 +177,82 @@ Setelah tersimpan, halaman menampilkan jumlah potongan. Nama yang sama akan meng
 Kotak *Uji pencarian* memanggil mesin pencari yang sama dengan yang dipakai AI. Hasilnya menampilkan
 potongan + skor + sumber (`lexical`, `vector`, atau `hybrid`). Ini cara tercepat tahu apakah dokumen
 kamu akan terpakai saat member bertanya.
+
+---
+
+## Riwayat transkrip (`/transkrip`)
+
+Setiap kali member menekan **Akhiri Sesi**, transkrip HTML-nya bukan cuma dikirim ke DM dan channel
+arsip — salinannya juga disimpan di tabel `transcripts` (SQLite), jadi tetap ada walau file di Discord
+sudah tenggelam atau folder `transcripts/` di panel dibersihkan.
+
+Halaman `/transkrip` menampilkan: user, channel asal, jumlah pesan, jumlah memori, ukuran file,
+waktu sesi ditutup, cuplikan ringkasan AI, plus tombol **Unduh** dan **Hapus**.
+
+| Endpoint | Fungsi |
+|---|---|
+| `GET /api/transkrip/<id>` | Unduh file HTML sebagai attachment (`content-disposition`) |
+| `DELETE /api/transkrip/<id>` | Hapus satu arsip dari database |
+
+Semua endpoint tetap butuh sesi login, dan `<id>` hanya bisa diakses oleh server (guild) pemiliknya.
+Transkrip dikirim sebagai **attachment** dengan `x-content-type-options: nosniff`, jadi isi HTML dari
+member tidak pernah dieksekusi di origin dashboard.
+
+> Ukuran penyimpanan: transkrip ~30–100 KB per sesi. Seribu sesi kira-kira 50 MB, masih aman di
+> disk 1 GB Wispbyte. Hapus arsip lama dari halaman ini kalau mulai menumpuk.
+
+---
+
+## Moderasi (`/moderasi`)
+
+Semua yang bisa diatur lewat `.env` juga bisa diatur di sini — dan nilai dashboard **menang**
+atas `.env` karena tersimpan per server. Halaman ini berisi:
+
+- **Filter kata**: status aktif/nonaktif, daftar kata (koma atau baris baru), tindakan
+  (`delete`/`warn`/`timeout`), durasi timeout 1–10080 menit.
+- **Ringkasan**: jumlah kata terdaftar, tindakan aktif, jumlah log.
+- **Log pelanggaran**: pelaku, kata yang cocok, cuplikan pesan, tindakan, waktu —
+  bisa dihapus satu per satu atau dibersihkan sekaligus.
+
+| Endpoint | Fungsi |
+|---|---|
+| `POST /api/moderasi` | Simpan pengaturan (JSON: `enabled`, `words[]`, `action`, `timeoutMinutes`) |
+| `DELETE /api/moderasi/logs/<id>` | Hapus satu catatan pelanggaran |
+| `DELETE /api/moderasi/logs` | Bersihkan semua catatan pelanggaran server ini |
+
+Penjelasan cara pencocokan kata, pengecualian staff, dan pengiriman log ke channel ada di
+[docs/moderation.md](moderation.md). Perubahan dari dashboard langsung dipakai pada pesan
+berikutnya (cache pengaturan hanya 15 detik dan di-reset saat menyimpan).
+
+---
+
+## Login lewat link (`/masuk/<token>`)
+
+Malas mengetik token di HP? Buka dashboard lewat address bar:
+
+```
+http://<alamat-panel>:<port>/masuk/<DASHBOARD_TOKEN>
+```
+
+Alurnya:
+
+1. Server memeriksa token (tetap timing-safe, sama seperti form login).
+2. Sesi 12 jam dibuat → cookie `zp_session` httpOnly dipasang.
+3. Halaman perantara menjalankan `location.replace('/')`, sehingga **entri riwayat berisi token
+   diganti** dengan `/` — tombol Back tidak membuka URL bertoken lagi.
+4. Semua halaman dikirim dengan `Referrer-Policy: no-referrer`, jadi token tidak bocor ke situs lain
+   lewat header Referer.
+
+`/login/<token>` juga jalan (alias). Tanpa token → dialihkan ke form login biasa.
+
+**Yang tetap perlu kamu waspadai:**
+
+| Risiko | Mitigasi |
+|---|---|
+| Token terlihat di log proxy / panel hosting | Jangan pakai link di komputer bersama; ganti token bila ragu |
+| Link tak sengaja terkirim ke orang lain | Siapa pun pemegang link = admin. Rotasi token: `npm run token -- --write` lalu perbarui env panel |
+| Brute force lewat link | Batas 8 percobaan / 10 menit per IP, sama dengan form login |
+| Browser menyimpan autocomplete | Tidak berlaku — token tidak pernah diketik di form |
 
 ---
 

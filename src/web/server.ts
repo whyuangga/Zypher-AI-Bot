@@ -6,25 +6,59 @@
  * jadi server Discord tetap bisa dipakai tanpa membuka port apa pun.
  */
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 import {
+  addKeyword,
+  clearModerationLogs,
   countChunks,
+  countModerationLogs,
+  deleteModerationLog,
   countGuildMessages,
   countGuildRows,
   countRows,
+  countTranscripts,
+  deleteKeyword,
+  deleteMemory,
+  deleteTranscript,
+  getTranscript,
+  getGuildSettings,
+  getModerationSettings,
   listDocuments,
   listGuildIds,
+  listGuildMemories,
   listKeywords,
+  listMemoryOwners,
   listMemories,
+  listModerationLogs,
   listRooms,
-  deleteKeyword,
+  listTranscripts,
+  messagesPerDay,
+  setGuildModel,
+  setModerationSettings,
+  setPersona,
 } from '../db/repo.js';
+import { invalidateModerationCache } from '../features/moderation.js';
 import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
+import { MAX_BINARY_BYTES } from '../lib/chunker.js';
 import { embeddingModelName } from '../features/rag-embed.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
-import { dashboardPage, documentsPage, loginPage } from './views.js';
+import {
+  dokumenPage,
+  keywordPage,
+  loginPage,
+  memoriPage,
+  moderasiPage,
+  pengaturanPage,
+  ringkasanPage,
+  transkripPage,
+} from './ui/pages.js';
+import { dbLabel, dialect } from '../db/index.js';
+import { parseLoginLink } from './login-link.js';
+import { dashboardStatus } from './status.js';
 
 const SESSION_COOKIE = 'zp_session';
 const GUILD_COOKIE = 'zp_guild';
@@ -53,7 +87,7 @@ function parseCookies(header: string | undefined): Record<string, string> {
   return result;
 }
 
-function readBody(request: IncomingMessage, limit: number): Promise<string> {
+function readRawBody(request: IncomingMessage, limit: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -67,9 +101,13 @@ function readBody(request: IncomingMessage, limit: number): Promise<string> {
       }
       chunks.push(chunk);
     });
-    request.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    request.on('end', () => resolve(Buffer.concat(chunks)));
     request.on('error', reject);
   });
+}
+
+function readBody(request: IncomingMessage, limit: number): Promise<string> {
+  return readRawBody(request, limit).then((buffer) => buffer.toString('utf8'));
 }
 
 function sendJson(response: ServerResponse, status: number, payload: unknown): void {
@@ -81,10 +119,47 @@ function sendJson(response: ServerResponse, status: number, payload: unknown): v
   response.end(body);
 }
 
+/**
+ * Font self-host (General Sans, assets/fonts) — disajikan dari repo supaya
+ * dashboard tidak bergantung pada CDN/fontshare saat panel tanpa akses keluar.
+ * Isinya kecil dan statis, jadi cukup dibaca sekali lalu di-cache di memori.
+ */
+const FONT_FILES: Record<string, string> = {
+  'general-sans-regular.woff2': 'GeneralSans-Regular.woff2',
+  'general-sans-medium.woff2': 'GeneralSans-Medium.woff2',
+};
+const fontCache = new Map<string, Buffer>();
+
+function serveFont(name: string, response: ServerResponse): boolean {
+  const file = FONT_FILES[name];
+  if (!file) return false;
+
+  let data = fontCache.get(file);
+  if (!data) {
+    try {
+      data = readFileSync(fileURLToPath(new URL(`../../assets/fonts/${file}`, import.meta.url)));
+    } catch {
+      return false;
+    }
+    fontCache.set(file, data);
+  }
+
+  response.writeHead(200, {
+    'content-type': 'font/woff2',
+    'content-length': String(data.byteLength),
+    'cache-control': 'public, max-age=31536000, immutable',
+    'access-control-allow-origin': '*',
+  });
+  response.end(data);
+  return true;
+}
+
 function sendHtml(response: ServerResponse, status: number, html: string): void {
   response.writeHead(status, {
     'content-type': 'text/html; charset=utf-8',
     'cache-control': 'no-store',
+    // Jangan bocorkan URL (yang bisa berisi token) ke situs lain lewat Referer.
+    'referrer-policy': 'no-referrer',
   });
   response.end(html);
 }
@@ -106,6 +181,76 @@ function tokenMatches(candidate: string): boolean {
   return timingSafeEqual(a, b);
 }
 
+function loginBlocked(ip: string): boolean {
+  const attempt = loginAttempts.get(ip);
+  return Boolean(attempt && attempt.resetAt > Date.now() && attempt.count >= LOGIN_MAX_ATTEMPTS);
+}
+
+function recordLoginFailure(ip: string): void {
+  const attempt = loginAttempts.get(ip);
+  const next = attempt && attempt.resetAt > Date.now() ? attempt : { count: 0, resetAt: Date.now() + LOGIN_WINDOW_MS };
+  next.count += 1;
+  loginAttempts.set(ip, next);
+}
+
+/**
+ * IP untuk rate limit login.
+ *
+ * `X-Forwarded-For` hanya dipercaya kalau koneksi datang dari reverse proxy
+ * lokal (127.0.0.1 / ::1) — mis. Cloudflare Tunnel. Dari koneksi luar, header
+ * itu bisa dipalsukan siapa saja, jadi yang dipakai alamat socket.
+ */
+function clientIp(request: IncomingMessage): string {
+  const socket = request.socket.remoteAddress ?? 'unknown';
+  const fromLocalProxy = socket === '127.0.0.1' || socket === '::1' || socket === '::ffff:127.0.0.1';
+  if (fromLocalProxy) {
+    const forwarded = request.headers['x-forwarded-for'];
+    const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+    const first = value?.split(',')[0]?.trim();
+    if (first) return first;
+  }
+  return socket;
+}
+
+/** Buat sesi baru dan kembalikan nilai header `set-cookie`. */
+function issueSessionCookie(request: IncomingMessage): string {
+  const sessionId = randomBytes(24).toString('hex');
+  sessions.set(sessionId, Date.now() + SESSION_TTL_MS);
+
+  const secure = (request.headers['x-forwarded-proto'] ?? '').toString() === 'https' ? '; Secure' : '';
+  return `${SESSION_COOKIE}=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}${secure}`;
+}
+
+/**
+ * Halaman perantara untuk login lewat link. `location.replace()` menimpa entri
+ * riwayat, jadi token tidak tertinggal di tombol Back / daftar riwayat.
+ */
+function loginHandoffPage(): string {
+  return `<!doctype html>
+<html lang="id"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Masuk… · Zypher AI</title>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body { display: grid; place-items: center; background: #080a0f; color: #a7afc2;
+    font: 15px/1.6 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .box { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  .spin { width: 30px; height: 30px; border-radius: 50%; border: 2.5px solid rgba(255,255,255,.12);
+    border-top-color: #7c5cff; animation: spin .8s linear infinite; }
+  a { color: #8fb0ff; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style></head>
+<body>
+<div class="box">
+  <span class="spin"></span>
+  <span>Membuka dashboard…</span>
+  <noscript><a href="/">Lanjut ke dashboard</a></noscript>
+</div>
+<script>location.replace('/');</script>
+</body></html>`;
+}
+
 function hasSession(request: IncomingMessage): boolean {
   const sessionId = parseCookies(request.headers.cookie)[SESSION_COOKIE];
   if (!sessionId) return false;
@@ -119,7 +264,7 @@ function hasSession(request: IncomingMessage): boolean {
   return true;
 }
 
-function resolveGuild(request: IncomingMessage, url: URL): string {
+async function resolveGuild(request: IncomingMessage, url: URL): Promise<string> {
   // Form header punya dua kolom: dropdown `guild` dan kotak ketik `guild_manual`.
   // Yang diketik manual menang, supaya ID server yang belum terdaftar di database
   // tetap bisa dibuka.
@@ -132,7 +277,7 @@ function resolveGuild(request: IncomingMessage, url: URL): string {
   const fromCookie = parseCookies(request.headers.cookie)[GUILD_COOKIE];
   if (fromCookie) return fromCookie;
 
-  return listGuildIds()[0] ?? '';
+  return (await listGuildIds())[0] ?? '';
 }
 
 /* ------------------------------------------------------------------ */
@@ -144,14 +289,23 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
   const path = url.pathname.replace(/\/+$/, '') || '/';
   const method = request.method ?? 'GET';
 
+  // Font statis dipakai halaman login & dashboard — publik, tanpa auth.
+  if (method === 'GET' && path.startsWith('/fonts/')) {
+    if (serveFont(path.slice('/fonts/'.length), response)) return;
+    response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+    response.end('Font tidak ditemukan');
+    return;
+  }
+
   // Health check tanpa auth — dipakai hosting untuk memastikan proses hidup.
   if (path === '/healthz') {
     sendJson(response, 200, {
       ok: true,
       uptimeSeconds: Math.round(process.uptime()),
+      database: await dbLabel(),
       rag: config.rag.enabled,
-      documents: countRows('documents'),
-      rooms: countRows('rooms'),
+      documents: await countRows('documents'),
+      rooms: await countRows('rooms'),
     });
     return;
   }
@@ -162,10 +316,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
   }
 
   if (path === '/login' && method === 'POST') {
-    const ip = request.socket.remoteAddress ?? 'unknown';
-    const attempt = loginAttempts.get(ip);
+    const ip = clientIp(request);
 
-    if (attempt && attempt.resetAt > Date.now() && attempt.count >= LOGIN_MAX_ATTEMPTS) {
+    if (loginBlocked(ip)) {
       sendHtml(response, 429, loginPage('Terlalu banyak percobaan. Tunggu beberapa menit.'));
       return;
     }
@@ -174,24 +327,47 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     const submitted = new URLSearchParams(body).get('token') ?? '';
 
     if (!tokenMatches(submitted)) {
-      const next = attempt && attempt.resetAt > Date.now() ? attempt : { count: 0, resetAt: Date.now() + LOGIN_WINDOW_MS };
-      next.count += 1;
-      loginAttempts.set(ip, next);
+      recordLoginFailure(ip);
       logger.warn(`Login dashboard gagal dari ${ip}`);
       sendHtml(response, 401, loginPage('Token salah.'));
       return;
     }
 
     loginAttempts.delete(ip);
-    const sessionId = randomBytes(24).toString('hex');
-    sessions.set(sessionId, Date.now() + SESSION_TTL_MS);
+    redirect(response, '/', issueSessionCookie(request));
+    return;
+  }
 
-    const secure = (request.headers['x-forwarded-proto'] ?? '').toString() === 'https' ? '; Secure' : '';
-    redirect(
-      response,
-      '/',
-      `${SESSION_COOKIE}=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}${secure}`,
-    );
+  /* --- Login lewat link: /masuk/<token> atau /login/<token> --- */
+  const loginLink = parseLoginLink(path);
+  if (loginLink.matched && method === 'GET') {
+    if (!loginLink.token) {
+      redirect(response, '/login');
+      return;
+    }
+
+    const ip = clientIp(request);
+    if (loginBlocked(ip)) {
+      sendHtml(response, 429, loginPage('Terlalu banyak percobaan. Tunggu beberapa menit.'));
+      return;
+    }
+
+    if (!tokenMatches(loginLink.token)) {
+      recordLoginFailure(ip);
+      logger.warn(`Login lewat link gagal dari ${ip} (token tidak cocok)`);
+      sendHtml(response, 401, loginPage('Token di link tidak cocok. Salin ulang dari panel hosting.'));
+      return;
+    }
+
+    loginAttempts.delete(ip);
+    logger.info('Login dashboard lewat link (token di URL) — sesi 12 jam dibuat');
+    response.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer',
+      'set-cookie': issueSessionCookie(request),
+    });
+    response.end(loginHandoffPage());
     return;
   }
 
@@ -211,7 +387,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
 
-  let guildId = resolveGuild(request, url);
+  let guildId = await resolveGuild(request, url);
   // Mode dashboard-saja (bot belum pernah join server): izinkan ID dikirim header.
   if (!guildId) {
     const header = request.headers['x-guild'];
@@ -225,27 +401,38 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
 
   /* ---------------- halaman ---------------- */
 
+  const navCounts = async (id: string) =>
+    id
+      ? {
+          dokumen: await countGuildRows(id, 'documents'),
+          keyword: await countGuildRows(id, 'keywords'),
+          memori: await countGuildRows(id, 'memories'),
+          transkrip: await countTranscripts(id),
+          moderasi: await countModerationLogs(id),
+        }
+      : {};
+
   if (path === '/' && method === 'GET') {
-    const rooms = guildId ? listRooms(guildId).slice(0, 8) : [];
-    const documents = guildId ? listDocuments(guildId).slice(0, 6) : [];
+    const rooms = guildId ? (await listRooms(guildId)).slice(0, 8) : [];
+    const documents = guildId ? (await listDocuments(guildId)).slice(0, 6) : [];
 
     sendHtml(
       response,
       200,
-      dashboardPage({
+      ringkasanPage({
         guildId,
-        guilds: listGuildIds(),
+        guilds: await listGuildIds(),
         // Angka di dashboard harus mencerminkan server yang sedang dipilih.
         // Dulu ini global, jadi user melihat "1 ROOM AI" sementara daftar room
         // di bawahnya kosong — dua bagian halaman seolah saling bertentangan.
         stats: guildId
           ? {
-              rooms: countGuildRows(guildId, 'rooms'),
-              documents: countGuildRows(guildId, 'documents'),
-              chunks: countGuildRows(guildId, 'chunks'),
-              keywords: listKeywords(guildId).length,
-              memories: countGuildRows(guildId, 'memories'),
-              messages: countGuildMessages(guildId),
+              rooms: await countGuildRows(guildId, 'rooms'),
+              documents: await countGuildRows(guildId, 'documents'),
+              chunks: await countGuildRows(guildId, 'chunks'),
+              keywords: (await listKeywords(guildId)).length,
+              memories: await countGuildRows(guildId, 'memories'),
+              messages: await countGuildMessages(guildId),
             }
           : { rooms: 0, documents: 0, chunks: 0, keywords: 0, memories: 0, messages: 0 },
         rooms: rooms.map((room) => ({
@@ -263,6 +450,11 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         })),
         ragEnabled: config.rag.enabled,
         embedModel: embeddingModelName(),
+        model: config.ai.model,
+        storage: dialect() === 'pg' ? 'PostgreSQL' : 'SQLite',
+        series: guildId ? await messagesPerDay(guildId, 7) : await messagesPerDay('', 7),
+        status: dashboardStatus(),
+        counts: await navCounts(guildId),
       }),
     );
     return;
@@ -272,11 +464,11 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     sendHtml(
       response,
       200,
-      documentsPage({
+      dokumenPage({
         guildId,
-        guilds: listGuildIds(),
+        guilds: await listGuildIds(),
         documents: guildId
-          ? listDocuments(guildId).map((document) => ({
+          ? (await listDocuments(guildId)).map((document) => ({
               id: document.id,
               name: document.name,
               chunkCount: document.chunkCount,
@@ -286,6 +478,121 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
             }))
           : [],
         embedModel: embeddingModelName(),
+        status: dashboardStatus(),
+        counts: await navCounts(guildId),
+      }),
+    );
+    return;
+  }
+
+  if (path === '/keyword' && method === 'GET') {
+    sendHtml(
+      response,
+      200,
+      keywordPage({
+        guildId,
+        guilds: await listGuildIds(),
+        keywords: guildId
+          ? (await listKeywords(guildId)).map((keyword) => ({
+              id: keyword.id,
+              trigger: keyword.trigger,
+              answer: keyword.answer,
+              createdAt: keyword.createdAt,
+            }))
+          : [],
+        status: dashboardStatus(),
+        counts: await navCounts(guildId),
+      }),
+    );
+    return;
+  }
+
+  if (path === '/memori' && method === 'GET') {
+    const owners = guildId ? await listMemoryOwners(guildId) : [];
+    const all = guildId ? await listGuildMemories(guildId, 500) : [];
+    const groups = owners.map((owner) => ({
+      userId: owner.userId,
+      items: all
+        .filter((memory) => memory.userId === owner.userId)
+        .map((memory) => ({
+          id: memory.id,
+          content: memory.content,
+          source: memory.source,
+          createdAt: memory.createdAt,
+        })),
+    }));
+
+    sendHtml(
+      response,
+      200,
+      memoriPage({
+        guildId,
+        guilds: await listGuildIds(),
+        groups,
+        status: dashboardStatus(),
+        counts: await navCounts(guildId),
+      }),
+    );
+    return;
+  }
+
+  if (path === '/transkrip' && method === 'GET') {
+    const items = guildId ? await listTranscripts(guildId, 100) : [];
+    sendHtml(
+      response,
+      200,
+      transkripPage({
+        guildId,
+        guilds: await listGuildIds(),
+        items,
+        status: dashboardStatus(),
+        counts: await navCounts(guildId),
+      }),
+    );
+    return;
+  }
+
+  if (path === '/moderasi' && method === 'GET') {
+    const stored = guildId ? await getModerationSettings(guildId) : null;
+    sendHtml(
+      response,
+      200,
+      moderasiPage({
+        guildId,
+        guilds: await listGuildIds(),
+        enabled: stored ? stored.enabled : config.moderation.enabled,
+        words: stored ? stored.words : config.moderation.words,
+        action: stored ? stored.action : config.moderation.action,
+        timeoutMinutes: stored ? stored.timeoutMinutes : config.moderation.timeoutMinutes,
+        fromEnv: !stored,
+        logs: guildId ? await listModerationLogs(guildId, 100) : [],
+        status: dashboardStatus(),
+        counts: await navCounts(guildId),
+      }),
+    );
+    return;
+  }
+
+  if (path === '/pengaturan' && method === 'GET') {
+    const settings = guildId ? await getGuildSettings(guildId) : null;
+    sendHtml(
+      response,
+      200,
+      pengaturanPage({
+        guildId,
+        guilds: await listGuildIds(),
+        persona: settings?.persona ?? null,
+        model: settings?.model ?? null,
+        defaultModel: config.ai.model,
+        embedModel: embeddingModelName(),
+        ragEnabled: config.rag.enabled,
+        stats: {
+          rooms: guildId ? await countGuildRows(guildId, 'rooms') : 0,
+          messages: guildId ? await countGuildMessages(guildId) : 0,
+          documents: guildId ? await countGuildRows(guildId, 'documents') : 0,
+        },
+        status: dashboardStatus(),
+        counts: await navCounts(guildId),
       }),
     );
     return;
@@ -299,8 +606,6 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       return;
     }
 
-    const limit = Math.min(config.rag.maxChars * 4 + 64 * 1024, 16 * 1024 * 1024);
-    const body = await readBody(request, limit);
     const headerName = request.headers['x-filename'];
     const rawName = Array.isArray(headerName) ? (headerName[0] ?? '') : (headerName ?? 'dokumen.txt');
     let name = 'dokumen.txt';
@@ -309,6 +614,14 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     } catch {
       name = rawName || 'dokumen.txt';
     }
+
+    // PDF/DOCX dikirim sebagai biner asli, jadi butuh ruang lebih besar daripada teks biasa.
+    // Body dibaca sebagai Buffer (bukan string) supaya byte biner tidak rusak.
+    const binary = /\.(pdf|docx)$/i.test(name);
+    const limit = binary
+      ? MAX_BINARY_BYTES + 256 * 1024
+      : Math.min(config.rag.maxChars * 4 + 64 * 1024, 16 * 1024 * 1024);
+    const body = await readRawBody(request, limit);
 
     const result = await ingestDocument({
       guildId,
@@ -334,6 +647,38 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
 
+  // Unduh transkrip: dikirim sebagai attachment supaya HTML-nya tidak dieksekusi
+  // di origin dashboard (transkrip berisi teks dari member).
+  const transcriptMatch = /^\/api\/transkrip\/(\d+)$/.exec(path);
+  if (transcriptMatch) {
+    const id = Number(transcriptMatch[1]);
+
+    if (method === 'GET') {
+      const record = guildId ? await getTranscript(guildId, id) : null;
+      if (!record) {
+        sendJson(response, 404, { error: 'Transkrip tidak ditemukan.' });
+        return;
+      }
+
+      const safeName = record.fileName.replace(/[^\w.\-]+/g, '-');
+      response.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'content-disposition': `attachment; filename="${safeName}"`,
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+        'referrer-policy': 'no-referrer',
+      });
+      response.end(record.html);
+      return;
+    }
+
+    if (method === 'DELETE') {
+      const removed = guildId ? await deleteTranscript(guildId, id) : false;
+      sendJson(response, removed ? 200 : 404, removed ? { ok: true } : { error: 'Transkrip tidak ditemukan.' });
+      return;
+    }
+  }
+
   if (path === '/api/search' && method === 'GET') {
     const query = url.searchParams.get('q') ?? '';
     if (!guildId || !query.trim()) {
@@ -355,27 +700,179 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
   }
 
   if (path === '/api/documents' && method === 'GET') {
-    sendJson(response, 200, { documents: guildId ? listDocuments(guildId) : [] });
+    sendJson(response, 200, { documents: guildId ? await listDocuments(guildId) : [] });
     return;
   }
 
   if (path === '/api/rooms' && method === 'GET') {
-    sendJson(response, 200, { rooms: guildId ? listRooms(guildId) : [] });
+    sendJson(response, 200, { rooms: guildId ? await listRooms(guildId) : [] });
     return;
   }
 
   if (path === '/api/memories' && method === 'GET') {
     const userId = url.searchParams.get('user') ?? '';
     sendJson(response, 200, {
-      memories: guildId && userId ? listMemories(guildId, userId, 200) : [],
+      memories: guildId && userId ? await listMemories(guildId, userId, 200) : [],
     });
+    return;
+  }
+
+  if (path === '/api/keyword' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+
+    const raw = await readBody(request, 64 * 1024);
+    let payload: { trigger?: unknown; answer?: unknown };
+    try {
+      payload = JSON.parse(raw) as { trigger?: unknown; answer?: unknown };
+    } catch {
+      sendJson(response, 400, { error: 'Format JSON tidak valid.' });
+      return;
+    }
+
+    const trigger = typeof payload.trigger === 'string' ? payload.trigger.trim() : '';
+    const answer = typeof payload.answer === 'string' ? payload.answer.trim() : '';
+    if (trigger.length < 3) {
+      sendJson(response, 400, { error: 'Kata kunci minimal 3 karakter.' });
+      return;
+    }
+    if (answer.length < 5) {
+      sendJson(response, 400, { error: 'Jawaban masih kosong.' });
+      return;
+    }
+
+    const result = await addKeyword(guildId, trigger, answer, null);
+    if (!result.ok) {
+      const message =
+        result.reason === 'duplicate' ? 'Keyword dengan kata kunci itu sudah ada.' : 'Keyword gagal disimpan.';
+      sendJson(response, 409, { error: message });
+      return;
+    }
+
+    sendJson(response, 200, { ok: true, id: result.id });
+    return;
+  }
+
+  const memoryMatch = /^\/api\/memori\/(\d+)$/.exec(path);
+  if (memoryMatch && method === 'DELETE') {
+    const id = Number(memoryMatch[1]);
+    const userId = url.searchParams.get('user') ?? '';
+    const removed = guildId && userId ? await deleteMemory(guildId, userId, id) : false;
+    sendJson(response, removed ? 200 : 404, removed ? { ok: true } : { error: 'Memori tidak ditemukan.' });
+    return;
+  }
+
+  if (path === '/api/pengaturan' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+
+    const raw = await readBody(request, 32 * 1024);
+    let payload: { persona?: unknown; model?: unknown };
+    try {
+      payload = JSON.parse(raw) as { persona?: unknown; model?: unknown };
+    } catch {
+      sendJson(response, 400, { error: 'Format JSON tidak valid.' });
+      return;
+    }
+
+    if (payload.persona !== undefined) {
+      const persona = typeof payload.persona === 'string' ? payload.persona.trim() : '';
+      if (persona.length > 1500) {
+        sendJson(response, 400, { error: 'Persona terlalu panjang (maks 1500 karakter).' });
+        return;
+      }
+      await setPersona(guildId, persona || null);
+    }
+
+    if (payload.model !== undefined) {
+      const model = typeof payload.model === 'string' ? payload.model.trim() : '';
+      if (model.length > 120) {
+        sendJson(response, 400, { error: 'Nama model terlalu panjang.' });
+        return;
+      }
+      await setGuildModel(guildId, model || null);
+    }
+
+    const settings = await getGuildSettings(guildId);
+    sendJson(response, 200, { ok: true, persona: settings?.persona ?? null, model: settings?.model ?? null });
+    return;
+  }
+
+  if (path === '/api/moderasi' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+
+    const raw = await readBody(request, 32 * 1024);
+    let payload: {
+      enabled?: unknown;
+      words?: unknown;
+      action?: unknown;
+      timeoutMinutes?: unknown;
+    };
+    try {
+      payload = JSON.parse(raw) as typeof payload;
+    } catch {
+      sendJson(response, 400, { error: 'Format JSON tidak valid.' });
+      return;
+    }
+
+    const action = payload.action === 'warn' || payload.action === 'timeout' ? payload.action : 'delete';
+    const timeoutMinutes = Math.min(10080, Math.max(1, Math.round(Number(payload.timeoutMinutes) || 10)));
+
+    // Kata boleh dikirim sebagai array atau string berkoma/baris baru.
+    const rawWords = Array.isArray(payload.words)
+      ? payload.words.map((word) => String(word))
+      : typeof payload.words === 'string'
+        ? payload.words.split(/[,\n]/)
+        : [];
+    const words = [...new Set(rawWords.map((word) => word.trim().toLowerCase()).filter(Boolean))];
+    if (words.length > 200) {
+      sendJson(response, 400, { error: 'Terlalu banyak kata (maks 200).' });
+      return;
+    }
+    if (words.some((word) => word.length > 60)) {
+      sendJson(response, 400, { error: 'Satu kata/frasa maksimal 60 karakter.' });
+      return;
+    }
+
+    await setModerationSettings({
+      guildId,
+      enabled: Boolean(payload.enabled),
+      words,
+      action,
+      timeoutMinutes,
+    });
+    invalidateModerationCache(guildId);
+
+    const saved = await getModerationSettings(guildId);
+    sendJson(response, 200, { ok: true, moderation: saved });
+    return;
+  }
+
+  if (path === '/api/moderasi/logs' && method === 'DELETE') {
+    const removed = guildId ? await clearModerationLogs(guildId) : 0;
+    sendJson(response, 200, { ok: true, removed });
+    return;
+  }
+
+  const modLogMatch = /^\/api\/moderasi\/logs\/(\d+)$/.exec(path);
+  if (modLogMatch && method === 'DELETE') {
+    const id = Number(modLogMatch[1]);
+    const removed = guildId ? await deleteModerationLog(guildId, id) : false;
+    sendJson(response, removed ? 200 : 404, removed ? { ok: true } : { error: 'Log tidak ditemukan.' });
     return;
   }
 
   const keywordMatch = /^\/api\/keyword\/(\d+)$/.exec(path);
   if (keywordMatch && method === 'DELETE') {
     const id = Number(keywordMatch[1]);
-    const removed = guildId ? deleteKeyword(guildId, id) : false;
+    const removed = guildId ? await deleteKeyword(guildId, id) : false;
     sendJson(response, removed ? 200 : 404, removed ? { ok: true } : { error: 'Keyword tidak ditemukan.' });
     return;
   }

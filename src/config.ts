@@ -132,6 +132,16 @@ const schema = z.object({
   PUBLIC_URL: optionalHost,
   WEB_PUBLIC_URL: optionalHost,
   DATABASE_PATH: z.string().default('./data/zypher.db'),
+  // Postgres opsional. Terisi = semua data disimpan di Postgres, bukan SQLite.
+  // Contoh: postgres://user:pass@host:5432/db?sslmode=require
+  DATABASE_URL: z
+    .string()
+    .optional()
+    .transform((value) => (value && value.trim() ? value.trim() : undefined)),
+  // Multi-shard: bagi server (guild) ke beberapa instance bot yang berbagi
+  // satu database. SHARD_COUNT=1 (default) = semua server ditangani instance ini.
+  SHARD_INDEX: numberish(0, 0, 255),
+  SHARD_COUNT: numberish(1, 1, 256),
   AUTO_MEMORY: booleanish(true),
   RATE_LIMIT_PER_MINUTE: numberish(12, 0, 240),
   MAX_INPUT_CHARS: numberish(2000, 100, 6000),
@@ -139,6 +149,24 @@ const schema = z.object({
   TRANSCRIPT_CHANNEL_ID: optionalId,
   STAFF_ROLE_ID: optionalId,
   ADMIN_ONLY_ROOMS: booleanish(false),
+  // ---------- Moderasi otomatis ----------
+  MODERATION_ENABLED: booleanish(false),
+  // Daftar kata dipisah koma. Boleh juga diatur per server dari dashboard.
+  MODERATION_WORDS: z.string().optional(),
+  // delete = hapus pesan, warn = tegur saja, timeout = hapus + bisukan member
+  MODERATION_ACTION: z.enum(['delete', 'warn', 'timeout']).default('delete'),
+  MODERATION_TIMEOUT_MINUTES: numberish(10, 1, 10080),
+  // ---------- Vision (gambar) ----------
+  VISION_ENABLED: booleanish(false),
+  VISION_MODEL: z.string().default('meta-llama/llama-4-scout-17b-16e-instruct'),
+  VISION_MAX_MB: numberish(5, 1, 20),
+  // ---------- Suara (STT/TTS, endpoint OpenAI-compatible mis. Groq) ----------
+  VOICE_ENABLED: booleanish(false),
+  STT_MODEL: z.string().default('whisper-large-v3'),
+  TTS_ENABLED: booleanish(true),
+  TTS_MODEL: z.string().default('playai-tts'),
+  TTS_VOICE: z.string().default('Fritz-PlayAI'),
+  VOICE_MAX_MB: numberish(20, 1, 25),
 });
 
 const schemaWithAliases = schema
@@ -248,6 +276,31 @@ export const config = {
   })(),
   database: {
     path: env.DATABASE_PATH,
+    url: env.DATABASE_URL,
+    shardIndex: env.SHARD_INDEX,
+    shardCount: env.SHARD_COUNT,
+  },
+  moderation: {
+    enabled: env.MODERATION_ENABLED,
+    words: (env.MODERATION_WORDS ?? '')
+      .split(',')
+      .map((word) => word.trim().toLowerCase())
+      .filter(Boolean),
+    action: env.MODERATION_ACTION,
+    timeoutMinutes: env.MODERATION_TIMEOUT_MINUTES,
+  },
+  vision: {
+    enabled: env.VISION_ENABLED,
+    model: env.VISION_MODEL,
+    maxBytes: env.VISION_MAX_MB * 1024 * 1024,
+  },
+  voice: {
+    enabled: env.VOICE_ENABLED,
+    sttModel: env.STT_MODEL,
+    ttsEnabled: env.TTS_ENABLED,
+    ttsModel: env.TTS_MODEL,
+    ttsVoice: env.TTS_VOICE,
+    maxBytes: env.VOICE_MAX_MB * 1024 * 1024,
   },
   features: {
     autoMemory: env.AUTO_MEMORY,

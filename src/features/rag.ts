@@ -18,7 +18,7 @@ import {
   type ChunkWithDocument,
   type DocumentRecord,
 } from '../db/repo.js';
-import { chunkText, DocumentError, extractText } from '../lib/chunker.js';
+import { chunkText, DocumentError, extractFileText } from '../lib/chunker.js';
 import { Bm25Index, cosineSimilarity } from '../lib/lexical.js';
 import { logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
@@ -49,18 +49,11 @@ interface GuildIndex {
 
 const indexCache = new Map<string, GuildIndex>();
 
-/** Tanda versi murah: jumlah + id terbesar. Perubahan apa pun mengubahnya. */
-function signatureOf(guildId: string): string {
-  const chunks = listChunks(guildId);
-  const lastId = chunks.length > 0 ? chunks[0]!.id : 0;
-  return `${chunks.length}:${lastId}`;
-}
-
-function getIndex(guildId: string): GuildIndex {
+async function getIndex(guildId: string): Promise<GuildIndex> {
   const cached = indexCache.get(guildId);
   if (cached) return cached;
 
-  const chunks = listChunks(guildId);
+  const chunks = await listChunks(guildId);
   const index: GuildIndex = {
     chunks,
     bm25: new Bm25Index(chunks.map((chunk) => ({ id: chunk.id, text: chunk.content }))),
@@ -96,7 +89,7 @@ export async function ingestDocument(input: {
   source?: string;
 }): Promise<IngestResult> {
   const name = input.name.trim().slice(0, 120) || 'dokumen.txt';
-  const text = extractText(name, input.content);
+  const text = await extractFileText(name, input.content);
 
   if (text.length > config.rag.maxChars) {
     throw new DocumentError(
@@ -111,10 +104,10 @@ export async function ingestDocument(input: {
 
   const vectors = await embedTexts(pieces);
 
-  const existing = findDocumentByName(input.guildId, name);
-  if (existing) deleteDocumentRow(input.guildId, existing.id);
+  const existing = await findDocumentByName(input.guildId, name);
+  if (existing) await deleteDocumentRow(input.guildId, existing.id);
 
-  const documentId = insertDocument({
+  const documentId = await insertDocument({
     guildId: input.guildId,
     name,
     source: input.source ?? 'upload',
@@ -122,7 +115,7 @@ export async function ingestDocument(input: {
     createdBy: input.createdBy ?? null,
   });
 
-  insertChunks(
+  await insertChunks(
     documentId,
     input.guildId,
     pieces.map((content, index) => ({ content, embedding: vectors?.[index] ?? null })),
@@ -130,7 +123,7 @@ export async function ingestDocument(input: {
 
   invalidateIndex(input.guildId);
 
-  const document = getDocument(input.guildId, documentId);
+  const document = await getDocument(input.guildId, documentId);
   logger.info(
     `RAG: "${name}" diindeks untuk ${input.guildId} — ${pieces.length} potongan${vectors ? ' (vektor)' : ' (leksikal)'}${
       existing ? ' [menggantikan versi lama]' : ''
@@ -153,13 +146,13 @@ export async function ingestDocument(input: {
   };
 }
 
-export function removeDocument(guildId: string, id: number): boolean {
-  const removed = deleteDocumentRow(guildId, id);
+export async function removeDocument(guildId: string, id: number): Promise<boolean> {
+  const removed = await deleteDocumentRow(guildId, id);
   if (removed) invalidateIndex(guildId);
   return removed;
 }
 
-export function listGuildDocuments(guildId: string): DocumentRecord[] {
+export async function listGuildDocuments(guildId: string): Promise<DocumentRecord[]> {
   return listDocuments(guildId);
 }
 
@@ -184,7 +177,7 @@ export async function searchKnowledge(
 ): Promise<RetrievedChunk[]> {
   if (!config.rag.enabled || !query.trim()) return [];
 
-  const index = getIndex(guildId);
+  const index = await getIndex(guildId);
   if (index.bm25.size === 0) return [];
 
   const topK = Math.max(1, options.topK ?? config.rag.topK);
@@ -201,7 +194,7 @@ export async function searchKnowledge(
   if (modelName) {
     const [queryVector] = (await embedTexts([query])) ?? [];
     if (queryVector) {
-      const withVectors = getIndex(guildId).chunks.filter((chunk) => chunk.embedding);
+      const withVectors = (await getIndex(guildId)).chunks.filter((chunk) => chunk.embedding);
       const scored = withVectors.map((chunk) => {
         let vector: number[] = [];
         try {

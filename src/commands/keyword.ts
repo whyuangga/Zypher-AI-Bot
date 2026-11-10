@@ -46,7 +46,7 @@ export const keywordCommand: Command = {
     if (subcommand === 'daftar') {
       if (!(await requireAdmin(interaction))) return;
 
-      const keywords = listKeywords(interaction.guildId, 100);
+      const keywords = await listKeywords(interaction.guildId, 100);
       if (keywords.length === 0) {
         await replyEphemeral(
           interaction,
@@ -79,7 +79,7 @@ export const keywordCommand: Command = {
       const trigger = interaction.options.getString('trigger', true);
       const answer = interaction.options.getString('jawaban', true);
 
-      const result = addKeyword(interaction.guildId, trigger, answer, interaction.user.id);
+      const result = await addKeyword(interaction.guildId, trigger, answer, interaction.user.id);
 
       if (!result.ok) {
         await replyEphemeral(
@@ -106,7 +106,7 @@ export const keywordCommand: Command = {
 
     if (subcommand === 'hapus') {
       const id = interaction.options.getInteger('id', true);
-      const removed = deleteKeyword(interaction.guildId, id);
+      const removed = await deleteKeyword(interaction.guildId, id);
       await replyEphemeral(
         interaction,
         removed ? `🗑️ Keyword #${id} dihapus.` : `Tidak ada keyword #${id}. Cek \`/keyword daftar\`.`,

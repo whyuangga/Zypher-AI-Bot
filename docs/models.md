@@ -124,6 +124,29 @@ Model lain: <https://ollama.com/library> — ID-nya persis nama yang kamu `pull`
 
 ---
 
+## Model vision & audio (opsional)
+
+Tiga variabel berikut memakai **provider utama** yang sama (`AI_BASE_URL` + `AI_API_KEY`),
+jadi ID-nya harus ada di provider tersebut. Model chat biasa **tidak bisa** dipakai untuk gambar.
+
+| Kebutuhan | Variabel | Contoh ID (Groq) | Catatan |
+|---|---|---|---|
+| Membaca gambar | `VISION_MODEL` | `meta-llama/llama-4-scout-17b-16e-instruct` | Harus model **multimodal**. Default proyek, tapi katalog gratis Groq berubah — verifikasi dulu. |
+| Transkrip suara | `STT_MODEL` | `whisper-large-v3` | Alternatif lebih cepat: `whisper-large-v3-turbo`. |
+| Balasan suara | `TTS_MODEL` + `TTS_VOICE` | `playai-tts` + `Fritz-PlayAI` / `Celeste-PlayAI` | Kuota TTS lebih kecil dari chat; matikan `TTS_ENABLED` kalau habis. |
+
+Kalau provider utamamu **Gemini**, `gemini-3.8-flash` juga multimodal (isi ID-nya di `VISION_MODEL`).
+Kalau OpenAI, gunakan `gpt-4o-mini` (vision), `whisper-1` (STT), dan `tts-1` (TTS).
+
+Cek ID yang benar-benar tersedia — daftar default `npm run models` menyaring model non-chat,
+jadi pakai `--all` untuk melihat model audio & vision:
+
+```bash
+npm run models -- groq --all
+```
+
+---
+
 ## Kombinasi yang disarankan untuk bot ini
 
 **Pemula (paling aman):**
@@ -153,8 +176,9 @@ AI_API_KEY=ollama
 ## Verifikasi model yang benar-benar tersedia
 
 ```bash
-npm run models            # semua provider yang key-nya terisi
-npm run models -- gemini  # satu provider saja
+npm run models              # semua provider yang key-nya terisi
+npm run models -- gemini    # satu provider saja
+npm run models -- groq --all # ikut tampilkan model audio/gambar (untuk vision & voice)
 ```
 
 Skrip ini memanggil endpoint `/models` milik provider (bukan daftar di dokumentasi), menyaring model

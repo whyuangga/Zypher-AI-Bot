@@ -33,7 +33,11 @@ const YELLOW = '\x1b[33m';
 const RED = '\x1b[31m';
 const CYAN = '\x1b[36m';
 
-const only = process.argv.slice(2).find((arg) => !arg.startsWith('-'))?.toLowerCase();
+const args = process.argv.slice(2);
+// --all = jangan saring; tampilkan juga model audio/gambar/embedding.
+// Berguna saat mencari ID untuk VISION_MODEL / STT_MODEL / TTS_MODEL.
+const showAll = args.includes('--all');
+const only = args.find((arg) => !arg.startsWith('-'))?.toLowerCase();
 
 function buildTargets(): Target[] {
   const targets = new Map<string, Target>();
@@ -47,7 +51,13 @@ function buildTargets(): Target[] {
       name: `${primaryBaseUrl.includes('127.0.0.1') || primaryBaseUrl.includes('localhost') ? 'custom' : new URL(primaryBaseUrl).hostname}`,
       baseUrl: primaryBaseUrl,
       apiKey: primaryKey,
-      currentModels: [process.env.AI_MODEL?.trim()].filter((value): value is string => Boolean(value)),
+      // Semua model yang bisa dipakai bot ikut ditandai: chat, vision, STT, TTS.
+      currentModels: [
+        process.env.AI_MODEL?.trim(),
+        process.env.VISION_MODEL?.trim(),
+        process.env.STT_MODEL?.trim(),
+        process.env.TTS_MODEL?.trim(),
+      ].filter((value): value is string => Boolean(value)),
     });
   }
 
@@ -149,7 +159,7 @@ async function main(): Promise<void> {
 
     try {
       const models = await fetchModels(target);
-      const filtered = models.filter((model) => isChatModel(model.id));
+      const filtered = showAll ? models : models.filter((model) => isChatModel(model.id));
 
       // OpenRouter mengembalikan seluruh katalog; tampilkan yang gratis saja.
       const visible =
@@ -158,7 +168,7 @@ async function main(): Promise<void> {
           : filtered;
 
       if (visible.length === 0) {
-        console.log(`  ${YELLOW}(tidak ada model chat yang terdeteksi)${RESET}\n`);
+        console.log(`  ${YELLOW}(tidak ada model${showAll ? '' : ' chat'} yang terdeteksi)${RESET}\n`);
         continue;
       }
 

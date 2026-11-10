@@ -50,8 +50,7 @@ if (!server) {
 
 const shutdown = () => {
   stopDashboard();
-  closeDatabase();
-  process.exit(0);
+  void closeDatabase().finally(() => process.exit(0));
 };
 
 process.on('SIGINT', shutdown);

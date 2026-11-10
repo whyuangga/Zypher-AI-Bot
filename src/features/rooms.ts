@@ -11,7 +11,7 @@ import {
   type TextChannel,
 } from 'discord.js';
 import { config } from '../config.js';
-import { createRoom, deleteRoom, getRoomByUser, listMemories, clearHistory, type Room } from '../db/repo.js';
+import { createRoom, deleteRoom, getRoomByUser, insertTranscript, listMemories, clearHistory, type Room } from '../db/repo.js';
 import { chat } from '../lib/llm.js';
 import { logger, errorMessage } from '../lib/logger.js';
 import { buildTranscriptHtml, transcriptFileName, type TranscriptMessage } from '../lib/transcript.js';
@@ -33,11 +33,11 @@ const sanitizeChannelName = (name: string): string =>
 
 /** Cari room lama milik user (kalau bot restart dan DB masih ada). */
 async function findExistingRoom(guild: Guild, userId: string): Promise<TextChannel | null> {
-  const stored = getRoomByUser(guild.id, userId);
+  const stored = await getRoomByUser(guild.id, userId);
   if (stored) {
     const channel = await guild.channels.fetch(stored.channelId).catch(() => null);
     if (channel && channel.type === ChannelType.GuildText) return channel;
-    deleteRoom(stored.channelId);
+    await deleteRoom(stored.channelId);
   }
 
   // Pemulihan: cari channel dengan marker di topic (kalau database ter-reset).
@@ -141,7 +141,7 @@ export async function createAiRoom(
     reason: `Room AI privat untuk ${member.user.username}`,
   });
 
-  createRoom(channel.id, guild.id, member.id);
+  await createRoom(channel.id, guild.id, member.id);
 
   const welcome = await channel.send({
     content: `<@${member.id}>`,
@@ -240,7 +240,7 @@ export async function endAiRoom(interaction: ButtonInteraction, channel: TextCha
   const userName = member?.displayName ?? user?.username ?? 'member';
 
   const messages = await fetchAllMessages(channel);
-  const memories = listMemories(guild.id, room.userId, 50);
+  const memories = await listMemories(guild.id, room.userId, 50);
   const endedAt = new Date();
   const startedAt = messages[0]?.createdAt ?? new Date(room.createdAt);
 
@@ -262,6 +262,26 @@ export async function endAiRoom(interaction: ButtonInteraction, channel: TextCha
   const fileName = transcriptFileName(userName, endedAt);
   const buffer = Buffer.from(html, 'utf8');
   const stats = `📄 **${messages.length} pesan** • ${memories.length} memori • ${Math.max(1, Math.round((endedAt.getTime() - startedAt.getTime()) / 60000))} menit`;
+
+  // Arsipkan dulu ke database supaya dashboard punya riwayat transkrip,
+  // apa pun hasil pengiriman file ke user/ channel arsip di bawah.
+  try {
+    await insertTranscript({
+      guildId: guild.id,
+      channelId: channel.id,
+      channelName: channel.name,
+      userId: room.userId,
+      userName,
+      fileName,
+      summary,
+      messageCount: messages.length,
+      memoryCount: memories.length,
+      html,
+      createdAt: endedAt.getTime(),
+    });
+  } catch (error) {
+    logger.warn('Gagal menyimpan transkrip ke database dashboard', errorMessage(error));
+  }
 
   let dmSent = false;
   if (user) {
@@ -326,8 +346,8 @@ export async function endAiRoom(interaction: ButtonInteraction, channel: TextCha
     return;
   }
 
-  clearHistory(channel.id);
-  deleteRoom(channel.id);
+  await clearHistory(channel.id);
+  await deleteRoom(channel.id);
 
   await channel
     .send({

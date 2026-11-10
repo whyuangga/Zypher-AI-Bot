@@ -19,14 +19,36 @@ const { addMemory, listMemories, deleteMemory, clearMemories, addKeyword, listKe
 const { createRoom, getRoomByChannel, getRoomByUser, appendMessage, getHistory, clearHistory, deleteRoom, touchRoom } =
   await import('../src/db/repo.js');
 const { setPersona, getGuildSettings } = await import('../src/db/repo.js');
-const { listGuildIds, countGuildRows, countGuildMessages } = await import('../src/db/repo.js');
+const { listGuildIds, countGuildRows, countGuildMessages, listMemoryOwners, listGuildMemories, messagesPerDay } =
+  await import('../src/db/repo.js');
+const { insertTranscript, listTranscripts, getTranscript, deleteTranscript, countTranscripts } = await import(
+  '../src/db/repo.js'
+);
+const { ringkasanPage, keywordPage, memoriPage, transkripPage, moderasiPage } = await import('../src/web/ui/pages.js');
+const {
+  setModerationSettings,
+  getModerationSettings,
+  addModerationLog,
+  listModerationLogs,
+  deleteModerationLog,
+  clearModerationLogs,
+  countModerationLogs,
+} = await import('../src/db/repo.js');
+const { findBannedWords } = await import('../src/features/moderation.js');
+const { isImageAttachment, mimeForAttachment, toDataUri, visionUserContent } = await import(
+  '../src/features/vision.js'
+);
+const { isAudioAttachment } = await import('../src/lib/audio.js');
+const { hashGuildId, shardInfo, ownsGuild } = await import('../src/lib/shard.js');
+const { zipSync, strToU8 } = await import('fflate');
+const { parseLoginLink } = await import('../src/web/login-link.js');
 const { matchKeywords } = await import('../src/features/keywords.js');
 const { buildSystemPrompt } = await import('../src/features/prompt.js');
 const { buildTranscriptHtml, transcriptFileName } = await import('../src/lib/transcript.js');
 const { chunkMessage, truncate, normalize } = await import('../src/lib/text.js');
 const { checkRateLimit } = await import('../src/lib/ratelimit.js');
 const { parseFallbackSpec, providerNameForBaseUrl, buildProviderChain } = await import('../src/lib/providers.js');
-const { chunkText, extractText, htmlToText, DocumentError } = await import('../src/lib/chunker.js');
+const { chunkText, extractText, extractFileText, htmlToText, DocumentError } = await import('../src/lib/chunker.js');
 const { Bm25Index, tokenize, stem, cosineSimilarity } = await import('../src/lib/lexical.js');
 const {
   ingestDocument,
@@ -68,72 +90,72 @@ const CHANNEL = '333333333333333333';
 console.log('\n🧪 Zypher AI Bot — smoke test\n');
 
 console.log('Memori');
-test('menyimpan fakta baru', () => {
-  const result = addMemory(GUILD, USER, 'Namanya Bagas, desainer grafis di Bogor.');
+await testAsync('menyimpan fakta baru', async () => {
+  const result = await addMemory(GUILD, USER, 'Namanya Bagas, desainer grafis di Bogor.');
   assert.equal(result.inserted, true);
-  assert.equal(listMemories(GUILD, USER).length, 1);
+  assert.equal((await listMemories(GUILD, USER)).length, 1);
 });
-test('mencegah duplikat', () => {
-  const result = addMemory(GUILD, USER, 'Namanya Bagas, desainer grafis di Bogor.');
+await testAsync('mencegah duplikat', async () => {
+  const result = await addMemory(GUILD, USER, 'Namanya Bagas, desainer grafis di Bogor.');
   assert.equal(result.inserted, false);
-  assert.equal(listMemories(GUILD, USER).length, 1);
+  assert.equal((await listMemories(GUILD, USER)).length, 1);
 });
-test('memisahkan memori antar user', () => {
-  addMemory(GUILD, '999999999999999999', 'Suka kopi.');
-  assert.equal(listMemories(GUILD, USER).length, 1);
+await testAsync('memisahkan memori antar user', async () => {
+  await addMemory(GUILD, '999999999999999999', 'Suka kopi.');
+  assert.equal((await listMemories(GUILD, USER)).length, 1);
 });
-test('menghapus satu memori', () => {
-  const [memory] = listMemories(GUILD, USER);
+await testAsync('menghapus satu memori', async () => {
+  const [memory] = await listMemories(GUILD, USER);
   assert.ok(memory);
-  assert.equal(deleteMemory(GUILD, USER, memory.id), true);
-  assert.equal(listMemories(GUILD, USER).length, 0);
+  assert.equal(await deleteMemory(GUILD, USER, memory.id), true);
+  assert.equal((await listMemories(GUILD, USER)).length, 0);
 });
-test('menghapus semua memori', () => {
-  addMemory(GUILD, USER, 'Satu.');
-  addMemory(GUILD, USER, 'Dua.');
-  assert.equal(clearMemories(GUILD, USER), 2);
+await testAsync('menghapus semua memori', async () => {
+  await addMemory(GUILD, USER, 'Satu.');
+  await addMemory(GUILD, USER, 'Dua.');
+  assert.equal(await clearMemories(GUILD, USER), 2);
 });
 
 console.log('\nKeyword');
-test('menambah & mendeteksi duplikat trigger', () => {
-  const first = addKeyword(GUILD, 'server ini apa', 'Komunitas Akademi Discord untuk belajar dan mabar.', USER);
+await testAsync('menambah & mendeteksi duplikat trigger', async () => {
+  const first = await addKeyword(GUILD, 'server ini apa', 'Komunitas Akademi Discord untuk belajar dan mabar.', USER);
   assert.equal(first.ok, true);
-  const dup = addKeyword(GUILD, 'Server Ini Apa', 'Duplikat.', USER);
+  const dup = await addKeyword(GUILD, 'Server Ini Apa', 'Duplikat.', USER);
   assert.equal(dup.ok, false);
   assert.equal(dup.reason, 'duplicate');
 });
-test('mencocokkan pertanyaan dengan kalimat berbeda', () => {
-  const matches = matchKeywords(GUILD, 'Halo kak, server ini apa ya?');
+await testAsync('mencocokkan pertanyaan dengan kalimat berbeda', async () => {
+  const matches = await matchKeywords(GUILD, 'Halo kak, server ini apa ya?');
   assert.equal(matches.length, 1);
   assert.equal(matches[0]?.trigger, 'server ini apa');
 });
-test('mencocokkan dengan kata yang dibalik', () => {
-  const matches = matchKeywords(GUILD, 'ini server buat apa sih');
+await testAsync('mencocokkan dengan kata yang dibalik', async () => {
+  const matches = await matchKeywords(GUILD, 'ini server buat apa sih');
   assert.equal(matches.length, 1);
 });
-test('tidak mencocokkan pertanyaan tak relevan', () => {
-  assert.equal(matchKeywords(GUILD, 'tolong buatkan puisi tentang hujan').length, 0);
+await testAsync('tidak mencocokkan pertanyaan tak relevan', async () => {
+  assert.equal((await matchKeywords(GUILD, 'tolong buatkan puisi tentang hujan')).length, 0);
 });
-test('daftar & hapus keyword', () => {
-  const [keyword] = listKeywords(GUILD);
+await testAsync('daftar & hapus keyword', async () => {
+  const [keyword] = await listKeywords(GUILD);
   assert.ok(keyword);
-  assert.equal(deleteKeyword(GUILD, keyword.id), true);
-  assert.equal(listKeywords(GUILD).length, 0);
+  assert.equal(await deleteKeyword(GUILD, keyword.id), true);
+  assert.equal((await listKeywords(GUILD)).length, 0);
 });
 
 console.log('\nPrompt');
-test('menyusun system prompt lengkap', () => {
-  setPersona(GUILD, 'Kamu guru bahasa Inggris yang sabar.');
-  addMemory(GUILD, USER, 'Namanya Bagas.');
-  addKeyword(GUILD, 'jam mabar', 'Mabar setiap Jumat 20.00 WIB.', USER);
+await testAsync('menyusun system prompt lengkap', async () => {
+  await setPersona(GUILD, 'Kamu guru bahasa Inggris yang sabar.');
+  await addMemory(GUILD, USER, 'Namanya Bagas.');
+  await addKeyword(GUILD, 'jam mabar', 'Mabar setiap Jumat 20.00 WIB.', USER);
 
   const prompt = buildSystemPrompt({
     botName: 'Zypher',
     guildName: 'Akademi Discord',
     userName: 'Bagas',
-    persona: getGuildSettings(GUILD)?.persona ?? null,
-    memories: listMemories(GUILD, USER),
-    keywords: listKeywords(GUILD),
+    persona: (await getGuildSettings(GUILD))?.persona ?? null,
+    memories: await listMemories(GUILD, USER),
+    keywords: await listKeywords(GUILD),
     now: new Date('2026-11-09T10:00:00+07:00'),
   });
 
@@ -146,31 +168,31 @@ test('menyusun system prompt lengkap', () => {
 });
 
 console.log('\nRoom & riwayat');
-test('membuat room dan menemukannya kembali', () => {
-  createRoom(CHANNEL, GUILD, USER);
-  assert.equal(getRoomByChannel(CHANNEL)?.userId, USER);
-  assert.equal(getRoomByUser(GUILD, USER)?.channelId, CHANNEL);
+await testAsync('membuat room dan menemukannya kembali', async () => {
+  await createRoom(CHANNEL, GUILD, USER);
+  assert.equal((await getRoomByChannel(CHANNEL))?.userId, USER);
+  assert.equal((await getRoomByUser(GUILD, USER))?.channelId, CHANNEL);
 });
-test('menyimpan & mengambil riwayat berurutan', () => {
-  appendMessage(CHANNEL, 'user', 'Halo');
-  appendMessage(CHANNEL, 'assistant', 'Hai! Ada yang bisa dibantu?');
-  appendMessage(CHANNEL, 'user', 'Ajarin Inggris dong');
-  touchRoom(CHANNEL, 3);
+await testAsync('menyimpan & mengambil riwayat berurutan', async () => {
+  await appendMessage(CHANNEL, 'user', 'Halo');
+  await appendMessage(CHANNEL, 'assistant', 'Hai! Ada yang bisa dibantu?');
+  await appendMessage(CHANNEL, 'user', 'Ajarin Inggris dong');
+  await touchRoom(CHANNEL, 3);
 
-  const history = getHistory(CHANNEL, 2);
+  const history = await getHistory(CHANNEL, 2);
   assert.equal(history.length, 2);
   assert.equal(history[0]?.content, 'Hai! Ada yang bisa dibantu?');
   assert.equal(history[1]?.role, 'user');
-  assert.equal(getRoomByChannel(CHANNEL)?.messageCount, 3);
+  assert.equal((await getRoomByChannel(CHANNEL))?.messageCount, 3);
 });
-test('reset tidak menghapus memori', () => {
-  clearHistory(CHANNEL);
-  assert.equal(getHistory(CHANNEL, 10).length, 0);
-  assert.equal(listMemories(GUILD, USER).length, 1);
+await testAsync('reset tidak menghapus memori', async () => {
+  await clearHistory(CHANNEL);
+  assert.equal((await getHistory(CHANNEL, 10)).length, 0);
+  assert.equal((await listMemories(GUILD, USER)).length, 1);
 });
-test('hapus room membersihkan data', () => {
-  deleteRoom(CHANNEL);
-  assert.equal(getRoomByChannel(CHANNEL), null);
+await testAsync('hapus room membersihkan data', async () => {
+  await deleteRoom(CHANNEL);
+  assert.equal(await getRoomByChannel(CHANNEL), null);
 });
 
 console.log('\nTranskrip');
@@ -219,31 +241,113 @@ test('nama file transkrip aman', () => {
 });
 
 console.log('\nDashboard & daftar server');
-test('server yang hanya punya data tetap muncul di daftar server', () => {
+await testAsync('server yang hanya punya data tetap muncul di daftar server', async () => {
   // Kasus nyata: room sudah ada, tapi tabel `guilds` belum pernah terisi.
   // Dashboard dulu menampilkan "(belum ada server)" dan semua panel kosong.
   const dataOnlyGuild = '444444444444444444';
-  addKeyword(dataOnlyGuild, 'jam buka', 'Setiap hari 08.00–22.00 WIB.', USER);
-  assert.ok(listGuildIds().includes(dataOnlyGuild), 'guild dengan data harus ikut terdaftar');
+  await addKeyword(dataOnlyGuild, 'jam buka', 'Setiap hari 08.00–22.00 WIB.', USER);
+  assert.ok((await listGuildIds()).includes(dataOnlyGuild), 'guild dengan data harus ikut terdaftar');
 });
-test('createRoom mendaftarkan server ke tabel guilds', () => {
+await testAsync('createRoom mendaftarkan server ke tabel guilds', async () => {
   const freshGuild = '555555555555555555';
-  assert.equal(getGuildSettings(freshGuild), null);
-  createRoom('666666666666666666', freshGuild, USER);
-  assert.ok(getGuildSettings(freshGuild), 'server harus punya baris guilds setelah room dibuat');
+  assert.equal(await getGuildSettings(freshGuild), null);
+  await createRoom('666666666666666666', freshGuild, USER);
+  assert.ok(await getGuildSettings(freshGuild), 'server harus punya baris guilds setelah room dibuat');
 });
-test('statistik dashboard dipisah per server', () => {
+await testAsync('statistik dashboard dipisah per server', async () => {
   const guildA = '777777777777777777';
   const guildB = '888888888888888888';
   const channelA = '999999999999999991';
 
-  createRoom(channelA, guildA, USER);
-  appendMessage(channelA, 'user', 'Halo dari server A');
+  await createRoom(channelA, guildA, USER);
+  await appendMessage(channelA, 'user', 'Halo dari server A');
 
-  assert.equal(countGuildRows(guildA, 'rooms'), 1);
-  assert.equal(countGuildRows(guildB, 'rooms'), 0, 'server B tidak boleh ikut menghitung room A');
-  assert.equal(countGuildMessages(guildA), 1);
-  assert.equal(countGuildMessages(guildB), 0);
+  assert.equal(await countGuildRows(guildA, 'rooms'), 1);
+  assert.equal(await countGuildRows(guildB, 'rooms'), 0, 'server B tidak boleh ikut menghitung room A');
+  assert.equal(await countGuildMessages(guildA), 1);
+  assert.equal(await countGuildMessages(guildB), 0);
+});
+
+await testAsync('grafik aktivitas menghitung pesan 7 hari terakhir', async () => {
+  const guildId = '121212121212121212';
+  const channelId = '131313131313131313';
+  await createRoom(channelId, guildId, USER);
+  await appendMessage(channelId, 'user', 'Halo');
+  await appendMessage(channelId, 'assistant', 'Hai');
+
+  const series = await messagesPerDay(guildId, 7);
+  assert.equal(series.length, 7, 'harus tepat 7 batang');
+  assert.equal(series[6]?.count, 2, 'pesan hari ini masuk batang terakhir');
+  assert.equal(series.reduce((sum, item) => sum + item.count, 0), 2);
+});
+await testAsync('memori dikelompokkan per user', async () => {
+  const guildId = '141414141414141414';
+  await addMemory(guildId, '151515151515151515', 'Fakta A');
+  await addMemory(guildId, '151515151515151515', 'Fakta B');
+  await addMemory(guildId, '161616161616161616', 'Fakta C');
+
+  const owners = await listMemoryOwners(guildId);
+  assert.equal(owners.length, 2);
+  assert.equal(owners[0]?.count, 2, 'user dengan memori terbanyak di atas');
+  assert.equal((await listGuildMemories(guildId)).length, 3);
+});
+
+console.log('\nLogin lewat link');
+test('mengurai /masuk/<token>', () => {
+  assert.deepEqual(parseLoginLink('/masuk/abc123'), { matched: true, token: 'abc123' });
+  assert.deepEqual(parseLoginLink('/login/abc123'), { matched: true, token: 'abc123' });
+});
+test('token dengan karakter spesial di-decode', () => {
+  assert.deepEqual(parseLoginLink('/masuk/a%2Bb%3D'), { matched: true, token: 'a+b=' });
+  // base64 punya "/" — harus tetap terbaca utuh, bukan dianggap sub-path
+  assert.deepEqual(parseLoginLink('/masuk/ab/cd=='), { matched: true, token: 'ab/cd==' });
+});
+test('link tanpa token dan path lain tidak dianggap login link', () => {
+  assert.deepEqual(parseLoginLink('/masuk'), { matched: true, token: null });
+  assert.deepEqual(parseLoginLink('/masuk/'), { matched: true, token: null });
+  assert.deepEqual(parseLoginLink('/'), { matched: false });
+  assert.deepEqual(parseLoginLink('/dokumen'), { matched: false });
+  assert.deepEqual(parseLoginLink('/masukan/abc'), { matched: false });
+});
+
+console.log('\nHalaman dashboard');
+const pageContext = {
+  guildId: '1569424777750257766',
+  guilds: ['1569424777750257766'],
+  status: { online: true, mode: 'bot' as const, uptimeSeconds: 3600 },
+};
+await testAsync('ringkasan merender sidebar, kartu statistik, dan grafik', async () => {
+  const html = ringkasanPage({
+    ...pageContext,
+    stats: { rooms: 3, documents: 2, chunks: 9, keywords: 4, memories: 6, messages: 84 },
+    rooms: [{ channelId: '1400000000000000001', userId: USER, messageCount: 12, lastActiveAt: Date.now() }],
+    documents: [{ id: 1, name: 'faq.md', chunkCount: 6, chars: 4200, createdAt: Date.now() }],
+    series: await messagesPerDay('1569424777750257766', 7),
+    ragEnabled: true,
+    embedModel: null,
+    model: 'openai/gpt-oss-120b',
+    counts: { dokumen: 2, keyword: 4, memori: 6 },
+  });
+
+  assert.match(html, /class="sidebar"/);
+  assert.match(html, /Kontrol panel|Control panel/);
+  assert.equal((html.match(/class="stat-value"/g) ?? []).length, 4);
+  assert.equal((html.match(/class="bar-col/g) ?? []).length, 7);
+  assert.match(html, /openai\/gpt-oss-120b/);
+  assert.match(html, /Room AI terbaru/);
+});
+test('halaman keyword meng-escape input user', () => {
+  const html = keywordPage({
+    ...pageContext,
+    keywords: [{ id: 1, trigger: '<script>alert(1)</script>', answer: 'jam 08.00', createdAt: Date.now() }],
+  });
+  assert.ok(!html.includes('<script>alert(1)</script>'), 'tag mentah tidak boleh lolos');
+  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+});
+test('empty state muncul kalau belum ada memori', () => {
+  const html = memoriPage({ ...pageContext, groups: [] });
+  assert.match(html, /Belum|belum mengingat|AI belum mengingat/);
+  assert.match(html, /class="empty"/);
 });
 
 console.log('\nTeks & rate limit');
@@ -292,12 +396,12 @@ test('htmlToText membuang tag & script', () => {
   assert.ok(!text.includes('<'));
   assert.ok(!text.includes('alert'));
 });
-test('extractText menolak PDF dengan pesan yang jelas', () => {
-  assert.throws(() => extractText('brosur.pdf', '%PDF-1.4 ...'), DocumentError);
+test('extractText menolak format biner yang belum didukung', () => {
+  assert.throws(() => extractText('data.xlsx', 'isi'), DocumentError);
   try {
-    extractText('brosur.pdf', '%PDF-1.4');
+    extractText('data.xlsx', 'isi');
   } catch (error) {
-    assert.match((error as Error).message, /PDF/);
+    assert.match((error as Error).message, /Excel/);
   }
 });
 test('extractText menolak file biner yang bukan UTF-8', () => {
@@ -341,7 +445,7 @@ await testAsync('RAG: ingest dokumen lalu temu kembali dengan nama sumber', asyn
   const result = await ingestDocument({ guildId: 'g-rag', name: 'faq.md', content: doc, createdBy: 'u-1' });
   assert.ok(result.chunkCount >= 1);
   assert.equal(result.document.name, 'faq.md');
-  assert.equal(listGuildDocuments('g-rag').length, 1);
+  assert.equal((await listGuildDocuments('g-rag')).length, 1);
 
   const hits = await searchKnowledge('g-rag', 'jam operasional server sampai jam berapa?');
   assert.ok(hits.length >= 1, 'harus ada hasil');
@@ -360,7 +464,7 @@ await testAsync('RAG: upload ulang dengan nama sama menggantikan dokumen lama', 
     name: 'faq.md',
     content: 'Jam operasional server sekarang 24 jam penuh tanpa henti, staff piket bergiliran.',
   });
-  assert.equal(listGuildDocuments('g-rag').length, 1, 'tidak boleh duplikat');
+  assert.equal((await listGuildDocuments('g-rag')).length, 1, 'tidak boleh duplikat');
 
   const hits = await searchKnowledge('g-rag', 'jam operasional');
   assert.match(hits[0]?.content ?? '', /24 jam/);
@@ -372,8 +476,8 @@ await testAsync('RAG: dokumen yang salah server tidak ikut terpakai', async () =
 });
 
 await testAsync('RAG: dokumen bisa dihapus dan hasil pencarian hilang', async () => {
-  const documents = listGuildDocuments('g-rag');
-  assert.equal(removeDocument('g-rag', documents[0]!.id), true);
+  const documents = await listGuildDocuments('g-rag');
+  assert.equal(await removeDocument('g-rag', documents[0]!.id), true);
   const hits = await searchKnowledge('g-rag', 'jam operasional');
   assert.equal(hits.length, 0);
 });
@@ -386,6 +490,321 @@ await testAsync('RAG: pertanyaan yang tidak berhubungan menghasilkan hasil koson
   });
   const hits = await searchKnowledge('g-rag2', 'kapan jadwal turnamen valorant dimulai?');
   assert.equal(hits.length, 0);
+});
+
+console.log('\nDokumen biner (PDF & DOCX)');
+
+/** DOCX minimal: arsip ZIP berisi word/document.xml. */
+function makeDocx(paragraphs: string[]): Uint8Array {
+  const body = paragraphs.map((text) => `<w:p><w:r><w:t>${text}</w:t></w:r></w:p>`).join('');
+  return zipSync(
+    {
+      '[Content_Types].xml': strToU8('<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>'),
+      'word/document.xml': strToU8(
+        `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}</w:body></w:document>`,
+      ),
+    },
+    { level: 6 },
+  );
+}
+
+/** PDF satu halaman tanpa xref — pdf.js tetap bisa membacanya. */
+function makePdf(text: string): Uint8Array {
+  const content = `BT /F1 18 Tf 20 120 Td (${text}) Tj ET`;
+  const pdf = `%PDF-1.4
+1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
+2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
+3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 200]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj
+4 0 obj<</Length ${content.length}>>stream
+${content}
+endstream
+endobj
+5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj
+trailer<</Root 1 0 R/Size 6>>
+%%EOF
+`;
+  return new TextEncoder().encode(pdf);
+}
+
+await testAsync('DOCX: teks paragraf terbaca', async () => {
+  const text = await extractFileText(
+    'aturan.docx',
+    makeDocx(['Dilarang spam dan tautan judi.', 'Jam operasional server 08.00-22.00 WIB.']),
+  );
+  assert.match(text, /Dilarang spam/);
+  assert.match(text, /08\.00-22\.00/);
+});
+
+await testAsync('DOCX rusak ditolak dengan pesan ramah', async () => {
+  await assert.rejects(
+    () => extractFileText('rusak.docx', new Uint8Array([1, 2, 3, 4, 5])),
+    (error: unknown) => error instanceof DocumentError && /rusak|bukan dokumen/i.test((error as Error).message),
+  );
+});
+
+await testAsync('PDF: teks diekstrak lewat unpdf', async () => {
+  const text = await extractFileText('faq.pdf', makePdf('Halo dari PDF aturan server'));
+  assert.match(text, /PDF aturan server/);
+});
+
+await testAsync('PDF dari Buffer Node (byteOffset != 0) tetap terbaca', async () => {
+  const pdf = makePdf('Kebijakan server soal spam');
+  // Tiru cara server membaca body upload: Buffer yang menumpang ArrayBuffer bersama.
+  const shared = Buffer.concat([Buffer.alloc(544), Buffer.from(pdf)]);
+  const view = shared.subarray(544);
+  assert.notEqual(view.byteOffset, 0);
+  const text = await extractFileText('buffer.pdf', view);
+  assert.match(text, /Kebijakan server/);
+});
+
+await testAsync('PDF rusak ditolak (bukan crash)', async () => {
+  await assert.rejects(
+    () => extractFileText('rusak.pdf', new TextEncoder().encode('%PDF-1.4 bukan pdf sungguhan')),
+    (error: unknown) => error instanceof DocumentError,
+  );
+});
+
+await testAsync('PDF hasil scan tanpa teks dapat pesan khusus OCR', async () => {
+  await assert.rejects(
+    () => extractFileText('scan.pdf', makePdf('')),
+    (error: unknown) => error instanceof DocumentError && /scan|OCR|tidak mengandung teks/i.test((error as Error).message),
+  );
+});
+
+test('format .doc lama tetap ditolak dengan saran konversi', () => {
+  assert.throws(
+    () => extractText('lama.doc', 'isi'),
+    (error: unknown) => error instanceof DocumentError && /Word 97-2003/.test((error as Error).message),
+  );
+});
+
+console.log('\nArsip transkrip');
+
+const TRANSCRIPT_ID = await insertTranscript({
+  guildId: 'g-tr',
+  channelId: 'chan-1',
+  channelName: 'room-ai-0001',
+  userId: USER,
+  userName: 'Bagas',
+  fileName: 'transkrip-bagas.html',
+  summary: 'Member menanyakan jam operasional server.',
+  messageCount: 12,
+  memoryCount: 2,
+  html: '<!doctype html><html><body><p>Halo</p></body></html>',
+  createdAt: 1_700_000_000_000,
+});
+
+await testAsync('transkrip tersimpan & terbaca di daftar', async () => {
+  assert.equal(await countTranscripts('g-tr'), 1);
+  const [item] = await listTranscripts('g-tr');
+  assert.ok(item);
+  assert.equal(item.id, TRANSCRIPT_ID);
+  assert.equal(item.messageCount, 12);
+  assert.equal(item.userName, 'Bagas');
+  assert.match(item.summary ?? '', /jam operasional/);
+  assert.ok(item.sizeBytes > 20, 'ukuran file harus tercatat');
+});
+
+await testAsync('transkrip lengkap hanya bisa dibuka oleh server pemiliknya', async () => {
+  const record = await getTranscript('g-tr', TRANSCRIPT_ID);
+  assert.ok(record);
+  assert.match(record.html, /<!doctype html>/);
+  assert.equal(await getTranscript('g-lain', TRANSCRIPT_ID), null);
+});
+
+await testAsync('transkrip bisa dihapus', async () => {
+  assert.equal(await deleteTranscript('g-tr', TRANSCRIPT_ID), true);
+  assert.equal(await countTranscripts('g-tr'), 0);
+  assert.equal(await deleteTranscript('g-tr', TRANSCRIPT_ID), false);
+});
+
+test('halaman transkrip merender arsip + tombol unduh', () => {
+  const html = transkripPage({
+    guildId: 'g-tr',
+    guilds: ['g-tr'],
+    items: [
+      {
+        id: 7,
+        userId: USER,
+        userName: 'Bagas',
+        channelName: 'room-ai-0001',
+        fileName: 'transkrip-bagas.html',
+        summary: 'Member menanyakan jam operasional.',
+        messageCount: 12,
+        memoryCount: 2,
+        sizeBytes: 24_000,
+        createdAt: 1_700_000_000_000,
+      },
+    ],
+    status: { online: false, mode: 'standalone', uptimeSeconds: 90 },
+  });
+  assert.match(html, /Transkrip/);
+  assert.match(html, /Bagas/);
+  assert.match(html, /\/api\/transkrip\/7/);
+  assert.match(html, /Unduh/);
+  assert.match(html, /23 KB/);
+});
+
+console.log('\nModerasi otomatis');
+test('moderasi: mencocokkan kata walau beda huruf besar/kecil & tanda baca', () => {
+  assert.deepEqual(findBannedWords('Dasar ANJING banget', ['anjing']), ['anjing']);
+  assert.deepEqual(findBannedWords('Dasar!!! anjing??', ['anjing']), ['anjing']);
+  assert.deepEqual(findBannedWords('pesan biasa saja', ['anjing']), []);
+});
+
+test('moderasi: menangkap variasi leetspeak dan frasa', () => {
+  assert.deepEqual(findBannedWords('k0nt0l banget', ['kontol']), ['kontol']);
+  assert.deepEqual(findBannedWords('dasar b4ngs4t kamu', ['bangsat']), ['bangsat']);
+  assert.deepEqual(findBannedWords('ini info penipuan online ya', ['penipuan online']), ['penipuan online']);
+});
+
+test('moderasi: tidak salah tangkap potongan kata lain', () => {
+  assert.deepEqual(findBannedWords('saya pakai asuransi kesehatan', ['asu']), []);
+  assert.deepEqual(findBannedWords('kelas musik tadi seru', ['asu']), []);
+});
+
+await testAsync('moderasi: pengaturan tersimpan per server', async () => {
+  assert.equal(await getModerationSettings('g-mod'), null);
+  await setModerationSettings({ guildId: 'g-mod', enabled: true, words: ['Anjing', 'Bangsat'], action: 'timeout', timeoutMinutes: 30 });
+  const saved = await getModerationSettings('g-mod');
+  assert.ok(saved);
+  assert.equal(saved.enabled, true);
+  assert.deepEqual(saved.words, ['anjing', 'bangsat']);
+  assert.equal(saved.action, 'timeout');
+  assert.equal(saved.timeoutMinutes, 30);
+  assert.equal(await getModerationSettings('g-mod-lain'), null, 'server lain harus tetap bersih');
+});
+
+await testAsync('moderasi: durasi timeout dijepit ke rentang wajar', async () => {
+  await setModerationSettings({ guildId: 'g-mod', enabled: true, words: ['x'], action: 'delete', timeoutMinutes: 0 });
+  assert.equal((await getModerationSettings('g-mod'))?.timeoutMinutes, 1);
+  await setModerationSettings({ guildId: 'g-mod', enabled: true, words: ['x'], action: 'delete', timeoutMinutes: 99_999 });
+  assert.equal((await getModerationSettings('g-mod'))?.timeoutMinutes, 10080);
+});
+
+await testAsync('moderasi: log pelanggaran tercatat, terisolasi per server, bisa dihapus', async () => {
+  await clearModerationLogs('g-mod');
+  const first = await addModerationLog({
+    guildId: 'g-mod',
+    channelId: 'c-1',
+    userId: USER,
+    userName: 'Bagas',
+    content: 'dasar anjing',
+    matched: 'anjing',
+    action: 'delete',
+  });
+  const second = await addModerationLog({
+    guildId: 'g-mod',
+    channelId: 'c-2',
+    userId: '999',
+    userName: 'Rina',
+    content: 'bangsat banget',
+    matched: 'bangsat',
+    action: 'warn',
+  });
+
+  assert.equal(await countModerationLogs('g-mod'), 2);
+  assert.equal(await countModerationLogs('g-mod-lain'), 0);
+
+  const logs = await listModerationLogs('g-mod', 10);
+  assert.equal(logs.length, 2);
+  assert.equal(logs[0]?.id, second, 'log terbaru muncul duluan');
+  assert.equal(logs[1]?.id, first);
+  assert.equal(logs[1]?.userName, 'Bagas');
+
+  assert.equal(await deleteModerationLog('g-mod-lain', first), false);
+  assert.equal(await deleteModerationLog('g-mod', first), true);
+  assert.equal(await countModerationLogs('g-mod'), 1);
+  assert.equal(await clearModerationLogs('g-mod'), 1);
+  assert.equal(await countModerationLogs('g-mod'), 0);
+});
+
+test('halaman moderasi merender pengaturan + log', () => {
+  const html = moderasiPage({
+    guildId: 'g-mod',
+    guilds: ['g-mod'],
+    enabled: true,
+    words: ['anjing', 'bangsat'],
+    action: 'timeout',
+    timeoutMinutes: 30,
+    fromEnv: false,
+    logs: [
+      {
+        id: 4,
+        userId: USER,
+        userName: 'Bagas',
+        channelId: 'c-1',
+        content: 'dasar anjing',
+        matched: 'anjing',
+        action: 'timeout',
+        createdAt: 1_700_000_000_000,
+      },
+    ],
+    status: { online: false, mode: 'standalone', uptimeSeconds: 90 },
+  });
+
+  assert.match(html, /Moderasi/);
+  assert.match(html, /anjing, bangsat/);
+  assert.match(html, /id="modEnabled" checked/);
+  assert.match(html, /value="timeout" selected/);
+  assert.match(html, /Bagas/);
+  assert.match(html, /\/api\/moderasi/);
+});
+
+console.log('\nVision & voice');
+test('vision: mengenali lampiran gambar dari nama file atau content-type', () => {
+  assert.equal(isImageAttachment('foto.PNG'), true);
+  assert.equal(isImageAttachment('foto.jpeg'), true);
+  assert.equal(isImageAttachment('screenshot', 'image/webp'), true);
+  assert.equal(isImageAttachment('laporan.pdf', 'application/pdf'), false);
+  assert.equal(isImageAttachment('catatan.txt', 'text/plain'), false);
+});
+
+test('vision: MIME mengikuti content-type lalu ekstensi', () => {
+  assert.equal(mimeForAttachment('x.png', 'image/png'), 'image/png');
+  assert.equal(mimeForAttachment('x.jpg'), 'image/jpeg');
+  assert.equal(mimeForAttachment('x.unknown'), 'image/png');
+});
+
+test('vision: data URI bisa dibalik jadi byte asli', () => {
+  const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]);
+  const uri = toDataUri(bytes, 'image/png');
+  assert.ok(uri.startsWith('data:image/png;base64,'));
+  const decoded = Buffer.from(uri.split(',')[1] ?? '', 'base64');
+  assert.deepEqual([...decoded], [...bytes]);
+});
+
+test('vision: pesan multimodal berisi teks lalu semua gambar', () => {
+  const content = visionUserContent('Apa isi gambar ini?', ['data:image/png;base64,AAA', 'data:image/png;base64,BBB']);
+  assert.equal(content.length, 3);
+  assert.deepEqual(content[0], { type: 'text', text: 'Apa isi gambar ini?' });
+  assert.deepEqual(content[1], { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } });
+  assert.equal(content[2]?.type, 'image_url');
+});
+
+test('voice: mengenali voice note Discord (.ogg) dan file audio lain', () => {
+  assert.equal(isAudioAttachment('voice-message.ogg', 'audio/ogg'), true);
+  assert.equal(isAudioAttachment('rekaman.m4a'), true);
+  assert.equal(isAudioAttachment('lagu.mp3', 'audio/mpeg'), true);
+  assert.equal(isAudioAttachment('foto.png', 'image/png'), false);
+  assert.equal(isAudioAttachment('dokumen.pdf'), false);
+});
+
+console.log('\nMulti-shard');
+test('shard: hash guild stabil dan tersebar merata', () => {
+  assert.equal(hashGuildId('1569424777750257766'), hashGuildId('1569424777750257766'));
+  assert.notEqual(hashGuildId('1569424777750257766'), hashGuildId('1569424777750257767'));
+
+  // 100 server sintetis dibagi 4 shard: tidak boleh ada shard yang kosong.
+  const buckets = [0, 0, 0, 0];
+  for (let index = 0; index < 100; index += 1) buckets[hashGuildId(String(100000000000000000 + index)) % 4] += 1;
+  assert.ok(buckets.every((count) => count > 5), `distribusi terlalu timpang: ${buckets.join('/')}`);
+});
+
+test('shard: default SHARD_COUNT=1 berarti semua server ditangani', () => {
+  assert.deepEqual(shardInfo(), { index: 0, count: 1, enabled: false });
+  assert.equal(ownsGuild('123'), true);
+  assert.equal(ownsGuild(null), true);
 });
 
 console.log('\nProvider & fallback');

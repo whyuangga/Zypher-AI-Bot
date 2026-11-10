@@ -49,11 +49,12 @@ yang benar (`https://api.groq.com/openai/v1` dan `openai/gpt-oss-120b`).
 5. Tab **OAuth2 → URL Generator**:
    - Scopes: `bot`, `applications.commands`
    - Bot Permissions: `Manage Channels`, `View Channels`, `Send Messages`, `Manage Messages`,
-     `Embed Links`, `Attach Files`, `Read Message History`, `Add Reactions`, `Use External Emojis`
+     `Embed Links`, `Attach Files`, `Read Message History`, `Add Reactions`, `Use External Emojis`,
+     `Moderate Members` *(hanya perlu kalau memakai `MODERATION_ACTION=timeout`)*
    - Buka URL yang muncul → pilih server → **Authorize**
 
 > URL siap pakai (ganti `YOUR_CLIENT_ID`):
-> `https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=388176&scope=bot%20applications.commands`
+> `https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=1099909803952&scope=bot%20applications.commands`
 
 ### Cara mendapatkan `DEV_GUILD_ID`
 
@@ -185,7 +186,7 @@ Kalau berhasil, log akan menampilkan:
 INFO  Database siap: /app/data/zypher.db
 INFO  Provider AI aktif (fallback berurutan): groq/gpt-oss-120b → gemini/gemini-3.8-flash → ...
 INFO  🤖 Login sebagai NamaBot#1234 (1 server)
-INFO  ✅ 10 slash command didaftarkan di guild "Server Kamu".
+INFO  ✅ 11 slash command didaftarkan di guild "Server Kamu".
 ```
 
 Di Discord:
@@ -223,7 +224,8 @@ Di Discord (kamu harus admin server):
 ```
 
 Kalau pencarian menampilkan potongan yang benar, tanyakan hal yang sama di room AI — jawabannya akan
-menyebut `-# 📚 Sumber: faq.txt`. Format yang didukung: `.txt`, `.md`, `.csv`, `.json`, `.html`, `.log`.
+menyebut `-# 📚 Sumber: faq.txt`. Format yang didukung: `.txt`, `.md`, `.csv`, `.json`, `.html`, `.log`, `.pdf`, `.docx`
+(maks **8 MB**; PDF harus berisi teks — hasil scan perlu OCR dulu).
 Panduan lengkap: [rag.md](rag.md).
 
 ### Dashboard web — kelola dari browser
@@ -242,6 +244,48 @@ DASHBOARD_PORT=3000
 Jalankan bot (atau `npm run dashboard` untuk dashboard saja), lalu buka <http://localhost:3000>.
 Login memakai token tadi. Di sana ada statistik, upload dokumen, dan uji pencarian. Keamanan &
 reverse proxy: [dashboard.md](dashboard.md).
+
+### Moderasi, vision, dan voice (opsional)
+
+Tiga fitur ini mati secara default supaya bot tetap ringan dan hemat kuota. Nyalakan
+kalau perlu:
+
+```env
+# Moderasi — bisa juga diatur per server dari dashboard /moderasi
+MODERATION_ENABLED=true
+MODERATION_WORDS=kata1,kata2,frasa tiga kata
+MODERATION_ACTION=delete          # delete | warn | timeout
+MODERATION_TIMEOUT_MINUTES=10
+
+# Vision — AI membaca gambar yang dikirim di room AI (butuh model multimodal)
+VISION_ENABLED=true
+VISION_MODEL=meta-llama/llama-4-scout-17b-16e-instruct
+
+# Voice — transkrip voice note + balasan suara
+VOICE_ENABLED=true
+STT_MODEL=whisper-large-v3
+TTS_ENABLED=true
+TTS_MODEL=playai-tts
+TTS_VOICE=Fritz-PlayAI
+```
+
+Detail: [docs/moderation.md](moderation.md) dan [docs/vision-voice.md](vision-voice.md).
+
+> Ingat: model teks biasa **tidak bisa** melihat gambar. Kalau `VISION_MODEL` salah,
+> balasan akan berupa error dari provider — matikan `VISION_ENABLED` atau ganti modelnya.
+
+### Database: SQLite atau Postgres
+
+Bawaan proyek ini adalah **SQLite** — satu file di `data/zypher.db`, tidak perlu server
+database, cocok untuk hosting panel gratis. Kalau kamu ingin Postgres (mis. karena hosting
+menyediakannya, atau akan menjalankan beberapa instance bot):
+
+```env
+DATABASE_URL=postgres://user:pass@host:5432/db?sslmode=require
+```
+
+Skema dibuat otomatis saat bot start. Data lama bisa dipindahkan dengan
+`npm run migrate:pg` — detail di [docs/postgres.md](postgres.md).
 
 ---
 

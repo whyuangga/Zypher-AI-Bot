@@ -162,6 +162,15 @@ function main(): void {
   // File pendukung: dipakai `npm install` di server.
   // `scripts/prepare.mjs` wajib ikut — tanpa itu, hook "prepare" gagal
   // (npm install mencoba menjalankan file yang tidak ada).
+  // Font self-host ikut dikirim: dashboard membacanya dari `assets/fonts/`.
+  const assetsDir = join(root, 'assets');
+  if (statSync(assetsDir, { throwIfNoEntry: false })?.isDirectory()) {
+    for (const full of walk(assetsDir)) {
+      if (!full.endsWith('.woff2')) continue;
+      files.push({ name: relative(root, full).split('\\').join('/'), data: readFileSync(full) });
+    }
+  }
+
   for (const name of ['package.json', 'package-lock.json', 'scripts/prepare.mjs']) {
     const full = join(root, name);
     if (statSync(full, { throwIfNoEntry: false })) {

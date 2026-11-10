@@ -320,6 +320,9 @@ Masih memungkinkan, tapi **wajib** menyimpan database di luar container:
 2. Atau pindahkan ke layanan dengan disk permanen (Render Disk/Railway Volume berbayar).
 3. Sadari bahwa Render free *web service* tidur saat idle → bot Discord **tidak bisa** memakai itu.
    Kalau tetap mau Render, pakai *background worker* (berbayar).
+4. Pilihan paling rapi untuk hosting berdisk sementara: pakai **Postgres gratis** (Neon/Supabase)
+   dan isi `DATABASE_URL` — data tidak lagi bergantung pada disk container.
+   Lihat [postgres.md](postgres.md).
 
 ---
 
@@ -338,6 +341,12 @@ docker compose restart bot
 
 Kalau tidak pakai Docker, file-nya ada di `./data/zypher.db`. Simpan salinannya di luar server
 (Google Drive, laptop, dsb.) — SQLite sangat jarang korup, tapi disk hosting bisa hilang kapan saja.
+
+Kalau memakai **Postgres**, backup tidak lagi berupa file:
+
+```bash
+pg_dump "$DATABASE_URL" > zypher-$(date +%F).sql
+```
 
 ---
 

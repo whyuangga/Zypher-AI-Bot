@@ -30,14 +30,18 @@ Chat bebas → AI menjawab, mengingat fakta, memakai keyword admin
 | ⚡ **Streaming jawaban** | Jawaban muncul bertahap (edit pesan tiap ±1,4 detik, menghormati rate limit Discord), bukan menunggu jeda panjang. Otomatis jatuh ke mode non-streaming kalau provider menolaknya. |
 | 💬 **Chat AI** | Konteks percakapan (20 pesan terakhir), jawaban panjang otomatis dipecah ke beberapa pesan. |
 | 🧠 **Memori jangka panjang** | AI otomatis menyimpan fakta penting lewat *tool calling*, plus perintah manual `/ingat`. Memori dipakai lagi di sesi berikutnya. |
-| 📚 **Dokumen RAG** | Upload `.txt`/`.md`/`.csv`/`.json` lewat `/dokumen tambah` atau dashboard. AI menjawab dari isi dokumen dan menyebut sumbernya (`📚 Sumber: faq.md`). Pencarian BM25 bawaan — **tanpa API key tambahan**. |
-| 🌐 **Dashboard web** | Ringkasan statistik, upload/hapus dokumen, dan uji pencarian RAG di browser. Aktif hanya kalau `DASHBOARD_TOKEN` diisi. Tanpa framework, satu proses dengan bot. |
+| 🖥️ **Dashboard web** | `/`, `/dokumen`, `/keyword`, `/memori`, `/transkrip`, `/moderasi`, `/pengaturan` — gaya editorial gelap (latar `#0D0D0F`, teks Wafer `#E2D1CC`, aksen Kimberly, tombol solid tanpa gradient): sidebar kiri, grafik aktivitas 7 hari, kartu statistik per server. Aktif kalau `DASHBOARD_TOKEN` diisi; tanpa framework, satu proses dengan bot. |
+| 📚 **Dokumen RAG** | Upload `.txt`/`.md`/`.csv`/`.json`/`.pdf`/`.docx` (maks 8 MB) lewat `/dokumen tambah` atau dashboard. AI menjawab dari isi dokumen dan menyebut sumbernya (`📚 Sumber: faq.md`). Pencarian BM25 bawaan — **tanpa API key tambahan**. |
 | 🔑 **Keyword kustom** | Admin menulis jawaban acuan; AI memakainya sebagai **fakta** dan menyusun ulang kalimatnya agar **bervariasi setiap kali** (bukan copy-paste). |
 | 🎭 **Persona per server** | Mis. "kamu guru bahasa Inggris yang sabar" — berlaku untuk semua room di server itu. |
 | 📄 **Transkrip sesi** | HTML mandiri (dark mode, rapi, aman dari XSS) berisi percakapan + memori + ringkasan AI. Dikirim ke DM dan/atau channel arsip. |
+| 🛡️ **Moderasi otomatis** | Filter kata terlarang di semua channel teks: hapus pesan / tegur / timeout. Pola `k0nt0l` tetap tertangkap, staff dikecualikan, semua pelanggaran tercatat di dashboard `/moderasi`. Lihat [docs/moderation.md](docs/moderation.md). |
+| 🖼️ **Vision (gambar)** | Member kirim gambar di room AI → AI membacanya dengan model multimodal. Gambar dikirim sebagai data URI (tanpa storage). Lihat [docs/vision-voice.md](docs/vision-voice.md). |
+| 🎙️ **Voice (STT/TTS)** | Voice note ditranskrip jadi pertanyaan, dan bot bisa membalas dengan pesan suara. Ada `/ucap` untuk mengubah teks jadi audio. |
 | 🔁 **Fallback multi-provider** | Provider utama kena limit/error → otomatis pindah ke provider cadangan (Groq → Gemini → OpenRouter), tanpa restart. |
 | 🛡️ **Rate limit & guard** | Batas pesan per menit, validasi input, penanganan error yang ramah, tanpa membocorkan system prompt. |
 | 🐳 **Siap deploy** | Docker multi-stage, volume SQLite, tanpa dependensi native (pakai `node:sqlite` bawaan Node 22). |
+| 🐘 **Postgres & multi-shard** | Cukup isi `DATABASE_URL` untuk pindah dari SQLite ke Postgres (skema otomatis, migrasi data satu perintah). Beberapa instance bisa berbagi satu database lewat `SHARD_COUNT`/`SHARD_INDEX`. Lihat [docs/postgres.md](docs/postgres.md). |
 
 ---
 
@@ -48,14 +52,14 @@ Runtime   Node.js 22 LTS
 Bahasa    TypeScript (strict)
 Discord   discord.js v14
 AI        Groq — openai/gpt-oss-120b (OpenAI-compatible API)
-Database  node:sqlite (built-in Node 22) — tanpa node-gyp, tanpa build tools
+Database  node:sqlite (built-in Node 22) — tanpa node-gyp, tanpa build tools; Postgres opsional lewat `DATABASE_URL`
 Validasi  zod + dotenv
 Deploy    Docker multi-stage + docker-compose
 ```
 
 **Kenapa Node.js, bukan Python?** Hampir seluruh fitur di atas adalah kerjaan **Discord API** (button, permission overwrite, lifecycle channel, transcript), bukan kerjaan ML. `discord.js` paling matang untuk komponen & permission, tutorial pola ticket-AI mayoritas juga JS. Akses LLM cukup HTTP call — tidak ada keuntungan Python di sini. Kalau nanti butuh embedding lokal/fine-tuning, itu lebih sehat dipecah jadi service Python terpisah.
 
-**Kenapa `node:sqlite`?** `better-sqlite3` butuh compile native (node-gyp + build tools) yang sering gagal di VPS kecil/Alpine. Modul `node:sqlite` sudah tersedia di Node 22 sehingga image Docker cukup `node:22-slim` tanpa compiler. Skalanya lebih dari cukup untuk ribuan memori & transcript.
+**Kenapa `node:sqlite`?** `better-sqlite3` butuh compile native (node-gyp + build tools) yang sering gagal di VPS kecil/Alpine. Modul `node:sqlite` sudah tersedia di Node 22 sehingga image Docker cukup `node:22-slim` tanpa compiler. Skalanya lebih dari cukup untuk ribuan memori & transcript. Butuh Postgres atau beberapa instance sekaligus? Semua query sudah async dan portable — cukup isi `DATABASE_URL` (lihat [docs/postgres.md](docs/postgres.md)).
 
 ---
 
@@ -79,11 +83,11 @@ Deploy    Docker multi-stage + docker-compose
    - ✅ **Message Content Intent** ← *wajib*, tanpa ini bot tidak bisa membaca isi chat
    - ✅ Server Members Intent *(opsional, untuk menampilkan nama tampilan member)*
 5. **OAuth2 → URL Generator**, centang `bot` + `applications.commands`, izin yang dibutuhkan:
-   `Manage Channels`, `View Channels`, `Send Messages`, `Manage Messages`, `Embed Links`, `Attach Files`, `Read Message History`, `Add Reactions`, `Use External Emojis`.
+   `Manage Channels`, `View Channels`, `Send Messages`, `Manage Messages`, `Embed Links`, `Attach Files`, `Read Message History`, `Add Reactions`, `Use External Emojis`, `Moderate Members` *(untuk timeout moderasi — kalau tidak ada, timeout gagal dan hanya tercatat di log)*.
 6. Buka URL hasil generate, pilih server, authorize.
 
 > URL siap pakai (ganti `YOUR_CLIENT_ID`):
-> `https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=388176&scope=bot%20applications.commands`
+> `https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=1099909803952&scope=bot%20applications.commands`
 
 ### 2. Ambil API key Groq
 
@@ -161,9 +165,12 @@ Klik **Buat Room AI** → channel privat muncul → mulai ngobrol.
 | `DASHBOARD_TOKEN` | kosong | Token login dashboard web. **Kosong = dashboard mati** |
 | `DASHBOARD_PORT` | `3000` | Port dashboard. Alias dari panel: `WEB_PORT`, `PORT`, `SERVER_PORT` (nilai `0` = belum diisi) |
 | `WEB_ENABLED` | `true` | `false` = matikan dashboard walau token terisi |
+| `WEB_HOST` | `0.0.0.0` | Alamat bind dashboard. Pakai `127.0.0.1` bila dashboard hanya diakses lewat reverse proxy |
 | `PUBLIC_URL` | kosong | Alamat publik dashboard yang ditampilkan di log |
 | `NODE_OPTIONS` | — | Set di **panel hosting** (bukan `.env`): `--max-old-space-size=384` untuk container 512 MB |
 | `DATABASE_PATH` | `./data/zypher.db` | Lokasi file SQLite |
+| `DATABASE_URL` | kosong | Postgres opsional. Terisi = SQLite diabaikan (lihat [docs/postgres.md](docs/postgres.md)) |
+| `SHARD_COUNT` / `SHARD_INDEX` | `1` / `0` | Multi-shard: bagi server ke beberapa instance yang berbagi satu database |
 | `AUTO_MEMORY` | `true` | Simpan memori otomatis lewat tool calling |
 | `RATE_LIMIT_PER_MINUTE` | `12` | Batas request AI per user/menit |
 | `MAX_INPUT_CHARS` | `2000` | Panjang pesan user yang diproses |
@@ -171,6 +178,18 @@ Klik **Buat Room AI** → channel privat muncul → mulai ngobrol.
 | `TRANSCRIPT_CHANNEL_ID` | kosong | Channel arsip transkrip & ringkasan sesi |
 | `STAFF_ROLE_ID` | kosong | Role staff yang boleh melihat/menutup room member |
 | `ADMIN_ONLY_ROOMS` | `false` | `true` = hanya admin yang bisa membuat room |
+| `MODERATION_ENABLED` | `false` | Aktifkan filter kata terlarang (bisa juga dari `/moderasi`) — [docs](docs/moderation.md) |
+| `MODERATION_WORDS` | kosong | Daftar kata terlarang, dipisah koma |
+| `MODERATION_ACTION` | `delete` | `delete` · `warn` (hapus + tegur) · `timeout` (hapus + bisukan) |
+| `MODERATION_TIMEOUT_MINUTES` | `10` | Durasi timeout moderasi (1–10080 menit) |
+| `VISION_ENABLED` | `false` | AI membaca gambar di room AI — [docs](docs/vision-voice.md) |
+| `VISION_MODEL` | `meta-llama/llama-4-scout-17b-16e-instruct` | Model multimodal yang dipakai saat ada gambar |
+| `VISION_MAX_MB` | `5` | Batas ukuran gambar yang diunduh bot |
+| `VOICE_ENABLED` | `false` | Transkrip voice note jadi pertanyaan — [docs](docs/vision-voice.md) |
+| `STT_MODEL` | `whisper-large-v3` | Model transkrip |
+| `TTS_ENABLED` | `true` | Balas voice note dengan pesan suara — [docs](docs/vision-voice.md) |
+| `TTS_MODEL` / `TTS_VOICE` | `playai-tts` / `Fritz-PlayAI` | Model & suara TTS |
+| `VOICE_MAX_MB` | `20` | Batas ukuran audio yang ditranskrip |
 
 ### Ganti provider AI (opsional)
 
@@ -212,6 +231,7 @@ Kalau model tidak mendukung *tool calling*, bot otomatis lanjut tanpa fitur memo
 | `/panel [channel]` | Admin | Kirim panel tombol pembuat room AI |
 | `/bantuan` | Semua | Panduan singkat (ephemeral) |
 | `/tanya pertanyaan:` | Semua | Tanya AI cepat tanpa room, jawaban hanya terlihat oleh penanya |
+| `/ucap teks:` | Semua | Ubah teks jadi pesan suara (butuh `VOICE_ENABLED` + `TTS_ENABLED`) |
 | `/ingat fakta:` | Semua | Simpan memori manual tentang diri sendiri |
 | `/memori [user]` | Semua / admin | Lihat daftar memori (dengan id) |
 | `/lupakan id:` / `semua:true` | Semua | Hapus satu / semua memori |
@@ -221,6 +241,9 @@ Kalau model tidak mendukung *tool calling*, bot otomatis lanjut tanpa fitur memo
 | `/dokumen cari pertanyaan:` | Semua | Uji potongan dokumen yang akan dipakai AI |
 | `/keyword tambah\|daftar\|hapus` | Admin | Kelola jawaban acuan yang divariasikan AI |
 | `/persona set\|lihat\|hapus` | Admin | Atur peran AI untuk seluruh server |
+
+Lampiran di room AI: **gambar** (JPG/PNG/WebP) dibaca AI bila `VISION_ENABLED=true`,
+**voice note** ditranskrip bila `VOICE_ENABLED=true`.
 
 Tombol di room: **Akhiri Sesi** (konfirmasi → transkrip → channel dihapus) dan **Bantuan**.
 
@@ -283,7 +306,8 @@ pm2 start dist/index.js --name zypher-ai-bot
 pm2 save
 ```
 
-Dashboard web ikut menyala di port 3000 kalau `DASHBOARD_TOKEN` diisi.
+Dashboard web ikut menyala di port 3000 kalau `DASHBOARD_TOKEN` diisi. Login lewat form `/login`
+atau link cepat `/masuk/<token>` (langsung masuk, URL-nya tidak tertinggal di riwayat browser).
 `docker-compose.yml` sudah meneruskan portnya.
 
 ### Panel hosting (tanpa VPS, gratis)
@@ -314,9 +338,11 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke          # 42 test logika inti (termasuk RAG & chunking)
+npm run smoke          # 78 test logika inti (termasuk RAG, moderasi, vision/voice)
+npm run smoke:pg       # 10 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # uji rantai fallback provider dengan server tiruan
 npm run dashboard      # nyalakan dashboard web saja, tanpa bot Discord
+npm run migrate:pg     # pindahkan data SQLite → Postgres
 npm run bundle         # bikin zypher-deploy.zip untuk panel hosting
 npm run token -- --write   # bikin & pasang DASHBOARD_TOKEN acak di .env
 ```
@@ -331,7 +357,8 @@ menyaring model non-chat, menandai model yang dipakai bot) — lebih akurat dari
 
 `npm run smoke` menguji CRUD memori, pencocokan keyword (termasuk kalimat yang dibalik), perakitan prompt,
 riwayat room, escape XSS pada transkrip, chunking pesan, rate limit, parsing `AI_FALLBACKS`, pemotongan
-dokumen RAG, tokenizer/BM25, serta ingest–cari–hapus dokumen di database sungguhan (in-memory).
+dokumen RAG, tokenizer/BM25, ingest–cari–hapus dokumen di database sungguhan (in-memory), serta
+rendering tiap halaman dashboard (sidebar, kartu statistik, grafik 7 hari, empty state, escape XSS).
 
 `npm run test:fallback` menyalakan dua server OpenAI-compatible tiruan (provider utama selalu 429) dan
 memeriksa 10 hal: pindah provider, payload utuh, berhenti saat prompt kepanjangan, **delta streaming
@@ -358,7 +385,13 @@ diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai u
 | Bot mati saat `npm install` di panel hosting | RAM hosting habis. Upload folder `node_modules` dari laptop, atau pakai image/hosting dengan RAM ≥512 MB. |
 | Jawaban muncul sekaligus, bukan streaming | Normal bila provider/model menolak `stream: true` — bot otomatis memakai mode non-streaming di provider tersebut (lihat log). |
 | AI tidak menjawab dari dokumen | Cek `/dokumen cari pertanyaan:...`. Kalau kosong, kata kuncinya tidak ada di dokumen — tambahkan sinonim atau pakai istilah yang dipakai member. |
-| "Format PDF belum didukung" | Konversi dulu ke `.txt`/`.md`. Lihat [docs/rag.md](docs/rag.md). |
+| Upload PDF/DOCX gagal | Maksimal **8 MB**, PDF harus berisi teks (hasil scan perlu OCR dulu), dan file tidak boleh terkunci password. Lihat [docs/rag.md](docs/rag.md). |
+| AI menjawab "belum bisa membaca gambar" | `VISION_ENABLED` masih `false`. Nyalakan dan pastikan `VISION_MODEL` benar-benar model **multimodal** (`npm run models -- groq --all`). |
+| Error `model ... does not support image input` | `VISION_MODEL` bukan model vision, atau provider tidak mendukung `image_url`. Ganti model atau matikan `VISION_ENABLED`. |
+| Voice note tidak ditranskrip | `VOICE_ENABLED` belum aktif, file > `VOICE_MAX_MB`, atau provider menolak endpoint `/audio/transcriptions`. Cek log: nama provider ikut dicatat. |
+| Balasan suara tidak muncul | `TTS_ENABLED=false`, kuota TTS habis, atau model suara tidak ada di provider. Jawaban teks tetap dikirim — tidak ada yang hilang. |
+| Moderasi tidak bereaksi | Pastikan dulu: moderasi aktif di `/moderasi` (menang atas `.env`), daftar kata tidak kosong, dan pengirimnya bukan staff/Manage Messages. Bot juga perlu izin **Manage Messages** untuk menghapus dan **Moderate Members** untuk timeout. |
+| `connect ECONNREFUSED` / `SSL required` (Postgres) | `DATABASE_URL` salah atau `sslmode=require` belum ditambahkan. Tes cepat: `DATABASE_URL=... npm run migrate:pg`. Lihat [docs/postgres.md](docs/postgres.md). |
 | Mau ganti token dashboard | `npm run token -- --write`, lalu perbarui juga variabel di panel hosting dan restart. |
 | Dashboard tidak bisa dibuka | `DASHBOARD_TOKEN` kosong atau kurang dari 12 karakter. Cek log: harus ada `🌐 Dashboard: …`. |
 | Data hilang setelah redeploy | Hosting tanpa disk persisten. Lihat [docs/hosting.md](docs/hosting.md) + unduh backup `zypher.db`. |
@@ -383,20 +416,31 @@ src/
 │   ├── keywords.ts          # pencocokan keyword
 │   ├── prompt.ts            # perakitan system prompt
 │   ├── buttons.ts           # router button interaction
+│   ├── moderation.ts        # filter kata terlarang + log pelanggaran
+│   ├── vision.ts            # lampiran gambar → data URI untuk model multimodal
 │   └── ui.ts                # embed & komponen
 ├── web/
 │   ├── server.ts            # dashboard: node:http, auth token, API JSON
-│   ├── views.ts             # halaman HTML server-rendered
+│   ├── ui/                  # theme, shell, ikon SVG, halaman (server-rendered)
 │   └── standalone.ts        # npm run dashboard (tanpa bot Discord)
-├── db/                      # koneksi SQLite, skema, query
-└── lib/                     # llm, transcript, ratelimit, text, chunker, lexical, logger, register
-scripts/smoke.ts             # smoke test tanpa Discord
+├── db/
+│   ├── index.ts             # lazy init driver + helper all/get/run/insert
+│   ├── driver.ts            # driver SQLite (node:sqlite) & Postgres (pg)
+│   ├── schema.ts            # DDL SQLite + DDL Postgres
+│   └── repo.ts              # semua query (async, portable dua engine)
+└── lib/                     # llm, audio (STT/TTS), transcript, ratelimit, text, chunker, lexical, shard, logger
+scripts/smoke.ts             # smoke test tanpa Discord (SQLite)
+scripts/smoke-pg.ts          # smoke test jalur Postgres (pg-mem)
+scripts/migrate-to-pg.ts     # migrasi data SQLite → Postgres
 docs/setup.md                # panduan setup langkah-demi-langkah
 docs/sample-transcript.html  # contoh hasil transkrip
 docs/providers.md            # provider AI free tier + contoh .env
 docs/models.md               # ID model gratis per provider + rekomendasi
 docs/rag.md                  # dokumen pengetahuan AI (RAG)
 docs/dashboard.md            # dashboard web: setup & keamanan
+docs/postgres.md             # Postgres, migrasi data, multi-shard
+docs/moderation.md           # moderasi otomatis + log pelanggaran
+docs/vision-voice.md         # vision gambar, STT/TTS, /ucap
 docs/hosting.md              # hosting bot gratis 24/7 + backup
 ```
 
@@ -406,12 +450,12 @@ docs/hosting.md              # hosting bot gratis 24/7 + backup
 
 - [x] Streaming jawaban (edit pesan bertahap)
 - [x] RAG dokumen server (`.txt`/`.md`/`.csv`/`.json`, pencarian hybrid)
-- [x] Web dashboard (statistik, kelola dokumen, uji pencarian)
-- [ ] Dukungan PDF/DOCX (butuh library ekstraksi)
-- [ ] Editor keyword & persona di dashboard
-- [ ] Moderasi otomatis + logging
-- [ ] Dukungan gambar (vision) & voice
-- [ ] Postgres untuk multi-shard
+- [x] Web dashboard (statistik, grafik aktivitas, kelola dokumen/keyword/memori/persona, uji pencarian)
+- [x] Dukungan PDF/DOCX (ekstraksi teks via `unpdf` + `fflate`, tanpa dependency native)
+- [x] Riwayat transkrip dari dashboard (arsip di SQLite, unduh & hapus dari web)
+- [x] Moderasi otomatis + logging (filter kata terlarang, halaman `/moderasi`, audit log)
+- [x] Dukungan gambar (vision) & voice (STT Whisper + TTS PlayAI, `/ucap`)
+- [x] Postgres untuk multi-shard (driver async SQLite ↔ Postgres, `npm run migrate:pg`, `SHARD_COUNT`/`SHARD_INDEX`)
 
 ---
 

@@ -7,10 +7,10 @@ export async function onChannelDelete(channel: DMChannel | NonThreadGuildBasedCh
   if (channel.isDMBased()) return;
 
   const guildChannel = channel as GuildBasedChannel;
-  const room = getRoomByChannel(guildChannel.id);
+  const room = await getRoomByChannel(guildChannel.id);
   if (!room) return;
 
-  deleteRoom(guildChannel.id);
-  clearHistory(guildChannel.id);
+  await deleteRoom(guildChannel.id);
+  await clearHistory(guildChannel.id);
   logger.info(`Room AI #${guildChannel.name} dihapus manual — data room dibersihkan.`);
 }

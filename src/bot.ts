@@ -9,6 +9,7 @@ import { errorMessage, logger } from './lib/logger.js';
 import { startRateLimitJanitor } from './lib/ratelimit.js';
 import { registerCommands } from './lib/register.js';
 import { startDashboard, stopDashboard } from './web/server.js';
+import { markBotOnline } from './web/status.js';
 
 const client = new Client({
   intents: [
@@ -21,12 +22,13 @@ const client = new Client({
 
 client.once(Events.ClientReady, async (ready) => {
   logger.info(`🤖 Login sebagai ${ready.user.tag} (${ready.guilds.cache.size} server)`);
+  markBotOnline(true);
 
   // Daftarkan semua server ke tabel `guilds` supaya dashboard langsung punya
   // daftar server yang bisa dipilih, bahkan sebelum ada room/dokumen dibuat.
   for (const guild of ready.guilds.cache.values()) {
     try {
-      ensureGuild(guild.id);
+      await ensureGuild(guild.id);
     } catch (error) {
       logger.warn(`Gagal mendaftarkan server ${guild.id} ke database: ${errorMessage(error)}`);
     }
@@ -54,12 +56,10 @@ client.on(Events.ChannelDelete, (channel) => {
 
 // Bot baru diundang ke server → langsung masuk daftar dashboard.
 client.on(Events.GuildCreate, (guild) => {
-  try {
-    ensureGuild(guild.id);
-    logger.info(`Bergabung ke server baru: ${guild.name} (${guild.id})`);
-  } catch (error) {
-    logger.warn(`Gagal mendaftarkan server ${guild.id}: ${errorMessage(error)}`);
-  }
+  logger.info(`Bergabung ke server baru: ${guild.name} (${guild.id})`);
+  void ensureGuild(guild.id).catch((error: unknown) =>
+    logger.warn(`Gagal mendaftarkan server ${guild.id}: ${errorMessage(error)}`),
+  );
 });
 
 client.on(Events.Error, (error) => logger.error('Discord client error', errorMessage(error)));
@@ -75,9 +75,10 @@ async function shutdown(signal: string): Promise<void> {
 
   logger.warn(`Menerima ${signal} — mematikan bot…`);
   try {
+    markBotOnline(false);
     stopDashboard();
     client.destroy();
-    closeDatabase();
+    await closeDatabase();
   } catch (error) {
     logger.error('Gagal mematikan bot dengan bersih', errorMessage(error));
   } finally {
@@ -102,7 +103,7 @@ async function main(): Promise<void> {
     if (message.toLowerCase().includes('token')) {
       logger.error('Cek DISCORD_TOKEN di .env — ambil ulang dari https://discord.com/developers/applications');
     }
-    closeDatabase();
+    await closeDatabase();
     process.exit(1);
   }
 }

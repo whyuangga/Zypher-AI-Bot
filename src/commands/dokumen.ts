@@ -7,7 +7,7 @@ import { replyEphemeral, requireAdmin, requireGuild } from './helpers.js';
 import type { Command } from './types.js';
 
 /** Batas ukuran file yang mau diunduh (byte). Sisanya jelas ditolak. */
-const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 
 function formatSize(chars: number): string {
   if (chars < 1000) return `${chars} karakter`;
@@ -22,7 +22,7 @@ export const dokumenCommand: Command = {
     .addSubcommand((sub) =>
       sub
         .setName('tambah')
-        .setDescription('Upload dokumen (.txt/.md/.csv/.json) sebagai pengetahuan AI')
+        .setDescription('Upload dokumen (.txt/.md/.csv/.json/.pdf/.docx) sebagai pengetahuan AI')
         .addAttachmentOption((option) =>
           option.setName('file').setDescription('File teks yang mau dijadikan rujukan AI').setRequired(true),
         )
@@ -91,7 +91,7 @@ export const dokumenCommand: Command = {
     if (!(await requireAdmin(interaction))) return;
 
     if (subcommand === 'daftar') {
-      const documents = listGuildDocuments(interaction.guildId);
+      const documents = await listGuildDocuments(interaction.guildId);
 
       if (documents.length === 0) {
         await replyEphemeral(
@@ -100,7 +100,7 @@ export const dokumenCommand: Command = {
             'Belum ada dokumen. Upload file teks dengan:',
             '`/dokumen tambah file:<lampiran>`',
             '',
-            'Format yang didukung: `.txt`, `.md`, `.csv`, `.json`, `.html`, `.log`.',
+            'Format yang didukung: `.txt`, `.md`, `.csv`, `.json`, `.html`, `.log`, `.pdf`, `.docx`.',
             'AI akan menjawab berdasarkan isi dokumen ini, lengkap dengan nama sumbernya.',
           ].join('\n'),
         );
@@ -126,7 +126,7 @@ export const dokumenCommand: Command = {
 
     if (subcommand === 'hapus') {
       const id = interaction.options.getInteger('id', true);
-      const removed = removeDocument(interaction.guildId, id);
+      const removed = await removeDocument(interaction.guildId, id);
       await replyEphemeral(
         interaction,
         removed ? `🗑️ Dokumen #${id} dihapus dari pengetahuan AI.` : `Tidak ada dokumen #${id}. Cek \`/dokumen daftar\`.`,
