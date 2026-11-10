@@ -21,7 +21,11 @@ const { createRoom, getRoomByChannel, getRoomByUser, appendMessage, getHistory, 
 const { setPersona, getGuildSettings } = await import('../src/db/repo.js');
 const { listGuildIds, countGuildRows, countGuildMessages, listMemoryOwners, listGuildMemories, messagesPerDay } =
   await import('../src/db/repo.js');
-const { ringkasanPage, keywordPage, memoriPage } = await import('../src/web/ui/pages.js');
+const { insertTranscript, listTranscripts, getTranscript, deleteTranscript, countTranscripts } = await import(
+  '../src/db/repo.js'
+);
+const { ringkasanPage, keywordPage, memoriPage, transkripPage } = await import('../src/web/ui/pages.js');
+const { zipSync, strToU8 } = await import('fflate');
 const { parseLoginLink } = await import('../src/web/login-link.js');
 const { matchKeywords } = await import('../src/features/keywords.js');
 const { buildSystemPrompt } = await import('../src/features/prompt.js');
@@ -29,7 +33,7 @@ const { buildTranscriptHtml, transcriptFileName } = await import('../src/lib/tra
 const { chunkMessage, truncate, normalize } = await import('../src/lib/text.js');
 const { checkRateLimit } = await import('../src/lib/ratelimit.js');
 const { parseFallbackSpec, providerNameForBaseUrl, buildProviderChain } = await import('../src/lib/providers.js');
-const { chunkText, extractText, htmlToText, DocumentError } = await import('../src/lib/chunker.js');
+const { chunkText, extractText, extractFileText, htmlToText, DocumentError } = await import('../src/lib/chunker.js');
 const { Bm25Index, tokenize, stem, cosineSimilarity } = await import('../src/lib/lexical.js');
 const {
   ingestDocument,
@@ -377,12 +381,12 @@ test('htmlToText membuang tag & script', () => {
   assert.ok(!text.includes('<'));
   assert.ok(!text.includes('alert'));
 });
-test('extractText menolak PDF dengan pesan yang jelas', () => {
-  assert.throws(() => extractText('brosur.pdf', '%PDF-1.4 ...'), DocumentError);
+test('extractText menolak format biner yang belum didukung', () => {
+  assert.throws(() => extractText('data.xlsx', 'isi'), DocumentError);
   try {
-    extractText('brosur.pdf', '%PDF-1.4');
+    extractText('data.xlsx', 'isi');
   } catch (error) {
-    assert.match((error as Error).message, /PDF/);
+    assert.match((error as Error).message, /Excel/);
   }
 });
 test('extractText menolak file biner yang bukan UTF-8', () => {
@@ -471,6 +475,159 @@ await testAsync('RAG: pertanyaan yang tidak berhubungan menghasilkan hasil koson
   });
   const hits = await searchKnowledge('g-rag2', 'kapan jadwal turnamen valorant dimulai?');
   assert.equal(hits.length, 0);
+});
+
+console.log('\nDokumen biner (PDF & DOCX)');
+
+/** DOCX minimal: arsip ZIP berisi word/document.xml. */
+function makeDocx(paragraphs: string[]): Uint8Array {
+  const body = paragraphs.map((text) => `<w:p><w:r><w:t>${text}</w:t></w:r></w:p>`).join('');
+  return zipSync(
+    {
+      '[Content_Types].xml': strToU8('<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>'),
+      'word/document.xml': strToU8(
+        `<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}</w:body></w:document>`,
+      ),
+    },
+    { level: 6 },
+  );
+}
+
+/** PDF satu halaman tanpa xref — pdf.js tetap bisa membacanya. */
+function makePdf(text: string): Uint8Array {
+  const content = `BT /F1 18 Tf 20 120 Td (${text}) Tj ET`;
+  const pdf = `%PDF-1.4
+1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
+2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
+3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 200]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj
+4 0 obj<</Length ${content.length}>>stream
+${content}
+endstream
+endobj
+5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj
+trailer<</Root 1 0 R/Size 6>>
+%%EOF
+`;
+  return new TextEncoder().encode(pdf);
+}
+
+await testAsync('DOCX: teks paragraf terbaca', async () => {
+  const text = await extractFileText(
+    'aturan.docx',
+    makeDocx(['Dilarang spam dan tautan judi.', 'Jam operasional server 08.00-22.00 WIB.']),
+  );
+  assert.match(text, /Dilarang spam/);
+  assert.match(text, /08\.00-22\.00/);
+});
+
+await testAsync('DOCX rusak ditolak dengan pesan ramah', async () => {
+  await assert.rejects(
+    () => extractFileText('rusak.docx', new Uint8Array([1, 2, 3, 4, 5])),
+    (error: unknown) => error instanceof DocumentError && /rusak|bukan dokumen/i.test((error as Error).message),
+  );
+});
+
+await testAsync('PDF: teks diekstrak lewat unpdf', async () => {
+  const text = await extractFileText('faq.pdf', makePdf('Halo dari PDF aturan server'));
+  assert.match(text, /PDF aturan server/);
+});
+
+await testAsync('PDF dari Buffer Node (byteOffset != 0) tetap terbaca', async () => {
+  const pdf = makePdf('Kebijakan server soal spam');
+  // Tiru cara server membaca body upload: Buffer yang menumpang ArrayBuffer bersama.
+  const shared = Buffer.concat([Buffer.alloc(544), Buffer.from(pdf)]);
+  const view = shared.subarray(544);
+  assert.notEqual(view.byteOffset, 0);
+  const text = await extractFileText('buffer.pdf', view);
+  assert.match(text, /Kebijakan server/);
+});
+
+await testAsync('PDF rusak ditolak (bukan crash)', async () => {
+  await assert.rejects(
+    () => extractFileText('rusak.pdf', new TextEncoder().encode('%PDF-1.4 bukan pdf sungguhan')),
+    (error: unknown) => error instanceof DocumentError,
+  );
+});
+
+await testAsync('PDF hasil scan tanpa teks dapat pesan khusus OCR', async () => {
+  await assert.rejects(
+    () => extractFileText('scan.pdf', makePdf('')),
+    (error: unknown) => error instanceof DocumentError && /scan|OCR|tidak mengandung teks/i.test((error as Error).message),
+  );
+});
+
+test('format .doc lama tetap ditolak dengan saran konversi', () => {
+  assert.throws(
+    () => extractText('lama.doc', 'isi'),
+    (error: unknown) => error instanceof DocumentError && /Word 97-2003/.test((error as Error).message),
+  );
+});
+
+console.log('\nArsip transkrip');
+
+const TRANSCRIPT_ID = insertTranscript({
+  guildId: 'g-tr',
+  channelId: 'chan-1',
+  channelName: 'room-ai-0001',
+  userId: USER,
+  userName: 'Bagas',
+  fileName: 'transkrip-bagas.html',
+  summary: 'Member menanyakan jam operasional server.',
+  messageCount: 12,
+  memoryCount: 2,
+  html: '<!doctype html><html><body><p>Halo</p></body></html>',
+  createdAt: 1_700_000_000_000,
+});
+
+test('transkrip tersimpan & terbaca di daftar', () => {
+  assert.equal(countTranscripts('g-tr'), 1);
+  const [item] = listTranscripts('g-tr');
+  assert.ok(item);
+  assert.equal(item.id, TRANSCRIPT_ID);
+  assert.equal(item.messageCount, 12);
+  assert.equal(item.userName, 'Bagas');
+  assert.match(item.summary ?? '', /jam operasional/);
+  assert.ok(item.sizeBytes > 20, 'ukuran file harus tercatat');
+});
+
+test('transkrip lengkap hanya bisa dibuka oleh server pemiliknya', () => {
+  const record = getTranscript('g-tr', TRANSCRIPT_ID);
+  assert.ok(record);
+  assert.match(record.html, /<!doctype html>/);
+  assert.equal(getTranscript('g-lain', TRANSCRIPT_ID), null);
+});
+
+test('transkrip bisa dihapus', () => {
+  assert.equal(deleteTranscript('g-tr', TRANSCRIPT_ID), true);
+  assert.equal(countTranscripts('g-tr'), 0);
+  assert.equal(deleteTranscript('g-tr', TRANSCRIPT_ID), false);
+});
+
+test('halaman transkrip merender arsip + tombol unduh', () => {
+  const html = transkripPage({
+    guildId: 'g-tr',
+    guilds: ['g-tr'],
+    items: [
+      {
+        id: 7,
+        userId: USER,
+        userName: 'Bagas',
+        channelName: 'room-ai-0001',
+        fileName: 'transkrip-bagas.html',
+        summary: 'Member menanyakan jam operasional.',
+        messageCount: 12,
+        memoryCount: 2,
+        sizeBytes: 24_000,
+        createdAt: 1_700_000_000_000,
+      },
+    ],
+    status: { online: false, mode: 'standalone', uptimeSeconds: 90 },
+  });
+  assert.match(html, /Transkrip/);
+  assert.match(html, /Bagas/);
+  assert.match(html, /\/api\/transkrip\/7/);
+  assert.match(html, /Unduh/);
+  assert.match(html, /23 KB/);
 });
 
 console.log('\nProvider & fallback');

@@ -27,16 +27,25 @@ Kalau kamu punya endpoint *embeddings*, bot bisa menambah **pencarian semantik**
 
 | Didukung | Tidak (belum) |
 |---|---|
-| `.txt` `.md` `.markdown` | `.pdf` |
-| `.csv` `.tsv` `.json` `.jsonl` | `.docx` `.doc` |
-| `.html` `.htm` `.xml` | `.xlsx` `.xls` |
-| `.log` `.ini` `.yaml` `.yml` | `.pptx` |
+| `.txt` `.md` `.markdown` | `.doc` (Word 97-2003) |
+| `.csv` `.tsv` `.json` `.jsonl` | `.xlsx` `.xls` |
+| `.html` `.htm` `.xml` | `.pptx` |
+| `.log` `.ini` `.yaml` `.yml` | `.odt` `.rtf` `.epub` |
 | `.sql`, kode (`.ts`, `.js`, `.py`, dst.) | gambar, audio, video |
+| **`.pdf`** (teks, bukan hasil scan) | PDF hasil scan (butuh OCR dulu) |
+| **`.docx`** (Word modern) | |
 
-PDF/DOCX sengaja ditolak dengan pesan jelas, bukan dibaca asal-asalan jadi teks sampah.
-Konversi dulu ke teks: buka di Word/Google Docs → **Save as .txt** / copy-paste ke `.md`.
+### PDF & DOCX
 
-**Batas default:** 5 MB per file upload Discord, 200.000 karakter per dokumen
+- **PDF** dibaca dengan [`unpdf`](https://github.com/unjs/unpdf) (pdf.js versi server) — tanpa
+  dependency native, jalan di panel 512 MB. PDF hasil **scan/gambar tidak punya lapisan teks**,
+  jadi bot menolak dengan pesan "OCR dulu" daripada menyimpan teks kosong.
+- **DOCX** dibaca dengan [`fflate`](https://github.com/101arrowz/fflate): cukup `word/document.xml`
+  di-unzip lalu tag XML-nya dibuang. Tidak ada library konversi Word yang berat.
+- Format lain tetap ditolak dengan pesan jelas (`.doc` lama, Excel, PowerPoint, dst.).
+  Konversi dulu: buka di Word/Google Docs → **Save as .txt/.docx** atau export PDF.
+
+**Batas default:** 8 MB per file (PDF/DOCX maupun teks), 200.000 karakter per dokumen
 (`RAG_MAX_CHARS`). Dokumen besar sebaiknya dipecah per topik — hasil pencarian malah lebih akurat.
 
 ---
@@ -149,7 +158,8 @@ lalu kembali ke pencarian leksikal. Dokumen yang sudah terlanjur diindeks tanpa 
 | Gejala | Penyebab & solusi |
 |---|---|
 | `/dokumen cari` kosong padahal dokumen ada | Kata di pertanyaan tidak muncul di dokumen. Coba istilah yang persis ada di dokumen, atau tambahkan sinonim di dokumen ("jam operasional / jam buka"). |
-| "Format **PDF** belum didukung" | Konversi ke `.txt` atau `.md` dulu. |
+| "PDF ini tidak bisa dibuka" | PDF terkunci password atau rusak — simpan ulang / export ulang. |
+| "PDF ini tidak mengandung teks (scan)" | Jalankan OCR dulu, atau salin isinya ke `.txt`. |
 | "Isinya terlalu pendek (minimal 20 karakter)" | File kosong / cuma berisi spasi. |
 | "File ini sepertinya bukan teks UTF-8" | File biner (gambar/zip) dengan nama `.txt`. Simpan ulang sebagai teks. |
 | AI tetap tidak menyebut sumber | Model mungkin mengabaikan potongan karena pertanyaannya tidak relevan. Uji dengan `/dokumen cari` untuk memastikan retrieval-nya benar. |

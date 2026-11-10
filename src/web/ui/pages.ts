@@ -232,8 +232,10 @@ export function dokumenPage(options: PageContext & { documents: DocumentRowView[
       </span>
     </div>
   </td>
-  <td>${formatNumber(document.chunkCount)} <span class="cell-sub">potongan</span><br>
-    <span class="cell-sub">${formatNumber(document.chars)} karakter</span></td>
+  <td>
+    <div class="cell-title">${formatNumber(document.chunkCount)}&nbsp;potongan</div>
+    <div class="cell-sub">${formatNumber(document.chars)}&nbsp;karakter</div>
+  </td>
   <td><span class="cell-sub">${esc(formatDate(document.createdAt))}</span></td>
   <td class="num">
     <button class="btn-danger btn-sm btn-icon" type="button"
@@ -249,11 +251,11 @@ export function dokumenPage(options: PageContext & { documents: DocumentRowView[
     title: 'Upload dari komputer',
     body: `<div class="card-pad" style="padding-top:6px">
   <label class="drop" for="file">
-    <input type="file" id="file" accept=".txt,.md,.markdown,.csv,.tsv,.json,.jsonl,.html,.htm,.xml,.log,.ini,.yaml,.yml,.sql,.ts,.js,.py">
+    <input type="file" id="file" accept=".txt,.md,.markdown,.csv,.tsv,.json,.jsonl,.html,.htm,.xml,.log,.ini,.yaml,.yml,.sql,.ts,.js,.py,.pdf,.docx">
     <span class="drop-ico">${icon('upload', 17)}</span>
     <span class="drop-text">
       <b id="fileName">Pilih file dari perangkat</b>
-      <span id="fileMeta">TXT · MD · CSV · JSON · HTML · LOG — maks 5 MB</span>
+      <span id="fileMeta">TXT · MD · CSV · JSON · PDF · DOCX — maks 8 MB</span>
     </span>
   </label>
   <div class="field-row" style="margin-top:14px">
@@ -328,7 +330,7 @@ if (dropInput) dropInput.addEventListener('change', function () {
   document.getElementById('fileName').textContent = f ? f.name : 'Pilih file dari perangkat';
   document.getElementById('fileMeta').textContent = f
     ? Math.max(1, Math.round(f.size / 1024)) + ' KB · siap diunggah'
-    : 'TXT · MD · CSV · JSON · HTML · LOG — maks 5 MB';
+    : 'TXT · MD · CSV · JSON · PDF · DOCX — maks 8 MB';
 });
 
 async function postDocument(name, text) {
@@ -346,7 +348,7 @@ async function uploadFile() {
   if (!input.files || !input.files.length) return toast('Pilih file dulu ya', true);
 
   var file = input.files[0];
-  if (file.size > 5 * 1024 * 1024) return toast('File lebih dari 5 MB', true);
+  if (file.size > 8 * 1024 * 1024) return toast('File lebih dari 8 MB', true);
 
   button.disabled = true;
   state.textContent = 'Mengunggah ' + file.name + '…';
@@ -710,7 +712,7 @@ export function pengaturanPage(
   });
 
   const body = `${pageHead({
-    kicker: '05 — Konfigurasi',
+    kicker: '06 — Konfigurasi',
     title: 'Pengaturan',
     subtitle: 'Perilaku AI dan informasi server. Perubahan langsung berlaku untuk pesan berikutnya.',
   })}
@@ -744,3 +746,130 @@ async function saveSettings(payload) {
 }
 
 export { SHARED_JS };
+
+/* ------------------------------------------------------------------ */
+/*  Transkrip                                                          */
+/* ------------------------------------------------------------------ */
+
+export interface TranskripItem {
+  id: number;
+  userId: string;
+  userName: string;
+  channelName: string;
+  fileName: string;
+  summary: string | null;
+  messageCount: number;
+  memoryCount: number;
+  sizeBytes: number;
+  createdAt: number;
+}
+
+export interface TranskripOptions extends PageContext {
+  items: TranskripItem[];
+}
+
+const sizeLabel = (bytes: number): string =>
+  bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+
+export function transkripPage(options: TranskripOptions): string {
+  const total = options.items.length;
+
+  const rows = options.items
+    .map(
+      (item) => `<tr>
+  <td class="cell-main-cell">
+    <div class="cell-main">
+      <span class="avatar-sm">${esc(initials(item.userId))}</span>
+      <span style="min-width:0">
+        <div class="cell-title">${esc(item.userName)}</div>
+        <div class="cell-sub">${esc(item.channelName || item.fileName)}</div>
+      </span>
+    </div>
+  </td>
+  <td class="num" data-label="Pesan">${formatNumber(item.messageCount)}</td>
+  <td class="num col-hide-sm" data-label="Memori">${formatNumber(item.memoryCount)}</td>
+  <td class="num col-hide-sm" data-label="Ukuran">${esc(sizeLabel(item.sizeBytes))}</td>
+  <td class="cell-date"><span class="cell-sub"><span class="date-long">${esc(formatDate(item.createdAt))}</span><span class="date-short">${esc(
+    new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', timeZone: 'Asia/Jakarta' }).format(new Date(item.createdAt)),
+  )}</span></span></td>
+  <td class="num cell-aksi">
+    <span class="row-actions">
+      <a class="btn-ghost btn-sm" href="/api/transkrip/${item.id}?guild=${encodeURIComponent(options.guildId)}"
+        title="Unduh transkrip">${icon('file', 14)} Unduh</a>
+      <button class="btn-danger btn-sm btn-icon" type="button"
+        onclick="removeTranscript(${item.id}, ${esc(JSON.stringify(item.fileName))})"
+        title="Hapus arsip" aria-label="Hapus ${esc(item.fileName)}">${icon('trash', 15)}</button>
+    </span>
+  </td>
+</tr>`,
+    )
+    .join('');
+
+  const listCard = card({
+    title: 'Arsip sesi',
+    hint: total > 0 ? `${total} file — disimpan saat member menutup room AI` : undefined,
+    body: rows
+      ? `<div class="table-wrap"><table class="table-stack">
+  <thead><tr>
+    <th>Sesi</th><th class="num">Pesan</th><th class="num col-hide-sm">Memori</th><th class="num col-hide-sm">Ukuran</th>
+    <th>Ditutup</th><th></th>
+  </tr></thead>
+  <tbody>${rows}</tbody>
+</table></div>`
+      : emptyState({
+          icon: 'file',
+          title: 'Belum ada transkrip',
+          text: 'Transkrip otomatis tersimpan di sini setiap kali member menekan Akhiri Sesi di room AI-nya.',
+        }),
+  });
+
+  const summaryCard = card({
+    title: 'Isi transkrip',
+    body: `<div class="list">
+  ${options.items
+    .slice(0, 5)
+    .filter((item) => item.summary)
+    .map(
+      (item) => `<div class="list-row">
+    <div class="list-body">
+      <div class="list-title">${esc(item.userName)} <span class="list-meta">${esc(formatDate(item.createdAt))}</span></div>
+      <div class="list-text">${esc(item.summary ?? '')}</div>
+    </div>
+  </div>`,
+    )
+    .join('') || `<div class="card-pad"><p class="hint" style="margin:0">Ringkasan AI muncul di sini setelah ada sesi yang ditutup dengan cukup banyak percakapan.</p></div>`}
+</div>`,
+  });
+
+  const body = `${pageHead({
+    kicker: '05 — Arsip sesi',
+    title: 'Transkrip',
+    subtitle: 'Salinan HTML setiap room AI yang sudah ditutup. Unduh untuk arsip, hapus kalau sudah tidak perlu.',
+    actions: badge(`${total} arsip`, total ? 'brand' : 'neutral'),
+  })}
+${listCard}
+<div class="mt">${summaryCard}</div>
+<script>
+async function removeTranscript(id, name) {
+  var ok = await askConfirm('Hapus arsip transkrip?', name + ' akan dihapus dari dashboard. File yang sudah diunduh member tidak terpengaruh.');
+  if (!ok) return;
+  try {
+    await api('/api/transkrip/' + id + '?guild=' + encodeURIComponent(${JSON.stringify(options.guildId)}), { method: 'DELETE' });
+    toast('Arsip transkrip dihapus');
+    setTimeout(function () { location.reload(); }, 400);
+  } catch (error) {
+    toast('Gagal menghapus: ' + error.message, true);
+  }
+}
+</script>`;
+
+  return appShell({
+    title: 'Transkrip',
+    guildId: options.guildId,
+    guilds: options.guilds,
+    active: 'transkrip',
+    body,
+    counts: options.counts,
+    status: options.status,
+  });
+}

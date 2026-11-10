@@ -18,7 +18,7 @@ import {
   type ChunkWithDocument,
   type DocumentRecord,
 } from '../db/repo.js';
-import { chunkText, DocumentError, extractText } from '../lib/chunker.js';
+import { chunkText, DocumentError, extractFileText } from '../lib/chunker.js';
 import { Bm25Index, cosineSimilarity } from '../lib/lexical.js';
 import { logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
@@ -96,7 +96,7 @@ export async function ingestDocument(input: {
   source?: string;
 }): Promise<IngestResult> {
   const name = input.name.trim().slice(0, 120) || 'dokumen.txt';
-  const text = extractText(name, input.content);
+  const text = await extractFileText(name, input.content);
 
   if (text.length > config.rag.maxChars) {
     throw new DocumentError(

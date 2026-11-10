@@ -12,6 +12,7 @@ Yang bisa dilakukan:
 | `/dokumen` | Upload dokumen RAG (file atau tempel teks), daftar dokumen, hapus dokumen, **uji pencarian** |
 | `/keyword` | Tambah & hapus template jawaban owner (FAQ, harga, aturan) |
 | `/memori` | Fakta yang diingat AI per user, dikelompokkan per member, bisa dihapus |
+| `/transkrip` | Arsip HTML tiap sesi AI yang sudah ditutup — unduh, lihat ringkasan, hapus |
 | `/pengaturan` | Persona AI & model per server, info server + salin Server ID |
 | `/healthz` | JSON status untuk monitoring (tanpa login) |
 
@@ -164,7 +165,8 @@ developer) → *Copy Server ID*.
 ## Upload dokumen dari dashboard
 
 1. Buka `/dokumen`.
-2. **Upload dari komputer**: pilih `.txt`/`.md`/`.csv`/`.json`/… (maks 5 MB) → *Upload dokumen*.
+2. **Upload dari komputer**: pilih `.txt`/`.md`/`.csv`/`.json`/`.pdf`/`.docx`/… (maks 8 MB) → *Upload dokumen*.
+   PDF dan DOCX diekstrak otomatis jadi teks (lihat [rag.md](rag.md#pdf--docx)).
 3. **Atau tempel teks**: beri nama file, tempel isinya, simpan.
 
 Setelah tersimpan, halaman menampilkan jumlah potongan. Nama yang sama akan menggantikan versi lama.
@@ -174,6 +176,29 @@ Setelah tersimpan, halaman menampilkan jumlah potongan. Nama yang sama akan meng
 Kotak *Uji pencarian* memanggil mesin pencari yang sama dengan yang dipakai AI. Hasilnya menampilkan
 potongan + skor + sumber (`lexical`, `vector`, atau `hybrid`). Ini cara tercepat tahu apakah dokumen
 kamu akan terpakai saat member bertanya.
+
+---
+
+## Riwayat transkrip (`/transkrip`)
+
+Setiap kali member menekan **Akhiri Sesi**, transkrip HTML-nya bukan cuma dikirim ke DM dan channel
+arsip — salinannya juga disimpan di tabel `transcripts` (SQLite), jadi tetap ada walau file di Discord
+sudah tenggelam atau folder `transcripts/` di panel dibersihkan.
+
+Halaman `/transkrip` menampilkan: user, channel asal, jumlah pesan, jumlah memori, ukuran file,
+waktu sesi ditutup, cuplikan ringkasan AI, plus tombol **Unduh** dan **Hapus**.
+
+| Endpoint | Fungsi |
+|---|---|
+| `GET /api/transkrip/<id>` | Unduh file HTML sebagai attachment (`content-disposition`) |
+| `DELETE /api/transkrip/<id>` | Hapus satu arsip dari database |
+
+Semua endpoint tetap butuh sesi login, dan `<id>` hanya bisa diakses oleh server (guild) pemiliknya.
+Transkrip dikirim sebagai **attachment** dengan `x-content-type-options: nosniff`, jadi isi HTML dari
+member tidak pernah dieksekusi di origin dashboard.
+
+> Ukuran penyimpanan: transkrip ~30–100 KB per sesi. Seribu sesi kira-kira 50 MB, masih aman di
+> disk 1 GB Wispbyte. Hapus arsip lama dari halaman ini kalau mulai menumpuk.
 
 ---
 

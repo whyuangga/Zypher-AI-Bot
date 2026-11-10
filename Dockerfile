@@ -21,6 +21,8 @@ WORKDIR /app
 
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+# font self-host dipakai dashboard (/fonts/general-sans-*.woff2)
+COPY assets ./assets
 COPY package.json ./
 
 RUN mkdir -p /app/data && chown -R node:node /app

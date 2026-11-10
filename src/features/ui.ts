@@ -109,7 +109,7 @@ export function helpEmbed(botName: string): EmbedBuilder {
           '`/dokumen tambah file:<lampiran>` — jadikan dokumen sebagai pengetahuan AI *(admin)*',
           '`/dokumen daftar` · `/dokumen hapus id:<nomor>` *(admin)*',
           '`/dokumen cari pertanyaan:<teks>` — cek potongan yang akan dipakai AI',
-          'Format: `.txt`, `.md`, `.csv`, `.json`, `.html`. AI menyebut sumbernya saat menjawab.',
+          'Format: `.txt`, `.md`, `.csv`, `.json`, `.html`, `.pdf`, `.docx`. AI menyebut sumbernya saat menjawab.',
         ].join('\n'),
       },
       {

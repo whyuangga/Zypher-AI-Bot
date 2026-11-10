@@ -310,7 +310,13 @@ tbody tr:hover { background: rgba(226, 209, 204, .04); }
 }
 .cell-title { font-weight: 500; color: var(--text); }
 .cell-sub { color: var(--text-3); font-size: 12px; }
+/* hanya tabel transkrip yang perlu satu baris — tabel lain butuh wrap normal */
+.table-stack .cell-sub {
+  display: block; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.date-short { display: none; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
+.row-actions { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
 
 /* ---------------- badges, chips, buttons ---------------- */
 .badge {
@@ -532,6 +538,11 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   .chart-legend { padding-left: 16px; padding-right: 16px; }
   th { padding: 11px 16px; }
   td { padding: 13px 16px; }
+  /* kolom sekunder disembunyikan di HP biar tombol Unduh tidak perlu di-scroll */
+  .col-hide-sm { display: none; }
+  .date-long { display: none; }
+  .date-short { display: inline; }
+  .table-stack .cell-sub { max-width: 42vw; }
   .card-pad { padding: 18px 16px; }
   .list-row, .kv, details.user-group > summary { padding-left: 16px; padding-right: 16px; }
   .cols-2-even { grid-template-columns: minmax(0, 1fr); }
@@ -558,6 +569,30 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   td .cell-main .avatar-sm { display: none; }
   .cell-sub { white-space: nowrap; }
 }
+/* Tabel arsip transkrip berubah jadi daftar bertumpuk di layar sempit,
+   supaya tombol Unduh/Hapus tidak perlu di-scroll ke samping. */
+@media (max-width: 560px) {
+  .table-stack thead { display: none; }
+  .table-stack, .table-stack tbody { display: block; width: 100%; }
+  .table-stack tr {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
+    padding: 16px; border-bottom: 1px solid var(--line);
+  }
+  .table-stack tr:last-child { border-bottom: 0; }
+  .table-stack td { display: block; padding: 0; border: 0; width: auto; }
+  /* di tumpukan HP semua statistik muat satu baris, jadi kolom yang tadi disembunyikan dimunculkan lagi */
+  .table-stack td.col-hide-sm { display: block; }
+  .table-stack td.cell-main-cell { flex: 1 1 100%; }
+  .table-stack td.num { flex: 0 0 auto; text-align: left; }
+  .table-stack td.num::before {
+    content: attr(data-label); font-size: 9px; font-weight: 500; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--text-3); margin-right: 5px;
+  }
+  .table-stack td.cell-date { flex: 0 0 auto; margin-left: auto; }
+  .table-stack td.cell-aksi { flex: 1 1 100%; }
+  .table-stack .row-actions { justify-content: flex-start; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }

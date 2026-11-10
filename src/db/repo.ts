@@ -62,6 +62,31 @@ export interface ChunkWithDocument extends ChunkRecord {
   documentName: string;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Arsip transkrip                                                    */
+/* ------------------------------------------------------------------ */
+
+/** Ringkasan satu sesi AI yang sudah ditutup (tanpa HTML-nya). */
+export interface TranscriptSummary {
+  id: number;
+  guildId: string;
+  channelId: string;
+  channelName: string;
+  userId: string;
+  userName: string;
+  fileName: string;
+  summary: string | null;
+  messageCount: number;
+  memoryCount: number;
+  sizeBytes: number;
+  createdAt: number;
+}
+
+/** Satu arsip transkrip lengkap, termasuk file HTML yang bisa diunduh. */
+export interface TranscriptRecord extends TranscriptSummary {
+  html: string;
+}
+
 export type ChatRole = 'user' | 'assistant';
 
 export interface StoredMessage {
@@ -512,6 +537,120 @@ export function countGuildMessages(guildId: string): number {
        WHERE r.guild_id = ?`,
     )
     .get(guildId) as { total: number };
+  return row.total;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Arsip transkrip                                                    */
+/* ------------------------------------------------------------------ */
+
+interface TranscriptRow {
+  id: number;
+  guild_id: string;
+  channel_id: string;
+  channel_name: string;
+  user_id: string;
+  user_name: string;
+  file_name: string;
+  summary: string | null;
+  message_count: number;
+  memory_count: number;
+  size_bytes: number;
+  created_at: number;
+}
+
+function toTranscriptSummary(row: TranscriptRow): TranscriptSummary {
+  return {
+    id: Number(row.id),
+    guildId: row.guild_id,
+    channelId: row.channel_id,
+    channelName: row.channel_name,
+    userId: row.user_id,
+    userName: row.user_name,
+    fileName: row.file_name,
+    summary: row.summary,
+    messageCount: Number(row.message_count),
+    memoryCount: Number(row.memory_count),
+    sizeBytes: Number(row.size_bytes),
+    createdAt: Number(row.created_at),
+  };
+}
+
+/**
+ * Simpan arsip sesi AI yang baru ditutup.
+ *
+ * HTML-nya ikut disimpan di database (bukan file terpisah) supaya dashboard bisa
+ * mengunduh transkrip lama walau folder `transcripts/` di panel sudah dibersihkan
+ * atau bot dipindah ke host lain. `size_bytes` disimpan supaya daftar transkrip
+ * tidak perlu membaca kolom HTML yang besar.
+ */
+export function insertTranscript(input: {
+  guildId: string;
+  channelId: string;
+  channelName: string;
+  userId: string;
+  userName: string;
+  fileName: string;
+  summary?: string | null;
+  messageCount: number;
+  memoryCount: number;
+  html: string;
+  createdAt?: number;
+}): number {
+  const result = db
+    .prepare(
+      `INSERT INTO transcripts
+        (guild_id, channel_id, channel_name, user_id, user_name, file_name, summary,
+         message_count, memory_count, size_bytes, html, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      input.guildId,
+      input.channelId,
+      input.channelName,
+      input.userId,
+      input.userName,
+      input.fileName,
+      input.summary ?? null,
+      input.messageCount,
+      input.memoryCount,
+      Buffer.byteLength(input.html, 'utf8'),
+      input.html,
+      input.createdAt ?? Date.now(),
+    );
+  return Number(result.lastInsertRowid);
+}
+
+/** Daftar transkrip satu server, terbaru dulu. Kolom HTML tidak ikut dibaca. */
+export function listTranscripts(guildId: string, limit = 100): TranscriptSummary[] {
+  const rows = db
+    .prepare(
+      `SELECT id, guild_id, channel_id, channel_name, user_id, user_name, file_name, summary,
+              message_count, memory_count, size_bytes, created_at
+       FROM transcripts WHERE guild_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`,
+    )
+    .all(guildId, limit) as unknown as TranscriptRow[];
+  return rows.map(toTranscriptSummary);
+}
+
+/** Satu transkrip lengkap (dengan HTML) — dipakai untuk unduhan. */
+export function getTranscript(guildId: string, id: number): TranscriptRecord | null {
+  const row = db
+    .prepare('SELECT * FROM transcripts WHERE guild_id = ? AND id = ?')
+    .get(guildId, id) as unknown as (TranscriptRow & { html: string }) | undefined;
+  if (!row) return null;
+  return { ...toTranscriptSummary(row), html: row.html };
+}
+
+export function deleteTranscript(guildId: string, id: number): boolean {
+  const result = db.prepare('DELETE FROM transcripts WHERE guild_id = ? AND id = ?').run(guildId, id);
+  return result.changes > 0;
+}
+
+export function countTranscripts(guildId: string): number {
+  const row = db.prepare('SELECT COUNT(*) AS total FROM transcripts WHERE guild_id = ?').get(guildId) as {
+    total: number;
+  };
   return row.total;
 }
 

@@ -30,7 +30,7 @@ Chat bebas → AI menjawab, mengingat fakta, memakai keyword admin
 | ⚡ **Streaming jawaban** | Jawaban muncul bertahap (edit pesan tiap ±1,4 detik, menghormati rate limit Discord), bukan menunggu jeda panjang. Otomatis jatuh ke mode non-streaming kalau provider menolaknya. |
 | 💬 **Chat AI** | Konteks percakapan (20 pesan terakhir), jawaban panjang otomatis dipecah ke beberapa pesan. |
 | 🧠 **Memori jangka panjang** | AI otomatis menyimpan fakta penting lewat *tool calling*, plus perintah manual `/ingat`. Memori dipakai lagi di sesi berikutnya. |
-| 🖥️ **Dashboard web** | `/`, `/dokumen`, `/keyword`, `/memori`, `/pengaturan` — gaya editorial monokrom (latar `#0D0D0F`, teks putih, tombol solid tanpa gradient): sidebar kiri, grafik aktivitas 7 hari, kartu statistik per server. Aktif kalau `DASHBOARD_TOKEN` diisi; tanpa framework, satu proses dengan bot. |
+| 🖥️ **Dashboard web** | `/`, `/dokumen`, `/keyword`, `/memori`, `/transkrip`, `/pengaturan` — gaya editorial monokrom (latar `#0D0D0F`, teks putih, tombol solid tanpa gradient): sidebar kiri, grafik aktivitas 7 hari, kartu statistik per server. Aktif kalau `DASHBOARD_TOKEN` diisi; tanpa framework, satu proses dengan bot. |
 | 📚 **Dokumen RAG** | Upload `.txt`/`.md`/`.csv`/`.json` lewat `/dokumen tambah` atau dashboard. AI menjawab dari isi dokumen dan menyebut sumbernya (`📚 Sumber: faq.md`). Pencarian BM25 bawaan — **tanpa API key tambahan**. |
 | 🔑 **Keyword kustom** | Admin menulis jawaban acuan; AI memakainya sebagai **fakta** dan menyusun ulang kalimatnya agar **bervariasi setiap kali** (bukan copy-paste). |
 | 🎭 **Persona per server** | Mis. "kamu guru bahasa Inggris yang sabar" — berlaku untuk semua room di server itu. |
@@ -409,8 +409,8 @@ docs/hosting.md              # hosting bot gratis 24/7 + backup
 - [x] Streaming jawaban (edit pesan bertahap)
 - [x] RAG dokumen server (`.txt`/`.md`/`.csv`/`.json`, pencarian hybrid)
 - [x] Web dashboard (statistik, grafik aktivitas, kelola dokumen/keyword/memori/persona, uji pencarian)
-- [ ] Dukungan PDF/DOCX (butuh library ekstraksi)
-- [ ] Riwayat transkrip dari dashboard
+- [x] Dukungan PDF/DOCX (ekstraksi teks via `unpdf` + `fflate`, tanpa dependency native)
+- [x] Riwayat transkrip dari dashboard (arsip di SQLite, unduh & hapus dari web)
 - [ ] Moderasi otomatis + logging
 - [ ] Dukungan gambar (vision) & voice
 - [ ] Postgres untuk multi-shard

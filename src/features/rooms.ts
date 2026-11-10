@@ -11,7 +11,7 @@ import {
   type TextChannel,
 } from 'discord.js';
 import { config } from '../config.js';
-import { createRoom, deleteRoom, getRoomByUser, listMemories, clearHistory, type Room } from '../db/repo.js';
+import { createRoom, deleteRoom, getRoomByUser, insertTranscript, listMemories, clearHistory, type Room } from '../db/repo.js';
 import { chat } from '../lib/llm.js';
 import { logger, errorMessage } from '../lib/logger.js';
 import { buildTranscriptHtml, transcriptFileName, type TranscriptMessage } from '../lib/transcript.js';
@@ -262,6 +262,26 @@ export async function endAiRoom(interaction: ButtonInteraction, channel: TextCha
   const fileName = transcriptFileName(userName, endedAt);
   const buffer = Buffer.from(html, 'utf8');
   const stats = `📄 **${messages.length} pesan** • ${memories.length} memori • ${Math.max(1, Math.round((endedAt.getTime() - startedAt.getTime()) / 60000))} menit`;
+
+  // Arsipkan dulu ke database supaya dashboard punya riwayat transkrip,
+  // apa pun hasil pengiriman file ke user/ channel arsip di bawah.
+  try {
+    insertTranscript({
+      guildId: guild.id,
+      channelId: channel.id,
+      channelName: channel.name,
+      userId: room.userId,
+      userName,
+      fileName,
+      summary,
+      messageCount: messages.length,
+      memoryCount: memories.length,
+      html,
+      createdAt: endedAt.getTime(),
+    });
+  } catch (error) {
+    logger.warn('Gagal menyimpan transkrip ke database dashboard', errorMessage(error));
+  }
 
   let dmSent = false;
   if (user) {

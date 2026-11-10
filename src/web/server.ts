@@ -16,8 +16,11 @@ import {
   countGuildMessages,
   countGuildRows,
   countRows,
+  countTranscripts,
   deleteKeyword,
   deleteMemory,
+  deleteTranscript,
+  getTranscript,
   getGuildSettings,
   listDocuments,
   listGuildIds,
@@ -26,15 +29,25 @@ import {
   listMemoryOwners,
   listMemories,
   listRooms,
+  listTranscripts,
   messagesPerDay,
   setGuildModel,
   setPersona,
 } from '../db/repo.js';
 import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
+import { MAX_BINARY_BYTES } from '../lib/chunker.js';
 import { embeddingModelName } from '../features/rag-embed.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
-import { dokumenPage, keywordPage, loginPage, memoriPage, pengaturanPage, ringkasanPage } from './ui/pages.js';
+import {
+  dokumenPage,
+  keywordPage,
+  loginPage,
+  memoriPage,
+  pengaturanPage,
+  ringkasanPage,
+  transkripPage,
+} from './ui/pages.js';
 import { parseLoginLink } from './login-link.js';
 import { dashboardStatus } from './status.js';
 
@@ -65,7 +78,7 @@ function parseCookies(header: string | undefined): Record<string, string> {
   return result;
 }
 
-function readBody(request: IncomingMessage, limit: number): Promise<string> {
+function readRawBody(request: IncomingMessage, limit: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -79,9 +92,13 @@ function readBody(request: IncomingMessage, limit: number): Promise<string> {
       }
       chunks.push(chunk);
     });
-    request.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    request.on('end', () => resolve(Buffer.concat(chunks)));
     request.on('error', reject);
   });
+}
+
+function readBody(request: IncomingMessage, limit: number): Promise<string> {
+  return readRawBody(request, limit).then((buffer) => buffer.toString('utf8'));
 }
 
 function sendJson(response: ServerResponse, status: number, payload: unknown): void {
@@ -380,6 +397,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
           dokumen: countGuildRows(id, 'documents'),
           keyword: countGuildRows(id, 'keywords'),
           memori: countGuildRows(id, 'memories'),
+          transkrip: countTranscripts(id),
         }
       : {};
 
@@ -506,6 +524,22 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
 
+  if (path === '/transkrip' && method === 'GET') {
+    const items = guildId ? listTranscripts(guildId, 100) : [];
+    sendHtml(
+      response,
+      200,
+      transkripPage({
+        guildId,
+        guilds: listGuildIds(),
+        items,
+        status: dashboardStatus(),
+        counts: navCounts(guildId),
+      }),
+    );
+    return;
+  }
+
   if (path === '/pengaturan' && method === 'GET') {
     const settings = guildId ? getGuildSettings(guildId) : null;
     sendHtml(
@@ -539,8 +573,6 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       return;
     }
 
-    const limit = Math.min(config.rag.maxChars * 4 + 64 * 1024, 16 * 1024 * 1024);
-    const body = await readBody(request, limit);
     const headerName = request.headers['x-filename'];
     const rawName = Array.isArray(headerName) ? (headerName[0] ?? '') : (headerName ?? 'dokumen.txt');
     let name = 'dokumen.txt';
@@ -549,6 +581,14 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     } catch {
       name = rawName || 'dokumen.txt';
     }
+
+    // PDF/DOCX dikirim sebagai biner asli, jadi butuh ruang lebih besar daripada teks biasa.
+    // Body dibaca sebagai Buffer (bukan string) supaya byte biner tidak rusak.
+    const binary = /\.(pdf|docx)$/i.test(name);
+    const limit = binary
+      ? MAX_BINARY_BYTES + 256 * 1024
+      : Math.min(config.rag.maxChars * 4 + 64 * 1024, 16 * 1024 * 1024);
+    const body = await readRawBody(request, limit);
 
     const result = await ingestDocument({
       guildId,
@@ -572,6 +612,38 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     const removed = guildId ? removeDocument(guildId, id) : false;
     sendJson(response, removed ? 200 : 404, removed ? { ok: true } : { error: 'Dokumen tidak ditemukan.' });
     return;
+  }
+
+  // Unduh transkrip: dikirim sebagai attachment supaya HTML-nya tidak dieksekusi
+  // di origin dashboard (transkrip berisi teks dari member).
+  const transcriptMatch = /^\/api\/transkrip\/(\d+)$/.exec(path);
+  if (transcriptMatch) {
+    const id = Number(transcriptMatch[1]);
+
+    if (method === 'GET') {
+      const record = guildId ? getTranscript(guildId, id) : null;
+      if (!record) {
+        sendJson(response, 404, { error: 'Transkrip tidak ditemukan.' });
+        return;
+      }
+
+      const safeName = record.fileName.replace(/[^\w.\-]+/g, '-');
+      response.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'content-disposition': `attachment; filename="${safeName}"`,
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+        'referrer-policy': 'no-referrer',
+      });
+      response.end(record.html);
+      return;
+    }
+
+    if (method === 'DELETE') {
+      const removed = guildId ? deleteTranscript(guildId, id) : false;
+      sendJson(response, removed ? 200 : 404, removed ? { ok: true } : { error: 'Transkrip tidak ditemukan.' });
+      return;
+    }
   }
 
   if (path === '/api/search' && method === 'GET') {
