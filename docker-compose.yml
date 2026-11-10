@@ -1,0 +1,24 @@
+services:
+  bot:
+    build: .
+    container_name: zypher-ai-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Database selalu di dalam volume, apa pun isi .env
+      DATABASE_PATH: /app/data/zypher.db
+      # Dashboard harus listen di 0.0.0.0 agar bisa diakses dari host
+      DASHBOARD_HOST: 0.0.0.0
+    ports:
+      - "3000:3000"
+    volumes:
+      - zypher-data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+volumes:
+  zypher-data:

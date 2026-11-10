@@ -1,0 +1,15 @@
+node_modules/
+dist/
+data/
+*.db
+*.db-shm
+*.db-wal
+transcripts/
+.env
+.env.*
+!.env.example
+.DS_Store
+npm-debug.log*
+*.tsbuildinfo
+*.zip
+zypher-deploy.zip
