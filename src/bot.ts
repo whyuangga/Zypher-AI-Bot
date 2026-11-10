@@ -9,6 +9,7 @@ import { errorMessage, logger } from './lib/logger.js';
 import { startRateLimitJanitor } from './lib/ratelimit.js';
 import { registerCommands } from './lib/register.js';
 import { startDashboard, stopDashboard } from './web/server.js';
+import { markBotOnline } from './web/status.js';
 
 const client = new Client({
   intents: [
@@ -21,6 +22,7 @@ const client = new Client({
 
 client.once(Events.ClientReady, async (ready) => {
   logger.info(`🤖 Login sebagai ${ready.user.tag} (${ready.guilds.cache.size} server)`);
+  markBotOnline(true);
 
   // Daftarkan semua server ke tabel `guilds` supaya dashboard langsung punya
   // daftar server yang bisa dipilih, bahkan sebelum ada room/dokumen dibuat.
@@ -75,6 +77,7 @@ async function shutdown(signal: string): Promise<void> {
 
   logger.warn(`Menerima ${signal} — mematikan bot…`);
   try {
+    markBotOnline(false);
     stopDashboard();
     client.destroy();
     closeDatabase();

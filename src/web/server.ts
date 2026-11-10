@@ -9,22 +9,31 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { config } from '../config.js';
 import {
+  addKeyword,
   countChunks,
   countGuildMessages,
   countGuildRows,
   countRows,
+  deleteKeyword,
+  deleteMemory,
+  getGuildSettings,
   listDocuments,
   listGuildIds,
+  listGuildMemories,
   listKeywords,
+  listMemoryOwners,
   listMemories,
   listRooms,
-  deleteKeyword,
+  messagesPerDay,
+  setGuildModel,
+  setPersona,
 } from '../db/repo.js';
 import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
 import { embeddingModelName } from '../features/rag-embed.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
-import { dashboardPage, documentsPage, loginPage } from './views.js';
+import { dokumenPage, keywordPage, loginPage, memoriPage, pengaturanPage, ringkasanPage } from './ui/pages.js';
+import { dashboardStatus } from './status.js';
 
 const SESSION_COOKIE = 'zp_session';
 const GUILD_COOKIE = 'zp_guild';
@@ -225,6 +234,15 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
 
   /* ---------------- halaman ---------------- */
 
+  const navCounts = (id: string) =>
+    id
+      ? {
+          dokumen: countGuildRows(id, 'documents'),
+          keyword: countGuildRows(id, 'keywords'),
+          memori: countGuildRows(id, 'memories'),
+        }
+      : {};
+
   if (path === '/' && method === 'GET') {
     const rooms = guildId ? listRooms(guildId).slice(0, 8) : [];
     const documents = guildId ? listDocuments(guildId).slice(0, 6) : [];
@@ -232,7 +250,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     sendHtml(
       response,
       200,
-      dashboardPage({
+      ringkasanPage({
         guildId,
         guilds: listGuildIds(),
         // Angka di dashboard harus mencerminkan server yang sedang dipilih.
@@ -263,6 +281,10 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         })),
         ragEnabled: config.rag.enabled,
         embedModel: embeddingModelName(),
+        model: config.ai.model,
+        series: guildId ? messagesPerDay(guildId, 7) : messagesPerDay('', 7),
+        status: dashboardStatus(),
+        counts: navCounts(guildId),
       }),
     );
     return;
@@ -272,7 +294,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     sendHtml(
       response,
       200,
-      documentsPage({
+      dokumenPage({
         guildId,
         guilds: listGuildIds(),
         documents: guildId
@@ -286,6 +308,84 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
             }))
           : [],
         embedModel: embeddingModelName(),
+        status: dashboardStatus(),
+        counts: navCounts(guildId),
+      }),
+    );
+    return;
+  }
+
+  if (path === '/keyword' && method === 'GET') {
+    sendHtml(
+      response,
+      200,
+      keywordPage({
+        guildId,
+        guilds: listGuildIds(),
+        keywords: guildId
+          ? listKeywords(guildId).map((keyword) => ({
+              id: keyword.id,
+              trigger: keyword.trigger,
+              answer: keyword.answer,
+              createdAt: keyword.createdAt,
+            }))
+          : [],
+        status: dashboardStatus(),
+        counts: navCounts(guildId),
+      }),
+    );
+    return;
+  }
+
+  if (path === '/memori' && method === 'GET') {
+    const owners = guildId ? listMemoryOwners(guildId) : [];
+    const all = guildId ? listGuildMemories(guildId, 500) : [];
+    const groups = owners.map((owner) => ({
+      userId: owner.userId,
+      items: all
+        .filter((memory) => memory.userId === owner.userId)
+        .map((memory) => ({
+          id: memory.id,
+          content: memory.content,
+          source: memory.source,
+          createdAt: memory.createdAt,
+        })),
+    }));
+
+    sendHtml(
+      response,
+      200,
+      memoriPage({
+        guildId,
+        guilds: listGuildIds(),
+        groups,
+        status: dashboardStatus(),
+        counts: navCounts(guildId),
+      }),
+    );
+    return;
+  }
+
+  if (path === '/pengaturan' && method === 'GET') {
+    const settings = guildId ? getGuildSettings(guildId) : null;
+    sendHtml(
+      response,
+      200,
+      pengaturanPage({
+        guildId,
+        guilds: listGuildIds(),
+        persona: settings?.persona ?? null,
+        model: settings?.model ?? null,
+        defaultModel: config.ai.model,
+        embedModel: embeddingModelName(),
+        ragEnabled: config.rag.enabled,
+        stats: {
+          rooms: guildId ? countGuildRows(guildId, 'rooms') : 0,
+          messages: guildId ? countGuildMessages(guildId) : 0,
+          documents: guildId ? countGuildRows(guildId, 'documents') : 0,
+        },
+        status: dashboardStatus(),
+        counts: navCounts(guildId),
       }),
     );
     return;
@@ -369,6 +469,91 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     sendJson(response, 200, {
       memories: guildId && userId ? listMemories(guildId, userId, 200) : [],
     });
+    return;
+  }
+
+  if (path === '/api/keyword' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+
+    const raw = await readBody(request, 64 * 1024);
+    let payload: { trigger?: unknown; answer?: unknown };
+    try {
+      payload = JSON.parse(raw) as { trigger?: unknown; answer?: unknown };
+    } catch {
+      sendJson(response, 400, { error: 'Format JSON tidak valid.' });
+      return;
+    }
+
+    const trigger = typeof payload.trigger === 'string' ? payload.trigger.trim() : '';
+    const answer = typeof payload.answer === 'string' ? payload.answer.trim() : '';
+    if (trigger.length < 3) {
+      sendJson(response, 400, { error: 'Kata kunci minimal 3 karakter.' });
+      return;
+    }
+    if (answer.length < 5) {
+      sendJson(response, 400, { error: 'Jawaban masih kosong.' });
+      return;
+    }
+
+    const result = addKeyword(guildId, trigger, answer, null);
+    if (!result.ok) {
+      const message =
+        result.reason === 'duplicate' ? 'Keyword dengan kata kunci itu sudah ada.' : 'Keyword gagal disimpan.';
+      sendJson(response, 409, { error: message });
+      return;
+    }
+
+    sendJson(response, 200, { ok: true, id: result.id });
+    return;
+  }
+
+  const memoryMatch = /^\/api\/memori\/(\d+)$/.exec(path);
+  if (memoryMatch && method === 'DELETE') {
+    const id = Number(memoryMatch[1]);
+    const userId = url.searchParams.get('user') ?? '';
+    const removed = guildId && userId ? deleteMemory(guildId, userId, id) : false;
+    sendJson(response, removed ? 200 : 404, removed ? { ok: true } : { error: 'Memori tidak ditemukan.' });
+    return;
+  }
+
+  if (path === '/api/pengaturan' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+
+    const raw = await readBody(request, 32 * 1024);
+    let payload: { persona?: unknown; model?: unknown };
+    try {
+      payload = JSON.parse(raw) as { persona?: unknown; model?: unknown };
+    } catch {
+      sendJson(response, 400, { error: 'Format JSON tidak valid.' });
+      return;
+    }
+
+    if (payload.persona !== undefined) {
+      const persona = typeof payload.persona === 'string' ? payload.persona.trim() : '';
+      if (persona.length > 1500) {
+        sendJson(response, 400, { error: 'Persona terlalu panjang (maks 1500 karakter).' });
+        return;
+      }
+      setPersona(guildId, persona || null);
+    }
+
+    if (payload.model !== undefined) {
+      const model = typeof payload.model === 'string' ? payload.model.trim() : '';
+      if (model.length > 120) {
+        sendJson(response, 400, { error: 'Nama model terlalu panjang.' });
+        return;
+      }
+      setGuildModel(guildId, model || null);
+    }
+
+    const settings = getGuildSettings(guildId);
+    sendJson(response, 200, { ok: true, persona: settings?.persona ?? null, model: settings?.model ?? null });
     return;
   }
 

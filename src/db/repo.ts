@@ -514,3 +514,73 @@ export function countGuildMessages(guildId: string): number {
     .get(guildId) as { total: number };
   return row.total;
 }
+
+/* ------------------------------------------------------------------ */
+/*  Statistik dashboard                                                */
+/* ------------------------------------------------------------------ */
+
+export interface MemoryOwner {
+  userId: string;
+  count: number;
+  lastAt: number;
+}
+
+/** Pemilik memori di satu server, diurutkan dari yang paling banyak. */
+export function listMemoryOwners(guildId: string): MemoryOwner[] {
+  const rows = db
+    .prepare(
+      `SELECT user_id, COUNT(*) AS total, MAX(created_at) AS last_at
+       FROM memories WHERE guild_id = ?
+       GROUP BY user_id ORDER BY total DESC, last_at DESC`,
+    )
+    .all(guildId) as unknown as Array<{ user_id: string; total: number; last_at: number }>;
+  return rows.map((row) => ({ userId: row.user_id, count: Number(row.total), lastAt: Number(row.last_at) }));
+}
+
+/** Semua memori satu server (untuk halaman Memori). */
+export function listGuildMemories(guildId: string, limit = 500): Memory[] {
+  const rows = db
+    .prepare('SELECT * FROM memories WHERE guild_id = ? ORDER BY id DESC LIMIT ?')
+    .all(guildId, limit) as unknown as MemoryRow[];
+  return rows.map(toMemory);
+}
+
+/**
+ * Jumlah pesan per hari (zona waktu WIB) selama `days` hari terakhir.
+ * Dipakai grafik aktivitas di dashboard.
+ */
+export function messagesPerDay(guildId: string, days = 7, timeZone = 'Asia/Jakarta'): Array<{ day: string; count: number }> {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+
+  const dayKey = (ms: number): string => formatter.format(new Date(ms));
+
+  // Susun 7 tanggal terakhir (termasuk hari ini) sebagai kerangka grafik.
+  const buckets: Array<{ day: string; count: number }> = [];
+  const index = new Map<string, number>();
+  for (let offset = days - 1; offset >= 0; offset -= 1) {
+    const key = dayKey(Date.now() - offset * 24 * 60 * 60 * 1000);
+    index.set(key, buckets.length);
+    buckets.push({ day: key, count: 0 });
+  }
+
+  const since = Date.now() - (days + 1) * 24 * 60 * 60 * 1000;
+  const rows = db
+    .prepare(
+      `SELECT m.created_at AS created_at FROM messages m
+       JOIN rooms r ON r.channel_id = m.channel_id
+       WHERE r.guild_id = ? AND m.created_at >= ?`,
+    )
+    .all(guildId, since) as unknown as Array<{ created_at: number }>;
+
+  for (const row of rows) {
+    const slot = index.get(dayKey(Number(row.created_at)));
+    if (slot !== undefined) buckets[slot]!.count += 1;
+  }
+
+  return buckets;
+}

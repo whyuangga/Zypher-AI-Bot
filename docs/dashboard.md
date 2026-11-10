@@ -8,9 +8,15 @@ Yang bisa dilakukan:
 
 | Halaman | Isi |
 |---|---|
-| `/` | Statistik (room, dokumen, potongan, keyword, memori, pesan), status fitur, room terbaru, dokumen terbaru |
+| `/` | 4 kartu statistik, **grafik aktivitas 7 hari**, status sistem, room terbaru, dokumen terbaru |
 | `/dokumen` | Upload dokumen RAG (file atau tempel teks), daftar dokumen, hapus dokumen, **uji pencarian** |
+| `/keyword` | Tambah & hapus template jawaban owner (FAQ, harga, aturan) |
+| `/memori` | Fakta yang diingat AI per user, dikelompokkan per member, bisa dihapus |
+| `/pengaturan` | Persona AI & model per server, info server + salin Server ID |
 | `/healthz` | JSON status untuk monitoring (tanpa login) |
+
+Tampilan memakai tema gelap dengan sidebar, kartu, dan grafik tanpa library chart —
+semua CSS/SVG dibuat langsung dari server, jadi tidak ada bundler yang harus jalan di panel hosting.
 
 ---
 
@@ -103,6 +109,19 @@ Kalau panel menampilkan port tertentu (mis. `25566` di tab Startup/Network), tul
 
 > **Catatan:** variabel dari panel **mengalahkan** isi `.env`, karena `dotenv` tidak menimpa
 > variabel yang sudah ada. Jadi aman mengisi keduanya.
+
+---
+
+## Tampilan & navigasi
+
+- **Sidebar** berisi Ringkasan, Dokumen RAG, Keyword, Memori, Pengaturan, dan pintu ke Health check.
+  Di layar HP sidebar jadi menu geser (tombol ☰ di kiri atas).
+- **Topbar** berisi pemilih server, chip Server ID aktif, dan tombol keluar.
+- **Kartu statistik** dan **grafik 7 hari** dihitung per server yang dipilih.
+- Aksi destruktif (hapus dokumen/keyword/memori) memakai dialog konfirmasi, bukan `confirm()` bawaan browser.
+- Semua notifikasi muncul sebagai *toast* di kanan bawah.
+
+> Grafik memakai zona waktu **Asia/Jakarta**, jadi batang "Hari ini" mengikuti tanggal WIB — bukan UTC server.
 
 ---
 

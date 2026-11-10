@@ -30,8 +30,8 @@ Chat bebas → AI menjawab, mengingat fakta, memakai keyword admin
 | ⚡ **Streaming jawaban** | Jawaban muncul bertahap (edit pesan tiap ±1,4 detik, menghormati rate limit Discord), bukan menunggu jeda panjang. Otomatis jatuh ke mode non-streaming kalau provider menolaknya. |
 | 💬 **Chat AI** | Konteks percakapan (20 pesan terakhir), jawaban panjang otomatis dipecah ke beberapa pesan. |
 | 🧠 **Memori jangka panjang** | AI otomatis menyimpan fakta penting lewat *tool calling*, plus perintah manual `/ingat`. Memori dipakai lagi di sesi berikutnya. |
+| 🖥️ **Dashboard web** | `/`, `/dokumen`, `/keyword`, `/memori`, `/pengaturan` — tema gelap ala SaaS: sidebar, grafik aktivitas 7 hari, kartu statistik per server. Aktif kalau `DASHBOARD_TOKEN` diisi; tanpa framework, satu proses dengan bot. |
 | 📚 **Dokumen RAG** | Upload `.txt`/`.md`/`.csv`/`.json` lewat `/dokumen tambah` atau dashboard. AI menjawab dari isi dokumen dan menyebut sumbernya (`📚 Sumber: faq.md`). Pencarian BM25 bawaan — **tanpa API key tambahan**. |
-| 🌐 **Dashboard web** | Ringkasan statistik, upload/hapus dokumen, dan uji pencarian RAG di browser. Aktif hanya kalau `DASHBOARD_TOKEN` diisi. Tanpa framework, satu proses dengan bot. |
 | 🔑 **Keyword kustom** | Admin menulis jawaban acuan; AI memakainya sebagai **fakta** dan menyusun ulang kalimatnya agar **bervariasi setiap kali** (bukan copy-paste). |
 | 🎭 **Persona per server** | Mis. "kamu guru bahasa Inggris yang sabar" — berlaku untuk semua room di server itu. |
 | 📄 **Transkrip sesi** | HTML mandiri (dark mode, rapi, aman dari XSS) berisi percakapan + memori + ringkasan AI. Dikirim ke DM dan/atau channel arsip. |
@@ -331,7 +331,8 @@ menyaring model non-chat, menandai model yang dipakai bot) — lebih akurat dari
 
 `npm run smoke` menguji CRUD memori, pencocokan keyword (termasuk kalimat yang dibalik), perakitan prompt,
 riwayat room, escape XSS pada transkrip, chunking pesan, rate limit, parsing `AI_FALLBACKS`, pemotongan
-dokumen RAG, tokenizer/BM25, serta ingest–cari–hapus dokumen di database sungguhan (in-memory).
+dokumen RAG, tokenizer/BM25, ingest–cari–hapus dokumen di database sungguhan (in-memory), serta
+rendering tiap halaman dashboard (sidebar, kartu statistik, grafik 7 hari, empty state, escape XSS).
 
 `npm run test:fallback` menyalakan dua server OpenAI-compatible tiruan (provider utama selalu 429) dan
 memeriksa 10 hal: pindah provider, payload utuh, berhenti saat prompt kepanjangan, **delta streaming
@@ -406,9 +407,9 @@ docs/hosting.md              # hosting bot gratis 24/7 + backup
 
 - [x] Streaming jawaban (edit pesan bertahap)
 - [x] RAG dokumen server (`.txt`/`.md`/`.csv`/`.json`, pencarian hybrid)
-- [x] Web dashboard (statistik, kelola dokumen, uji pencarian)
+- [x] Web dashboard (statistik, grafik aktivitas, kelola dokumen/keyword/memori/persona, uji pencarian)
 - [ ] Dukungan PDF/DOCX (butuh library ekstraksi)
-- [ ] Editor keyword & persona di dashboard
+- [ ] Riwayat transkrip dari dashboard
 - [ ] Moderasi otomatis + logging
 - [ ] Dukungan gambar (vision) & voice
 - [ ] Postgres untuk multi-shard

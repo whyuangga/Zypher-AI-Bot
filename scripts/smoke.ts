@@ -19,7 +19,9 @@ const { addMemory, listMemories, deleteMemory, clearMemories, addKeyword, listKe
 const { createRoom, getRoomByChannel, getRoomByUser, appendMessage, getHistory, clearHistory, deleteRoom, touchRoom } =
   await import('../src/db/repo.js');
 const { setPersona, getGuildSettings } = await import('../src/db/repo.js');
-const { listGuildIds, countGuildRows, countGuildMessages } = await import('../src/db/repo.js');
+const { listGuildIds, countGuildRows, countGuildMessages, listMemoryOwners, listGuildMemories, messagesPerDay } =
+  await import('../src/db/repo.js');
+const { ringkasanPage, keywordPage, memoriPage } = await import('../src/web/ui/pages.js');
 const { matchKeywords } = await import('../src/features/keywords.js');
 const { buildSystemPrompt } = await import('../src/features/prompt.js');
 const { buildTranscriptHtml, transcriptFileName } = await import('../src/lib/transcript.js');
@@ -244,6 +246,70 @@ test('statistik dashboard dipisah per server', () => {
   assert.equal(countGuildRows(guildB, 'rooms'), 0, 'server B tidak boleh ikut menghitung room A');
   assert.equal(countGuildMessages(guildA), 1);
   assert.equal(countGuildMessages(guildB), 0);
+});
+
+test('grafik aktivitas menghitung pesan 7 hari terakhir', () => {
+  const guildId = '121212121212121212';
+  const channelId = '131313131313131313';
+  createRoom(channelId, guildId, USER);
+  appendMessage(channelId, 'user', 'Halo');
+  appendMessage(channelId, 'assistant', 'Hai');
+
+  const series = messagesPerDay(guildId, 7);
+  assert.equal(series.length, 7, 'harus tepat 7 batang');
+  assert.equal(series[6]?.count, 2, 'pesan hari ini masuk batang terakhir');
+  assert.equal(series.reduce((sum, item) => sum + item.count, 0), 2);
+});
+test('memori dikelompokkan per user', () => {
+  const guildId = '141414141414141414';
+  addMemory(guildId, '151515151515151515', 'Fakta A');
+  addMemory(guildId, '151515151515151515', 'Fakta B');
+  addMemory(guildId, '161616161616161616', 'Fakta C');
+
+  const owners = listMemoryOwners(guildId);
+  assert.equal(owners.length, 2);
+  assert.equal(owners[0]?.count, 2, 'user dengan memori terbanyak di atas');
+  assert.equal(listGuildMemories(guildId).length, 3);
+});
+
+console.log('\nHalaman dashboard');
+const pageContext = {
+  guildId: '1569424777750257766',
+  guilds: ['1569424777750257766'],
+  status: { online: true, mode: 'bot' as const, uptimeSeconds: 3600 },
+};
+test('ringkasan merender sidebar, kartu statistik, dan grafik', () => {
+  const html = ringkasanPage({
+    ...pageContext,
+    stats: { rooms: 3, documents: 2, chunks: 9, keywords: 4, memories: 6, messages: 84 },
+    rooms: [{ channelId: '1400000000000000001', userId: USER, messageCount: 12, lastActiveAt: Date.now() }],
+    documents: [{ id: 1, name: 'faq.md', chunkCount: 6, chars: 4200, createdAt: Date.now() }],
+    series: messagesPerDay('1569424777750257766', 7),
+    ragEnabled: true,
+    embedModel: null,
+    model: 'openai/gpt-oss-120b',
+    counts: { dokumen: 2, keyword: 4, memori: 6 },
+  });
+
+  assert.match(html, /class="sidebar"/);
+  assert.match(html, /Kontrol panel|Control panel/);
+  assert.equal((html.match(/class="stat-value"/g) ?? []).length, 4);
+  assert.equal((html.match(/class="bar-col/g) ?? []).length, 7);
+  assert.match(html, /openai\/gpt-oss-120b/);
+  assert.match(html, /Room AI terbaru/);
+});
+test('halaman keyword meng-escape input user', () => {
+  const html = keywordPage({
+    ...pageContext,
+    keywords: [{ id: 1, trigger: '<script>alert(1)</script>', answer: 'jam 08.00', createdAt: Date.now() }],
+  });
+  assert.ok(!html.includes('<script>alert(1)</script>'), 'tag mentah tidak boleh lolos');
+  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+});
+test('empty state muncul kalau belum ada memori', () => {
+  const html = memoriPage({ ...pageContext, groups: [] });
+  assert.match(html, /Belum|belum mengingat|AI belum mengingat/);
+  assert.match(html, /class="empty"/);
 });
 
 console.log('\nTeks & rate limit');
