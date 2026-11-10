@@ -56,6 +56,7 @@ import {
   ringkasanPage,
   transkripPage,
 } from './ui/pages.js';
+import { dialect } from '../db/index.js';
 import { parseLoginLink } from './login-link.js';
 import { dashboardStatus } from './status.js';
 
@@ -449,6 +450,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         ragEnabled: config.rag.enabled,
         embedModel: embeddingModelName(),
         model: config.ai.model,
+        storage: dialect() === 'pg' ? 'PostgreSQL' : 'SQLite',
         series: guildId ? await messagesPerDay(guildId, 7) : await messagesPerDay('', 7),
         status: dashboardStatus(),
         counts: await navCounts(guildId),

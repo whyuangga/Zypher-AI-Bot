@@ -104,6 +104,8 @@ export interface DashboardData extends PageContext {
   ragEnabled: boolean;
   embedModel: string | null;
   model: string;
+  /** Label engine database, mis. "SQLite" atau "PostgreSQL" */
+  storage?: string;
 }
 
 export function ringkasanPage(data: DashboardData): string {
@@ -128,6 +130,7 @@ export function ringkasanPage(data: DashboardData): string {
   <div class="kv"><span>Dokumen RAG</span>${data.ragEnabled ? badge('Aktif', 'ok') : badge('Nonaktif', 'warn')}</div>
   <div class="kv"><span>Pesan tersimpan</span><b>${formatNumber(data.stats.messages)}</b></div>
   <div class="kv"><span>Keyword aktif</span><b>${formatNumber(data.stats.keywords)}</b></div>
+  <div class="kv"><span>Database</span><b>${esc(data.storage ?? 'SQLite')}</b></div>
   <div class="kv"><span>Mode</span><b>${data.status.mode === 'bot' ? 'Bot + dashboard' : 'Dashboard saja'}</b></div>
 </div>`,
   });
@@ -195,7 +198,7 @@ export function ringkasanPage(data: DashboardData): string {
   const body = `${pageHead({
     kicker: '01 — Ikhtisar',
     title: 'Ringkasan',
-    subtitle: `Server <span class="mono">${esc(data.guildId || '—')}</span> · data langsung dari SQLite bot`,
+    subtitle: `Server <span class="mono">${esc(data.guildId || '—')}</span> · data langsung dari ${esc(data.storage ?? 'SQLite')} bot`,
     actions: `<a class="btn-primary" href="/dokumen">${icon('upload', 16)} Upload dokumen</a>`,
   })}
 ${stats}
