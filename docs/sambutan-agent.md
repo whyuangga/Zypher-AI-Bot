@@ -146,6 +146,53 @@ dengan sadar; turunkan kalau kuota terasa cepat habis.
 
 ---
 
+## Pratinjau & tombol tes (tanpa menunggu member)
+
+Menyalakan sambutan lalu menunggu ada orang bergabung itu lambat, dan tidak bisa
+diulang kalau hasilnya kurang pas. Karena itu kedua halaman punya panel tes.
+
+**Halaman Sambutan → panel "Pratinjau & tes"**
+
+| Tombol | Yang terjadi |
+|---|---|
+| **Tes sambutan** | Teks sapaan dibuat untuk nama contoh di atas — persis seperti yang akan diterima member |
+| **Tes tanpa AI** | Sama, tapi memakai template (untuk melihat teks cadangan) |
+| **Tes salam perpisahan** | Sama untuk goodbye |
+
+Hasilnya menampilkan **sumber teksnya**: `ditulis AI`, `dari template`, atau
+`gagal` beserta alasannya. Kalau opsi kartu dicentang, kartu PNG ikut dirender
+dan ditampilkan — sekaligus membuktikan Chromium di server benar-benar jalan.
+
+Panel ini memakai **isi form saat itu**, bukan pengaturan tersimpan. Jadi kamu
+bisa mencoba gaya lain, melihat hasilnya, baru menekan Simpan.
+
+**Halaman AI Agent → panel "Tes percakapan"**
+
+| Tombol | Yang terjadi |
+|---|---|
+| **Tes balasan** | Balasan untuk pesan contoh, bisa dipilih mode ngobrol atau mode galeri |
+| **Tes pemecah sepi** | Kalimat yang akan dipakai saat channel sepi — sekaligus memberi tahu kalau fitur itu tidak akan jalan (channel belum dipilih / ambang 0 menit) |
+
+Di halaman agent, pengaturan yang dipakai adalah yang **sudah tersimpan**, karena
+hasilnya bergantung pada channel, jeda, dan batas per jam. Kalau channel yang
+diuji belum diatur, hasilnya diberi catatan supaya tidak bingung kenapa di server
+sungguhan bot diam.
+
+### Yang penting: tidak ada yang dikirim
+
+Semua tombol tes hanya **mengembalikan teks** ke browser. Tidak ada pesan ke
+channel, tidak ada DM, tidak ada mention. Ini dijaga test otomatis
+(`pratinjau: tidak ada modul pratinjau yang mengirim ke Discord`) yang membaca
+kode `src/features/preview.ts` dan menolak adanya `.send(`.
+
+Supaya hasil tes tidak pernah menyimpang dari perilaku bot, prompt sambutan,
+prompt perpisahan, aturan gaya agent, dan prompt pemecah sepi **hanya ada di satu
+tempat** (`src/features/preview.ts`) dan dipakai bersama oleh bot maupun
+dashboard. Test `pratinjau: prompt hanya punya SATU sumber` menjaga ini.
+
+
+---
+
 ## Menyalakan
 
 1. Buka dashboard → **Sambutan**.

@@ -29,6 +29,7 @@ import {
   shouldReply,
   type AgentState,
 } from './agent-core.js';
+import { agentRoleInstruction, buildQuietPrompt } from './preview.js';
 
 const MAX_TOOL_ROUNDS = 2;
 /** Balasan nimbrung harus pendek — ini obrolan, bukan jawaban tiket. */
@@ -151,18 +152,7 @@ async function composeReply(
     }),
     '',
     '## Mode nimbrung di channel publik',
-    role === 'gallery'
-      ? [
-          'Kamu sedang menanggapi kiriman di channel galeri komunitas.',
-          '- Komentari isi gambarnya secara spesifik: suasana, warna, objek, ekspresi.',
-          '- Maksimal 2 kalimat, hangat dan apresiatif — bukan penilaian teknis foto.',
-          '- Jangan pernah menyebut orang lain tanpa diminta; cukup komentari karyanya.',
-        ].join('\n')
-      : [
-          'Kamu sedang ikut ngobrol di channel komunitas, bukan menjawab tiket bantuan.',
-          '- Balas seperti anggota komunitas: singkat, santai, maksimal 3 kalimat.',
-          '- Sambung pembicaraan sebelumnya kalau masih nyambung; jangan mengulang sapaan.',
-        ].join('\n'),
+    agentRoleInstruction(role),
     '- Jangan memakai pembuka khas bot, jangan menyebut dirimu AI.',
     '- Boleh menanggapi sticker, emoji, atau gambar dengan reaksi ringan.',
     '- Jangan membahas data pribadi siapa pun; kalau ditanya hal sensitif, alihkan dengan ramah.',
@@ -354,16 +344,10 @@ export async function handleQuietChannel(
       messages: [
         {
           role: 'system',
-          content:
-            'Kamu anggota komunitas yang santai. Tulis satu kalimat pembuka singkat (maks 100 karakter) ' +
+          content: 'Kamu anggota komunitas yang santai. Tulis satu kalimat pembuka singkat (maks 100 karakter) ' +
             'untuk memecah keheningan. Jangan menyebut dirimu bot atau AI.',
         },
-        {
-          role: 'user',
-          content:
-            'Channel sedang sepi — tidak ada yang mengobrol cukup lama. ' +
-            'Buat satu kalimat pembuka ringan untuk mengajak ngobrol (bukan pengumuman, bukan promosi).',
-        },
+        { role: 'user', content: buildQuietPrompt(channel.guild.name) },
       ],
       maxTokens: 80,
       temperature: 0.9,

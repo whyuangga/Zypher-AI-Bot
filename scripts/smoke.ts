@@ -1606,6 +1606,32 @@ const agentSettings = (patch: Record<string, unknown> = {}) => ({
   ...patch,
 });
 
+const welcomeSettings = (patch: Record<string, unknown> = {}) => ({
+  guildId: GUILD,
+  channelId: null,
+  enabled: true,
+  useAi: true,
+  template: null,
+  style: null,
+  example: null,
+  imageEnabled: false,
+  includeAvatar: true,
+  updatedAt: 0,
+  ...patch,
+});
+
+const goodbyeSettings = (patch: Record<string, unknown> = {}) => ({
+  guildId: GUILD,
+  channelId: '333333333333333333',
+  enabled: true,
+  useAi: true,
+  template: null,
+  style: null,
+  example: null,
+  updatedAt: 0,
+  ...patch,
+});
+
 await testAsync('agent: channel selain yang diaktifkan tidak disentuh', async () => {
   const { shouldReply, emptyState } = await import('../src/features/agent-core.js');
   const decision = shouldReply({
@@ -1833,12 +1859,8 @@ await testAsync('sambutan: template mengisi {user} dan {server}', async () => {
 });
 
 await testAsync('sambutan: prompt melarang pembuka khas bot & membatasi panjang', async () => {
-  const { buildWelcomePrompt } = await import('../src/features/welcome.js');
-  const member = {
-    displayName: 'Sky',
-    user: { username: 'sky123' },
-    guild: { name: 'Komunitas Zypher' },
-  } as unknown as Parameters<typeof buildWelcomePrompt>[1];
+  const { buildWelcomePrompt } = await import('../src/features/preview.js');
+  const member = { name: 'Sky', guildName: 'Komunitas Zypher' };
 
   const prompt = buildWelcomePrompt(
     { guildId: GUILD, channelId: null, enabled: true, useAi: true, template: null, imageEnabled: true, style: 'santai', example: null, includeAvatar: true, updatedAt: 0 },
@@ -2067,12 +2089,8 @@ await testAsync('goodbye: template mengisi {user} dan {server}', async () => {
 });
 
 await testAsync('goodbye: prompt tidak menanyakan alasan keluar & singkat', async () => {
-  const { buildGoodbyePrompt } = await import('../src/features/welcome.js');
-  const member = {
-    displayName: 'Sky',
-    user: { username: 'sky123' },
-    guild: { name: 'Komunitas Zypher' },
-  } as unknown as Parameters<typeof buildGoodbyePrompt>[1];
+  const { buildGoodbyePrompt } = await import('../src/features/preview.js');
+  const member = { name: 'Sky', guildName: 'Komunitas Zypher' };
 
   const prompt = buildGoodbyePrompt(
     { guildId: GUILD, channelId: '123', enabled: true, useAi: true, template: null, style: null, example: null, updatedAt: 0 },
@@ -2135,6 +2153,128 @@ await testAsync('screening: video dihitung konten visual untuk galeri', async ()
   assert.ok(source.includes('hasVisualContent'), 'ada deteksi konten visual');
   assert.ok(source.includes('video/'), 'video ikut dikenali');
   assert.ok(/mp4|mov\|webm/.test(source) || source.includes('VIDEO_EXT'), 'ekstensi video dikenali');
+});
+
+
+console.log('\nPratinjau & tes fitur (tanpa Discord)');
+
+await testAsync('pratinjau: sambutan jatuh ke template saat AI dimatikan', async () => {
+  const { previewWelcome } = await import('../src/features/preview.js');
+  const result = await previewWelcome({
+    settings: { ...welcomeSettings(), useAi: false, template: 'Halo {user} di {server}!' },
+    name: 'Rani',
+    guildName: 'Komunitas Zypher',
+  });
+  assert.equal(result.source, 'template');
+  assert.equal(result.text, 'Halo Rani di Komunitas Zypher!');
+  assert.ok(result.note?.includes('AI dimatikan'), 'alasan fallback dijelaskan');
+});
+
+await testAsync('pratinjau: sambutan memakai template default kalau kosong', async () => {
+  const { previewWelcome, SAMPLE_MEMBER_NAME } = await import('../src/features/preview.js');
+  const result = await previewWelcome({
+    settings: { ...welcomeSettings(), useAi: false, template: null },
+    name: SAMPLE_MEMBER_NAME,
+    guildName: 'Komunitas Zypher',
+  });
+  assert.ok(result.text.includes(SAMPLE_MEMBER_NAME), 'nama contoh dipakai');
+  assert.ok(result.text.includes('Komunitas Zypher'), 'nama server dipakai');
+});
+
+await testAsync('pratinjau: perpisahan jatuh ke template tanpa mengirim apa pun', async () => {
+  const { previewGoodbye } = await import('../src/features/preview.js');
+  const result = await previewGoodbye({
+    settings: { ...goodbyeSettings(), useAi: false },
+    name: 'Budi',
+    guildName: 'Komunitas Zypher',
+  });
+  assert.equal(result.source, 'template');
+  assert.ok(result.text.includes('Budi'));
+  assert.equal(result.text.includes('{user}'), false, 'placeholder terisi');
+});
+
+await testAsync('pratinjau: tidak ada modul pratinjau yang mengirim ke Discord', async () => {
+  const source = await readFile('src/features/preview.ts', 'utf8');
+  // Kalau ini gagal, artinya pratinjau bisa mengirim pesan sungguhan — bahaya.
+  // 'discord.js' boleh disebut di komentar; yang dilarang adalah import nyata
+  // dan pemanggilan pengiriman pesan.
+  for (const forbidden of ["from 'discord.js'", '.send(', 'TextChannel']) {
+    assert.equal(source.includes(forbidden), false, `tidak boleh ada ${forbidden}`);
+  }
+});
+
+await testAsync('pratinjau: prompt hanya punya SATU sumber (dipakai bot & dashboard)', async () => {
+  const welcome = await readFile('src/features/welcome.ts', 'utf8');
+  const preview = await readFile('src/features/preview.ts', 'utf8');
+  assert.ok(welcome.includes("from './preview.js'"), 'welcome memakai prompt dari preview.js');
+  assert.equal(/export function buildWelcomePrompt/.test(welcome), false, 'tidak ada salinan di welcome.ts');
+  assert.ok(preview.includes('export function buildWelcomePrompt'));
+  assert.ok(preview.includes('export function buildGoodbyePrompt'));
+});
+
+await testAsync('pratinjau: aturan gaya agent dipakai bersama', async () => {
+  const { agentRoleInstruction } = await import('../src/features/preview.js');
+  const gallery = agentRoleInstruction('gallery');
+  const chat = agentRoleInstruction('chat');
+  assert.ok(gallery.includes('galeri'), 'ada instruksi khusus galeri');
+  assert.ok(gallery.includes('2 kalimat'), 'komentar galeri dibatasi');
+  assert.ok(chat.includes('3 kalimat'), 'obrolan dibatasi');
+
+  const agent = await readFile('src/features/agent.ts', 'utf8');
+  assert.ok(agent.includes('agentRoleInstruction'), 'bot memakai aturan yang sama');
+});
+
+await testAsync('pratinjau: pemecah sepi menolak kalau fitur mati', async () => {
+  const { previewQuietBreak } = await import('../src/features/preview.js');
+  const tanpaChannel = await previewQuietBreak({
+    settings: agentSettings({ channelId: null }),
+    guildName: 'Komunitas Zypher',
+  });
+  assert.equal(tanpaChannel.wouldFire, false);
+  assert.ok(tanpaChannel.reason.includes('Channel ngobrol belum dipilih'));
+
+  const ambangNol = await previewQuietBreak({
+    settings: agentSettings({ channelId: '444444444444444444', quietMinutes: 0 }),
+    guildName: 'Komunitas Zypher',
+  });
+  assert.equal(ambangNol.wouldFire, false);
+  assert.ok(ambangNol.reason.includes('0 menit'));
+});
+
+await testAsync('pratinjau: pesan uji kosong ditolak API', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(server.includes("'/api/preview/agent'"), 'endpoint ada');
+  assert.ok(server.includes("'/api/preview/quiet'"), 'endpoint pemecah sepi ada');
+  assert.ok(server.includes('Tulis pesan uji dulu'), 'validasi pesan kosong');
+});
+
+await testAsync('pratinjau: peran galeri tanpa channel galeri diberi catatan', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(
+    server.includes('Channel galeri belum dipilih'),
+    'admin diberi tahu bahwa mode ini belum aktif di server',
+  );
+});
+
+await testAsync('dashboard: tombol tes memakai form apa adanya', async () => {
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  assert.ok(pages.includes('async function runTest'), 'ada fungsi tes sambutan');
+  assert.ok(pages.includes('async function runAgentTest'), 'ada fungsi tes agent');
+  assert.ok(pages.includes('async function runQuietTest'), 'ada tes pemecah sepi');
+  assert.ok(pages.includes("'/api/preview/' + kind"), 'menembak endpoint sambutan/perpisahan');
+  assert.ok(pages.includes("'/api/preview/agent'"), 'menembak endpoint agent');
+  assert.ok(pages.includes("'/api/preview/quiet'"), 'menembak endpoint pemecah sepi');
+  assert.ok(pages.includes('Tes tanpa AI'), 'ada tombol tanpa AI');
+});
+
+await testAsync('dashboard: postJson terdefinisi di JS bersama', async () => {
+  // Bug nyata: tombol Simpan memanggil postJson yang tidak pernah didefinisikan.
+  const shell = await readFile('src/web/ui/shell.ts', 'utf8');
+  assert.ok(shell.includes('async function postJson'), 'postJson ada di SHARED_JS');
+  assert.ok(shell.includes('function toast'), 'toast tersedia');
+
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  assert.ok(pages.includes("await postJson('/api/agent'"), 'halaman agent memakainya');
 });
 
 

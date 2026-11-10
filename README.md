@@ -326,7 +326,9 @@ Fitur-fitur ini diatur **dari dashboard**, bukan lewat slash command:
   dan mengomentari **gambar/video di channel galeri**. Bot diam saat obrolan
   ramai dan dibatasi per jam.
 
-Semua default mati.
+Semua default mati, dan **kedua halaman punya tombol tes**: hasil sapaan, salam
+perpisahan, balasan agent, sampai kalimat pemecah sepi bisa dilihat langsung di
+dashboard — tanpa menunggu ada member bergabung dan tanpa mengirim pesan apa pun.
 
 Panduan lengkap: **[docs/sambutan-agent.md](docs/sambutan-agent.md)**.
 

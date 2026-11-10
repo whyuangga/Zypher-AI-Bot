@@ -247,6 +247,10 @@ Dua kartu berdampingan, satu tema "kehadiran":
 - **Salam perpisahan** — saat member keluar. **Wajib pilih channel**: DM tidak
   mungkin dikirim ke orang yang sudah keluar, jadi kalau channel kosong salam
   tidak dikirim sama sekali.
+- **Pratinjau & tes** — tombol "Tes sambutan", "Tes salam perpisahan", dan
+  "Tes tanpa AI". Hasilnya menampilkan teksnya beserta sumbernya (AI / template /
+  gagal) dan kartu PNG kalau opsi kartu dicentang. Memakai isi form saat itu,
+  jadi bisa dicoba sebelum menyimpan.
 
 ---
 
@@ -261,6 +265,9 @@ Halaman sendiri, sengaja terpisah dari sambutan karena yang diatur bukan
   diabaikan. Isi satu channel di kedua kolom akan ditolak.
 - Batas per jam (gabungan kedua channel), jeda minimum, dan sakelar "diam saat
   ramai".
+
+Panel **Tes percakapan** menguji balasan bot untuk pesan contoh (mode ngobrol
+atau mode galeri) serta kalimat **pemecah sepi** — tanpa mengirim ke channel.
 
 Detail perilaku & biaya API: [sambutan-agent.md](sambutan-agent.md).
 

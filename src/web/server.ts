@@ -50,6 +50,14 @@ import {
 import { invalidateModerationCache } from '../features/moderation.js';
 import { listPanelChannels, PanelError, panelState, publishPanel, removePanel } from '../features/panel.js';
 import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
+import {
+  previewAgentReply,
+  previewGoodbye,
+  previewQuietBreak,
+  previewWelcome,
+  SAMPLE_MEMBER_NAME,
+} from '../features/preview.js';
+import { renderWelcomeCard } from '../features/welcome-card.js';
 import { MAX_BINARY_BYTES } from '../lib/chunker.js';
 import { embeddingModelName } from '../features/rag-embed.js';
 import { errorMessage, logger } from '../lib/logger.js';
@@ -504,6 +512,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
           },
           channels,
           botOnline: status.online,
+          sampleName: SAMPLE_MEMBER_NAME,
           status,
           counts,
         }),
@@ -529,6 +538,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         },
         channels,
         botOnline: status.online,
+        sampleName: SAMPLE_MEMBER_NAME,
         status,
         counts,
       }),
@@ -995,6 +1005,148 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
 
+  /* ---------------------------- pratinjau ---------------------------- */
+  // Endpoint pratinjau sengaja tidak menyentuh Discord sama sekali: admin bisa
+  // mencoba sapaan berkali-kali tanpa mengirim pesan ke channel mana pun.
+  // Yang dikembalikan adalah hasil persis seperti yang akan dikirim bot.
+
+  if (path === '/api/preview/goodbye' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const payload = await readJson(request, response);
+    if (!payload) return;
+
+    const current = await getGoodbyeSettings(guildId);
+    const settings = {
+      ...current,
+      useAi: payload.useAi === undefined ? current.useAi : Boolean(payload.useAi),
+      template: textField(payload, 'template', current.template, 1000),
+      style: textField(payload, 'style', current.style),
+      example: textField(payload, 'example', current.example),
+    };
+
+    const result = await previewGoodbye({
+      settings,
+      name: previewName(payload, SAMPLE_MEMBER_NAME),
+      guildName: (await getGuildName(guildId)) ?? 'Server ini',
+      templateOnly: payload.templateOnly === true,
+    });
+    sendJson(response, 200, { ok: true, ...result });
+    return;
+  }
+
+  if (path === '/api/preview/welcome' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const payload = await readJson(request, response);
+    if (!payload) return;
+
+    const current = await getWelcomeSettings(guildId);
+    const settings = {
+      ...current,
+      useAi: payload.useAi === undefined ? current.useAi : Boolean(payload.useAi),
+      template: textField(payload, 'template', current.template, 1000),
+      style: textField(payload, 'style', current.style),
+      example: textField(payload, 'example', current.example),
+    };
+
+    const name = previewName(payload, SAMPLE_MEMBER_NAME);
+    const guildName = (await getGuildName(guildId)) ?? 'Server ini';
+    const withCard = payload.withCard === true;
+
+    const result = await previewWelcome({
+      settings,
+      name,
+      guildName,
+      templateOnly: payload.templateOnly === true,
+      withCard,
+      // Renderer disuntikkan supaya modul pratinjau tidak bergantung Chromium.
+      renderCard: withCard
+        ? (input) =>
+            renderWelcomeCard({
+              userName: input.name,
+              guildName: input.guildName,
+              message: input.text,
+              avatarDataUri: null,
+            })
+        : undefined,
+    });
+
+    // Kalau kartu diminta tapi Chromium tidak ada, admin perlu tahu alasannya.
+    if (withCard && !result.card) {
+      result.note = [result.note, 'Kartu PNG tidak tersedia — sambutan tetap terkirim sebagai embed teks.']
+        .filter(Boolean)
+        .join(' ');
+    }
+    sendJson(response, 200, { ok: true, ...result });
+    return;
+  }
+
+  if (path === '/api/preview/agent' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const payload = await readJson(request, response);
+    if (!payload) return;
+
+    const current = await getAgentSettings(guildId);
+    const message = typeof payload.message === 'string' ? payload.message.trim().slice(0, 1500) : '';
+    if (!message) {
+      sendJson(response, 400, { error: 'Tulis pesan uji dulu.' });
+      return;
+    }
+
+    const role = payload.role === 'gallery' ? 'gallery' : payload.role === 'chat' ? 'chat' : undefined;
+    const guild = await getGuildSettings(guildId);
+    const result = await previewAgentReply({
+      settings: current,
+      guildName: (await getGuildName(guildId)) ?? 'Server ini',
+      userName: previewName(payload, SAMPLE_MEMBER_NAME),
+      message,
+      role,
+      botName: botClient?.user?.username ?? 'Zypher AI',
+      persona: guild?.persona ?? null,
+    });
+
+    // Beri tahu admin kalau channel peran yang diuji belum diatur — biar tidak
+    // bingung kenapa bot tidak membalas di server sungguhan.
+    if (role === 'gallery' && !current.galleryChannelId) {
+      result.note = [result.note, 'Channel galeri belum dipilih — di server sungguhan bot tidak akan membalas mode ini.']
+        .filter(Boolean)
+        .join(' ');
+    }
+    if (role === 'chat' && !current.channelId) {
+      result.note = [result.note, 'Channel ngobrol belum dipilih — di server sungguhan bot tidak akan membalas.']
+        .filter(Boolean)
+        .join(' ');
+    }
+    sendJson(response, 200, { ok: true, ...result });
+    return;
+  }
+
+  if (path === '/api/preview/quiet' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const payload = await readJson(request, response);
+    if (!payload) return;
+
+    const current = await getAgentSettings(guildId);
+    const result = await previewQuietBreak({
+      settings: current,
+      guildName: (await getGuildName(guildId)) ?? 'Server ini',
+      force: payload.force === true,
+    });
+    sendJson(response, 200, { ok: true, ...result });
+    return;
+  }
+
   if (path === '/api/moderasi' && method === 'POST') {
     if (!guildId) {
       sendJson(response, 400, { error: 'Server belum dipilih.' });
@@ -1199,3 +1351,38 @@ export function pruneSessions(): void {
   }
 }
 
+/* ------------------------------ bantuan ------------------------------ */
+
+/** Baca + parse JSON body; `null` = respons error sudah dikirim. */
+async function readJson(
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<Record<string, unknown> | null> {
+  const raw = await readBody(request, 32 * 1024);
+  try {
+    const parsed = JSON.parse(raw || '{}') as unknown;
+    if (!parsed || typeof parsed !== 'object') throw new Error('bukan objek');
+    return parsed as Record<string, unknown>;
+  } catch {
+    sendJson(response, 400, { error: 'Format JSON tidak valid.' });
+    return null;
+  }
+}
+
+/** Field teks opsional: tidak dikirim = nilai lama, dikirim kosong = null. */
+function textField(
+  payload: Record<string, unknown>,
+  key: string,
+  current: string | null,
+  max = 300,
+): string | null {
+  if (!(key in payload)) return current;
+  const value = typeof payload[key] === 'string' ? (payload[key] as string).trim() : '';
+  return value ? value.slice(0, max) : null;
+}
+
+/** Nama yang dipakai pratinjau — diketik admin, kalau kosong pakai nama default. */
+function previewName(payload: Record<string, unknown>, fallback: string): string {
+  const value = typeof payload.name === 'string' ? payload.name.trim() : '';
+  return (value || fallback).slice(0, 60);
+}

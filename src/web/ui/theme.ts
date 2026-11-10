@@ -667,4 +667,36 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* Kotak pratinjau: menampilkan hasil uji fitur tanpa mengirim apa pun.
+   Dibedakan dari kartu pengaturan supaya jelas ini keluaran, bukan isian. */
+.preview-box {
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  padding: 14px;
+  background: rgba(109, 140, 255, 0.04);
+}
+.preview-meta {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 8px;
+}
+.preview-text {
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.preview-img {
+  display: block;
+  width: 100%;
+  max-width: 460px;
+  margin-top: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
 `;

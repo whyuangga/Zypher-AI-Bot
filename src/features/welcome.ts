@@ -28,55 +28,25 @@ import { chat } from '../lib/llm.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
 import { renderWelcomeCard } from './welcome-card.js';
-
-const DEFAULT_TEMPLATE = 'Halo {user}, selamat datang di **{server}**! Senang kamu bergabung.';
-
-/** Jam lokal server (WIB) — dipakai untuk menentukan pagi/siang/malam. */
-function partOfDay(now = new Date()): string {
-  const hour = Number(
-    new Intl.DateTimeFormat('id-ID', {
-      timeZone: config.features.timeZone,
-      hour: 'numeric',
-      hour12: false,
-    }).format(now),
-  );
-  if (hour < 4) return 'dinihari';
-  if (hour < 11) return 'pagi';
-  if (hour < 15) return 'siang';
-  if (hour < 18) return 'sore';
-  return 'malam';
-}
+import { buildWelcomePrompt, partOfDay, previewGoodbye, previewWelcome } from './preview.js';
+import { DEFAULT_GOODBYE_TEMPLATE, DEFAULT_WELCOME_TEMPLATE, fillText } from './greeting-text.js';
 
 /** Isi placeholder template tanpa AI. */
 export function fillTemplate(template: string, member: GuildMember): string {
-  const name = member.displayName || member.user.username;
-  const guildName = member.guild.name;
-  return template.replace(/\{user\}/g, name).replace(/\{server\}/g, guildName);
+  return fillText(template, {
+    user: memberName(member),
+    server: member.guild.name,
+  });
 }
 
-/** Instruksi gaya untuk model — dipisah supaya mudah dibaca dan diuji. */
-export function buildWelcomePrompt(
-  settings: WelcomeSettings,
-  member: GuildMember,
-  when: string,
-): string {
-  const name = member.displayName || member.user.username;
-  return [
-    'Kamu anggota komunitas yang ramah, bukan asisten dan bukan bot pengumuman.',
-    `Tulis SATU sapaan untuk member baru bernama "${name}" yang baru saja bergabung di server "${member.guild.name}".`,
-    `Waktu saat ini: ${when}. Sebut waktu itu kalau terasa pas.`,
-    `Gaya: ${settings.style?.trim() || 'hangat, santai, seperti orang sungguhan menyapa'}.`,
-    settings.example?.trim() ? `Contoh nada yang ingin ditiru (jangan disalin): "${settings.example.trim()}"` : '',
-    'Aturan:',
-    '- Maksimal 2 kalimat pendek, tidak lebih dari 220 karakter.',
-    '- Sapa pakai nama panggilannya, jangan pakai kata "member" atau "user".',
-    '- Jangan memakai pembuka khas AI: "Halo! Selamat datang", "Hai, aku bot", "Semoga betul-betul".',
-    '- Jangan membuat janji, tautan, atau menyebut aturan server.',
-    '- Boleh menyebut satu hal ringan untuk memulai obrolan (mis. tanya lagi ngapain).',
-    'Balas HANYA dengan teks sapaannya.',
-  ]
-    .filter(Boolean)
-    .join('\n');
+/** Nama panggilan member — nickname di server lebih dulu, lalu username. */
+function memberName(member: GuildMember): string {
+  return member.displayName || member.user.username;
+}
+
+/** Bentuk minimal member untuk fungsi prompt di `preview.ts`. */
+function memberShape(member: GuildMember): { name: string; guildName: string } {
+  return { name: memberName(member), guildName: member.guild.name };
 }
 
 /** Minta AI menulis sapaan. `null` = gagal, pemanggil memakai template. */
@@ -89,7 +59,7 @@ async function generateGreeting(
     const result = await chat({
       messages: [
         { role: 'system', content: 'Kamu menulis satu sapaan singkat. Balas hanya teks sapaannya.' },
-        { role: 'user', content: buildWelcomePrompt(settings, member, when) },
+        { role: 'user', content: buildWelcomePrompt(settings, memberShape(member), when) },
       ],
       temperature: 0.9,
       maxTokens: 120,
@@ -140,7 +110,7 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
 
   const greeting = settings.useAi ? await generateGreeting(settings, member) : null;
   const usedAi = Boolean(greeting);
-  const text = greeting ?? fillTemplate(settings.template?.trim() || DEFAULT_TEMPLATE, member);
+  const text = greeting ?? fillTemplate(settings.template?.trim() || DEFAULT_WELCOME_TEMPLATE, member);
 
   const channel =
     settings.channelId && settings.channelId !== member.guild.id
@@ -220,56 +190,14 @@ async function buildCard(
 /*  Salam perpisahan (goodbye)                                         */
 /* ------------------------------------------------------------------ */
 
-const DEFAULT_GOODBYE = '{user} sudah keluar dari **{server}**. Semoga urusannya lancar!';
-
-/**
- * Instruksi gaya salam perpisahan.
- *
- * Nadanya sengaja berbeda dari sambutan: tidak berpura-pura gembira, tidak
- * menanyakan alasan keluar, dan tidak menyebut nama member yang sensitif
- * kalau ternyata ia keluar karena masalah.
- */
-export function buildGoodbyePrompt(settings: GoodbyeSettings, member: GuildMember): string {
-  const name = member.displayName || member.user.username;
-  return [
-    'Kamu anggota komunitas yang santai.',
-    `Tulis SATU salam perpisahan singkat untuk "${name}" yang baru saja keluar dari server "${member.guild.name}".`,
-    `Gaya: ${settings.style?.trim() || 'sopan, hangat, tanpa berlebihan'}.`,
-    settings.example?.trim() ? `Contoh nada yang ingin ditiru (jangan disalin): "${settings.example.trim()}"` : '',
-    'Aturan:',
-    '- Maksimal 1–2 kalimat pendek, tidak lebih dari 180 karakter.',
-    '- Jangan menanyakan alasan keluar, jangan menyindir, jangan menyebut aturan server.',
-    '- Jangan memakai kata "member" atau "user".',
-    '- Boleh mendoakan hal baik secara umum.',
-    'Balas HANYA dengan teks salamnya.',
-  ]
-    .filter(Boolean)
-    .join('\n');
-}
-
 /** Isi placeholder untuk salam perpisahan. */
 export function fillGoodbyeTemplate(template: string, member: GuildMember): string {
-  return template
-    .replace(/\{user\}/g, member.displayName || member.user.username)
-    .replace(/\{server\}/g, member.guild.name);
+  return fillText(template, { user: memberName(member), server: member.guild.name });
 }
 
 async function generateGoodbye(settings: GoodbyeSettings, member: GuildMember): Promise<string | null> {
-  try {
-    const result = await chat({
-      messages: [
-        { role: 'system', content: 'Kamu menulis satu salam perpisahan singkat. Balas hanya teksnya.' },
-        { role: 'user', content: buildGoodbyePrompt(settings, member) },
-      ],
-      temperature: 0.8,
-      maxTokens: 100,
-    });
-    const text = (result.message.content ?? '').trim().replace(/^["'“”]|["'“”]$/g, '').trim();
-    return text ? truncate(text, 220) : null;
-  } catch (error) {
-    logger.warn(`Gagal membuat salam perpisahan untuk ${member.user.tag} — pakai template`, errorMessage(error));
-    return null;
-  }
+  const result = await previewGoodbye({ settings, ...memberShape(member) });
+  return result.source === 'ai' ? result.text : null;
 }
 
 /**
@@ -292,7 +220,7 @@ export async function goodbyeMember(member: GuildMember): Promise<boolean> {
   }
 
   const greeting = settings.useAi ? await generateGoodbye(settings, member) : null;
-  const text = greeting ?? fillGoodbyeTemplate(settings.template?.trim() || DEFAULT_GOODBYE, member);
+  const text = greeting ?? fillGoodbyeTemplate(settings.template?.trim() || DEFAULT_GOODBYE_TEMPLATE, member);
 
   try {
     await channel.send({ content: text, allowedMentions: { parse: [] } });

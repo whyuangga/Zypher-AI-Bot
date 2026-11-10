@@ -66,6 +66,25 @@ async function api(path, options) {
   return data;
 }
 
+/**
+ * Kirim JSON ke API dan tampilkan hasilnya sebagai toast.
+ * Tanpa ini, tombol Simpan di halaman mana pun akan ReferenceError di browser.
+ */
+async function postJson(path, payload, successMessage) {
+  try {
+    var data = await api(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (successMessage) toast('✅ ' + successMessage);
+    return data;
+  } catch (error) {
+    toast('Gagal: ' + error.message, true);
+    throw error;
+  }
+}
+
 function copyText(text, label) {
   var done = function () { toast('✅ ' + (label || 'ID') + ' disalin'); };
   if (navigator.clipboard && window.isSecureContext) {

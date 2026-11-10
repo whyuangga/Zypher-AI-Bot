@@ -937,6 +937,8 @@ export interface WelcomePageOptions extends PageContext {
   };
   channels: Array<{ id: string; name: string }>;
   botOnline: boolean;
+  /** Nama awal di kolom "Nama contoh" pada panel pratinjau. */
+  sampleName: string;
 }
 
 /** Opsi channel: nilai kosong dipakai untuk "mati" atau "DM". */
@@ -1072,12 +1074,49 @@ export function welcomePage(options: WelcomePageOptions): string {
 </div>`,
   });
 
+  const previewCard = card({
+    title: 'Pratinjau & tes',
+    hint: 'tanpa mengirim apa pun ke Discord',
+    right: `<span id="previewState" class="hint" style="margin:0">Siap diuji</span>`,
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+  <div>
+    <label class="field" for="previewName">Nama contoh</label>
+    <input type="text" id="previewName" value="${esc(options.sampleName)}" placeholder="Sky" maxlength="60">
+    <p class="hint">Dipakai sebagai nama member di sapaan. Coba beberapa nama untuk melihat kalimatnya berubah.</p>
+  </div>
+
+  <div style="display:flex;gap:10px;flex-wrap:wrap">
+    <button class="btn-primary" type="button" id="testWelcome" onclick="runTest('welcome')">${icon('message', 16)} Tes sambutan</button>
+    <button class="btn-ghost" type="button" onclick="runTest('welcome', true)">Tes tanpa AI</button>
+  </div>
+  <div class="preview-box" id="outWelcome" hidden>
+    <div class="preview-meta" id="metaWelcome"></div>
+    <div class="preview-text" id="textWelcome"></div>
+    <img id="cardWelcome" class="preview-img" alt="Kartu sambutan" hidden>
+  </div>
+
+  <hr style="border:none;border-top:1px solid var(--line);margin:2px 0">
+
+  <div style="display:flex;gap:10px;flex-wrap:wrap">
+    <button class="btn-primary" type="button" id="testGoodbye" onclick="runTest('goodbye')">${icon('logout', 16)} Tes salam perpisahan</button>
+    <button class="btn-ghost" type="button" onclick="runTest('goodbye', true)">Tes tanpa AI</button>
+  </div>
+  <div class="preview-box" id="outGoodbye" hidden>
+    <div class="preview-meta" id="metaGoodbye"></div>
+    <div class="preview-text" id="textGoodbye"></div>
+  </div>
+
+  <p class="hint" style="margin:0">Yang diuji adalah <b>isi pesannya</b>, bukan pengirimannya. Tombol ini memakai form di atas apa adanya, jadi kamu bisa mencoba gaya lain sebelum menyimpan.</p>
+</div>`,
+  });
+
   const body = `${pageHead({
     kicker: '03 — Kehadiran',
     title: 'Sambutan & Perpisahan',
     subtitle: 'Sapa member yang baru datang, dan ucapkan salam saat mereka pamit. Dua-duanya mati secara default.',
   })}
 <div class="grid cols-2-even mt">${welcomeCard}${goodbyeCard}</div>
+<div class="mt">${previewCard}</div>
 
 <script>
 async function saveWelcome() {
@@ -1102,6 +1141,71 @@ async function saveGoodbye() {
     style: document.getElementById('goodbyeStyle').value.trim() || null,
     example: document.getElementById('goodbyeExample').value.trim() || null,
   }, 'Salam perpisahan disimpan.');
+}
+
+/**
+ * Ambil nilai form apa adanya (belum tentu tersimpan) lalu minta server
+ * merendernya. Hasilnya hanya ditampilkan — tidak ada pesan yang dikirim.
+ */
+async function runTest(kind, templateOnly) {
+  var button = document.getElementById(kind === 'welcome' ? 'testWelcome' : 'testGoodbye');
+  var state = document.getElementById('previewState');
+  var label = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Menguji…';
+  state.textContent = 'Menghubungi model…';
+
+  var name = document.getElementById('previewName').value.trim();
+  var payload = kind === 'welcome'
+    ? {
+        name: name,
+        useAi: document.getElementById('welcomeUseAi').checked,
+        template: document.getElementById('welcomeTemplate').value.trim(),
+        style: document.getElementById('welcomeStyle').value.trim(),
+        example: document.getElementById('welcomeExample').value.trim(),
+        withCard: document.getElementById('welcomeImage').checked,
+        templateOnly: !!templateOnly,
+      }
+    : {
+        name: name,
+        useAi: document.getElementById('goodbyeUseAi').checked,
+        template: document.getElementById('goodbyeTemplate').value.trim(),
+        style: document.getElementById('goodbyeStyle').value.trim(),
+        example: document.getElementById('goodbyeExample').value.trim(),
+        templateOnly: !!templateOnly,
+      };
+
+  try {
+    var data = await api('/api/preview/' + kind, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    var box = document.getElementById('out' + kind.charAt(0).toUpperCase() + kind.slice(1));
+    box.hidden = false;
+    document.getElementById('text' + kind.charAt(0).toUpperCase() + kind.slice(1)).textContent = data.text || '(kosong)';
+    document.getElementById('meta' + kind.charAt(0).toUpperCase() + kind.slice(1)).textContent =
+      (data.source === 'ai' ? '✍️ ditulis AI' : data.source === 'template' ? '📄 dari template' : '⚠️ gagal')
+      + (data.note ? ' — ' + data.note : '')
+      + (data.card ? ' · kartu ' + Math.round((data.cardBytes || 0) / 1024) + ' KB' : '');
+
+    var image = document.getElementById('cardWelcome');
+    if (kind === 'welcome') {
+      // Kartu dikirim sebagai data URI di respons yang sama — tidak perlu
+      // endpoint gambar tambahan dan tidak ada yang disimpan ke disk.
+      image.hidden = !data.cardDataUri;
+      if (data.cardDataUri) image.src = data.cardDataUri;
+    }
+    state.textContent = 'Selesai';
+    toast('✅ Pratinjau siap — belum ada yang dikirim');
+  } catch (error) {
+    state.textContent = 'Gagal';
+    toast('Gagal menguji: ' + error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
 }
 </script>`;
 
@@ -1133,6 +1237,8 @@ export interface AgentPageOptions extends PageContext {
   };
   channels: Array<{ id: string; name: string }>;
   botOnline: boolean;
+  /** Nama awal di kolom "Nama member contoh" pada panel tes. */
+  sampleName: string;
 }
 
 export function agentPage(options: AgentPageOptions): string {
@@ -1207,6 +1313,44 @@ export function agentPage(options: AgentPageOptions): string {
 </div>`,
   });
 
+  const testCard = card({
+    title: 'Tes percakapan',
+    hint: 'tanpa mengirim ke channel',
+    right: `<span id="testState" class="hint" style="margin:0">Siap diuji</span>`,
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+  <div>
+    <label class="field" for="testName">Nama member contoh</label>
+    <input type="text" id="testName" value="${esc(options.sampleName)}" maxlength="60" placeholder="Sky">
+  </div>
+
+  <div>
+    <label class="field" for="testMessage">Pesan yang dikirim member</label>
+    <textarea id="testMessage" rows="2" placeholder="selamat pagi semua">selamat pagi semua</textarea>
+  </div>
+
+  <div>
+    <label class="field" for="testRole">Uji sebagai</label>
+    <span class="select-shell" style="width:100%">
+      <select id="testRole" style="width:100%">
+        <option value="chat">Pesan di channel ngobrol</option>
+        <option value="gallery">Komentar di channel galeri</option>
+      </select>
+      ${icon('chevron', 15)}
+    </span>
+  </div>
+
+  <div style="display:flex;gap:10px;flex-wrap:wrap">
+    <button class="btn-primary" type="button" id="testChat" onclick="runAgentTest()">${icon('message', 16)} Tes balasan</button>
+    <button class="btn-ghost" type="button" id="testQuiet" onclick="runQuietTest()">${icon('sparkles', 16)} Tes pemecah sepi</button>
+  </div>
+
+  <div class="preview-box" id="outAgent" hidden>
+    <div class="preview-meta" id="metaAgent"></div>
+    <div class="preview-text" id="textAgent"></div>
+  </div>
+</div>`,
+  });
+
   const behaviourCard = card({
     title: 'Kapan bot membalas',
     body: `<div class="list">
@@ -1227,6 +1371,7 @@ export function agentPage(options: AgentPageOptions): string {
     subtitle: 'Bot ikut menghidupkan channel ngobrol, dan mengomentari foto di channel galeri.',
   })}
 <div class="grid cols-2 mt">${channelsCard}${behaviourCard}</div>
+<div class="mt">${testCard}</div>
 
 <script>
 async function saveAgent() {
@@ -1240,6 +1385,83 @@ async function saveAgent() {
     reactEmoji: document.getElementById('agentEmoji').checked,
     reactImages: document.getElementById('agentImages').checked,
   }, 'Pengaturan agent disimpan.');
+}
+
+/**
+ * Uji balasan agent memakai pengaturan yang TERSIMPAN.
+ *
+ * Berbeda dengan halaman Sambutan (yang memakai isi form), di sini pengaturan
+ * agent dipakai apa adanya karena hasilnya juga bergantung pada channel, jeda,
+ * dan batas per jam — menguji nilai yang belum disimpan akan menyesatkan.
+ */
+async function runAgentTest() {
+  var button = document.getElementById('testChat');
+  var label = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Menguji…';
+  document.getElementById('testState').textContent = 'Menghubungi model…';
+
+  try {
+    var data = await api('/api/preview/agent', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: document.getElementById('testName').value.trim(),
+        message: document.getElementById('testMessage').value.trim(),
+        role: document.getElementById('testRole').value,
+      }),
+    });
+    showAgentResult(
+      data.source === 'ai' ? '✍️ balasan ' + (data.role === 'gallery' ? 'mode galeri' : 'mode ngobrol') : '⚠️ gagal',
+      data.text || '(kosong)',
+      data.note,
+    );
+    document.getElementById('testState').textContent = 'Selesai';
+    toast('✅ Pratinjau balasan siap — belum ada yang dikirim');
+  } catch (error) {
+    document.getElementById('testState').textContent = 'Gagal';
+    toast('Gagal menguji: ' + error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
+/** Uji apakah bot akan menyapa saat channel sepi, beserta kalimatnya. */
+async function runQuietTest() {
+  var button = document.getElementById('testQuiet');
+  var label = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Menguji…';
+  document.getElementById('testState').textContent = 'Menghubungi model…';
+
+  try {
+    var data = await api('/api/preview/quiet', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (!data.wouldFire) {
+      showAgentResult('⏸️ tidak akan menyapa', '(tidak ada kalimat)', data.reason);
+    } else if (data.source === 'ai') {
+      showAgentResult('✍️ kalimat pemecah sepi', data.text, data.reason);
+    } else {
+      showAgentResult('⚠️ gagal membuat kalimat', '(kosong)', data.note || data.reason);
+    }
+    document.getElementById('testState').textContent = 'Selesai';
+  } catch (error) {
+    document.getElementById('testState').textContent = 'Gagal';
+    toast('Gagal menguji: ' + error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
+function showAgentResult(meta, text, note) {
+  document.getElementById('outAgent').hidden = false;
+  document.getElementById('metaAgent').textContent = meta + (note ? ' — ' + note : '');
+  document.getElementById('textAgent').textContent = text;
 }
 </script>`;
 

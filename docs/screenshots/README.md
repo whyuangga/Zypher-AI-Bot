@@ -67,6 +67,19 @@ CHROMIUM_PATH=/usr/bin/chromium DASHBOARD_TOKEN=<token> npm run screenshots
 
 Skrip menulis ke `docs/screenshots/` dan mencetak ukuran tiap file.
 
+### Menguji tombol halaman (bukan hanya tampilannya)
+
+```bash
+DASHBOARD_TOKEN=... DASHBOARD_PORT=8899 CHROMIUM_PATH=/tmp/chromium \
+LD_LIBRARY_PATH=/tmp/nsslib/lib npx tsx scripts/ui-test.mts
+```
+
+Skrip ini **mengklik** tombol "Tes sambutan", "Tes salam perpisahan", "Tes
+balasan", "Tes pemecah sepi", dan "Simpan agent" di browser sungguhan, lalu
+gagal kalau ada error JavaScript di console. Perlu karena bug di JS halaman
+(contoh nyata: `postJson` tidak pernah didefinisikan) tidak terlihat oleh
+typecheck maupun smoke test.
+
 ### Kenapa `screenshots:seed` menolak nama database lain
 
 Skrip seed **menghapus dan membuat ulang** database yang ditunjuk `DATABASE_PATH`.
@@ -75,8 +88,10 @@ tidak memuat kata `screenshot`.
 
 ## Catatan tampilan
 
-**Desktop.** Sidebar memuat 6 halaman: Ringkasan, Panel, Dokumen RAG, Keyword,
-Moderasi, Pengaturan. Tidak ada lagi menu Memori atau Transkrip.
+**Desktop.** Sidebar memuat 8 halaman: Ringkasan, Panel, Sambutan, AI Agent,
+Dokumen RAG, Keyword, Moderasi, Pengaturan. Sambutan dan AI Agent sengaja
+dipisah: yang pertama mengatur sapaan datang/pamit, yang kedua cara bot
+mengobrol. Tidak ada lagi menu Memori atau Transkrip.
 
 **Mobile.** Tiga kartu statistik diletakkan sejajar dalam satu baris.
 Tabel bertumpuk memakai header tersembunyi + label per sel, nama file tidak
