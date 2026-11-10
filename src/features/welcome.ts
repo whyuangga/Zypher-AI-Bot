@@ -27,7 +27,7 @@ import { errorMessage, logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
 import { renderWelcomeCard } from './welcome-card.js';
 import { previewGoodbye, previewWelcome } from './preview.js';
-import { readBannerDataUri } from './banner.js';
+import { readBannerDataUri, readBannerAttachment } from './banner.js';
 import { DEFAULT_GOODBYE_TEMPLATE, DEFAULT_WELCOME_TEMPLATE, fillText } from './greeting-text.js';
 
 /** Isi placeholder template tanpa AI. */
@@ -133,9 +133,14 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
 
   // Tanpa kartu, banner tetap dipakai sebagai gambar embed — supaya unggahan
   // admin tidak sia-sia saat kartu PNG dimatikan.
-  if (!attachment) {
-    const banner = await readBannerDataUri(settings.bannerPath);
-    if (banner) embed.setImage(banner);
+  //
+  // Discord MENOLAK `setImage()` berisi data URI ("Received one or more
+  // errors"). Banner harus dikirim sebagai lampiran lalu dirujuk lewat
+  // attachment://. Dulu di sini data URI dipakai langsung, sehingga setiap
+  // sambutan yang banner-nya aktif gagal terkirim tanpa penjelasan.
+  const bannerFile = attachment ? null : await readBannerAttachment(settings.bannerPath);
+  if (bannerFile) {
+    embed.setImage(`attachment://${bannerFile.name}`);
   }
 
   try {
@@ -143,13 +148,13 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
       await channel.send({
         content: `<@${member.id}>`,
         embeds: attachment ? [] : [embed],
-        files: attachment ? [attachment] : [],
+        files: attachment ? [attachment] : bannerFile ? [bannerFile.attachment] : [],
         allowedMentions: { users: [member.id] },
       });
     } else {
       await member.send({
         embeds: attachment ? [] : [embed],
-        files: attachment ? [attachment] : [],
+        files: attachment ? [attachment] : bannerFile ? [bannerFile.attachment] : [],
       });
     }
     logger.info(`Sambutan untuk ${member.user.tag} terkirim via ${where}${usedAi ? ' (AI)' : ' (template)'}.`);
@@ -205,7 +210,6 @@ async function buildCard(
   const suffix = usedAi ? 'ai' : 'template';
   return new AttachmentBuilder(png, { name: `${options.filePrefix}-${suffix}.png` });
 }
-
 
 
 /* ------------------------------------------------------------------ */
@@ -264,15 +268,15 @@ export async function goodbyeMember(member: GuildMember): Promise<boolean> {
     .setDescription(text)
     .setFooter({ text: `Member keluar · ${member.guild.name}` });
 
-  if (!attachment) {
-    const banner = await readBannerDataUri(settings.bannerPath);
-    if (banner) embed.setImage(banner);
-  }
+  // Lihat catatan di kirimWelcome(): data URI ditolak Discord, banner harus
+  // jadi lampiran dan dirujuk dengan attachment://.
+  const bannerFile = attachment ? null : await readBannerAttachment(settings.bannerPath);
+  if (bannerFile) embed.setImage(`attachment://${bannerFile.name}`);
 
   try {
     await channel.send({
       embeds: attachment ? [] : [embed],
-      files: attachment ? [attachment] : [],
+      files: attachment ? [attachment] : bannerFile ? [bannerFile.attachment] : [],
       allowedMentions: { parse: [] },
     });
     logger.info(`Salam perpisahan untuk ${member.user.tag} terkirim${greeting ? ' (AI)' : ' (template)'}.`);

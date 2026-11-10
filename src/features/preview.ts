@@ -213,7 +213,7 @@ export async function previewWelcome(options: WelcomePreviewOptions): Promise<Pr
       'Kamu menulis satu sapaan singkat. Balas hanya teks sapaannya.',
       buildWelcomePrompt(settings, { name, guildName }, partOfDay()),
       0.9,
-      120,
+      config.ai.brevityTokens,
       'sambutan',
     );
     text = result.text;
@@ -271,7 +271,7 @@ export async function previewGoodbye(options: {
       'Kamu menulis satu salam perpisahan singkat. Balas hanya teksnya.',
       buildGoodbyePrompt(settings, { name, guildName }),
       0.8,
-      100,
+      config.ai.brevityTokens,
       'salam perpisahan',
     );
     text = result.text;
@@ -370,12 +370,14 @@ export async function previewAgentReply(options: AgentReplyPreviewOptions): Prom
         ...historyMessages,
         { role: 'user', content: `${options.userName}: ${options.message}` },
       ],
-      maxTokens: 220,
+      // Jawaban agent bisa sampai 1200 karakter — jatah token penuh, bukan
+      // angka kecil, supaya model reasoning tidak kehabisan sebelum menulis.
+      maxTokens: config.ai.maxTokens,
       temperature: 0.8,
     });
     const text = cleanReply(result.message.content, 1200);
     if (!text) {
-      return { role, text: '(model mengembalikan teks kosong)', source: 'error', note: 'Coba lagi atau ubah pesan uji.' };
+      return { role, text: '(kosong)', source: 'error', note: EMPTY_REPLY_HINT };
     }
     return { role, text, source: 'ai', note: null };
   } catch (error) {
@@ -419,7 +421,7 @@ export async function previewQuietBreak(options: {
     'Kamu anggota komunitas yang santai. Balas hanya satu kalimat pembuka.',
     buildQuietPrompt(guildName),
     0.9,
-    80,
+    config.ai.brevityTokens,
     'pemecah sepi',
   );
 

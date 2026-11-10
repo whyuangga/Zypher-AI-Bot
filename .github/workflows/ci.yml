@@ -1,0 +1,57 @@
+name: CI
+
+# Dijalankan untuk setiap dorongan ke main dan setiap pull request.
+# Tujuannya menangkap tiga jenis kesalahan yang dulu lolos ke produksi:
+#   1. tipe salah (typecheck)
+#   2. kode mati / import tak terpakai (--noUnusedLocals)
+#   3. perilaku rusak (smoke + uji rantai fallback AI)
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck dan uji
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Ambil kode
+        uses: actions/checkout@v4
+
+      - name: Pasang Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # npm ci menjalankan hook "prepare" yang ikut membangun dist/.
+      # Kalau build gagal di sini, CI langsung merah - itu memang yang diinginkan.
+      - name: Pasang dependensi
+        run: npm ci
+
+      - name: Typecheck ketat
+        run: npm run typecheck:strict
+
+      - name: Smoke test
+        run: npm run smoke
+
+      - name: Uji rantai fallback AI
+        run: npm run test:fallback
+
+      # Menjalankan JavaScript dashboard sungguhan di node:vm dengan DOM tiruan:
+      # menangkap postJson yang hilang, id yang tidak ada, dan endpoint salah.
+      - name: Pengaman UI dashboard
+        run: npm run test:ui
+
+      - name: Build produksi
+        run: npm run build

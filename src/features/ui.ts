@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, EmbedBuilder } from 'discord.js';
 import { dmPanelRow, panelEmbedDm } from './dm.js';
 
 export const BRAND_COLOR = 0x6d8cff;

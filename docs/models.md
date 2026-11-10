@@ -198,3 +198,26 @@ Setelah yakin nama model benar, uji end-to-end (chat + streaming) ke provider su
 ```bash
 npm run doctor
 ```
+
+## Plafon `max_tokens` per provider
+
+`AI_MAX_TOKENS` (default `4096`) adalah **permintaan**, bukan jaminan. Setiap provider punya
+batasnya sendiri — Groq 8k, Gemini berbeda per model, OpenRouter tergantung model di belakangnya.
+Kalau bot mengirim lebih besar, provider **menolak** permintaan (bukan memotong jawabannya).
+
+Bot menangani ini sendiri:
+
+1. Permintaan ditolak → angka batas dibaca dari pesan error provider
+   (mis. `max_tokens must be less than or equal to 8191`).
+2. Permintaan diulang **di provider yang sama** dengan angka aman — tidak langsung lompat ke fallback.
+3. Batas itu diingat, jadi permintaan berikutnya langsung memakai angka yang benar.
+
+Sekali per provider per permintaan — kalau masih ditolak, bot tidak mengulang terus-menerus.
+
+`AI_BREVITY_TOKENS` (default `1024`) dipakai untuk jawaban pendek: sapaan agent, sambutan,
+salam perpisahan, dan pemecah sepi. Alasannya: model reasoning bisa menghabiskan seluruh jatah
+token untuk "berpikir" lalu mengembalikan **teks kosong**. Jatah terpisah membuat obrolan panjang
+tetap lega tanpa membuat sapaan jadi kosong.
+
+> Angka kecil yang dipaksakan di dalam kode (dulu 120–220) adalah penyebab paling sering dari
+> "bot tidak membalas" / "sambutan kosong". Sekarang semua jatah diatur dari dua variabel di atas.

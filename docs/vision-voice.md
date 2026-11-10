@@ -23,7 +23,8 @@ model multimodal, provider menolak permintaan dan penyebabnya muncul di log.
 
 Alur:
 
-1. Member kirim gambar (JPG/PNG/WebP/GIF) di DM — boleh disertai teks pertanyaan.
+1. Member kirim gambar (JPG/PNG/WebP/GIF) di DM **atau di room AI** — boleh disertai
+   teks pertanyaan. Tanpa teks pun dibaca (pertanyaan bawaannya "jelaskan isi gambar ini").
 2. Bot mengunduh maksimal **3 gambar** per pesan, dicek ukurannya (`VISION_MAX_MB`).
 3. Gambar diubah jadi **data URI base64** lalu dimasukkan ke pesan dengan format
    `image_url` (protokol OpenAI-compatible) — tidak perlu upload ke storage mana pun.
@@ -87,6 +88,11 @@ Alur voice note:
 
 Kalau transkrip gagal (kuota habis, format ditolak, file rusak), member melihat alasan
 singkatnya dan percakapan tetap bisa lanjut dengan teks.
+
+> **Sudah diperbaiki:** sebelumnya bot menjawab *"Tulis pertanyaannya dalam bentuk teks"*
+> untuk semua pesan tanpa teks, sehingga voice note tidak pernah ditranskrip dan
+> `VOICE_ENABLED` tidak berefek. Sekarang lampiran dibaca lebih dulu: voice note
+> ditranskrip, gambar dikirim ke model multimodal.
 
 ### Suara otomatis (TTS)
 

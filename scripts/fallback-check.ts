@@ -9,6 +9,9 @@
  * Jalankan: npm run test:fallback
  */
 process.env.DISCORD_TOKEN = 'fallback-check-token-0000000000';
+// GUILD_ID wajib sejak bot jadi single-server.
+process.env.GUILD_ID = '123456789012345678';
+process.env.DASHBOARD_TOKEN = 'fallback-check-dashboard-000';
 process.env.CLIENT_ID = '123456789012345678';
 process.env.AI_API_KEY = 'fake-primary-key-123456';
 process.env.AI_BASE_URL = 'http://127.0.0.1:4101/v1';
@@ -22,12 +25,12 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 const PRIMARY_PORT = 4101;
 const FALLBACK_PORT = 11434;
 
-type Mode = 'ok' | 'context-too-long' | 'stream' | 'stream-tool';
+type Mode = 'ok' | 'context-too-long' | 'stream' | 'stream-tool' | 'token-cap' | 'empty';
 
 interface ServerState {
   mode: Mode;
   requests: number;
-  lastBody: { stream?: boolean; messages?: Array<{ content: string }>; model?: string } | null;
+  lastBody: { stream?: boolean; messages?: Array<{ content: string }>; model?: string; max_tokens?: number } | null;
 }
 
 interface FakeServer {
@@ -130,6 +133,10 @@ function fallbackReply(state: ServerState): FakeReply {
   switch (state.mode) {
     case 'context-too-long':
       return { status: 400, body: contextTooLong };
+    case 'empty':
+      // Model reasoning bisa menghabiskan jatah token untuk berpikir lalu
+      // mengembalikan isi kosong dengan status 200.
+      return { status: 200, body: completion('llama3.1', '') };
     case 'stream':
       return {
         stream: [
@@ -174,10 +181,27 @@ function check(name: string, fn: () => void): void {
 async function main(): Promise<void> {
   console.log('\n🔁 Uji fallback + streaming (server tiruan)\n');
 
-  const primary = await startFakeServer(PRIMARY_PORT, () => ({ status: 429, body: rateLimited }));
+  // Server utama bisa berganti perilaku per skenario.
+  const primary = await startFakeServer(PRIMARY_PORT, (state) => {
+    switch (state.mode) {
+      case 'token-cap':
+        // Provider hanya menolak kalau kita meminta lebih dari 1024 token.
+        if ((state.lastBody?.max_tokens ?? 0) > 1024) {
+          return {
+            status: 400,
+            body: { error: { message: 'max_tokens must be less than or equal to 1024', type: 'invalid_request_error' } },
+          };
+        }
+        return { status: 200, body: completion('primary-model', 'Jawaban dari provider utama.') };
+      case 'empty':
+        return { status: 200, body: completion('primary-model', '') };
+      default:
+        return { status: 429, body: rateLimited };
+    }
+  });
   const fallback = await startFakeServer(FALLBACK_PORT, fallbackReply);
 
-  const { chat, streamChat, AiError } = await import('../src/lib/llm.js');
+  const { chat, streamChat, AiError, resetTokenCaps } = await import('../src/lib/llm.js');
 
   try {
     /* ---------- 1. Non-streaming: 429 di utama -> fallback ---------- */
@@ -185,7 +209,9 @@ async function main(): Promise<void> {
     const result = await chat({ messages: [{ role: 'user', content: 'Halo, kamu siapa?' }] });
 
     check('provider utama dicoba lebih dulu (dan gagal)', () => {
-      assert.equal(primary.state.requests, 3, 'harus retry 3x di provider utama sebelum menyerah');
+      // Rate limit tidak sembuh dalam milidetik: kalau ada provider cadangan,
+      // langsung pindah. Sebelumnya bot menunggu 400ms + 800ms sia-sia.
+      assert.equal(primary.state.requests, 1, 'tidak menunggu backoff saat masih ada fallback');
     });
     check('jawaban berasal dari provider fallback', () => {
       assert.equal(result.provider, 'ollama');
@@ -270,6 +296,61 @@ async function main(): Promise<void> {
     check('argumen tool valid sebagai JSON', () => {
       const parsed = JSON.parse(toolResult.message.tool_calls?.[0]?.function.arguments ?? '{}') as { fakta?: string };
       assert.equal(parsed.fakta, 'Namanya Bagas.');
+    });
+    /* ---------- 5. Provider menolak max_tokens -> ulang di provider yang sama ---------- */
+    console.log('\nPlafon max_tokens');
+    fallback.state.mode = 'ok';
+    primary.state.mode = 'token-cap';
+    primary.state.requests = 0;
+    resetTokenCaps();
+
+    const capped = await chat({ messages: [{ role: 'user', content: 'Halo' }], maxTokens: 8192 });
+
+    check('plafon token diulang di provider yang sama, bukan lompat fallback', () => {
+      assert.equal(capped.provider, 'custom', 'tetap dijawab provider utama');
+      assert.equal(capped.message.content, 'Jawaban dari provider utama.');
+      assert.equal(primary.state.requests, 2, 'sekali ditolak, sekali dengan angka aman');
+    });
+    check('angka yang dikirim sudah turun ke plafon provider', () => {
+      assert.equal(primary.state.lastBody?.max_tokens, 1024);
+    });
+
+    // Permintaan berikutnya harus langsung memakai angka aman — jangan membuat
+    // user menunggu penolakan yang sama berulang kali.
+    primary.state.requests = 0;
+    await chat({ messages: [{ role: 'user', content: 'Halo lagi' }], maxTokens: 8192 });
+    check('plafon diingat untuk permintaan berikutnya', () => {
+      assert.equal(primary.state.requests, 1, 'tidak ditolak lagi');
+      assert.equal(primary.state.lastBody?.max_tokens, 1024);
+    });
+
+    /* ---------- 6. Balasan kosong -> provider berikutnya, bukan teks kosong ---------- */
+    console.log('\nBalasan kosong');
+    resetTokenCaps();
+    primary.state.mode = 'empty';
+    fallback.state.mode = 'ok';
+    fallback.state.requests = 0;
+
+    const rescued = await chat({ messages: [{ role: 'user', content: 'Halo' }], maxTokens: 700 });
+    check('provider kosong dilewati, fallback menjawab', () => {
+      assert.equal(rescued.provider, 'ollama');
+      assert.match(rescued.message.content ?? '', /fallback/);
+      assert.equal(fallback.state.requests, 1);
+    });
+
+    // Kalau semua provider kosong, user harus menerima error yang menjelaskan —
+    // bukan jawaban kosong yang membingungkan.
+    fallback.state.mode = 'empty';
+    let emptyError: unknown = null;
+    try {
+      await chat({ messages: [{ role: 'user', content: 'Halo' }] });
+    } catch (error) {
+      emptyError = error;
+    }
+    check('semua provider kosong -> error jelas, bukan jawaban kosong', () => {
+      assert.ok(emptyError instanceof AiError, 'harus melempar AiError');
+      assert.match((emptyError as Error).message, /tidak tersedia/i);
+      assert.match((emptyError as Error).message, /2 dicoba/i);
     });
   } finally {
     primary.server.close();

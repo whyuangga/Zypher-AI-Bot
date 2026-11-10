@@ -31,10 +31,34 @@ import type { GoodbyeSettings, WelcomeSettings } from '../db/repo.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
 import { previewGoodbye, previewWelcome } from './preview.js';
-import { readBannerDataUri } from './banner.js';
+import { readBannerDataUri, readBannerAttachment } from './banner.js';
 import { renderWelcomeCard } from './welcome-card.js';
 
 export class SendTestError extends Error {}
+
+/**
+ * Terjemahkan error Discord yang tidak informatif jadi kalimat yang bisa
+ * ditindaklanjuti.
+ *
+ * Kasus nyata: mengirim embed bergambar data URI ditolak dengan
+ * "Received one or more errors" — admin tidak mungkin menebak artinya.
+ */
+function explainDiscordError(error: unknown): string {
+  const raw = errorMessage(error);
+  if (/received one or more errors/i.test(raw)) {
+    return (
+      `${raw}. Discord menolak isi pesan, biasanya karena gambar embed tidak valid. ` +
+      'Coba matikan kartu PNG sementara atau unggah ulang banner (PNG/JPG/WebP).'
+    );
+  }
+  if (/missing access|missing permissions/i.test(raw)) {
+    return `${raw}. Bot tidak punya izin menulis di channel itu.`;
+  }
+  if (/unknown channel/i.test(raw)) {
+    return `${raw}. Channel sudah dihapus atau bukan milik server ini.`;
+  }
+  return raw;
+}
 
 export interface SendTestResult {
   ok: boolean;
@@ -158,10 +182,11 @@ export async function sendWelcomeTest(
     .setColor(0x6d8cff)
     .setDescription(preview.text)
     .setFooter({ text: `Pesan uji · ${guild.name}` });
-  if (!card) {
-    const banner = await readBannerDataUri(settings.bannerPath);
-    if (banner) embed.setImage(banner);
-  }
+  // Discord menolak setImage() berisi data URI ("Received one or more
+  // errors"), jadi banner dikirim sebagai lampiran dan dirujuk attachment://.
+  // Ternyata ini juga alasan sambutan sungguhan gagal terkirim.
+  const bannerFile = card ? null : await readBannerAttachment(settings.bannerPath);
+  if (bannerFile) embed.setImage(`attachment://${bannerFile.name}`);
 
   const note: string[] = [];
   if (preview.source !== 'ai') note.push(preview.note ?? 'AI tidak dipakai.');
@@ -170,7 +195,7 @@ export async function sendWelcomeTest(
   const payload = {
     content: TEST_MARK,
     embeds: card ? [] : [embed],
-    files: card ? [card] : [],
+    files: card ? [card] : bannerFile ? [bannerFile.attachment] : [],
     allowedMentions: { parse: [] as const },
   };
 
@@ -211,7 +236,7 @@ export async function sendWelcomeTest(
       note: note.length ? note.join(' ') : null,
     };
   } catch (error) {
-    throw new SendTestError(`Gagal mengirim ke #${channel.name}: ${errorMessage(error)}`);
+    throw new SendTestError(`Gagal mengirim ke #${channel.name}: ${explainDiscordError(error)}`);
   }
 }
 
@@ -260,10 +285,8 @@ export async function sendGoodbyeTest(
     .setColor(0x716c98)
     .setDescription(preview.text)
     .setFooter({ text: `Pesan uji · ${guild.name}` });
-  if (!card) {
-    const banner = await readBannerDataUri(settings.bannerPath);
-    if (banner) embed.setImage(banner);
-  }
+  const bannerFile = card ? null : await readBannerAttachment(settings.bannerPath);
+  if (bannerFile) embed.setImage(`attachment://${bannerFile.name}`);
 
   const note: string[] = [];
   if (preview.source !== 'ai') note.push(preview.note ?? 'AI tidak dipakai.');
@@ -276,7 +299,7 @@ export async function sendGoodbyeTest(
     await channel.send({
       content: TEST_MARK,
       embeds: card ? [] : [embed],
-      files: card ? [card] : [],
+      files: card ? [card] : bannerFile ? [bannerFile.attachment] : [],
       allowedMentions: { parse: [] as const },
     });
     logger.info(`Kirim tes salam perpisahan ke #${channel.name} berhasil.`);
@@ -289,7 +312,7 @@ export async function sendGoodbyeTest(
       note: note.length ? note.join(' ') : null,
     };
   } catch (error) {
-    throw new SendTestError(`Gagal mengirim ke #${channel.name}: ${errorMessage(error)}`);
+    throw new SendTestError(`Gagal mengirim ke #${channel.name}: ${explainDiscordError(error)}`);
   }
 }
 
@@ -319,17 +342,29 @@ export async function sendAgentTest(
   const { channel, reason } = await resolveChannel(guild, options.channelId);
   if (!channel) throw new SendTestError(reason ?? 'Channel AI Agent tidak bisa dipakai.');
 
-  const embed = new EmbedBuilder()
-    .setColor(options.role === 'gallery' ? 0x9b8fd0 : 0x6d8cff)
-    .setAuthor({ name: `${options.userName} (pesan uji)` })
-    .setDescription(`> ${options.sampleMessage.slice(0, 300)}`)
-    .addFields({ name: 'Balasan bot', value: truncate(options.reply, 1000) || '(kosong)' })
-    .setFooter({ text: `Pesan uji · ${guild.name}` });
+  // Sengaja teks biasa, bukan embed: AI Agent di channel membalas sebagai
+  // pesan biasa supaya menyatu dengan obrolan member. Pesan uji harus
+  // memperlihatkan bentuk yang sama, bukan kotak embed yang tidak akan pernah
+  // muncul di pemakaian nyata.
+  //
+  // Format: penanda uji, kutipan pesan member (blockquote), lalu balasan bot.
+  const quoted = options.sampleMessage
+    .slice(0, 300)
+    .split('\n')
+    .map((line) => `> ${line}`)
+    .join('\n');
+  const body = [
+    TEST_MARK,
+    '',
+    `**${options.userName} (pesan uji):**`,
+    quoted,
+    '',
+    truncate(options.reply, 1500) || '(kosong)',
+  ].join('\n');
 
   try {
     await channel.send({
-      content: TEST_MARK,
-      embeds: [embed],
+      content: body,
       allowedMentions: { parse: [] as const },
     });
     logger.info(`Kirim tes agent ke #${channel.name} berhasil.`);
@@ -342,6 +377,6 @@ export async function sendAgentTest(
       note: null,
     };
   } catch (error) {
-    throw new SendTestError(`Gagal mengirim ke #${channel.name}: ${errorMessage(error)}`);
+    throw new SendTestError(`Gagal mengirim ke #${channel.name}: ${explainDiscordError(error)}`);
   }
 }

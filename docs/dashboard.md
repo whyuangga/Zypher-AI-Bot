@@ -278,7 +278,7 @@ Dua kartu berdampingan, satu tema "kehadiran":
   |---|---|---|
   | "Kirim tes sungguhan" (sambutan) | DM kamu, atau channel sambutan kalau dipilih | teks sambutan + kartu PNG kalau diaktifkan |
   | "Kirim tes ke channel" (perpisahan) | channel salam perpisahan yang tersimpan | teks salam perpisahan + kartu PNG |
-  | "Kirim tes ke channel" (agent) | channel ngobrol/galeri tersimpan | kutipan pesan uji + balasan bot |
+  | "Kirim tes ke channel" (agent) | channel ngobrol/galeri tersimpan | **teks biasa** (bukan embed): kutipan pesan uji + balasan bot |
 
   Pesannya selalu dibuka penanda *"🧪 Pesan uji dari dashboard"* dan mention
   tidak dipicu, jadi tidak ada member yang ter-tag karena tes. Tombol ini mati
@@ -306,7 +306,8 @@ Panel **Tes percakapan** menguji balasan bot untuk pesan contoh (mode ngobrol
 atau mode galeri) serta kalimat **pemecah sepi** — tanpa mengirim ke channel.
 Tombol "Kirim tes ke channel" di sebelahnya **mengirim** satu pesan nyata berisi
 kutipan pesan uji dan balasan bot, supaya gaya balasannya bisa dilihat langsung
-di Discord.
+di Discord. Pesannya **teks biasa, bukan embed** — agent membalas sebagai pesan
+biasa supaya menyatu dengan obrolan member, jadi pesan uji harus berbentuk sama.
 
 Detail perilaku & biaya API: [sambutan-agent.md](sambutan-agent.md).
 
@@ -328,6 +329,14 @@ atas `.env` karena tersimpan per server. Halaman ini berisi:
 | `POST /api/moderasi` | Simpan pengaturan (JSON: `enabled`, `words[]`, `action`, `timeoutMinutes`) |
 | `DELETE /api/moderasi/logs/<id>` | Hapus satu catatan pelanggaran |
 | `DELETE /api/moderasi/logs` | Bersihkan semua catatan pelanggaran server ini |
+| `GET /api/banner/welcome` \| `/goodbye` | Gambar banner mentah (PNG/JPG/WebP) untuk `<img>` di dashboard. Di-cache browser; tanpa ini banner 8 MB harus ikut di HTML |
+| `POST /api/banner/welcome` \| `/goodbye` | Unggah/ganti/hapus banner (JSON `dataUri` atau `{remove:true}`) |
+| `GET /api/search?q=<kata>` | Uji pencarian RAG di halaman Dokumen: kembalikan potongan yang cocok beserta skor dan asal skornya (`lexical`/`vector`/`hybrid`). Maksimal 500 karakter |
+
+> **Catatan riwayat:** tombol Cari di halaman Dokumen dulu memanggil `/api/search`
+> yang **tidak pernah ada di server** — tombolnya selalu berakhir "Gagal mencari"
+> tanpa penjelasan. Endpoint-nya kini ada, dan `npm run test:ui` memeriksa setiap
+> rute yang dipanggil UI benar-benar ditangani server.
 
 Endpoint halaman Sambutan & AI Agent (pratinjau tidak mengirim apa pun;
 `send-test` yang benar-benar mengirim):
@@ -514,6 +523,56 @@ dan kosongkan `DASHBOARD_TOKEN`.
 | Panel tidak bisa dikirim dari dashboard | Halaman Panel butuh bot hidup; mode dashboard-saja hanya bisa menyimpan tombol aktif/nonaktif |
 | Angka berbeda dengan daftar di bawah | Sudah diperbaiki: angka kini per server. Update ke versi terbaru |
 | Data hilang setelah redeploy | Hosting tanpa disk persisten. Lihat [hosting.md](hosting.md) |
+
+---
+
+## Pengaman otomatis UI
+
+Logika interaktif dashboard **tidak ditulis di TypeScript**, melainkan di dalam
+template literal (string). Artinya `tsc` tidak bisa memeriksanya sama sekali, dan
+`npm run smoke` hanya menguji sisi server. Tiga bug yang pernah lolos ke produksi
+karena celah ini:
+
+1. tombol Simpan memanggil `postJson()` yang tidak pernah didefinisikan —
+   semua tombol simpan di semua halaman mati;
+2. `document.getElementById('x').checked` padahal `#x` tidak ada — error `null`
+   hanya muncul saat tombolnya diklik;
+3. UI memanggil `/api/...` yang tidak ditangani server.
+
+Sekarang ada dua lapis pengaman.
+
+### Lapis 1 — `npm run test:ui` (ikut CI, tanpa browser)
+
+Merender setiap halaman dengan fungsi yang sama dengan server, menjalankan setiap
+`<script>` di `node:vm` dengan DOM tiruan, lalu **mengklik tombol simpan/tes** seperti
+user. Yang diperiksa:
+
+- semua blob JSON di HTML bisa di-parse;
+- setiap `<script>` lolos parse dan jalan tanpa error saat halaman dimuat;
+- setiap `getElementById` punya elemennya — termasuk id yang baru disentuh
+  **setelah** tombol diklik (di sinilah bug no. 2 bersembunyi);
+- setiap fungsi yang dipanggil lewat atribut `onclick` benar-benar ada;
+- helper bersama (`postJson`, `toast`, `api`, `copyText`, `askConfirm`) tersedia;
+- setiap endpoint `/api/...` yang dipanggil UI ditangani `src/web/server.ts`.
+
+Skrip ini juga menguji dirinya sendiri: ia menyuntikkan bug tiruan (id salah ketik,
+fungsi hilang, syntax error) dan **gagal kalau bug itu tidak terdeteksi**.
+
+### Lapis 2 — `npm run test:browser` (Chromium sungguhan)
+
+Untuk hal yang hanya terlihat di browser: login, klik tombol tes, unggah banner,
+dan error di console. Butuh dashboard yang hidup dan Chromium (~150 MB), jadi tidak
+masuk CI.
+
+```bash
+npx playwright install chromium          # sekali saja
+
+DASHBOARD_TOKEN=rahasia DASHBOARD_PORT=8899 npm run dashboard   # terminal 1
+DASHBOARD_TOKEN=rahasia npm run test:browser                    # terminal 2
+```
+
+Kalau Chromium tidak ditemukan, skrip memberi tahu cara memasangnya — bukan gagal
+dengan pesan `ERR_MODULE_NOT_FOUND` seperti sebelumnya.
 
 ---
 

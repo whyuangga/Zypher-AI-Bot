@@ -210,7 +210,6 @@ async function logAction(
 ): Promise<void> {
   const guildId = message.guild?.id ?? message.guildId ?? '';
   const userName = message.member?.displayName ?? message.author.username;
-  const content = message.content.replace(/\s+/g, ' ').trim();
 
   try {
     const id = await addModerationLog({

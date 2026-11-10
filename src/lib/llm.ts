@@ -26,6 +26,22 @@ export interface ChatResult {
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
 }
 
+/**
+ * Apakah balasan punya isi yang benar-benar bisa dibaca user?
+ *
+ * `reasoning_content` ikut dianggap isi: sebagian provider reasoning menaruh
+ * jawaban di sana dan membiarkan `content` kosong.
+ */
+function hasVisibleText(message: AssistantMessage): boolean {
+  const raw = message as unknown as { content?: string | null; reasoning_content?: string | null };
+  const content = raw.content?.trim();
+  if (content) return true;
+  const reasoning = raw.reasoning_content?.trim();
+  if (reasoning) return true;
+  // Tool call tanpa teks tetap sah — model ingin memanggil fungsi dulu.
+  return Array.isArray(message.tool_calls) && message.tool_calls.length > 0;
+}
+
 export class AiError extends Error {
   override readonly name = 'AiError';
 
@@ -36,12 +52,82 @@ export class AiError extends Error {
     readonly tryNextProvider = true,
     /** true = kesalahan di sisi kita (prompt terlalu panjang), fallback tidak akan menolong */
     readonly fatal = false,
+    /**
+     * Terisi kalau provider menolak `max_tokens` dan menyebut batasnya.
+     *
+     * Disimpan di error (bukan hanya di hasil `classify`) supaya tetap terbaca
+     * setelah `runOnProvider` melemparnya — dulu info ini hilang di tengah jalan
+     * sehingga `chat()` tidak pernah mengulang dengan angka aman dan langsung
+     * lompat ke provider cadangan padahal provider utama sebenarnya sehat.
+     */
+    readonly tokenCap?: number,
   ) {
     super(message);
   }
 }
 
 const clients = new Map<string, OpenAI>();
+
+/**
+ * Batas `max_tokens` yang masih diterima tiap provider.
+ *
+ * Provider punya plafon berbeda (Groq 8k, Gemini 64k, OpenRouter tergantung
+ * model). Kalau kita mengirim lebih besar, permintaan DITOLAK — bukan
+ * dipotong. Contoh nyata: gemini menolak 8192 untuk model tertentu dengan
+ * "max_tokens must be less than or equal to 8191".
+ *
+ * Perilakunya: begitu ditolak, batas itu dicatat lalu permintaan diulang
+ * dengan angka yang aman — sekali, tanpa mengganggu user dan tanpa menebak.
+ */
+const tokenCaps = new Map<string, number>();
+
+/** Angka aman saat provider tidak menyebut batasnya di pesan error. */
+const SAFE_TOKEN_FALLBACK = 4096;
+
+/** Untuk pengujian: lupakan plafon yang sudah dipelajari. */
+export function resetTokenCaps(): void {
+  tokenCaps.clear();
+}
+
+function tokenCapKey(provider: AiProvider): string {
+  return `${provider.name}::${provider.model}`;
+}
+
+/**
+ * Kalau error menyebut plafon `max_tokens`, kembalikan angkanya.
+ *
+ * Format yang muncul di praktik: "max_tokens must be less than or equal to
+ * 8191", "'max_tokens' too large: 8192 (maximum 4096)".
+ *
+ * Catatan: "maximum context length is 8192 tokens" BUKAN plafon keluaran —
+ * itu percakapan kepanjangan (lihat `classify`). Mengembalikan angka di situ
+ * hanya akan membuat bot mengulang permintaan yang pasti gagal.
+ */
+export function parseTokenCap(message: string): number | null {
+  const patterns = [
+    // "max_tokens must be less than or equal to 8191"
+    /max_tokens[^0-9]{0,40}(?:less than or equal to|maximum|at most|<=)\s*(\d+)/i,
+    // "'max_tokens' too large: 8192 (maximum 4096)" — yang dipakai adalah
+    // angka batas di dalam kurung. Pola lama mengambil 8192 (angka yang
+    // justru ditolak), lalu mengirim ulang angka yang sama dan gagal lagi.
+    /\(\s*max(?:imum)?\s*:?\s*(\d+)\s*\)/i,
+    /(?:maximum|max)\s+(?:value\s+)?(?:of|for)?\s*max_tokens[^0-9]{0,20}(\d+)/i,
+  ];
+  for (const pattern of patterns) {
+    const match = pattern.exec(message);
+    if (match?.[1]) {
+      const value = Number(match[1]);
+      if (Number.isFinite(value) && value >= 64) return value;
+    }
+  }
+  return null;
+}
+
+/** Apakah error ini soal `max_tokens` terlalu besar? */
+function isTokenCapError(message: string): boolean {
+  if (/context length|context window|too many tokens/i.test(message)) return false;
+  return /max_tokens|too large/i.test(message) && /token/i.test(message);
+}
 
 function clientFor(provider: AiProvider): OpenAI {
   const cacheKey = `${provider.baseUrl}::${provider.apiKey}`;
@@ -81,7 +167,7 @@ function isToolUnsupported(error: unknown): boolean {
 }
 
 /** Ubah error SDK menjadi AiError + info apakah layak di-retry di provider yang sama. */
-function classify(error: unknown): { error: AiError; retryable: boolean } {
+function classify(error: unknown): { error: AiError; retryable: boolean; tokenCap?: number } {
   if (error instanceof AiError) return { error, retryable: false };
 
   if (error instanceof OpenAI.APIError) {
@@ -101,11 +187,30 @@ function classify(error: unknown): { error: AiError; retryable: boolean } {
     if (status === 429) {
       return { error: new AiError('kuota/rate limit penuh', status), retryable: true };
     }
-    if (status === 413 || /too large|context length|maximum context|token limit/i.test(text)) {
+    // Penting: periksa konteks kepanjangan LEBIH DULU. Pesan seperti
+    // "maximum context length is 8192 tokens" juga menyebut "maximum" dan
+    // "tokens", jadi kalau urutannya terbalik ia salah dibaca sebagai plafon
+    // max_tokens — user disuruh menunggu percobaan ulang yang pasti gagal,
+    // padahal yang perlu dilakukan adalah /reset. Percakapan kepanjangan
+    // tidak bisa ditolong dengan mengecilkan max_tokens.
+    const contextTooLong =
+      status === 413 ||
+      /context length|context window|too many tokens|prompt is too long/i.test(text);
+
+    if (contextTooLong) {
       return {
         error: new AiError('Percakapan terlalu panjang. Pakai `/reset` lalu mulai topik baru ya.', status, false, true),
         retryable: false,
       };
+    }
+
+    // Token kita sendiri yang terlalu besar (bukan percakapan kepanjangan).
+    // Bukan kesalahan user: catat plafonnya, ulangi di provider yang sama
+    // dengan angka yang aman. Dulu kasus ini jatuh ke pesan "percakapan
+    // terlalu panjang" dan menyuruh user /reset — menyesatkan.
+    if (isTokenCapError(text)) {
+      const cap = parseTokenCap(text) ?? SAFE_TOKEN_FALLBACK;
+      return { error: new AiError(`plafon max_tokens provider (${cap})`, status, true, false, cap), retryable: false, tokenCap: cap };
     }
     if (typeof status === 'number' && RETRYABLE_STATUS.has(status)) {
       return { error: new AiError(`gangguan sementara provider (${status})`, status), retryable: true };
@@ -128,6 +233,18 @@ function classify(error: unknown): { error: AiError; retryable: boolean } {
   };
 }
 
+/** Apakah ada provider cadangan? Kalau tidak, menunggu backoff masih masuk akal. */
+function hasFallbackProvider(): boolean {
+  return buildProviderChain().length > 1;
+}
+
+/** `max_tokens` yang akan dikirim: keinginan pemanggil, dibatasi plafon provider. */
+function effectiveMaxTokens(provider: AiProvider, requested: number | undefined): number {
+  const wanted = requested ?? config.ai.maxTokens;
+  const cap = tokenCaps.get(tokenCapKey(provider));
+  return cap ? Math.min(wanted, cap) : wanted;
+}
+
 async function callOnce(
   provider: AiProvider,
   request: ChatRequest,
@@ -135,12 +252,13 @@ async function callOnce(
   allowModelOverride: boolean,
 ): Promise<ChatResult> {
   const model = allowModelOverride && request.model ? request.model : provider.model;
+  const maxTokens = effectiveMaxTokens(provider, request.maxTokens);
 
   const completion = await clientFor(provider).chat.completions.create({
     model,
     messages: request.messages,
     temperature: request.temperature ?? config.ai.temperature,
-    max_tokens: request.maxTokens ?? config.ai.maxTokens,
+    max_tokens: maxTokens,
     ...(useTools && request.tools?.length ? { tools: request.tools, tool_choice: 'auto' as const } : {}),
   });
 
@@ -193,6 +311,11 @@ async function runOnProvider(
       const { error: aiError, retryable } = classify(error);
       lastError = aiError;
 
+      // Rate limit tidak akan sembuh dalam hitungan milidetik. Kalau ada
+      // provider cadangan, lebih baik langsung pindah daripada menunggu
+      // backoff 400ms + 800ms dan membuat user menunggu tanpa hasil.
+      if (aiError.status === 429 && hasFallbackProvider()) throw aiError;
+
       if (!retryable || attempt === attempts) throw aiError;
 
       const backoff = 400 * 2 ** (attempt - 1);
@@ -213,6 +336,7 @@ async function runOnProvider(
 export async function chat(request: ChatRequest): Promise<ChatResult> {
   const chain = buildProviderChain();
   const failures: string[] = [];
+  const tokenRetries = new Set<string>();
 
   for (let index = 0; index < chain.length; index += 1) {
     const provider = chain[index];
@@ -226,15 +350,48 @@ export async function chat(request: ChatRequest): Promise<ChatResult> {
         index === 0,
       );
 
+      // Model bisa "berhasil" tapi tidak menulis apa pun — khas model reasoning
+      // yang menghabiskan jatah token untuk berpikir. Tanpa pemeriksaan ini
+      // rantai fallback tidak pernah dicoba dan pemanggil menerima teks kosong
+      // (gejala nyata: sambutan, salam perpisahan, dan pemecah sepi kosong
+      // padahal provider cadangan tersedia).
+      if (!hasVisibleText(result.message)) {
+        const detail = `model mengembalikan teks kosong (jatah ${request.maxTokens ?? 'default'} token mungkin habis untuk berpikir)`;
+        failures.push(`${provider.name}: ${detail}`);
+        logger.warn(`Provider ${provider.name} ${detail} — mencoba provider berikutnya.`);
+        continue;
+      }
+
       if (index > 0) {
         logger.info(`Provider utama gagal — jawaban diberikan oleh fallback ${result.provider}/${result.model}.`);
       }
 
       return result;
     } catch (error) {
-      const aiError = error instanceof AiError ? error : classify(error).error;
+      // AiError yang dilempar `runOnProvider` sudah membawa `tokenCap` sendiri,
+      // jadi jangan dibuang seperti sebelumnya.
+      const { error: aiError, tokenCap } = error instanceof AiError
+        ? { error, tokenCap: error.tokenCap }
+        : classify(error);
 
       if (aiError.fatal) throw aiError;
+
+      // Plafon token: catat lalu ulangi provider yang sama dengan angka aman.
+      // Bukan kegagalan provider, jadi tidak dihitung sebagai percobaan gagal.
+      if (tokenCap) {
+        const key = tokenCapKey(provider);
+        // Sekali saja per provider per permintaan — kalau masih ditolak,
+        // ulang terus sama saja dengan loop tanpa akhir.
+        if (!tokenRetries.has(key)) {
+          tokenRetries.add(key);
+          tokenCaps.set(key, tokenCap);
+          logger.warn(
+            `${provider.name}/${provider.model} menolak max_tokens — dibatasi ${tokenCap} dan dicoba ulang.`,
+          );
+          index -= 1;
+          continue;
+        }
+      }
 
       failures.push(`${provider.name}: ${aiError.message}`);
 
@@ -291,6 +448,8 @@ async function streamOnProvider(
     onDelta(text);
   };
 
+  let tokenRetried = false;
+
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       const model = allowModelOverride && request.model ? request.model : provider.model;
@@ -300,7 +459,7 @@ async function streamOnProvider(
         model,
         messages: request.messages,
         temperature: request.temperature ?? config.ai.temperature,
-        max_tokens: request.maxTokens ?? config.ai.maxTokens,
+        max_tokens: effectiveMaxTokens(provider, request.maxTokens),
         ...(useTools && request.tools?.length ? { tools: request.tools, tool_choice: 'auto' as const } : {}),
         stream: true,
       });
@@ -361,13 +520,29 @@ async function streamOnProvider(
         continue;
       }
 
-      const { error: aiError, retryable } = classify(error);
+      const { error: aiError, retryable, tokenCap } = classify(error);
       lastError = aiError;
+
+      // Plafon token: catat, lalu ulangi percobaan yang sama dengan angka aman.
+      // Aman dilakukan walau sudah ada teks: stream belum menghasilkan apa pun
+      // kalau permintaannya ditolak sejak awal.
+      if (tokenCap && !emitted && !tokenRetried) {
+        tokenRetried = true;
+        tokenCaps.set(tokenCapKey(provider), tokenCap);
+        logger.warn(
+          `${provider.name}/${provider.model} menolak max_tokens — dibatasi ${tokenCap} dan dicoba ulang.`,
+        );
+        attempt -= 1;
+        continue;
+      }
 
       // Sudah ada teks yang tampil: jangan pindah provider / retry, nanti jawaban dobel.
       if (emitted) {
         throw new AiError(`${aiError.message} (jawaban terputus)`, aiError.status, false, true);
       }
+
+      // Sama seperti non-streaming: rate limit lebih cepat ditolong provider lain.
+      if (aiError.status === 429 && hasFallbackProvider()) throw aiError;
 
       if (!retryable || attempt === attempts) throw aiError;
 
@@ -405,6 +580,21 @@ export async function streamChat(request: ChatRequest, options: StreamOptions): 
           options.onDelta(delta);
         },
       );
+
+      // Sama seperti chat(): stream bisa selesai tanpa satu potong teks pun
+      // (model reasoning kehabisan jatah). Tanpa pemeriksaan ini, fallback
+      // tidak pernah dicoba dan user melihat pesan kosong.
+      //
+      // PENTING: tool call yang sah memang tidak selalu punya teks. Dulu
+      // pemeriksaan ini membuangnya dan bot melapor "semua provider gagal"
+      // padahal model cuma mau memanggil fungsi (mis. simpan memori).
+      const hasToolCalls = Boolean(result.message.tool_calls?.length);
+      if (!emitted && !hasToolCalls) {
+        const detail = 'stream selesai tanpa teks (jatah token mungkin habis untuk berpikir)';
+        failures.push(`${provider.name}: ${detail}`);
+        logger.warn(`Provider ${provider.name} ${detail} — mencoba provider berikutnya.`);
+        continue;
+      }
 
       if (index > 0) {
         logger.info(`Provider utama gagal — jawaban streaming diberikan oleh fallback ${result.provider}/${result.model}.`);

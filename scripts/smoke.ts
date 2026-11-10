@@ -51,7 +51,6 @@ const { buildTranscriptHtml, transcriptFileName } = await import('../src/lib/tra
 const { chunkMessage, truncate, normalize } = await import('../src/lib/text.js');
 const { detectLanguage } = await import('../src/lib/language.js');
 const { parseConsolidatedMemories } = await import('../src/features/memory.js');
-const { invalidateIndex } = await import('../src/features/rag.js');
 const { checkRateLimit } = await import('../src/lib/ratelimit.js');
 const { parseFallbackSpec, providerNameForBaseUrl, buildProviderChain } = await import('../src/lib/providers.js');
 const { chunkText, extractText, extractFileText, htmlToText, DocumentError } = await import('../src/lib/chunker.js');
@@ -100,7 +99,6 @@ function test(name: string, fn: () => void): void {
 
 const GUILD = '111111111111111111';
 const USER = '222222222222222222';
-const CHANNEL = '333333333333333333';
 
 console.log('\n🧪 Zypher AI Bot — smoke test\n');
 
@@ -357,7 +355,6 @@ await testAsync('panel: default aktif, simpan pesan, pindah channel, toggle', as
 await testAsync('statistik dashboard dipisah per server', async () => {
   const guildA = '777777777777777777';
   const guildB = '888888888888888888';
-  const channelA = '999999999999999991';
 
   await setDmSession(USER, guildA);
   await appendMessage(`dm:${USER}`, 'user', 'Halo dari server A');
@@ -2370,7 +2367,7 @@ await testAsync('banner: data URI rusak / bukan gambar ditolak', async () => {
 });
 
 await testAsync('banner: gambar terlalu kecil ditolak (akan pecah sebagai latar)', async () => {
-  const { saveBanner, BannerError } = await import('../src/features/banner.js');
+  const { saveBanner } = await import('../src/features/banner.js');
   let message = '';
   try {
     await saveBanner(`data:image/png;base64,${PNG_1x1.toString('base64')}`, 'abc123');
@@ -2626,6 +2623,278 @@ await testAsync('dashboard: tombol kirim tes ada di kedua halaman', async () => 
   assert.ok(pages.includes("'/api/send-test/agent'"), 'endpoint agent');
   assert.ok(pages.includes('Kirim tes sungguhan'), 'label jelas membedakan dari pratinjau');
   assert.ok(pages.includes('Kirim tes ke channel'), 'tombol agent & perpisahan');
+});
+
+await testAsync('kirim tes: error Discord yang samar diterjemahkan', async () => {
+  const { sendAgentTest } = await import('../src/features/test-send.js');
+  const channel = {
+    id: '111111111111111111', name: 'ngobrol',
+    isTextBased: () => true, isDMBased: () => false,
+    permissionsFor: () => ({ has: () => true }),
+    // Inilah balasan asli Discord saat embed berisi data URI ditolak.
+    send: async () => { throw new Error('Received one or more errors'); },
+  };
+  const client = {
+    guilds: { fetch: async () => ({ id: '1', name: 'S', channels: { fetch: async () => channel }, members: { me: { id: '2' } } }) },
+  } as never;
+
+  await assert.rejects(
+    () => sendAgentTest(client, { guildId: '1', channelId: channel.id, reply: 'halo', role: 'chat', sampleMessage: 'hai', userName: 'Sky' }),
+    (error: unknown) => {
+      const message = (error as Error).message;
+      assert.match(message, /Received one or more errors/, 'pesan asli tetap disertakan');
+      assert.match(message, /banner|kartu PNG/i, 'menjelaskan kemungkinan penyebab');
+      assert.match(message, /unggah ulang/i, 'memberi tindakan yang bisa dilakukan');
+      return true;
+    },
+  );
+});
+
+await testAsync('vision: gambar di DM ikut dibaca (tidak lagi langsung kosong)', async () => {
+  // Bug: collectImages langsung `return EMPTY` bila message.guildId kosong,
+  // sehingga gambar di DM tidak pernah dibaca walau modelnya multimodal.
+  const source = await readFile('src/features/vision.ts', 'utf8');
+  const fn = source.slice(source.indexOf('export async function collectImages'));
+  // Hanya periksa kode, bukan komentar yang menjelaskan bug lama.
+  const code = fn
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('//') && !line.trim().startsWith('*'))
+    .join('\n');
+  assert.equal(
+    /if \(!message\.guildId\)/.test(code),
+    false,
+    'tidak lagi menolak pesan DM',
+  );
+
+  const { collectImages } = await import('../src/features/vision.js');
+  const { AttachmentBuilder } = await import('discord.js');
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  const attachment = new AttachmentBuilder(png, { name: 'foto.png' });
+  const fake = {
+    guildId: null,
+    attachments: new Map([['1', { name: 'foto.png', contentType: 'image/png', size: png.length, url: 'https://contoh.invalid/foto.png' }]]),
+  };
+
+  // Unduhan di-stub supaya test tidak menyentuh jaringan.
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(png, { headers: { 'content-type': 'image/png' } })) as never;
+  try {
+    const result = await collectImages(fake as never);
+    assert.equal(result.dataUris.length, 1, 'gambar DM terkirim ke model');
+    assert.ok(result.dataUris[0]!.startsWith('data:image/png;base64,'), 'berupa data URI');
+    assert.equal(attachment.name, 'foto.png');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+await testAsync('voice: voice note di DM ditranskrip, bukan ditolak', async () => {
+  const dm = await readFile('src/features/dm.ts', 'utf8');
+  const code = dm
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('//') && !line.trim().startsWith('*'))
+    .join('\n');
+  // Panggilan sebenarnya, bukan sekadar nama di komentar/import.
+  assert.ok(/await readVoiceNote\(/.test(code), 'memanggil readVoiceNote');
+  assert.ok(/await replyWithSpeech\(/.test(code), 'memanggil replyWithSpeech untuk balasan suara');
+  assert.ok(/if \(voiceNoteText && config\.voice\.ttsEnabled\)/.test(code), 'TTS hanya untuk voice note');
+  // Penolakan teks hanya boleh muncul kalau tidak ada teks DAN tidak ada gambar.
+  assert.ok(
+    /if \(!question && collected\.dataUris\.length === 0\)/.test(dm),
+    'tidak menolak pesan yang punya lampiran',
+  );
+
+  const chat = await readFile('src/features/chat.ts', 'utf8');
+  assert.ok(chat.includes('export async function readVoiceNote'), 'helper bisa dipakai DM');
+  assert.ok(chat.includes('export async function replyWithSpeech'), 'TTS bisa dipakai DM');
+});
+
+await testAsync('stream: stream kosong memicu provider berikutnya', async () => {
+  // Pasangan dari chat(): stream bisa selesai tanpa satu potong teks pun.
+  const llm = await readFile('src/lib/llm.ts', 'utf8');
+  const streamFn = llm.slice(llm.indexOf('export async function streamChat'));
+  assert.ok(/if \(!emitted && !hasToolCalls\)/.test(streamFn), 'stream kosong diperiksa');
+  assert.ok(streamFn.includes('continue;'), 'lanjut ke provider berikutnya');
+  // Tool call yang sah memang tanpa teks — jangan dianggap kosong.
+  assert.ok(
+    /const hasToolCalls = Boolean\(result\.message\.tool_calls\?\.length\)/.test(streamFn),
+    'tool_calls dihitung sebagai isi yang sah',
+  );
+});
+
+await testAsync('banner: halaman tidak menyisipkan data URI (bisa belasan MB)', async () => {
+  // Dua banner 8 MB sebagai data URI = HTML belasan MB; di HP praktis mati.
+  const { welcomePage } = await import('../src/web/ui/pages.js');
+  const page = welcomePage({
+    guildId: '1',
+    guildName: 'Server',
+    welcome: {
+      enabled: true, useAi: false, channelId: null, template: 'Halo {user}!',
+      imageEnabled: false, includeAvatar: false, style: null, example: null,
+      bannerPath: 'banner-abc.png', hasBanner: true,
+    },
+    goodbye: {
+      enabled: false, useAi: false, channelId: null, template: 'Bye {user}!',
+      imageEnabled: false, includeAvatar: false, style: null, example: null,
+      bannerPath: 'banner-def.png', hasBanner: true,
+    },
+    channels: [],
+    botOnline: false,
+    sampleName: 'Sky',
+    cardRenderer: { available: false, path: null },
+    persona: null, model: null, defaultModel: 'x', embedModel: null, ragEnabled: false,
+    ttsReplyInRoom: null, ttsReplyInRoomDefault: true, ragEnabledSetting: null,
+    ragEnabledDefault: true, autoMemorySetting: null, autoMemoryDefault: true,
+    adminOnlyRoomsSetting: null, adminOnlyRoomsDefault: false,
+    stats: { rooms: 0, messages: 0, documents: 0 },
+    status: { online: false, mode: 'standalone', uptimeSeconds: 0 },
+    counts: {},
+  } as never);
+
+  // Favicon memang data URI SVG kecil — yang dilarang adalah gambar base64
+  // (banner bisa 8 MB dan ada dua).
+  assert.equal(page.includes('data:image/png;base64,'), false, 'tidak ada banner base64 di HTML');
+  assert.equal(page.includes('data:image/jpeg;base64,'), false, 'tidak ada banner JPEG base64');
+  assert.equal(page.includes('data:image/webp;base64,'), false, 'tidak ada banner WebP base64');
+  assert.ok(page.includes('/api/banner/welcome?v=banner-abc.png'), 'gambar diambil lewat URL');
+  assert.ok(page.includes('/api/banner/goodbye?v=banner-def.png'), 'banner perpisahan juga URL');
+  // Penanda "ada banner" harus boolean, bukan string kosong (falsy).
+  assert.ok(page.includes('src="/api/banner/welcome'), 'gambar tampil saat ada banner');
+});
+
+await testAsync('banner: ada endpoint gambar + penanda boolean', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(/method === 'GET'/.test(server) && server.includes("path.endsWith('/welcome')"), 'endpoint GET banner ada');
+  assert.ok(server.includes('readBannerBytes'), 'menyajikan byte gambar');
+  assert.ok(server.includes("'cache-control': 'private, max-age=86400'"), 'gambar bisa di-cache');
+  assert.ok(server.includes('hasBanner: bannerExists('), 'penanda boolean, bukan string');
+});
+
+await testAsync('kirim: banner dikirim sebagai lampiran, bukan data URI', async () => {
+  // Bug nyata: embed.setImage(dataUri) ditolak Discord dengan pesan samar
+  // "Received one or more errors", sehingga sambutan, salam perpisahan, dan
+  // tombol kirim tes semuanya gagal terkirim tanpa penjelasan.
+  const welcome = await readFile('src/features/welcome.ts', 'utf8');
+  const test = await readFile('src/features/test-send.ts', 'utf8');
+
+  for (const [name, source] of [['welcome.ts', welcome], ['test-send.ts', test]] as const) {
+    const setImages = [...source.matchAll(/embed\.setImage\(([^)]*)\)/g)].map((m) => m[1]!.trim());
+    assert.ok(setImages.length > 0, `${name} memakai setImage`);
+    for (const arg of setImages) {
+      assert.ok(
+        arg.includes('attachment://'),
+        `${name}: setImage harus merujuk attachment://, bukan ${arg.slice(0, 40)}`,
+      );
+    }
+    // Data URI hanya boleh dipakai untuk SVG kartu / <img> pratinjau.
+    assert.ok(
+      source.includes('readBannerAttachment'),
+      `${name} memakai readBannerAttachment untuk lampiran`,
+    );
+  }
+});
+
+await testAsync('ai: balasan kosong memicu provider berikutnya (bukan teks kosong)', async () => {
+  // Dulu rantai fallback hanya jalan kalau ada error. Model reasoning yang
+  // menghabiskan token untuk berpikir tetap dianggap "berhasil", jadi user
+  // menerima teks kosong padahal provider cadangan tersedia.
+  const llm = await readFile('src/lib/llm.ts', 'utf8');
+  assert.ok(llm.includes('hasVisibleText'), 'ada pemeriksaan isi balasan');
+  assert.ok(
+    /if \(!hasVisibleText\(result\.message\)\)/.test(llm),
+    'balasan kosong diperlakukan sebagai kegagalan provider',
+  );
+  assert.ok(llm.includes('continue;'), 'lanjut ke provider berikutnya');
+  // reasoning_content harus dianggap isi yang sah.
+  const block = llm.slice(llm.indexOf('function hasVisibleText'));
+  assert.ok(block.includes('reasoning_content'), 'reasoning_content ikut diterima');
+  assert.ok(block.includes('tool_calls'), 'tool call tanpa teks tetap sah');
+});
+
+await testAsync('ai: penolakan max_tokens diulang di provider yang sama (bukan lompat fallback)', async () => {
+  // Bug nyata: AiError dilempar tanpa membawa `tokenCap`, jadi chat() tidak
+  // pernah tahu ada plafon token. Akibatnya permintaan langsung dilempar ke
+  // provider cadangan padahal provider utama hanya perlu angka lebih kecil —
+  // atau lebih buruk, user tidak pernah dapat jawaban sama sekali.
+  const llm = await readFile('src/lib/llm.ts', 'utf8');
+
+  // 1. Nilai plafon harus tersimpan di error yang dilempar.
+  const ctor = llm.slice(llm.indexOf('export class AiError'), llm.indexOf('const clients = new Map'));
+  assert.ok(/tokenCap\?: number/.test(ctor), 'AiError membawa tokenCap');
+
+  // 2. classify() mengisi field itu, bukan cuma mengembalikan objek terpisah.
+  assert.ok(
+    /new AiError\(`plafon max_tokens provider \(\$\{cap\}\)`, status, true, false, cap\)/.test(llm),
+    'classify meneruskan cap ke AiError',
+  );
+
+  // 3. chat() membacanya kembali dari AiError (dulu dipaksa undefined).
+  const chatFn = llm.slice(llm.indexOf('export async function chat'), llm.indexOf('async function streamOnProvider'));
+  assert.ok(/tokenCap: error\.tokenCap/.test(chatFn), 'chat membaca tokenCap dari AiError');
+  assert.equal(/tokenCap: undefined/.test(chatFn), false, 'tidak ada lagi tokenCap yang dibuang');
+
+  // 4. Pengaman anti-loop tetap ada: satu kali ulang per provider.
+  assert.ok(chatFn.includes('tokenRetries.has(key)'), 'ada penjaga agar tidak mengulang terus');
+  assert.ok(chatFn.includes('index -= 1'), 'kembali ke provider yang sama');
+});
+
+await testAsync('ai: 429 langsung pindah provider (tidak menunggu backoff)', async () => {
+  // Menunggu 400ms + 800ms untuk rate limit hanya membuang waktu user;
+  // provider cadangan bisa menjawab sekarang juga.
+  const llm = await readFile('src/lib/llm.ts', 'utf8');
+  const guards = llm.match(/aiError\.status === 429 && hasFallbackProvider\(\)/g) ?? [];
+  assert.equal(guards.length, 2, 'aturan ini berlaku di chat() dan streamChat()');
+  assert.ok(/function hasFallbackProvider\(\): boolean/.test(llm), 'memakai satu pengecekan bersama');
+});
+
+await testAsync('config: AI_BREVITY_TOKENS terpisah dari AI_MAX_TOKENS', async () => {
+  const { config } = await import('../src/config.js');
+  assert.equal(typeof config.ai.brevityTokens, 'number', 'brevityTokens ada di config');
+  assert.ok(config.ai.brevityTokens >= 256, `jatah ringkas minimal 256 token (dapat ${config.ai.brevityTokens})`);
+  assert.ok(
+    config.ai.maxTokens >= config.ai.brevityTokens,
+    `maxTokens (${config.ai.maxTokens}) tidak boleh lebih kecil dari brevityTokens (${config.ai.brevityTokens})`,
+  );
+
+  // Angka kecil hardcoded dulu penyebab "teks kosong": pemanggil memaksa 80-220.
+  for (const file of ['src/features/preview.ts', 'src/features/agent.ts', 'src/features/dm.ts']) {
+    const source = await readFile(file, 'utf8');
+    const code = source
+      .split('\n')
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .join('\n');
+    const stray = [...code.matchAll(/maxTokens:\s*(\d+)/g)].filter((m) => Number(m[1]) < 256);
+    assert.equal(stray.length, 0, `${file} masih memaksa max_tokens kecil (${stray.map((m) => m[1]).join(', ')})`);
+  }
+});
+
+await testAsync('ai: parseTokenCap membaca format error provider nyata', async () => {
+  const { parseTokenCap } = await import('../src/lib/llm.js');
+  assert.equal(parseTokenCap('max_tokens must be less than or equal to 8191'), 8191);
+  assert.equal(parseTokenCap("'max_tokens' too large: 8192 (maximum 4096)"), 4096);
+  assert.equal(parseTokenCap('Model returned empty content'), null, 'error lain tidak dianggap plafon');
+  assert.equal(parseTokenCap('max_tokens must be less than or equal to 12'), null, 'angka tidak masuk akal ditolak');
+
+  // "maximum context length" adalah percakapan kepanjangan, bukan plafon token
+  // keluaran. Kalau tertukar, user disuruh menunggu retry yang pasti gagal
+  // padahal yang perlu dilakukan adalah /reset.
+  assert.equal(parseTokenCap('maximum context length is 8192 tokens'), null, 'konteks kepanjangan bukan plafon');
+});
+
+await testAsync('agent: pesan uji memakai teks biasa, bukan embed', async () => {
+  const source = await readFile('src/features/test-send.ts', 'utf8');
+  const block = source.slice(source.indexOf('export async function sendAgentTest'));
+  const body = block.slice(0, block.indexOf('catch (error)'));
+
+  // Agent di channel membalas sebagai pesan biasa supaya menyatu dengan member.
+  // Pesan uji harus memperlihatkan bentuk yang sama.
+  assert.equal(/embeds:\s*\[/.test(body), false, 'tidak mengirim embed');
+  assert.ok(body.includes('content: body'), 'mengirim konten teks');
+  assert.ok(body.includes('quoted'), 'pesan member dikutip sebagai blockquote');
+  assert.ok(body.includes('allowedMentions'), 'mention tetap tidak dipicu');
 });
 
 await testAsync('css: ikon di tombol kotak tepat di tengah & badge sejajar judul', async () => {

@@ -66,7 +66,7 @@ platform Discord yang tidak bisa dilewati bot. Karena itu fitur room/thread diha
 | 👋 **Sambutan & perpisahan** | Sapaan yang **digenerate AI per orang** — pakai nama panggilan + waktu setempat, jadi kalimatnya beda tiap member (bukan template seragam). Bisa disertai **kartu PNG** berisi nama & sapaan, dikirim lewat DM atau channel. Saat member keluar, bot mengucapkan **salam perpisahan** dengan nada sopan. Lihat [docs/sambutan-agent.md](docs/sambutan-agent.md). |
 | 🗣️ **AI Agent di channel** | Di **dua** channel: bot ikut ngobrol seperti anggota komunitas di channel ngobrol (balas mention/reply, tanggapi emoji/sticker, menyapa saat sepi), dan **mengomentari gambar & video** di channel galeri. **Diam saat obrolan ramai**, dibatasi N balasan per jam, dan riwayat obrolannya **hanya di memori** — tidak ditulis ke database. |
 | 🖥️ **Dashboard web** | `/`, `/panel`, `/sambutan`, `/agent`, `/dokumen`, `/keyword`, `/moderasi`, `/pengaturan` (8 halaman) — gaya editorial gelap ([pratinjau](docs/screenshots/README.md)), **toggle fitur AI per server** (RAG, Auto Memory, tombol chat DM khusus admin, Suara balasan AI). Sidebar kiri, grafik aktivitas 7 hari, kartu statistik per server. Nama server tampil di topbar (bukan ID mentah), dan panel "Chat via DM" bisa dikirim, dipindah, atau dimatikan dari `/panel`. **Dashboard tidak menyimpan isi percakapan maupun memori member.** |
-| 📚 **Dokumen RAG** | Upload `.txt`/`.md`/`.csv`/`.json`/`.pdf`/`.docx` (maks 8 MB) lewat `/dokumen tambah` atau dashboard. AI menjawab dari isi dokumen dan menyebut sumbernya (`📚 Sumber: faq.md — bagian 3`). Pencarian BM25 bawaan — **tanpa API key tambahan**. |
+| 📚 **Dokumen RAG** | Upload `.txt`/`.md`/`.csv`/`.json`/`.pdf`/`.docx` (maks 8 MB) lewat `/dokumen tambah` atau dashboard. AI menjawab dari isi dokumen dan menyebut sumbernya (`📚 Sumber: faq.md — bagian 3`). Ada **uji pencarian** di halaman Dokumen (tombol Cari) untuk melihat potongan mana yang akan dipakai AI beserta skornya — sama seperti `/dokumen cari`. Pencarian BM25 bawaan — **tanpa API key tambahan**. |
 | 🔑 **Keyword kustom** | Admin menulis jawaban acuan; AI memakainya sebagai **fakta** dan menyusun ulang kalimatnya agar **bervariasi setiap kali** (bukan copy-paste). |
 | 🎭 **Persona per server** | Mis. "kamu guru bahasa Inggris yang sabar" — berlaku untuk semua chat yang memakai server itu sebagai konteks. |
 | 📄 **Transkrip sesi** | HTML mandiri (dark mode, rapi, aman dari XSS) berisi percakapan + memori + ringkasan AI. **Hanya dikirim ke DM member** — tidak diarsipkan di dashboard. |
@@ -189,7 +189,8 @@ Klik **Chat via DM** → bot mengirim DM ke kamu → mulai ngobrol di DM.
 | `AI_BASE_URL` | `https://api.groq.com/openai/v1` | Endpoint OpenAI-compatible. Ganti untuk pindah provider. |
 | `AI_MODEL` | `openai/gpt-oss-120b` | Model yang dipakai (lihat [docs/models.md](docs/models.md)) |
 | `AI_TEMPERATURE` | `0.8` | Kreativitas (0–2). Naikkan kalau variasi jawaban terasa monoton. |
-| `AI_MAX_TOKENS` | `700` | Panjang maksimal jawaban |
+| `AI_MAX_TOKENS` | `4096` | Jatah maksimum jawaban (64–8192). Kalau provider menolak angkanya, bot otomatis menurunkannya sendiri dan mengingat batas itu. |
+| `AI_BREVITY_TOKENS` | `1024` | Jatah untuk jawaban pendek: sapaan agent, sambutan, salam perpisahan, pemecah sepi |
 | `AI_HISTORY_LIMIT` | `20` | Jumlah pesan terakhir sebagai konteks |
 | `AI_FALLBACKS` | kosong | Provider cadangan, mis. `gemini:gemini-3.8-flash,openrouter:...` |
 | `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `NVIDIA_API_KEY`, `GROQ_API_KEY` | kosong | Key untuk provider cadangan |
@@ -237,6 +238,14 @@ AI_FALLBACKS=gemini:gemini-3.8-flash,openrouter:google/gemma-4-31b-it:free
 GEMINI_API_KEY=AIza...
 OPENROUTER_API_KEY=sk-or-v1-...
 ```
+
+Rantai fallback bekerja begini:
+
+- Provider utama dicoba lebih dulu, lalu cadangan sesuai urutan di `AI_FALLBACKS`.
+- Rate limit (`429`) langsung pindah provider — tidak menunggu backoff yang pasti sia-sia.
+- Balasan kosong dianggap gagal, jadi provider berikutnya dicoba (khas model reasoning yang menghabiskan jatah untuk berpikir).
+- Provider yang menolak `AI_MAX_TOKENS` dicoba ulang di tempat dengan batas yang disebutkan provider, dan batas itu diingat untuk permintaan berikutnya.
+- Kalau semua provider gagal, user menerima penjelasan singkat — bukan jawaban kosong.
 
 ```env
 # OpenAI
@@ -455,9 +464,12 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke          # 220 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
+npm run smoke          # 233 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
 npm run smoke:pg       # 14 test jalur Postgres (pg-mem, tanpa server database)
-npm run test:fallback  # uji rantai fallback provider dengan server tiruan
+npm run test:fallback  # 15 pemeriksaan rantai fallback provider (server tiruan)
+npm run test:ui        # 75 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
+npm run test:browser   # uji klik sungguhan di Chromium (butuh dashboard hidup)
+npm run verify         # semuanya sekaligus: typecheck ketat + smoke + fallback + UI
 npm run dashboard      # nyalakan dashboard web saja, tanpa bot Discord
 npm run migrate:pg     # pindahkan data SQLite → Postgres
 npm run bundle         # bikin zypher-deploy.zip untuk panel hosting
@@ -477,9 +489,29 @@ riwayat room, escape XSS pada transkrip, chunking pesan, rate limit, parsing `AI
 dokumen RAG, tokenizer/BM25, ingest–cari–hapus dokumen di database sungguhan (in-memory), serta
 rendering tiap halaman dashboard (sidebar, kartu statistik, grafik 7 hari, empty state, escape XSS).
 
-`npm run test:fallback` menyalakan dua server OpenAI-compatible tiruan (provider utama selalu 429) dan
-memeriksa 10 hal: pindah provider, payload utuh, berhenti saat prompt kepanjangan, **delta streaming
-diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai utuh** (memori tetap jalan).
+`npm run test:fallback` menyalakan dua server OpenAI-compatible tiruan — tanpa jaringan, tanpa API key —
+dan memeriksa 15 hal: pindah provider saat 429, payload utuh, berhenti saat prompt kepanjangan (tanpa
+retry sia-sia), **delta streaming diterima bertahap**, **tool call yang datang sebagai delta tetap
+terangkai utuh**, **plafon `max_tokens` yang ditolak diulang di provider yang sama** (bukan langsung
+lompat fallback) lalu diingat, serta **balasan kosong** yang memicu provider berikutnya sampai error
+yang jelas kalau semua provider kosong.
+
+`npm run test:ui` adalah pengaman untuk bagian dashboard yang **tidak bisa dilihat `tsc`**:
+hampir semua logika interaktifnya ada di dalam template literal. Skrip ini merender setiap
+halaman, menjalankan setiap `<script>` di `node:vm` dengan DOM tiruan, lalu **mengklik tombol
+simpan/tes** dan memeriksa permintaan yang terkirim. Tanpa browser, tanpa jaringan — jadi ikut
+berjalan di CI. Yang diperiksa: JSON di HTML valid, JS jalan tanpa error, setiap
+`getElementById` punya elemennya (juga yang baru disentuh setelah tombol diklik), setiap
+fungsi `onclick` ada, helper bersama (`postJson`, `toast`) tersedia, dan setiap endpoint yang
+dipanggil UI benar-benar ditangani server.
+
+`npm run test:browser` memeriksa sisanya di Chromium sungguhan: login, klik tombol tes,
+unggah banner, dan error di console browser. Tidak masuk CI karena butuh Chromium ~150 MB —
+pasang sekali dengan `npx playwright install chromium`.
+
+**CI otomatis** (`.github/workflows/ci.yml`) menjalankan typecheck ketat (`--noUnusedLocals`),
+`smoke`, `test:fallback`, `test:ui`, dan `build` untuk setiap pull request — jadi regresi seperti import mati
+atau rantai fallback yang rusak ketahuan sebelum di-merge, bukan setelah bot diam di server.
 
 ---
 
