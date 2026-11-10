@@ -105,16 +105,25 @@ export function dmServerPickerEmbed(
   const active = current ? `\n\n**Aktif sekarang:** ${choices.find((c) => c.id === current.guildId)?.name ?? current.guildId}` : '';
   return new EmbedBuilder()
     .setColor(BRAND_COLOR)
-    .setTitle('🌐 Pilih server')
+    .setTitle('🌐 Pilih server konteks')
     .setDescription(
       [
-        'Konteks AI (persona, dokumen rujukan, dan memanggil memori) mengikuti server yang dipilih.',
+        '**`/server` bukan perintah untuk membuat channel.** Ini hanya memilih',
+        '**server mana** yang dipakai sebagai sumber konteks AI di DM ini:',
         '',
+        '> 🎭 **Persona** — gaya bicara yang diatur admin server itu',
+        '> 📚 **Dokumen** — FAQ, aturan, dan catatan yang di-upload ke server itu',
+        '> 🧠 **Memori** — fakta yang kamu simpan lewat `/ingat` di server itu',
+        '',
+        'Chat tetap berjalan di DM ini. Tidak ada channel atau room yang dibuat,',
+        'dan admin server tetap tidak bisa membaca percakapan kita.',
+        '',
+        `**Server yang kamu ikuti (${choices.length}):**`,
         ...choices.map((choice, index) => `**${index + 1}.** ${choice.name}`),
         active,
       ].join('\n'),
     )
-    .setFooter({ text: 'Pilih lewat tombol di bawah, atau /server nama:<server>' });
+    .setFooter({ text: 'Klik tombol di bawah, atau /server nama:<nama server>' });
 }
 
 export function dmServerPickerRow(
@@ -375,7 +384,7 @@ async function generateDmAnswer(input: {
  *
  * Transkrip **hanya** dikirim ke DM — tidak disimpan di database mana pun.
  */
-export async function endDmSession(user: User, botName: string): Promise<{ messages: number } | null> {
+export async function endDmSession(user: User, botName: string): Promise<{ messages: number; delivered: boolean } | null> {
   const session = await getDmSession(user.id);
   if (!session) return null;
 
@@ -436,6 +445,7 @@ export async function endDmSession(user: User, botName: string): Promise<{ messa
 
   const fileName = transcriptFileName(user.username, endedAt);
 
+  let delivered = true;
   try {
     await user.send({
       content: [
@@ -447,13 +457,16 @@ export async function endDmSession(user: User, botName: string): Promise<{ messa
       files: [new AttachmentBuilder(Buffer.from(html, 'utf8'), { name: fileName })],
     });
   } catch (error) {
+    delivered = false;
     logger.warn('Gagal mengirim transkrip DM', errorMessage(error));
   }
 
   await clearHistory(`dm:${user.id}`);
   await deleteDmSession(user.id);
 
-  return { messages: lines.length };
+  // `delivered: false` = sesi tetap ditutup, tapi member tidak menerima file.
+  // Pemanggil wajib memberi tahu, jangan diam-diam mengaku berhasil.
+  return { messages: lines.length, delivered };
 }
 
 /** Jumlah pesan di sesi DM aktif. */

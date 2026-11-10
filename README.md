@@ -266,7 +266,7 @@ Kalau model tidak mendukung *tool calling*, bot otomatis lanjut tanpa fitur memo
 | `/ingat fakta:` | Semua | Simpan memori manual tentang diri sendiri |
 | `/memori` | Semua | Lihat daftar memori **milik sendiri** (dengan id) |
 | `/lupakan id:` / `semua:true` | Semua | Hapus satu / semua memori sendiri |
-| `/server [nama]` | Semua | Pilih server konteks untuk chat DM (persona, dokumen, memori) |
+| `/server [nama]` | Semua | Pilih **server konteks** untuk chat DM (persona, dokumen, memori mana yang dipakai). **Tidak membuat channel apa pun** |
 | `/akhiri` | Semua | Tutup sesi DM → transkrip HTML dikirim ke DM → riwayat dihapus |
 | `/reset` | Semua | Hapus riwayat konteks DM, memori tetap |
 | `/dokumen tambah file:` | Admin | Upload dokumen teks sebagai pengetahuan AI |
@@ -431,6 +431,9 @@ diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai u
 | `connect ECONNREFUSED` / `SSL required` (Postgres) | `DATABASE_URL` salah atau `sslmode=require` belum ditambahkan. Tes cepat: `DATABASE_URL=... npm run migrate:pg`. Lihat [docs/postgres.md](docs/postgres.md). |
 | Mau ganti token dashboard | `npm run token -- --write`, lalu perbarui juga variabel di panel hosting dan restart. |
 | Dashboard tidak bisa dibuka | `DASHBOARD_TOKEN` kosong atau kurang dari 12 karakter. Cek log: harus ada `🌐 Dashboard: …`. |
+| `/akhiri` di DM tidak menutup sesi — bot malah membalas seperti ngobrol biasa | Slash command tidak terdaftar untuk DM. Log harus memuat `slash command global didaftarkan (termasuk untuk DM)`. Kalau log-nya menyebut pendaftaran **per-guild**, bot masih versi lama — update lalu restart. Lihat [setup](docs/setup.md#cara-mendapatkan-dev_guild_id). |
+| `/server` membalas penjelasan tentang server, bukan menu pilihan | Sama seperti di atas — teksnya dianggap pertanyaan biasa, lalu AI menjawab dari dokumen RAG. |
+| Tombol pilihan server di embed `/server` tidak bereaksi | Sudah diperbaiki: `dm:server:<id>` sebelumnya dibuat tapi tidak punya handler. |
 | Data hilang setelah redeploy | Hosting tanpa disk persisten. Lihat [docs/hosting.md](docs/hosting.md) + unduh backup `zypher.db`. |
 | Jawaban terasa monoton | Naikkan `AI_TEMPERATURE` (mis. `0.9`) dan pastikan keyword punya jawaban acuan yang cukup detail. |
 

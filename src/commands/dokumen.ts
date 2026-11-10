@@ -4,7 +4,7 @@ import { DocumentError, ingestDocument, listGuildDocuments, removeDocument, sear
 import { errorMessage, logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
 import { replyEphemeral, requireAdmin, requireGuild } from './helpers.js';
-import type { Command } from './types.js';
+import { dmCapable, type Command } from './types.js';
 
 /** Batas ukuran file yang mau diunduh (byte). Sisanya jelas ditolak. */
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
@@ -16,41 +16,43 @@ function formatSize(chars: number): string {
 }
 
 export const dokumenCommand: Command = {
-  data: new SlashCommandBuilder()
-    .setName('dokumen')
-    .setDescription('Kelola dokumen pengetahuan server untuk AI (RAG)')
-    .addSubcommand((sub) =>
-      sub
-        .setName('tambah')
-        .setDescription('Upload dokumen (.txt/.md/.csv/.json/.pdf/.docx) sebagai pengetahuan AI')
-        .addAttachmentOption((option) =>
-          option.setName('file').setDescription('File teks yang mau dijadikan rujukan AI').setRequired(true),
-        )
-        .addStringOption((option) =>
-          option
-            .setName('nama')
-            .setDescription('Nama dokumen (default: nama file). Nama sama = mengganti versi lama.')
-            .setRequired(false)
-            .setMaxLength(120),
-        ),
-    )
-    .addSubcommand((sub) => sub.setName('daftar').setDescription('Lihat semua dokumen pengetahuan server'))
-    .addSubcommand((sub) =>
-      sub
-        .setName('hapus')
-        .setDescription('Hapus dokumen dari pengetahuan AI')
-        .addIntegerOption((option) =>
-          option.setName('id').setDescription('Id dokumen (lihat /dokumen daftar)').setRequired(true).setMinValue(1),
-        ),
-    )
-    .addSubcommand((sub) =>
-      sub
-        .setName('cari')
-        .setDescription('Uji pencarian: lihat potongan dokumen yang akan dipakai AI')
-        .addStringOption((option) =>
-          option.setName('pertanyaan').setDescription('Pertanyaan untuk diuji').setRequired(true).setMaxLength(300),
-        ),
-    ),
+  data: dmCapable(
+    new SlashCommandBuilder()
+      .setName('dokumen')
+      .setDescription('Kelola dokumen pengetahuan server untuk AI (RAG)')
+      .addSubcommand((sub) =>
+        sub
+          .setName('tambah')
+          .setDescription('Upload dokumen (.txt/.md/.csv/.json/.pdf/.docx) sebagai pengetahuan AI')
+          .addAttachmentOption((option) =>
+            option.setName('file').setDescription('File teks yang mau dijadikan rujukan AI').setRequired(true),
+          )
+          .addStringOption((option) =>
+            option
+              .setName('nama')
+              .setDescription('Nama dokumen (default: nama file). Nama sama = mengganti versi lama.')
+              .setRequired(false)
+              .setMaxLength(120),
+          ),
+      )
+      .addSubcommand((sub) => sub.setName('daftar').setDescription('Lihat semua dokumen pengetahuan server'))
+      .addSubcommand((sub) =>
+        sub
+          .setName('hapus')
+          .setDescription('Hapus dokumen dari pengetahuan AI')
+          .addIntegerOption((option) =>
+            option.setName('id').setDescription('Id dokumen (lihat /dokumen daftar)').setRequired(true).setMinValue(1),
+          ),
+      )
+      .addSubcommand((sub) =>
+        sub
+          .setName('cari')
+          .setDescription('Uji pencarian: lihat potongan dokumen yang akan dipakai AI')
+          .addStringOption((option) =>
+            option.setName('pertanyaan').setDescription('Pertanyaan untuk diuji').setRequired(true).setMaxLength(300),
+          ),
+      ),
+  ),
 
   async execute(interaction) {
     if (!(await requireGuild(interaction)) || !interaction.guildId) return;

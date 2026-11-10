@@ -1,18 +1,20 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { clearMemories, deleteMemory, listMemories } from '../db/repo.js';
 import { replyEphemeral, resolveContextGuild } from './helpers.js';
-import type { Command } from './types.js';
+import { dmCapable, type Command } from './types.js';
 
 export const lupakanCommand: Command = {
-  data: new SlashCommandBuilder()
-    .setName('lupakan')
-    .setDescription('Hapus memori yang disimpan tentang kamu')
-    .addIntegerOption((option) =>
-      option.setName('id').setDescription('Nomor memori (lihat di /memori)').setMinValue(1).setRequired(false),
+  data: dmCapable(
+    new SlashCommandBuilder()
+      .setName('lupakan')
+      .setDescription('Hapus memori yang disimpan tentang kamu')
+      .addIntegerOption((option) =>
+        option.setName('id').setDescription('Nomor memori (lihat di /memori)').setMinValue(1).setRequired(false),
     )
-    .addBooleanOption((option) =>
-      option.setName('semua').setDescription('Hapus SEMUA memori tentang kamu').setRequired(false),
+      .addBooleanOption((option) =>
+        option.setName('semua').setDescription('Hapus SEMUA memori tentang kamu').setRequired(false),
     ),
+  ),
 
   async execute(interaction) {
     const guildId = await resolveContextGuild(interaction);

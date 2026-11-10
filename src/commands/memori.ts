@@ -2,12 +2,14 @@ import { EmbedBuilder, MessageFlags, SlashCommandBuilder, type User } from 'disc
 import { listMemories } from '../db/repo.js';
 import { BRAND_COLOR } from '../features/ui.js';
 import { resolveContextGuild } from './helpers.js';
-import type { Command } from './types.js';
+import { dmCapable, type Command } from './types.js';
 
 export const memoriCommand: Command = {
-  data: new SlashCommandBuilder()
-    .setName('memori')
-    .setDescription('Lihat daftar hal yang AI ingat tentang kamu'),
+  data: dmCapable(
+    new SlashCommandBuilder()
+      .setName('memori')
+      .setDescription('Lihat daftar hal yang AI ingat tentang kamu'),
+  ),
 
   async execute(interaction) {
     const guildId = await resolveContextGuild(interaction);

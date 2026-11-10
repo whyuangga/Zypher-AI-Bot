@@ -2,26 +2,28 @@ import { MessageFlags, SlashCommandBuilder } from 'discord.js';
 import { getGuildSettings, setPersona } from '../db/repo.js';
 import { truncate } from '../lib/text.js';
 import { replyEphemeral, requireAdmin, requireGuild } from './helpers.js';
-import type { Command } from './types.js';
+import { dmCapable, type Command } from './types.js';
 
 export const personaCommand: Command = {
-  data: new SlashCommandBuilder()
-    .setName('persona')
-    .setDescription('Atur peran/kepribadian AI di server ini (admin)')
-    .addSubcommand((sub) =>
-      sub
-        .setName('set')
-        .setDescription('Tentukan peran AI, mis. "kamu guru bahasa Inggris yang sabar"')
-        .addStringOption((option) =>
-          option
-            .setName('teks')
-            .setDescription('Deskripsi peran & gaya bicara AI')
-            .setRequired(true)
-            .setMaxLength(1500),
-        ),
+  data: dmCapable(
+    new SlashCommandBuilder()
+      .setName('persona')
+      .setDescription('Atur peran/kepribadian AI di server ini (admin)')
+      .addSubcommand((sub) =>
+        sub
+          .setName('set')
+          .setDescription('Tentukan peran AI, mis. "kamu guru bahasa Inggris yang sabar"')
+          .addStringOption((option) =>
+            option
+              .setName('teks')
+              .setDescription('Deskripsi peran & gaya bicara AI')
+              .setRequired(true)
+              .setMaxLength(1500),
+          ),
     )
-    .addSubcommand((sub) => sub.setName('lihat').setDescription('Lihat persona yang aktif sekarang'))
-    .addSubcommand((sub) => sub.setName('hapus').setDescription('Kembali ke persona default')),
+      .addSubcommand((sub) => sub.setName('lihat').setDescription('Lihat persona yang aktif sekarang'))
+      .addSubcommand((sub) => sub.setName('hapus').setDescription('Kembali ke persona default')),
+  ),
 
   async execute(interaction) {
     if (!(await requireGuild(interaction)) || !interaction.guildId) return;
