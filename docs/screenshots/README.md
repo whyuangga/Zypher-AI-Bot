@@ -100,3 +100,8 @@ di kanan baris terakhir, bukan turun ke baris sendiri.
 
 **Toggle.** Sakelar fitur AI (Dokumen RAG, Vision, Auto Memory, Chat khusus admin,
 Suara balasan AI) tampil sebagai switch di kanan label, sebaris.
+
+**Tombol kirim tes.** Di halaman Sambutan dan AI Agent ada tombol kirim tes
+sungguhan di samping tombol pratinjau. Di screenshot tombol itu tampak redup
+karena dashboard dijalankan **tanpa bot** (mode screenshot); di server asli
+tombolnya aktif. Tombol pratinjau tetap berfungsi penuh tanpa bot.

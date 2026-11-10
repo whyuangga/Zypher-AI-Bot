@@ -2527,6 +2527,210 @@ await testAsync('dokumen: banner dijelaskan sebagai data yang perlu disk persist
 
 
 
+console.log('\nKirim tes & perbaikan bug dashboard');
+
+await testAsync('css: atribut hidden selalu menang atas display:block', async () => {
+  // Bug nyata: .preview-img { display:block } mengalahkan hidden, sehingga
+  // gambar kartu kosong tetap tampil sebagai kotak rusak di halaman Sambutan.
+  const theme = await readFile('src/web/ui/theme.ts', 'utf8');
+  assert.ok(/\[hidden\]\s*\{[^}]*display:\s*none\s*!important/.test(theme), 'ada aturan [hidden] !important');
+
+  // Aturan harus muncul SETELAH kelas gambar agar menang tanpa !important...
+  // dengan !important urutan tidak penting, tapi tetap dicek agar tidak terhapus.
+  const previewImg = theme.indexOf('.preview-img');
+  const hiddenRule = theme.search(/\[hidden\]\s*\{/);
+  assert.ok(previewImg > -1 && hiddenRule > -1, 'kedua aturan ada');
+});
+
+await testAsync('preview: jawaban kosong diberi saran yang bisa ditindaklanjuti', async () => {
+  const { EMPTY_REPLY_HINT } = await import('../src/features/preview.js');
+  assert.ok(EMPTY_REPLY_HINT.includes('AI_MAX_TOKENS'), 'menyebut setelan yang harus diubah');
+  assert.ok(/reasoning/i.test(EMPTY_REPLY_HINT), 'menjelaskan penyebab umum (model reasoning)');
+  // Pesan lama terlalu samar: admin tidak tahu harus berbuat apa.
+  assert.ok(/jawaban kosong/i.test(EMPTY_REPLY_HINT), 'menyatakan jawaban kosong');
+});
+
+await testAsync('preview: catatan kegagalan tidak dobel di respons API', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  const preview = await readFile('src/features/preview.ts', 'utf8');
+  // Dulu dua tempat menambahkan catatan kartu, hasilnya kalimat berulang.
+  assert.equal(server.includes('Kartu PNG tidak tersedia — sambutan tetap terkirim'), false);
+  assert.ok(preview.includes('Kartu PNG tidak dirender'), 'satu sumber catatan kartu');
+});
+
+await testAsync('kirim tes: benar-benar memakai API Discord (bukan pratinjau)', async () => {
+  const source = await readFile('src/features/test-send.ts', 'utf8');
+  assert.ok(source.includes('.send('), 'memanggil send()');
+  assert.ok(source.includes('allowedMentions'), 'mention tidak dipicu');
+  assert.ok(source.includes('Pesan uji dari dashboard'), 'pesan diberi penanda jelas');
+
+  // Tidak boleh mengimpor modul pratinjau untuk mengirim: pratinjau tidak punya
+  // akses Discord, jadi memakainya di sini berarti tidak ada yang terkirim.
+  assert.ok(source.includes('previewWelcome'), 'memakai teks dari pratinjau');
+  assert.ok(source.includes("from './preview.js'"), 'teks diambil dari modul pratinjau');
+});
+
+await testAsync('kirim tes: menolak saat bot offline dengan alasan jelas', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  const block = server.slice(server.indexOf("path.startsWith('/api/send-test/')"));
+  assert.ok(block.includes('botClient?.isReady()'), 'cek bot siap');
+  assert.ok(block.includes('Bot sedang offline'), 'alasan disebutkan');
+  assert.ok(block.includes('npm run dev'), 'memberi tahu cara memperbaiki');
+});
+
+await testAsync('kirim tes: goodbye selalu ke channel (DM tidak mungkin)', async () => {
+  const source = await readFile('src/features/test-send.ts', 'utf8');
+  const block = source.slice(source.indexOf('export async function sendGoodbyeTest'));
+  assert.ok(block.includes('belum punya channel tujuan'), 'menolak tanpa channel');
+  assert.equal(block.includes("where: 'dm'"), false, 'tidak pernah mengaku terkirim ke DM');
+});
+
+await testAsync('kirim tes: izin channel dilaporkan spesifik', async () => {
+  const source = await readFile('src/features/test-send.ts', 'utf8');
+  assert.ok(source.includes('Send Message'), 'menyebut izin yang kurang');
+  assert.ok(source.includes('tidak bisa melihat'), 'kasus channel tidak terlihat');
+  assert.ok(source.includes('privasi DM'), 'menjelaskan kenapa DM bisa gagal');
+});
+
+await testAsync('kirim tes: kartu ikut dikirim kalau diaktifkan', async () => {
+  const source = await readFile('src/features/test-send.ts', 'utf8');
+  assert.ok(source.includes('renderWelcomeCard'), 'memakai renderer kartu yang sama');
+  assert.ok(source.includes('Chromium tidak tersedia'), 'memberi tahu saat kartu gagal');
+});
+
+await testAsync('kirim tes: endpoint terpisah dari pratinjau', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(server.includes("'/api/send-test/'") || server.includes("'/api/send-test"), 'endpoint ada');
+  assert.ok(server.includes('/api/preview/'), 'pratinjau tetap ada');
+  // Pratinjau tidak boleh mengirim, kirim-tes tidak boleh cuma merender.
+  const previewBlock = server.slice(server.indexOf("'/api/preview/goodbye'"), server.indexOf("'/api/send-test/"));
+  assert.equal(previewBlock.includes('.send('), false, 'pratinjau tidak mengirim');
+});
+
+await testAsync('dashboard: tombol kirim tes ada di kedua halaman', async () => {
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  assert.ok(pages.includes('async function sendTest'), 'JS kirim tes sambutan/perpisahan');
+  assert.ok(pages.includes('async function sendAgentTest'), 'JS kirim tes agent');
+  assert.ok(pages.includes("'/api/send-test/' + kind"), 'menembak endpoint yang benar');
+  assert.ok(pages.includes("'/api/send-test/agent'"), 'endpoint agent');
+  assert.ok(pages.includes('Kirim tes sungguhan'), 'label jelas membedakan dari pratinjau');
+  assert.ok(pages.includes('Kirim tes ke channel'), 'tombol agent & perpisahan');
+});
+
+await testAsync('kirim tes: pesan benar-benar terkirim lewat channel (channel palsu)', async () => {
+  const { sendGoodbyeTest } = await import('../src/features/test-send.js');
+
+  // Channel palsu: meniru bagian discord.js yang dipakai resolveChannel + send.
+  const sent: Record<string, unknown>[] = [];
+  const channel = {
+    id: '111111111111111111',
+    name: 'perpisahan',
+    isTextBased: () => true,
+    isDMBased: () => false,
+    permissionsFor: () => ({ has: () => true }),
+    send: async (payload: Record<string, unknown>) => {
+      sent.push(payload);
+      return { id: '1' };
+    },
+  };
+  const guild = {
+    id: '156942477750257766',
+    name: 'Komunitas Zypher',
+    channels: { fetch: async () => channel },
+    members: { me: { id: '2' } },
+  };
+  const fakeClient = { guilds: { fetch: async () => guild } } as never;
+  const member = {
+    displayName: 'Sky',
+    user: { username: 'sky', tag: 'sky#0001' },
+    displayAvatarURL: () => 'https://contoh.invalid/a.png',
+    send: async () => ({ id: '3' }),
+  } as never;
+
+  const result = await sendGoodbyeTest(fakeClient, {
+    guildId: guild.id,
+    settings: {
+      channelId: channel.id, useAi: false, imageEnabled: false, includeAvatar: false,
+      template: 'Sampai jumpa {user}!', style: '', example: '', bannerPath: null,
+    } as never,
+    member,
+  });
+
+  assert.equal(sent.length, 1, 'tepat satu pesan dikirim');
+  assert.equal(result.where, 'channel', 'melaporkan tujuan sebenarnya');
+  assert.equal(result.channelName, 'perpisahan', 'nama channel ikut dilaporkan');
+
+  const payload = sent[0]!;
+  assert.ok(String(payload.content).includes('Pesan uji dari dashboard'), 'pesan diberi penanda');
+  assert.deepEqual(payload.allowedMentions, { parse: [] }, 'mention tidak dipicu');
+  assert.equal(result.text, 'Sampai jumpa Sky!', 'isi pesan = hasil pratinjau');
+});
+
+await testAsync('kirim tes: menolak perpisahan tanpa channel, tidak ada yang terkirim', async () => {
+  const { sendGoodbyeTest, SendTestError } = await import('../src/features/test-send.js');
+  let called = false;
+  const fakeClient = {
+    guilds: {
+      fetch: async () => ({
+        id: '1', name: 'Server',
+        channels: { fetch: async () => { called = true; return null; } },
+        members: { me: { id: '2' } },
+      }),
+    },
+  } as never;
+
+  await assert.rejects(
+    () => sendGoodbyeTest(fakeClient, {
+      guildId: '1',
+      settings: { channelId: null } as never,
+      member: { displayName: 'Sky', user: { username: 'sky' } } as never,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof SendTestError, 'memakai error khusus agar jadi 400');
+      assert.match((error as Error).message, /belum punya channel tujuan/);
+      return true;
+    },
+  );
+  assert.equal(called, false, 'tidak menyentuh channel sama sekali');
+});
+
+await testAsync('kirim tes: DM gagal menjelaskan sebab dan menawarkan target channel', async () => {
+  const { sendWelcomeTest } = await import('../src/features/test-send.js');
+  const fakeClient = {
+    guilds: { fetch: async () => ({ id: '1', name: 'Server', channels: { fetch: async () => null } }) },
+  } as never;
+  const member = {
+    displayName: 'Sky',
+    user: { username: 'sky' },
+    displayAvatarURL: () => 'https://contoh.invalid/a.png',
+    send: async () => { throw new Error('Cannot send messages to this user'); },
+  } as never;
+
+  await assert.rejects(
+    () => sendWelcomeTest(fakeClient, {
+      guildId: '1',
+      settings: { channelId: null, useAi: false, imageEnabled: false, includeAvatar: false } as never,
+      member,
+      target: 'dm',
+    }),
+    (error: unknown) => {
+      assert.match((error as Error).message, /privasi DM/i);
+      assert.match((error as Error).message, /target "channel"/i, 'memberi jalan keluar');
+      return true;
+    },
+  );
+});
+
+await testAsync('dashboard: peringatan ditampilkan kalau Chromium tidak ada', async () => {
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  assert.ok(pages.includes('Kartu PNG tidak akan terkirim'), 'peringatan ada');
+  assert.ok(pages.includes('CHROMIUM_PATH'), 'menyebut cara memperbaiki');
+
+  const card = await readFile('src/features/welcome-card.ts', 'utf8');
+  assert.ok(card.includes('export function cardRendererAvailable'), 'status bisa dicek');
+});
+
+
 /*
  * Pemeriksaan terakhir: angka test di dokumentasi harus sama dengan jumlah test
  * yang benar-benar dijalankan.

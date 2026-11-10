@@ -271,6 +271,22 @@ Dua kartu berdampingan, satu tema "kehadiran":
   "Tes tanpa AI". Hasilnya menampilkan teksnya beserta sumbernya (AI / template /
   gagal) dan kartu PNG kalau opsi kartu dicentang. Memakai isi form saat itu,
   jadi bisa dicoba sebelum menyimpan.
+- **Kirim tes sungguhan** — tombol terpisah yang **benar-benar mengirim satu
+  pesan ke Discord**, bukan pratinjau. Ada tiga:
+
+  | Tombol | Tujuan | Isi pesan |
+  |---|---|---|
+  | "Kirim tes sungguhan" (sambutan) | DM kamu, atau channel sambutan kalau dipilih | teks sambutan + kartu PNG kalau diaktifkan |
+  | "Kirim tes ke channel" (perpisahan) | channel salam perpisahan yang tersimpan | teks salam perpisahan + kartu PNG |
+  | "Kirim tes ke channel" (agent) | channel ngobrol/galeri tersimpan | kutipan pesan uji + balasan bot |
+
+  Pesannya selalu dibuka penanda *"🧪 Pesan uji dari dashboard"* dan mention
+  tidak dipicu, jadi tidak ada member yang ter-tag karena tes. Tombol ini mati
+  saat bot offline di proses dashboard — mengirim butuh koneksi Discord.
+
+  Kegagalan dijelaskan spesifik, bukan "gagal": channel tidak ditemukan, bot
+  tidak punya izin *Send Message* / *View Channel*, DM ditutup privasi, atau
+  Chromium tidak ada sehingga kartu tidak dibuat.
 
 ---
 
@@ -288,6 +304,9 @@ Halaman sendiri, sengaja terpisah dari sambutan karena yang diatur bukan
 
 Panel **Tes percakapan** menguji balasan bot untuk pesan contoh (mode ngobrol
 atau mode galeri) serta kalimat **pemecah sepi** — tanpa mengirim ke channel.
+Tombol "Kirim tes ke channel" di sebelahnya **mengirim** satu pesan nyata berisi
+kutipan pesan uji dan balasan bot, supaya gaya balasannya bisa dilihat langsung
+di Discord.
 
 Detail perilaku & biaya API: [sambutan-agent.md](sambutan-agent.md).
 

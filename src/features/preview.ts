@@ -119,13 +119,34 @@ function cleanReply(raw: string | null | undefined, maxChars: number): string | 
   return text ? truncate(text, maxChars) : null;
 }
 
+/**
+ * Penyebab paling umum jawaban kosong, dengan saran yang bisa langsung dicoba.
+ *
+ * Model populer sekarang banyak yang "reasoning" (gpt-oss, DeepSeek-R1, QwQ):
+ * jawabannya masuk ke `reasoning_content`/`thinking`, sedangkan `content` bisa
+ * kosong kalau jatah token habis untuk proses berpikir. Tanpa penjelasan ini,
+ * admin hanya melihat "teks kosong" dan tidak tahu harus berbuat apa.
+ */
+export const EMPTY_REPLY_HINT =
+  'Model mengembalikan jawaban kosong. Biasanya karena model reasoning kehabisan jatah token ' +
+  'sebelum menulis jawaban. Coba naikkan AI_MAX_TOKENS (mis. 1500) atau ganti AI_MODEL ke model ' +
+  'non-reasoning, lalu tes lagi.';
+
+export interface AskResult {
+  text: string | null;
+  /** Alasan kegagalan yang siap ditampilkan ke admin. */
+  error: string | null;
+  /** true = model menjawab tapi isinya kosong (bukan error jaringan/kuota). */
+  empty: boolean;
+}
+
 async function askModel(
   systemPrompt: string,
   userPrompt: string,
   temperature: number,
   maxTokens: number,
   label: string,
-): Promise<{ text: string | null; error: string | null }> {
+): Promise<AskResult> {
   try {
     const result = await chat({
       messages: [
@@ -135,10 +156,25 @@ async function askModel(
       temperature,
       maxTokens,
     });
-    return { text: cleanReply(result.message.content, maxTokens >= 200 ? 260 : 220), error: null };
+
+    // Sebagian provider menaruh jawaban di field lain saat mode reasoning.
+    const raw = result.message as unknown as {
+      content?: string | null;
+      reasoning_content?: string | null;
+    };
+    const content = raw.content?.trim();
+    const reasoning = raw.reasoning_content?.trim();
+    const picked = content || reasoning || null;
+    const text = cleanReply(picked, maxTokens >= 200 ? 260 : 220);
+
+    if (!text) {
+      logger.warn(`Pratinjau ${label}: model (${result.provider}/${result.model}) mengembalikan teks kosong.`);
+      return { text: null, error: EMPTY_REPLY_HINT, empty: true };
+    }
+    return { text, error: null, empty: false };
   } catch (error) {
     logger.warn(`Pratinjau ${label} gagal memanggil model`, errorMessage(error));
-    return { text: null, error: errorMessage(error) };
+    return { text: null, error: `AI gagal: ${errorMessage(error)}`, empty: false };
   }
 }
 
@@ -181,7 +217,7 @@ export async function previewWelcome(options: WelcomePreviewOptions): Promise<Pr
       'sambutan',
     );
     text = result.text;
-    if (!text) note = result.error ? `AI gagal: ${result.error}` : 'AI mengembalikan teks kosong.';
+    if (!text) note = result.error;
   } else {
     note = settings.useAi ? 'Mode template dipaksa.' : 'AI dimatikan di pengaturan.';
   }
@@ -239,7 +275,7 @@ export async function previewGoodbye(options: {
       'salam perpisahan',
     );
     text = result.text;
-    if (!text) note = result.error ? `AI gagal: ${result.error}` : 'AI mengembalikan teks kosong.';
+    if (!text) note = result.error;
   } else {
     note = settings.useAi ? 'Mode template dipaksa.' : 'AI dimatikan di pengaturan.';
   }
@@ -407,5 +443,7 @@ export async function previewQuietBreak(options: {
 }
 
 function mergeNote(current: string | null, extra: string): string {
-  return current ? `${current} ${extra}` : extra;
+  // Dipisah baris, bukan spasi: beberapa catatan sekaligus (AI gagal + kartu
+  // tidak dirender) jadi satu paragraf panjang yang sulit dibaca di HP.
+  return current ? `${current}\n${extra}` : extra;
 }

@@ -365,6 +365,14 @@ tbody tr:hover { background: rgba(226, 209, 204, .04); }
   background: transparent; border: 1px solid var(--line); font-size: 12px; color: var(--text-2);
 }
 
+/* Atribut hidden harus selalu menang.
+   Tanpa aturan ini, kelas seperti .preview-img dan .banner-preview img yang
+   memakai display:block mengalahkan atribut hidden, sehingga gambar kosong
+   tetap tampil sebagai kotak rusak (bug nyata di halaman Sambutan). */
+[hidden] {
+  display: none !important;
+}
+
 /* Tombol: solid Wafer (bukan gradient), huruf kapital ber-spasi. */
 button, .btn, .btn-primary, .btn-ghost, .btn-danger {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
@@ -683,6 +691,9 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   text-transform: uppercase;
   color: var(--text-3);
   margin-bottom: 8px;
+  /* Beberapa catatan digabung dengan newline agar tetap terpisah per baris. */
+  white-space: pre-line;
+  line-height: 1.7;
 }
 .preview-text {
   font-size: 14.5px;
@@ -737,5 +748,25 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* Baris tombol kirim-tes: pilihan tujuan + tombol, sejajar dan membungkus
+   di layar sempit (390px) tanpa memotong teks tombol. */
+.send-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.send-select {
+  flex: 1 1 200px;
+  min-width: 0;
+  padding: 11px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
 }
 `;
