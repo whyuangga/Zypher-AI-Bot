@@ -572,14 +572,22 @@ async function runSearch() {
       hits.innerHTML = '<div class="list-meta">Tidak ada potongan yang cocok dengan kata kunci itu.</div>';
       return;
     }
+    var esc = function (text) {
+      return String(text == null ? '' : text).replace(/[<>&"]/g, function (c) {
+        return { '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c];
+      });
+    };
+    // Isi dokumen berasal dari unggahan user: WAJIB di-escape sebelum masuk
+    // innerHTML. Nilai yang mungkin tidak ada juga diberi nilai cadangan —
+    // dulu hit.score.toFixed(2) membuat seluruh daftar hasil hilang kalau
+    // server tidak mengirim skor.
     hits.innerHTML = data.results.map(function (hit) {
+      var score = typeof hit.score === 'number' ? hit.score.toFixed(2) : '—';
       return '<div class="list-row" style="padding:12px 0">' +
-        '<div class="list-body"><div class="list-title">' + hit.documentName +
-        ' <span class="badge brand">' + hit.via + '</span>' +
-        ' <span class="list-meta">bagian ' + (hit.ordinal + 1) + ' · skor ' + hit.score.toFixed(2) + '</span></div>' +
-        '<div class="list-text">' + hit.preview.replace(/[<>&]/g, function (c) {
-          return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c];
-        }) + '</div></div></div>';
+        '<div class="list-body"><div class="list-title">' + esc(hit.documentName) +
+        ' <span class="badge brand">' + esc(hit.via) + '</span>' +
+        ' <span class="list-meta">bagian ' + (Number(hit.ordinal) + 1) + ' · skor ' + score + '</span></div>' +
+        '<div class="list-text">' + esc(hit.preview) + '</div></div></div>';
     }).join('');
   } catch (error) {
     hits.innerHTML = '<div class="list-meta">Gagal mencari: ' + error.message + '</div>';

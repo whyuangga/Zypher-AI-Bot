@@ -46,7 +46,7 @@ import {
 } from '../db/repo.js';
 import { invalidateModerationCache } from '../features/moderation.js';
 import { listPanelChannels, PanelError, publishPanel, removePanel } from '../features/panel.js';
-import { DocumentError, ingestDocument, removeDocument } from '../features/rag.js';
+import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
 import {
   previewAgentReply,
   previewGoodbye,
@@ -752,6 +752,44 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
   // di origin dashboard (transkrip berisi teks dari member).
   if (path === '/api/documents' && method === 'GET') {
     sendJson(response, 200, { documents: guildId ? await listDocuments(guildId) : [] });
+    return;
+  }
+
+  // Uji pencarian di halaman Dokumen: "apakah AI benar-benar menemukan
+  // potongan ini?". Tanpa endpoint ini tombol Cari di UI memanggil rute yang
+  // tidak ada dan selalu menampilkan "Gagal mencari" — fiturnya mati total.
+  if (path === '/api/search' && method === 'GET') {
+    const query = (url.searchParams.get('q') ?? '').trim();
+    if (!query) {
+      sendJson(response, 400, { error: 'Kata kunci pencarian kosong.' });
+      return;
+    }
+    // Batasi panjang: query puluhan ribu karakter hanya membebani tokenizer
+    // tanpa memberi hasil lebih baik. Ditolak jelas, bukan diproses diam-diam.
+    if (query.length > 500) {
+      sendJson(response, 400, { error: 'Kata kunci terlalu panjang (maksimal 500 karakter).' });
+      return;
+    }
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+
+    const hits = await searchKnowledge(guildId, query, { topK: 8 });
+    sendJson(response, 200, {
+      query,
+      results: hits.map((hit) => ({
+        documentId: hit.documentId,
+        documentName: hit.documentName,
+        ordinal: hit.ordinal,
+        // UI memakai `preview` (bukan `content`) dan memotongnya supaya kartu
+        // hasil tidak memanjang. Dipotong di server agar payload tetap kecil;
+        // isi tidak di-escape di sini — UI yang meng-escape sebelum menyisipkan.
+        preview: hit.content.length > 320 ? `${hit.content.slice(0, 320)}…` : hit.content,
+        score: Number(hit.score.toFixed(3)),
+        via: hit.via,
+      })),
+    });
     return;
   }
 

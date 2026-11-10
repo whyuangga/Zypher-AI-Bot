@@ -613,6 +613,15 @@ const clickCases: ClickCase[] = [
     action: 'runAgentTest()',
     expect: { path: '/api/preview/agent', method: 'POST' },
   },
+  {
+    page: '/dokumen',
+    label: 'Tombol Cari menembak uji pencarian',
+    prepare: [{ id: 'q', value: 'jam operasional' }],
+    action: 'runSearch()',
+    // Dulu UI memanggil /api/search yang tidak pernah ada di server: tombol
+    // Cari selalu berakhir "Gagal mencari" tanpa penjelasan.
+    expect: { path: '/api/search', method: 'GET' },
+  },
 ];
 
 for (const clickCase of clickCases) {
@@ -631,7 +640,9 @@ for (const clickCase of clickCases) {
     target.page.fetches.length = 0;
     await target.page.evaluate(clickCase.action);
 
-    const sent = target.page.fetches.find((call) => call.path === clickCase.expect.path);
+    const sent = target.page.fetches.find(
+      (call) => call.path.split('?')[0] === clickCase.expect.path,
+    );
     assert.ok(
       sent,
       `tidak ada permintaan ke ${clickCase.expect.path} (yang terjadi: ${
@@ -675,7 +686,14 @@ for (const { html } of mounted) {
   for (const block of scriptBlocks(html)) {
     if (block.json) continue;
     for (const match of block.code.matchAll(/'(\/api\/[a-z/]*\/)'\s*\+/g)) dynamicPrefixes.add(match[1]!);
-    for (const match of block.code.matchAll(/'(\/api\/[a-z/]+)'/g)) calledRoutes.add(match[1]!);
+    // Path literal boleh membawa query string ('/api/search?q='). Tanpa
+    // pemisahan ini, rute ber-query tidak pernah diperiksa sama sekali —
+    // itulah sebabnya /api/search yang tidak ada tetap lolos sebagai "aman".
+    for (const match of block.code.matchAll(/'(\/api\/[a-z/?=&-]+)'/g)) {
+      const path = match[1]!.split('?')[0]!;
+      if (path.endsWith('/')) continue; // sudah ditangani sebagai awalan dinamis
+      calledRoutes.add(path);
+    }
   }
 }
 
@@ -706,6 +724,9 @@ function addSegments(raw: string): void {
 /** route cocok kalau ada rute server yang sama atau berawalan route + '/'. */
 function isServed(route: string): boolean {
   const clean = route.replace(/\/$/, '');
+  for (const prefix of serverPrefixes) {
+    if (clean === prefix.replace(/\/$/, '') || clean.startsWith(prefix)) return true;
+  }
   for (const known of serverSegments) {
     if (known === clean || known.startsWith(`${clean}/`)) return true;
   }
@@ -719,8 +740,13 @@ for (const match of serverSource.matchAll(/'(\/api\/[a-zA-Z/-]+)'/g)) addSegment
 for (const match of serverSource.matchAll(/`(\/api\/[a-zA-Z-]+\/)/g)) addSegments(match[1]!);
 // 3. Regex berparameter.
 for (const match of serverSource.matchAll(/\^\\\/(api)\\\/([a-zA-Z-]+)/g)) addSegments(`/${match[1]}/${match[2]}`);
-// 4. startsWith untuk rute bersarang.
-for (const match of serverSource.matchAll(/startsWith\('(\/api\/[a-zA-Z/-]+)'\)/g)) addSegments(match[1]!);
+// 4. startsWith untuk rute bersarang (mis. '/api/send-test/' + kind).
+//    Disimpan sebagai awalan supaya isServed() mengenali turunannya.
+const serverPrefixes = new Set<string>();
+for (const match of serverSource.matchAll(/startsWith\('(\/api\/[a-zA-Z/-]+)'\)/g)) {
+  serverPrefixes.add(match[1]!);
+  addSegments(match[1]!);
+}
 
 await check(`${dynamicPrefixes.size} path dinamis ditangani server`, () => {
   const unknown = [...dynamicPrefixes].filter((prefix) => !isServed(prefix));

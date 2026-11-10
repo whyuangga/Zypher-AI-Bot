@@ -329,9 +329,14 @@ atas `.env` karena tersimpan per server. Halaman ini berisi:
 | `POST /api/moderasi` | Simpan pengaturan (JSON: `enabled`, `words[]`, `action`, `timeoutMinutes`) |
 | `DELETE /api/moderasi/logs/<id>` | Hapus satu catatan pelanggaran |
 | `DELETE /api/moderasi/logs` | Bersihkan semua catatan pelanggaran server ini |
-
 | `GET /api/banner/welcome` \| `/goodbye` | Gambar banner mentah (PNG/JPG/WebP) untuk `<img>` di dashboard. Di-cache browser; tanpa ini banner 8 MB harus ikut di HTML |
 | `POST /api/banner/welcome` \| `/goodbye` | Unggah/ganti/hapus banner (JSON `dataUri` atau `{remove:true}`) |
+| `GET /api/search?q=<kata>` | Uji pencarian RAG di halaman Dokumen: kembalikan potongan yang cocok beserta skor dan asal skornya (`lexical`/`vector`/`hybrid`). Maksimal 500 karakter |
+
+> **Catatan riwayat:** tombol Cari di halaman Dokumen dulu memanggil `/api/search`
+> yang **tidak pernah ada di server** — tombolnya selalu berakhir "Gagal mencari"
+> tanpa penjelasan. Endpoint-nya kini ada, dan `npm run test:ui` memeriksa setiap
+> rute yang dipanggil UI benar-benar ditangani server.
 
 Endpoint halaman Sambutan & AI Agent (pratinjau tidak mengirim apa pun;
 `send-test` yang benar-benar mengirim):
