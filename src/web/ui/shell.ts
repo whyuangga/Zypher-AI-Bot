@@ -7,12 +7,26 @@ import { icon, type IconName } from './icons.js';
 import { esc, initials } from './base.js';
 import { STYLE } from './theme.js';
 
-export type PageKey = 'ringkasan' | 'dokumen' | 'keyword' | 'memori' | 'transkrip' | 'moderasi' | 'pengaturan';
+export type PageKey =
+  | 'ringkasan'
+  | 'panel'
+  | 'dokumen'
+  | 'keyword'
+  | 'memori'
+  | 'transkrip'
+  | 'moderasi'
+  | 'pengaturan';
+
+/** Satu server di dropdown. `name` null = bot belum pernah melihat server ini. */
+export interface GuildChoice {
+  id: string;
+  name: string | null;
+}
 
 export interface ShellOptions {
   title: string;
   guildId: string;
-  guilds: string[];
+  guilds: GuildChoice[];
   active: PageKey;
   body: string;
   subtitle?: string;
@@ -22,6 +36,7 @@ export interface ShellOptions {
 
 const NAV: Array<{ key: PageKey; label: string; href: string; icon: IconName }> = [
   { key: 'ringkasan', label: 'Ringkasan', href: '/', icon: 'home' },
+  { key: 'panel', label: 'Panel', href: '/panel', icon: 'sparkles' },
   { key: 'dokumen', label: 'Dokumen RAG', href: '/dokumen', icon: 'book' },
   { key: 'keyword', label: 'Keyword', href: '/keyword', icon: 'tag' },
   { key: 'memori', label: 'Memori', href: '/memori', icon: 'brain' },
@@ -110,17 +125,25 @@ document.addEventListener('click', function (event) {
 });
 `;
 
+/** Label server: nama Discord kalau sudah diketahui bot, kalau belum pakai ID ringkas. */
+export function guildLabel(guild: GuildChoice, guildId = ''): string {
+  const name = guild.name?.trim();
+  if (name) return guildId && name.length > 42 ? `${name.slice(0, 41)}…` : name;
+  return `Server ${guild.id.slice(-6)}`;
+}
+
 function guildPicker(options: ShellOptions): string {
-  const choices =
-    options.guildId && !options.guilds.includes(options.guildId)
-      ? [options.guildId, ...options.guilds]
-      : options.guilds;
+  const known = options.guilds.some((guild) => guild.id === options.guildId);
+  const choices: GuildChoice[] =
+    options.guildId && !known ? [{ id: options.guildId, name: null }, ...options.guilds] : options.guilds;
 
   const optionTags = choices.length
     ? choices
         .map(
-          (id) =>
-            `<option value="${esc(id)}"${id === options.guildId ? ' selected' : ''}>${esc(id)}</option>`,
+          (guild) =>
+            `<option value="${esc(guild.id)}"${guild.id === options.guildId ? ' selected' : ''}>${esc(
+              guildLabel(guild),
+            )}</option>`,
         )
         .join('')
     : '<option value="">Belum ada server</option>';
@@ -147,6 +170,10 @@ export function appShell(options: ShellOptions): string {
       ${count !== undefined && count > 0 ? `<span class="nav-badge">${count}</span>` : ''}
     </a>`;
   }).join('');
+
+  const current =
+    options.guilds.find((guild) => guild.id === options.guildId) ?? { id: options.guildId, name: null };
+  const currentName = options.guildId ? guildLabel(current) : '—';
 
   const statusLine = options.status.mode === 'bot'
     ? options.status.online
@@ -200,10 +227,12 @@ export function appShell(options: ShellOptions): string {
       <button class="icon-btn burger" type="button" data-nav-toggle aria-label="Buka menu">${icon('menu', 18)}</button>
       ${guildPicker(options)}
       <div class="topbar-right">
-        <span class="chip" title="Server yang sedang dibuka">
-          ${icon('users', 14)} <span class="mono">${esc(options.guildId || '—')}</span>
+        <span class="chip" title="Server yang sedang dibuka (ID: ${esc(options.guildId || '—')})">
+          ${icon('users', 14)} <span>${esc(currentName)}</span>
         </span>
-        <span class="avatar" title="Admin dashboard">${esc(options.guildId ? initials(options.guildId) : 'AI')}</span>
+        <span class="avatar" title="Admin dashboard">${esc(
+          options.guildId ? initials(current.name ?? options.guildId) : 'AI',
+        )}</span>
         <a class="icon-btn" href="/logout" title="Keluar" aria-label="Keluar">${icon('logout', 17)}</a>
       </div>
     </header>

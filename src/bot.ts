@@ -1,7 +1,7 @@
 import { ActivityType, Client, Events, GatewayIntentBits } from 'discord.js';
 import { config } from './config.js';
 import { closeDatabase } from './db/index.js';
-import { ensureGuild } from './db/repo.js';
+import { ensureGuild, setGuildName } from './db/repo.js';
 import { onChannelDelete } from './events/channelDelete.js';
 import { onInteractionCreate } from './events/interactionCreate.js';
 import { onMessageCreate } from './events/messageCreate.js';
@@ -26,9 +26,11 @@ client.once(Events.ClientReady, async (ready) => {
 
   // Daftarkan semua server ke tabel `guilds` supaya dashboard langsung punya
   // daftar server yang bisa dipilih, bahkan sebelum ada room/dokumen dibuat.
+  // Nama server ikut disimpan agar dropdown dashboard tidak menampilkan ID mentah.
   for (const guild of ready.guilds.cache.values()) {
     try {
       await ensureGuild(guild.id);
+      await setGuildName(guild.id, guild.name);
     } catch (error) {
       logger.warn(`Gagal mendaftarkan server ${guild.id} ke database: ${errorMessage(error)}`);
     }
@@ -57,8 +59,16 @@ client.on(Events.ChannelDelete, (channel) => {
 // Bot baru diundang ke server → langsung masuk daftar dashboard.
 client.on(Events.GuildCreate, (guild) => {
   logger.info(`Bergabung ke server baru: ${guild.name} (${guild.id})`);
-  void ensureGuild(guild.id).catch((error: unknown) =>
-    logger.warn(`Gagal mendaftarkan server ${guild.id}: ${errorMessage(error)}`),
+  void (async () => {
+    await ensureGuild(guild.id);
+    await setGuildName(guild.id, guild.name);
+  })().catch((error: unknown) => logger.warn(`Gagal mendaftarkan server ${guild.id}: ${errorMessage(error)}`));
+});
+
+// Server di-rename (atau ikonnya diganti): nama di dashboard ikut diperbarui.
+client.on(Events.GuildUpdate, (_previous, guild) => {
+  void setGuildName(guild.id, guild.name).catch((error: unknown) =>
+    logger.warn(`Gagal memperbarui nama server ${guild.id}: ${errorMessage(error)}`),
   );
 });
 
@@ -91,7 +101,8 @@ process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 startRateLimitJanitor();
 // Dashboard dinyalakan sebelum login Discord supaya tetap bisa dipakai memantau bot.
-startDashboard();
+// Client dioper supaya halaman Panel bisa mengirim/menghapus panel dari browser.
+startDashboard(client);
 
 async function main(): Promise<void> {
   logger.info(`Menghubungkan ke Discord… (model AI: ${config.ai.model})`);

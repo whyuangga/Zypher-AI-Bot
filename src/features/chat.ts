@@ -12,6 +12,7 @@ import { chat, streamChat, type ChatMessage, type ChatTool } from '../lib/llm.js
 import { logger, errorMessage } from '../lib/logger.js';
 import { checkRateLimit } from '../lib/ratelimit.js';
 import { chunkMessage, truncate } from '../lib/text.js';
+import { detectLanguage } from '../lib/language.js';
 import { getMemories, memoryTools, runMemoryTool } from './memory.js';
 import { matchKeywords } from './keywords.js';
 import { buildSystemPrompt } from './prompt.js';
@@ -67,13 +68,14 @@ async function generateAnswer(
     memories,
     keywords,
     knowledgeBlock: buildKnowledgeBlock(sources),
+    language: detectLanguage(context.question),
   });
 
   // Model vision umumnya belum mendukung function calling, jadi tool dimatikan
   // saat ada gambar dan modelnya dipaksa ke `VISION_MODEL`.
   const hasImages = (context.images?.length ?? 0) > 0;
   const tools: ChatTool[] | undefined =
-    !hasImages && context.allowTools && config.features.autoMemory ? memoryTools : undefined;
+    !hasImages && context.allowTools && (settings?.autoMemory ?? config.features.autoMemory) ? memoryTools : undefined;
   const model = hasImages ? config.vision.model : (settings?.model ?? context.model ?? undefined);
 
   const userMessage: ChatMessage = hasImages
@@ -210,6 +212,7 @@ export async function handleRoomMessage(message: Message): Promise<void> {
 
   const room = await getRoomByChannel(message.channelId);
   if (!room) return;
+  const settings = await getGuildSettings(message.guildId);
 
   // Hanya pesan pemilik room yang dibalas. Staff boleh membaca, tidak memicu AI.
   if (message.author.id !== room.userId) return;
@@ -285,9 +288,11 @@ export async function handleRoomMessage(message: Message): Promise<void> {
     const sourceNote = summarizeSources(result.sources);
     await streamer.finish(sourceNote ? `${result.text}\n\n-# ${sourceNote}` : result.text);
 
-    // Balas voice note dengan suara juga, kalau TTS aktif. Gagal TTS tidak boleh
-    // menghapus jawaban teks yang sudah terkirim.
-    if (voice.text) await replyWithSpeech(message, result.text);
+    // Balas dengan suara juga: voice note (selalu) atau semua jawaban room
+    // (TTS_REPLY_IN_ROOM=true di .env, atau toggle per server di dashboard).
+    // Gagal TTS tidak boleh menghapus jawaban teks.
+    const ttsSetting = settings?.ttsReplyInRoom ?? config.voice.ttsReplyInRoom;
+    if (voice.text || ttsSetting) await replyWithSpeech(message, result.text);
   } catch (error) {
     logger.error('Gagal menjawab pesan room AI', errorMessage(error));
     const note = `Maaf, ada gangguan: ${errorMessage(error).slice(0, 200)}\nCoba lagi sebentar lagi ya.`;

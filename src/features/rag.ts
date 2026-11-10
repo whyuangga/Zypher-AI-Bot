@@ -7,6 +7,7 @@
  * sebagai rujukan. AI menjawab berdasarkan isi dokumen, bukan mengarang.
  */
 import { config } from '../config.js';
+import { getGuildSettings } from '../db/repo.js';
 import {
   deleteDocument as deleteDocumentRow,
   findDocumentByName,
@@ -175,7 +176,8 @@ export async function searchKnowledge(
   query: string,
   options: SearchOptions = {},
 ): Promise<RetrievedChunk[]> {
-  if (!config.rag.enabled || !query.trim()) return [];
+  const settings = await getGuildSettings(guildId);
+  if (!(settings?.ragEnabled ?? config.rag.enabled) || !query.trim()) return [];
 
   const index = await getIndex(guildId);
   if (index.bm25.size === 0) return [];
@@ -305,15 +307,19 @@ Kutipan di bawah diambil otomatis dari dokumen resmi server ini. Ini sumber kebe
 ${entries.join('\n\n')}
 
 Cara memakainya:
-- Jawab berdasarkan kutipan di atas kalau pertanyaannya relevan. Sebutkan nama dokumen kalau membantu.
+- Jawab berdasarkan kutipan di atas kalau pertanyaannya relevan. Ketika kamu memakai informasi dari
+  suatu dokumen, sebutkan namanya secara natural di jawaban — contoh: "Seperti yang tertulis di FAQ, ..."
 - JANGAN mengarang di luar isi dokumen. Kalau tidak ada di dokumen, bilang belum ada informasinya.
 - Ringkas dengan bahasamu sendiri, jangan menyalin mentah dan jangan menulis ulang tag [Sumber: ...].
 `.trimEnd();
 }
 
-/** Ringkas sumber unik untuk ditampilkan di bawah jawaban. */
+/**
+ * Ringkas sumber unik untuk ditampilkan di bawah jawaban.
+ * Menampilkan nama dokumen + bagian yang dipakai (bukan sekadar nama dokumen).
+ */
 export function summarizeSources(results: RetrievedChunk[], max = 3): string {
   if (results.length === 0) return '';
-  const names = [...new Set(results.map((result) => result.documentName))].slice(0, max);
-  return `📚 Sumber: ${names.join(', ')}`;
+  const parts = [...new Set(results.map((result) => `${result.documentName} — bagian ${result.ordinal + 1}`))];
+  return `📚 Sumber: ${parts.slice(0, max).join(' · ')}`;
 }

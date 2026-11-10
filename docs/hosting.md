@@ -188,7 +188,7 @@ INFO     Port diambil dari WEB_PORT=16954
 
 ```
 🤖 Login sebagai NamaBot#1234 (1 server)
-✅ 10 slash command didaftarkan …
+✅ 11 slash command didaftarkan …
 ```
 
 > **Konsol Wispbyte bukan shell.** Mengetik `npm run apa-saja` di sana hanya masuk ke stdin proses

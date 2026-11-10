@@ -245,6 +245,10 @@ Jalankan bot (atau `npm run dashboard` untuk dashboard saja), lalu buka <http://
 Login memakai token tadi. Di sana ada statistik, upload dokumen, dan uji pencarian. Keamanan &
 reverse proxy: [dashboard.md](dashboard.md).
 
+Panel "Buat Room AI" juga dikelola dari dashboard (**Panel**): pilih channel, klik *Kirim panel*,
+dan panel lama otomatis dihapus. Mau mematikan fitur room? Hapus panelnya, atau matikan centang
+*Izinkan member membuat room* — tombolnya tetap terlihat tapi menolak dengan sopan.
+
 ### Moderasi, vision, dan voice (opsional)
 
 Tiga fitur ini mati secara default supaya bot tetap ringan dan hemat kuota. Nyalakan

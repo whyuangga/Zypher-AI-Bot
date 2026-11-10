@@ -22,3 +22,8 @@ Diambil dari build terbaru dengan data demo: 1 server, 3 room AI, 84 pesan, 5 do
 
 Catatan tampilan mobile: stat card tersusun 2×2, tabel memakai header membulat,
 label grafik 7 hari tidak pecah, dan tidak ada scroll horizontal.
+
+> ⚠️ Gambar di folder ini diambil **sebelum halaman `/panel` ditambahkan**, jadi sidebar di
+> screenshot belum memuat item *Panel* dan topbar masih menampilkan ID server (versi sekarang
+> menampilkan nama server). Perubahan tata letak lain tidak ada — warna, tipografi, dan kartu
+> identik. Screenshot baru menyusul saat build berikutnya difoto ulang.

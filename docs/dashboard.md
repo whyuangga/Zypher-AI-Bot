@@ -9,12 +9,13 @@ Yang bisa dilakukan:
 | Halaman | Isi |
 |---|---|
 | `/` | 4 kartu statistik, **grafik aktivitas 7 hari**, status sistem, room terbaru, dokumen terbaru |
+| `/panel` | Kelola panel "Buat Room AI": kirim ke satu channel, ganti channel, hapus, atau matikan tombolnya |
 | `/dokumen` | Upload dokumen RAG (file atau tempel teks), daftar dokumen, hapus dokumen, **uji pencarian** |
 | `/keyword` | Tambah & hapus template jawaban owner (FAQ, harga, aturan) |
-| `/memori` | Fakta yang diingat AI per user, dikelompokkan per member, bisa dihapus |
+| `/memori` | Fakta yang diingat AI per user, dikelompokkan per member, bisa dihapus + **konsolidasi AI** (gabung duplikat, hapus noise) |
 | `/transkrip` | Arsip HTML tiap sesi AI yang sudah ditutup — unduh, lihat ringkasan, hapus |
 | `/moderasi` | Filter kata terlarang per server, tindakan (hapus/tegur/timeout), log pelanggaran |
-| `/pengaturan` | Persona AI & model per server, info server + salin Server ID |
+| `/pengaturan` | Persona AI & model per server, **toggle fitur AI** (RAG, Vision, Auto Memory, Admin Only Rooms, Suara di room), info server + salin Server ID |
 | `/healthz` | JSON status untuk monitoring (tanpa login) — termasuk engine database |
 
 Tampilan memakai gaya **editorial gelap** (hangat, bukan hitam-putih murni) dengan palet pemilik proyek:
@@ -131,9 +132,9 @@ Kalau panel menampilkan port tertentu (mis. `25566` di tab Startup/Network), tul
 
 ## Tampilan & navigasi
 
-- **Sidebar** berisi Ringkasan, Dokumen RAG, Keyword, Memori, Pengaturan, dan pintu ke Health check.
-  Di layar HP sidebar jadi menu geser (tombol ☰ di kiri atas).
-- **Topbar** berisi pemilih server, chip Server ID aktif, dan tombol keluar.
+- **Sidebar** berisi Ringkasan, Panel, Dokumen RAG, Keyword, Memori, Transkrip, Moderasi, Pengaturan,
+  dan pintu ke Health check. Di layar HP sidebar jadi menu geser (tombol ☰ di kiri atas).
+- **Topbar** berisi pemilih server, nama server aktif, dan tombol keluar.
 - **Kartu statistik** dan **grafik 7 hari** dihitung per server yang dipilih.
 - Aksi destruktif (hapus dokumen/keyword/memori) memakai dialog konfirmasi, bukan `confirm()` bawaan browser.
 - Semua notifikasi muncul sebagai *toast* di kanan bawah.
@@ -157,6 +158,11 @@ atas, atau **tempel Server ID** di kotak sebelahnya — berguna untuk bot yang b
 Jadi database lama tetap tampil walau tabel `guilds`-nya belum pernah terisi. Semua angka di halaman
 Ringkasan (Room AI, Dokumen, Keyword, Memori, Pesan) juga **dihitung per server yang dipilih**, supaya
 cocok dengan tabel di bawahnya.
+
+**Nama server:** bot menyimpan nama server Discord ke tabel `guilds` saat login, saat masuk server baru,
+dan saat server di-rename — jadi dropdown menampilkan nama, bukan deretan angka. Server yang belum
+pernah dilihat bot (mis. Anda hanya membuka mode dashboard-saja) tampil sebagai `Server 577090`
+(enam digit terakhir ID) sampai bot dijalankan sekali.
 
 Cara mendapatkan Server ID: Discord → Server Settings → Widget, atau klik kanan server (mode
 developer) → *Copy Server ID*.
@@ -203,6 +209,32 @@ member tidak pernah dieksekusi di origin dashboard.
 
 ---
 
+## Panel room AI (`/panel`)
+
+Halaman ini menggantikan ketikan `/panel` di Discord untuk urusan sehari-hari.
+
+| Aksi | Hasil |
+|---|---|
+| Pilih channel → **Kirim panel** | Panel dikirim ke channel itu; panel lama (kalau ada) dihapus otomatis |
+| **Kirim ulang panel** | Panel di channel yang sama dikirim baru, pesan lama dihapus |
+| **Hapus panel** | Pesan panel dihapus dari Discord, jadi tombol "Buat Room AI" tidak bisa diklik lagi |
+| Centang "Izinkan member membuat room" | Tombol tetap terlihat, tapi kalau dimatikan member mendapat balasan *"sedang dinonaktifkan admin"* |
+
+Aturannya **satu panel per server**. Database hanya menyimpan satu baris di tabel `panels`
+(`channel_id` + `message_id`), jadi tidak mungkin ada dua panel aktif tanpa sengaja.
+
+Hal yang perlu diketahui:
+
+- Halaman ini butuh **bot hidup** (`npm run dev` / `node dist/index.js`). Di mode dashboard-saja,
+  daftar channel tidak bisa dibaca dan tombol kirim/hapus akan menolak dengan pesan jelas — tapi
+  tombol aktif/nonaktif tetap bisa disimpan.
+- Bot perlu izin **View Channel**, **Send Messages**, **Embed Links**, dan **Manage Messages**
+  (untuk menghapus panel lama) di channel tujuan. Izin dicek sebelum mengirim.
+- Mematikan tombol tidak menghapus pesan panel; member masih bisa membaca penjelasannya.
+- Panel yang dikirim lewat `/panel` di Discord juga tercatat di halaman ini.
+
+---
+
 ## Moderasi (`/moderasi`)
 
 Semua yang bisa diatur lewat `.env` juga bisa diatur di sini — dan nilai dashboard **menang**
@@ -220,9 +252,49 @@ atas `.env` karena tersimpan per server. Halaman ini berisi:
 | `DELETE /api/moderasi/logs/<id>` | Hapus satu catatan pelanggaran |
 | `DELETE /api/moderasi/logs` | Bersihkan semua catatan pelanggaran server ini |
 
+Endpoint halaman Panel:
+
+| Endpoint | Fungsi |
+|---|---|
+| `POST /api/panel` `{action:'send',channelId}` | Kirim/kirim ulang panel ke channel itu (panel lama dihapus) |
+| `POST /api/panel` `{action:'remove'}` | Hapus pesan panel dari Discord |
+| `POST /api/panel` `{action:'toggle',enabled}` | Nyalakan/matikan tombol "Buat Room AI" tanpa menyentuh pesannya |
+| `POST /api/memori/consolidate?guild=…&user=…` | AI meninjau memori user, menggabungkan duplikat, menghapus yang tidak berguna |
+
 Penjelasan cara pencocokan kata, pengecualian staff, dan pengiriman log ke channel ada di
 [docs/moderation.md](moderation.md). Perubahan dari dashboard langsung dipakai pada pesan
 berikutnya (cache pengaturan hanya 15 detik dan di-reset saat menyimpan).
+
+---
+
+## Toggle fitur AI per server
+
+Semua fitur AI bisa di-toggle per server dari dashboard `/pengaturan` — tidak perlu edit `.env`:
+
+| Toggle | Arti | Default .env |
+|---|---|---|
+| **Dokumen RAG** | AI boleh jawab dari dokumen yang di-upload | `RAG_ENABLED=true` |
+| **Vision (Gambar)** | AI boleh baca gambar yang dikirim member | `VISION_ENABLED=false` |
+| **Auto Memory** | AI boleh ingat fakta otomatis dari percakapan | `AUTO_MEMORY=true` |
+| **Admin Only Rooms** | Hanya admin yang boleh buat room AI | `ADMIN_ONLY_ROOMS=false` |
+| **Suara di room** | Jawaban AI di room otomatis dibacakan (TTS) | `TTS_REPLY_IN_ROOM=true` |
+
+Bila belum di-set (default), memakai nilai dari `.env`. Setelah di-set, nilai di database dipakai — overriding `.env`.
+
+---
+
+## Konsolidasi memori (dashboard + `/konsolidasi`)
+
+AI bisa meninjau memori user secara periodik: menggabungkan fakta yang berulang
+("Namaku Bagas" × 3 → satu fakta), dan menghapus obrolan basi yang tidak berguna untuk
+percakapan nanti. Di ruang privat (room AI), AI otomatis memanggil ini setelah 40 memori
+terkumpul; admin juga bisa menjalankannya dari dashboard atau slash command:
+
+1. **Dashboard**: buka `/memori` → pilih user → klik **Konsolidasi AI** → konfirmasi.
+2. **Discord**: `/konsolidasi [user]` — bisa dipakai member untuk dirinya sendiri, atau admin untuk member lain.
+
+Keamanan: konsolidasi gagal (AI error, output tidak valid) → **tidak menghapus apa pun**. Memori lama
+dihapus hanya setelah AI mengembalikan daftar fakta yang valid.
 
 ---
 
@@ -307,6 +379,8 @@ dan kosongkan `DASHBOARD_TOKEN`.
 | "Terlalu banyak percobaan" | Tunggu 10 menit, atau restart bot (menghapus hitungan di memori) |
 | Halaman kosong padahal bot punya data | Server ID belum dipilih — tempel Server ID di kanan atas |
 | Server bot tidak muncul di dropdown | Restart bot (daftar server diperbarui saat login) atau tempel Server ID manual |
+| Dropdown menampilkan `Server 577090` | Nama server diambil dari Discord saat bot login. Jalankan bot sekali (`npm run dev`) — di mode dashboard-saja nama belum diketahui |
+| Panel tidak bisa dikirim dari dashboard | Halaman Panel butuh bot hidup; mode dashboard-saja hanya bisa menyimpan tombol aktif/nonaktif |
 | Angka berbeda dengan daftar di bawah | Sudah diperbaiki: angka kini per server. Update ke versi terbaru |
 | Data hilang setelah redeploy | Hosting tanpa disk persisten. Lihat [hosting.md](hosting.md) |
 

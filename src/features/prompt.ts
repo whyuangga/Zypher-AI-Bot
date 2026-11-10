@@ -1,4 +1,5 @@
 import type { Keyword, Memory } from '../db/repo.js';
+import { detectLanguage, type LanguageCode } from '../lib/language.js';
 import { formatMemoriesForPrompt } from './memory.js';
 
 export interface PromptContext {
@@ -11,6 +12,8 @@ export interface PromptContext {
   /** Blok dokumen hasil RAG (sudah diformat oleh `src/features/rag.ts`). */
   knowledgeBlock?: string;
   now?: Date;
+  /** Bahasa user (deteksi otomatis). Kosong = default bahasa Indonesia. */
+  language?: LanguageCode;
 }
 
 function formatDate(date: Date): string {
@@ -44,6 +47,22 @@ Cara memakainya:
 `.trimEnd();
 }
 
+/**
+ * Instruksi bahasa: otomatis mengikuti bahasa user. User pakai bahasa Inggris
+ * → jawab dalam bahasa Inggris; sebaliknya Indonesia. Unknown → bahasa Indonesia
+ * (bahasa default server ini).
+ */
+function languageInstruction(language: LanguageCode | undefined): string[] {
+  if (language === 'en') {
+    return [
+      '- User menulis dalam bahasa Inggris. Jawab dalam bahasa Inggris sehari-hari yang santai dan ramah.',
+    ];
+  }
+  return [
+    '- Bahasa Indonesia sehari-hari yang santai dan ramah, kecuali user memakai bahasa lain — ikuti bahasa user.',
+  ];
+}
+
 function buildPersonaBlock(persona: string | null): string {
   if (!persona || !persona.trim()) return '';
   return `
@@ -55,13 +74,14 @@ ${persona.trim()}
 /** Rakit system prompt lengkap untuk satu percakapan. */
 export function buildSystemPrompt(context: PromptContext): string {
   const now = context.now ?? new Date();
+  const language = context.language ?? 'unknown';
 
   const sections = [
     `Kamu adalah ${context.botName}, asisten AI di server Discord "${context.guildName}".`,
     `Kamu sedang mengobrol berdua dengan ${context.userName} di ruang privat. Waktu sekarang: ${formatDate(now)}.`,
     '',
     '[GAYA MENJAWAB]',
-    '- Bahasa Indonesia sehari-hari yang santai dan ramah, kecuali user memakai bahasa lain — ikuti bahasa user.',
+    ...languageInstruction(language),
     '- Ringkas dan padat. Maksimal sekitar 4 paragraf pendek. Jangan bertele-tele.',
     '- Boleh memakai format Discord: **tebal**, *miring*, `kode`, dan kutipan dengan "> ".',
     '- Jangan memakai heading markdown (#), tabel, atau format yang tidak didukung Discord.',

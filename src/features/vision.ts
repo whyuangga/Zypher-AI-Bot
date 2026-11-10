@@ -1,5 +1,6 @@
 import type { Message } from 'discord.js';
 import { config } from '../config.js';
+import { getGuildSettings } from '../db/repo.js';
 import { errorMessage, logger } from '../lib/logger.js';
 
 /**
@@ -53,7 +54,9 @@ const EMPTY: CollectedImages = { dataUris: [], skipped: [] };
  * menggagalkan yang lain — pesan tetap dijawab dengan gambar yang berhasil.
  */
 export async function collectImages(message: Message, limit = 3): Promise<CollectedImages> {
-  if (!config.vision.enabled || message.attachments.size === 0) return EMPTY;
+  if (!message.guildId) return EMPTY;
+  const settings = await getGuildSettings(message.guildId);
+  if (!(settings?.visionEnabled ?? config.vision.enabled) || message.attachments.size === 0) return EMPTY;
 
   const candidates = [...message.attachments.values()]
     .filter((attachment) => isImageAttachment(attachment.name, attachment.contentType))

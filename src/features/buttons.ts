@@ -6,7 +6,8 @@ import {
   type GuildMember,
 } from 'discord.js';
 import { config } from '../config.js';
-import { getRoomByChannel } from '../db/repo.js';
+import { getGuildSettings } from '../db/repo.js';
+import { getPanel, getRoomByChannel } from '../db/repo.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { canManageRoom, createAiRoom, endAiRoom, replyRoomHelp } from './rooms.js';
 import { endConfirmRow } from './ui.js';
@@ -23,13 +24,25 @@ async function handleCreate(interaction: ButtonInteraction): Promise<void> {
     return;
   }
 
+  // Panel bisa dimatikan dari dashboard tanpa menghapus pesannya — jadi tombol
+  // yang masih terlihat pun tidak lagi membuat room.
+  const panel = await getPanel(interaction.guild.id).catch(() => null);
+  if (panel && !panel.enabled) {
+    await interaction.reply({
+      content: '🔒 Pembuatan room AI sedang dinonaktifkan admin server.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
   const member = await resolveMember(interaction);
   if (!member) {
     await interaction.reply({ content: 'Tidak bisa membaca data member kamu. Coba lagi.', flags: MessageFlags.Ephemeral });
     return;
   }
 
-  if (config.features.adminOnlyRooms && !member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+  const settings = await getGuildSettings(interaction.guildId);
+  if ((settings?.adminOnlyRooms ?? config.features.adminOnlyRooms) && !member.permissions.has(PermissionFlagsBits.ManageGuild)) {
     await interaction.reply({
       content: '🔒 Room AI saat ini hanya bisa dibuat oleh admin server.',
       flags: MessageFlags.Ephemeral,

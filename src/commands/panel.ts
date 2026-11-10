@@ -1,5 +1,5 @@
-import { ChannelType, MessageFlags, SlashCommandBuilder, type TextChannel } from 'discord.js';
-import { panelEmbed, panelRow } from '../features/ui.js';
+import { ChannelType, MessageFlags, SlashCommandBuilder } from 'discord.js';
+import { PanelError, publishPanel } from '../features/panel.js';
 import { requireAdmin } from './helpers.js';
 import type { Command } from './types.js';
 
@@ -17,6 +17,14 @@ export const panelCommand: Command = {
   async execute(interaction) {
     if (!(await requireAdmin(interaction))) return;
 
+    if (!interaction.guildId) {
+      await interaction.reply({
+        content: 'Panel hanya bisa dikirim di dalam server.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
     const selected = interaction.options.getChannel('channel');
     const target = selected ?? interaction.channel;
 
@@ -31,11 +39,21 @@ export const panelCommand: Command = {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     try {
-      await (target as TextChannel).send({ embeds: [panelEmbed()], components: [panelRow()] });
-      await interaction.editReply({ content: `✅ Panel AI sudah dikirim ke <#${target.id}>.` });
-    } catch {
+      // Panel lama (di channel mana pun) dihapus dulu: satu panel aktif per server.
+      // Catatannya juga dipakai halaman Panel di dashboard.
+      const result = await publishPanel(interaction.client, interaction.guildId, target.id);
       await interaction.editReply({
-        content: `❌ Gagal mengirim panel ke <#${target.id}>. Pastikan bot punya izin **Send Messages** & **Embed Links** di sana.`,
+        content: [
+          `✅ Panel AI sudah dikirim ke <#${result.channelId}>.`,
+          result.removedPrevious ? 'Panel lama otomatis dihapus supaya tidak dobel.' : '',
+          'Kelola panel (pindah channel / hapus / nonaktifkan) dari dashboard → **Panel**.',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      });
+    } catch (error) {
+      await interaction.editReply({
+        content: `❌ ${error instanceof PanelError ? error.message : 'Gagal mengirim panel.'}`,
       });
     }
   },

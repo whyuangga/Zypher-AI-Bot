@@ -12,9 +12,27 @@ import { all, get, insert, run } from './index.js';
 
 export interface GuildSettings {
   guildId: string;
+  /** Nama server Discord, diisi bot saat login. `null` untuk database lama. */
+  name: string | null;
   persona: string | null;
   model: string | null;
+  /** Otomatis membalas jawaban room dengan suara (TTS). `null` = memakai default `.env`. */
+  ttsReplyInRoom: boolean | null;
+  /** AI boleh jawab dari dokumen. `null` = memakai RAG_ENABLED dari .env. */
+  ragEnabled: boolean | null;
+  /** AI boleh baca gambar. `null` = memakai VISION_ENABLED dari .env. */
+  visionEnabled: boolean | null;
+  /** AI boleh ingat otomatis. `null` = memakai AUTO_MEMORY dari .env. */
+  autoMemory: boolean | null;
+  /** Hanya admin yang boleh buat room. `null` = memakai ADMIN_ONLY_ROOMS dari .env. */
+  adminOnlyRooms: boolean | null;
   createdAt: number;
+}
+
+/** Satu pilihan server di dropdown dashboard. */
+export interface GuildChoice {
+  id: string;
+  name: string | null;
 }
 
 export interface Memory {
@@ -109,8 +127,14 @@ export interface StoredMessage {
 
 interface GuildRow {
   guild_id: string;
+  name: string | null;
   persona: string | null;
   model: string | null;
+  tts_reply_in_room: number | boolean | null;
+  rag_enabled: number | boolean | null;
+  vision_enabled: number | boolean | null;
+  auto_memory: number | boolean | null;
+  admin_only_rooms: number | boolean | null;
   created_at: number;
 }
 interface MemoryRow {
@@ -165,8 +189,21 @@ interface MessageRow {
 
 const toGuild = (row: GuildRow): GuildSettings => ({
   guildId: row.guild_id,
+  name: row.name ?? null,
   persona: row.persona,
   model: row.model,
+  ttsReplyInRoom:
+    row.tts_reply_in_room === null || row.tts_reply_in_room === undefined
+      ? null
+      : Boolean(row.tts_reply_in_room),
+  ragEnabled:
+    row.rag_enabled === null || row.rag_enabled === undefined ? null : Boolean(row.rag_enabled),
+  visionEnabled:
+    row.vision_enabled === null || row.vision_enabled === undefined ? null : Boolean(row.vision_enabled),
+  autoMemory:
+    row.auto_memory === null || row.auto_memory === undefined ? null : Boolean(row.auto_memory),
+  adminOnlyRooms:
+    row.admin_only_rooms === null || row.admin_only_rooms === undefined ? null : Boolean(row.admin_only_rooms),
   createdAt: Number(row.created_at),
 });
 
@@ -249,6 +286,51 @@ export async function setPersona(guildId: string, persona: string | null): Promi
 export async function setGuildModel(guildId: string, model: string | null): Promise<void> {
   await ensureGuild(guildId);
   await run('UPDATE guilds SET model = ? WHERE guild_id = ?', [model, guildId]);
+}
+
+/**
+ * Simpan toggle "RAG suara di room" per server.
+ * `null` = pakai default dari .env (TTS_REPLY_IN_ROOM).
+ */
+export async function setGuildTtsReplyInRoom(guildId: string, enabled: boolean | null): Promise<void> {
+  await ensureGuild(guildId);
+  await run('UPDATE guilds SET tts_reply_in_room = ? WHERE guild_id = ?', [enabled === null ? null : enabled ? 1 : 0, guildId]);
+}
+
+/** AI boleh jawab dari dokumen. `null` = pakai RAG_ENABLED dari .env. */
+export async function setGuildRagEnabled(guildId: string, enabled: boolean | null): Promise<void> {
+  await ensureGuild(guildId);
+  await run('UPDATE guilds SET rag_enabled = ? WHERE guild_id = ?', [enabled === null ? null : enabled ? 1 : 0, guildId]);
+}
+
+/** AI boleh baca gambar. `null` = pakai VISION_ENABLED dari .env. */
+export async function setGuildVisionEnabled(guildId: string, enabled: boolean | null): Promise<void> {
+  await ensureGuild(guildId);
+  await run('UPDATE guilds SET vision_enabled = ? WHERE guild_id = ?', [enabled === null ? null : enabled ? 1 : 0, guildId]);
+}
+
+/** AI boleh ingat otomatis. `null` = pakai AUTO_MEMORY dari .env. */
+export async function setGuildAutoMemory(guildId: string, enabled: boolean | null): Promise<void> {
+  await ensureGuild(guildId);
+  await run('UPDATE guilds SET auto_memory = ? WHERE guild_id = ?', [enabled === null ? null : enabled ? 1 : 0, guildId]);
+}
+
+/** Hanya admin yang boleh buat room. `null` = pakai ADMIN_ONLY_ROOMS dari .env. */
+export async function setGuildAdminOnlyRooms(guildId: string, enabled: boolean | null): Promise<void> {
+  await ensureGuild(guildId);
+  await run('UPDATE guilds SET admin_only_rooms = ? WHERE guild_id = ?', [enabled === null ? null : enabled ? 1 : 0, guildId]);
+}
+
+/**
+ * Simpan nama server Discord.
+ *
+ * Dashboard memakai nama ini supaya dropdown tidak menampilkan deretan angka.
+ * Dipanggil bot saat login, saat masuk server baru, dan saat server di-rename.
+ */
+export async function setGuildName(guildId: string, name: string | null): Promise<void> {
+  await ensureGuild(guildId);
+  const clean = name?.trim().slice(0, 100) || null;
+  await run('UPDATE guilds SET name = ? WHERE guild_id = ?', [clean, guildId]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -511,16 +593,27 @@ export async function countChunks(guildId: string): Promise<number> {
  * Kalau kita hanya membaca `guilds`, dashboard menampilkan "(belum ada server)"
  * padahal data bot jelas ada. UNION membuat data itu tetap muncul.
  */
-export async function listGuildIds(): Promise<string[]> {
-  const rows = await all<{ guild_id: string }>(
-    `SELECT guild_id FROM guilds
-     UNION SELECT guild_id FROM rooms
-     UNION SELECT guild_id FROM documents
-     UNION SELECT guild_id FROM keywords
-     UNION SELECT guild_id FROM memories
-     ORDER BY guild_id`,
+/**
+ * Server yang punya data + nama tampilannya (bila sudah diketahui bot).
+ *
+ * Dipakai dashboard: dropdown menampilkan nama, bukan ID mentah. Server yang
+ * belum pernah dilihat bot (mode dashboard saja) tetap muncul dengan `name: null`
+ * supaya datanya tidak "hilang" dari dashboard.
+ */
+export async function listGuilds(): Promise<GuildChoice[]> {
+  const rows = await all<{ guild_id: string; name: string | null }>(
+    `SELECT ids.guild_id AS guild_id, guilds.name AS name
+     FROM (
+       SELECT guild_id FROM guilds
+       UNION SELECT guild_id FROM rooms
+       UNION SELECT guild_id FROM documents
+       UNION SELECT guild_id FROM keywords
+       UNION SELECT guild_id FROM memories
+     ) AS ids
+     LEFT JOIN guilds ON guilds.guild_id = ids.guild_id
+     ORDER BY ids.guild_id`,
   );
-  return rows.map((row) => row.guild_id);
+  return rows.map((row) => ({ id: row.guild_id, name: row.name?.trim() || null }));
 }
 
 export async function countRows(
@@ -880,4 +973,68 @@ export async function clearModerationLogs(guildId: string): Promise<number> {
 export async function countModerationLogs(guildId: string): Promise<number> {
   const row = await get<{ total: number }>('SELECT COUNT(*) AS total FROM mod_logs WHERE guild_id = ?', [guildId]);
   return Number(row?.total ?? 0);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Panel room AI (satu channel per server)                            */
+/* ------------------------------------------------------------------ */
+
+export interface PanelState {
+  guildId: string;
+  /** Channel tempat panel dikirim terakhir kali (`null` = belum pernah). */
+  channelId: string | null;
+  /** ID pesan panel, dipakai untuk menghapus/mengganti panel lama. */
+  messageId: string | null;
+  /** `false` = tombol "Buat Room AI" ditolak walau pesan panelnya masih ada. */
+  enabled: boolean;
+  updatedAt: number | null;
+}
+
+interface PanelRow {
+  guild_id: string;
+  channel_id: string | null;
+  message_id: string | null;
+  enabled: number;
+  updated_at: number;
+}
+
+const toPanel = (guildId: string, row: PanelRow | null): PanelState => ({
+  guildId,
+  channelId: row?.channel_id ?? null,
+  messageId: row?.message_id ?? null,
+  // Baris belum ada = perilaku lama: panel aktif.
+  enabled: row ? Number(row.enabled) === 1 : true,
+  updatedAt: row ? Number(row.updated_at) : null,
+});
+
+export async function getPanel(guildId: string): Promise<PanelState> {
+  const row = await get<PanelRow>('SELECT * FROM panels WHERE guild_id = ?', [guildId]);
+  return toPanel(guildId, row);
+}
+
+/** Simpan/hapus referensi pesan panel. `messageId = null` = tidak ada panel aktif. */
+export async function setPanelMessage(
+  guildId: string,
+  channelId: string | null,
+  messageId: string | null,
+): Promise<void> {
+  const now = Date.now();
+  await run(
+    `INSERT INTO panels (guild_id, channel_id, message_id, enabled, updated_at)
+     VALUES (?, ?, ?, 1, ?)
+     ON CONFLICT (guild_id) DO UPDATE SET channel_id = ?, message_id = ?, updated_at = ?`,
+    [guildId, channelId, messageId, now, channelId, messageId, now],
+  );
+}
+
+/** Nyalakan/matikan tombol pembuat room tanpa menghapus pesan panelnya. */
+export async function setPanelEnabled(guildId: string, enabled: boolean): Promise<PanelState> {
+  const now = Date.now();
+  await run(
+    `INSERT INTO panels (guild_id, channel_id, message_id, enabled, updated_at)
+     VALUES (?, NULL, NULL, ?, ?)
+     ON CONFLICT (guild_id) DO UPDATE SET enabled = ?, updated_at = ?`,
+    [guildId, enabled ? 1 : 0, now, enabled ? 1 : 0, now],
+  );
+  return getPanel(guildId);
 }

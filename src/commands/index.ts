@@ -2,6 +2,7 @@ import { bantuanCommand } from './bantuan.js';
 import { dokumenCommand } from './dokumen.js';
 import { ingatCommand } from './ingat.js';
 import { keywordCommand } from './keyword.js';
+import { konsolidasiCommand } from './konsolidasi.js';
 import { lupakanCommand } from './lupakan.js';
 import { memoriCommand } from './memori.js';
 import { panelCommand } from './panel.js';
@@ -19,6 +20,7 @@ export const commands: Command[] = [
   ingatCommand,
   memoriCommand,
   lupakanCommand,
+  konsolidasiCommand,
   resetCommand,
   keywordCommand,
   personaCommand,
