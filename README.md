@@ -297,6 +297,24 @@ Pakai **`/reset`** kalau mau ganti topik tapi masih ingin lanjut ngobrol.
 Pakai **`/akhiri`** kalau sudah selesai dan ingin menyimpan transkrip. Keduanya
 bisa dipakai di DM.
 
+### Setelah `/akhiri`, apakah harus klik "Chat via DM" lagi?
+
+**Tidak.** Setelah `/akhiri`, kamu cukup **menulis pesan lagi di DM yang sama** —
+bot otomatis membuka sesi baru dengan **server konteks yang sama** seperti
+sebelumnya, dan mengirim satu baris pemberitahuan:
+
+> 💬 Sesi baru dimulai — konteks **Nama Server**.
+
+Riwayat lama tetap terhapus (bot mulai dari nol), memori jangka panjang tetap ada.
+
+Panel dengan tombol **Chat via DM** hanya diperlukan **pertama kali** atau saat
+ingin **memindahkan sesi** ke server lain. Kalau kamu ikut beberapa server dan
+ingin ganti konteks tanpa menunggu, pakai `/server`.
+
+> Pilihan server disimpan di tabel `dm_prefs` — terpisah dari `dm_sessions`
+> yang dihapus `/akhiri`. Jadi sesi berikutnya tidak akan diam-diam berpindah
+> ke server lain hanya karena server itu kebetulan lebih dulu ada di cache bot.
+
 ---
 
 ## 🧠 Bagaimana AI-nya bekerja

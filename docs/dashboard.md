@@ -211,6 +211,11 @@ dijalankan ulang, termasuk menghapus riwayat `messages` milik room lama.
 > `messages` dengan kunci `dm:<user_id>` selama sesi berjalan — baris itu dihapus saat member
 > menjalankan `/akhiri` atau `/reset`.
 
+Setelah `/akhiri`, sesi boleh dimulai lagi langsung dari DM: bot membuat baris `dm_sessions`
+baru memakai server konteks yang tersimpan di **`dm_prefs`** (tabel terpisah yang tidak ikut
+dihapus). Isi `dm_prefs` hanya dua ID dan satu timestamp — tidak ada data percakapan maupun
+memori member di sana.
+
 ---
 
 ## Panel chat AI (`/panel`)

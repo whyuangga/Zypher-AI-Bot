@@ -5,8 +5,8 @@ import {
   type GuildMember,
 } from 'discord.js';
 import { config } from '../config.js';
-import { getGuildSettings, getPanel, setDmSession } from '../db/repo.js';
-import { dmHelpEphemeral, listGuildChoices, startDmSession } from './dm.js';
+import { getGuildSettings, getPanel } from '../db/repo.js';
+import { chooseContextGuild, dmHelpEphemeral, listGuildChoices, startDmSession } from './dm.js';
 import { errorMessage, logger } from '../lib/logger.js';
 
 async function resolveMember(interaction: ButtonInteraction): Promise<GuildMember | null> {
@@ -103,7 +103,7 @@ async function handleDmServerPick(interaction: ButtonInteraction): Promise<void>
     return;
   }
 
-  await setDmSession(interaction.user.id, match.id, interaction.user.id);
+  await chooseContextGuild(interaction.user.id, match.id);
   await interaction.reply({
     content: `✅ Konteks sekarang memakai **${match.name}**. Lanjutkan tanya jawab di chat ini ya.`,
     flags: MessageFlags.Ephemeral,

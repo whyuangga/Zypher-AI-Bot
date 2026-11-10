@@ -444,6 +444,28 @@ export async function deleteDmSession(userId: string): Promise<void> {
   await run('DELETE FROM dm_sessions WHERE user_id = ?', [userId]);
 }
 
+/**
+ * Simpan pilihan server konteks member.
+ *
+ * Terpisah dari `dm_sessions` karena `/akhiri` menghapus sesi — pilihan server
+ * harus tetap diingat supaya percakapan berikutnya memakai konteks yang sama,
+ * bukan server pertama yang kebetulan ada di cache bot.
+ */
+export async function setDmPrefGuild(userId: string, guildId: string): Promise<void> {
+  await run(
+    `INSERT INTO dm_prefs (user_id, guild_id, updated_at)
+     VALUES (?, ?, ?)
+     ON CONFLICT (user_id) DO UPDATE SET guild_id = excluded.guild_id, updated_at = excluded.updated_at`,
+    [userId, guildId, Date.now()],
+  );
+}
+
+/** Server konteks terakhir yang dipilih member (null = belum pernah memilih). */
+export async function getDmPrefGuild(userId: string): Promise<string | null> {
+  const row = await get<{ guild_id: string }>('SELECT guild_id FROM dm_prefs WHERE user_id = ?', [userId]);
+  return row?.guild_id ?? null;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Conversation history                                               */
 /* ------------------------------------------------------------------ */

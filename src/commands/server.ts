@@ -2,9 +2,10 @@ import { SlashCommandBuilder } from 'discord.js';
 import {
   dmServerPickerEmbed,
   dmServerPickerRow,
+  chooseContextGuild,
   listGuildChoices,
 } from '../features/dm.js';
-import { getDmSession, setDmSession } from '../db/repo.js';
+import { getDmSession } from '../db/repo.js';
 import { dmCapable, type Command } from './types.js';
 
 /**
@@ -49,7 +50,7 @@ export const serverCommand: Command = {
         return;
       }
 
-      await setDmSession(interaction.user.id, match.id, interaction.user.id);
+      await chooseContextGuild(interaction.user.id, match.id);
       await interaction.reply({
         content: `✅ Konteks sekarang memakai **${match.name}**. Lanjutkan tanya jawab di DM ya.`,
       });
@@ -59,7 +60,7 @@ export const serverCommand: Command = {
     // Hanya satu server: langsung pilih.
     if (choices.length === 1) {
       const only = choices[0]!;
-      await setDmSession(interaction.user.id, only.id, interaction.user.id);
+      await chooseContextGuild(interaction.user.id, only.id);
       await interaction.reply({ content: `✅ Konteks memakai **${only.name}**.` });
       return;
     }

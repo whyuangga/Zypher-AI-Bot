@@ -32,11 +32,13 @@ import {
   clearHistory,
   countHistory,
   deleteDmSession,
+  getDmPrefGuild,
   getDmSession,
   getGuildSettings,
   getHistory,
   listMemories,
   appendMessage,
+  setDmPrefGuild,
   setDmSession,
   touchDmSession,
   type DmSession,
@@ -67,6 +69,18 @@ export async function listGuildChoices(client: Client, userId: string): Promise<
   }
 
   return choices.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Tetapkan server konteks untuk member dan ingat pilihannya.
+ *
+ * Selalu dipakai berpasangan: `dm_sessions` bisa hilang saat `/akhiri`, jadi
+ * pilihan server disimpan terpisah di `dm_prefs` agar sesi berikutnya tidak
+ * diam-diam berpindah ke server lain.
+ */
+export async function chooseContextGuild(userId: string, guildId: string): Promise<void> {
+  await setDmSession(userId, guildId, userId);
+  await setDmPrefGuild(userId, guildId);
 }
 
 /** Embed pembuka saat member pertama kali membuka DM ke bot. */
@@ -190,7 +204,7 @@ export function dmPanelRow(): ActionRowBuilder<ButtonBuilder> {
 export async function startDmSession(user: User, guild: Guild): Promise<boolean> {
   const existing = await getDmSession(user.id);
   if (!existing || existing.guildId !== guild.id) {
-    await setDmSession(user.id, guild.id, user.id);
+    await chooseContextGuild(user.id, guild.id);
   } else {
     await touchDmSession(user.id);
   }
@@ -230,8 +244,10 @@ export async function handleDmMessage(message: Message): Promise<void> {
   const user = message.author;
   const session = await getDmSession(user.id);
 
-  // Belum punya sesi: bungkus sebagai percakapan server pertama yang tersedia,
-  // supaya member yang langsung mengetik di DM tetap dilayani.
+  // Belum punya sesi (mis. baru selesai `/akhiri`): buat sesi baru memakai
+  // server konteks TERAKHIR yang dipilih member, bukan server pertama yang
+  // kebetulan ada di cache bot — dulu itu diam-diam memindahkan konteks AI
+  // (persona, dokumen, memori) ke server lain.
   let active = session;
   if (!active) {
     const choices = await listGuildChoices(message.client, user.id);
@@ -245,7 +261,13 @@ export async function handleDmMessage(message: Message): Promise<void> {
         .catch(() => undefined);
       return;
     }
-    await setDmSession(user.id, choices[0]!.id, user.id);
+
+    const preferred = await getDmPrefGuild(user.id);
+    const remembered = preferred ? choices.find((choice) => choice.id === preferred) : undefined;
+    // Kalau member sudah keluar dari server itu, lupakan preferensinya.
+    if (preferred && !remembered) await setDmPrefGuild(user.id, choices[0]!.id);
+
+    await chooseContextGuild(user.id, (remembered ?? choices[0]!).id);
     active = await getDmSession(user.id);
   }
 
@@ -277,6 +299,21 @@ export async function handleDmMessage(message: Message): Promise<void> {
   if (!question) {
     await message.reply({ content: 'Tulis pertanyaannya dalam bentuk teks ya 🙏' }).catch(() => undefined);
     return;
+  }
+
+  // Sesi baru dibuka otomatis (baru selesai `/akhiri`): beri tahu sekali supaya
+  // member tahu konteks mana yang dipakai — bukan diam-diam memakai server lain.
+  if (!session) {
+    const label = guild.name ?? active.guildId;
+    await message
+      .reply({
+        content: [
+          `💬 Sesi baru dimulai — konteks **${label}**.`,
+          'Riwayat sebelumnya sudah dihapus, jadi bot mulai dari nol.',
+          '-# Ganti server konteks dengan `/server`, atau tutup lagi dengan `/akhiri`.',
+        ].join('\n'),
+      })
+      .catch(() => undefined);
   }
 
   // Placeholder, lalu edit bertahap supaya terasa streaming tanpa kena rate limit.
@@ -452,7 +489,10 @@ export async function endDmSession(user: User, botName: string): Promise<{ messa
         '**Transkrip percakapan kamu**',
         `📄 ${lines.length} pesan • ${memories.length} memori`,
         '',
-        'Sesi ditutup. Riwayat percakapan dihapus dari bot — file di bawah satu-satunya salinan.',
+        'Riwayat percakapan dihapus dari bot — file di bawah satu-satunya salinan.',
+        '',
+        'Mau ngobrol lagi? **Langsung tulis di chat ini.** Bot akan membuka sesi baru',
+        'dengan server konteks yang sama — tidak perlu klik "Chat via DM" lagi.',
       ].join('\n'),
       files: [new AttachmentBuilder(Buffer.from(html, 'utf8'), { name: fileName })],
     });

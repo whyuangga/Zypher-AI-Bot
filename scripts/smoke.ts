@@ -1274,6 +1274,62 @@ test('endDmSession melaporkan kegagalan kirim transkrip', async () => {
   );
 });
 
+console.log('\nSesi baru setelah /akhiri');
+
+test('preferensi server bertahan setelah sesi dihapus', async () => {
+  const { setDmPrefGuild, getDmPrefGuild, setDmSession, deleteDmSession } = await import('../src/db/repo.js');
+
+  const user = '900000000000000900';
+  await setDmSession(user, '111', user);
+  await setDmPrefGuild(user, '111');
+
+  // `/akhiri` menghapus sesi...
+  await deleteDmSession(user);
+
+  // ...tapi pilihan server harus tetap diingat supaya sesi berikutnya tidak
+  // diam-diam pindah ke server lain.
+  assert.equal(await getDmPrefGuild(user), '111', 'preferensi server bertahan');
+});
+
+test('preferensi diperbarui saat member memilih server lain', async () => {
+  const { setDmPrefGuild, getDmPrefGuild } = await import('../src/db/repo.js');
+  const user = '900000000000000901';
+  await setDmPrefGuild(user, 'aaa');
+  await setDmPrefGuild(user, 'bbb');
+  assert.equal(await getDmPrefGuild(user), 'bbb', 'pilihan terbaru menang');
+});
+
+test('chooseContextGuild menyimpan sesi + preferensi sekaligus', async () => {
+  const { chooseContextGuild } = await import('../src/features/dm.js');
+  const { getDmSession, getDmPrefGuild } = await import('../src/db/repo.js');
+  const user = '900000000000000902';
+  await chooseContextGuild(user, '999');
+  assert.equal((await getDmSession(user))?.guildId, '999', 'sesi menunjuk server itu');
+  assert.equal(await getDmPrefGuild(user), '999', 'preferensi ikut tersimpan');
+});
+
+test('handleDmMessage memakai preferensi, bukan server pertama di cache', async () => {
+  const source = await readFile('src/features/dm.ts', 'utf8');
+  const block = source.slice(source.indexOf('export async function handleDmMessage'));
+  assert.ok(block.includes('getDmPrefGuild'), 'membaca preferensi server');
+  assert.ok(
+    /remembered \?\? choices\[0\]!/ .test(block) || block.includes('remembered ?? choices[0]!'),
+    'memakai server yang diingat, fallback ke pilihan pertama',
+  );
+  // Dulu: `await setDmSession(user.id, choices[0]!.id, user.id)` tanpa preferensi.
+  assert.equal(
+    /await setDmSession\(user\.id, choices\[0\]!\.id/.test(block),
+    false,
+    'tidak lagi langsung memakai server pertama',
+  );
+});
+
+test('/akhiri memberi tahu bahwa sesi baru bisa dimulai langsung di DM', async () => {
+  const source = await readFile('src/features/dm.ts', 'utf8');
+  assert.ok(source.includes('Langsung tulis di chat ini'), 'menjelaskan tidak perlu klik panel lagi');
+  assert.ok(source.includes('Sesi baru dimulai'), 'memberi tahu saat sesi baru dibuka otomatis');
+});
+
 console.log('\nCommand di DM');
 
 test('/reset bisa dipakai di DM (bukan hanya di server)', async () => {
