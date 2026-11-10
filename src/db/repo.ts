@@ -1,4 +1,10 @@
-import { db } from './index.js';
+import { all, get, insert, run } from './index.js';
+
+/*
+ * Semua fungsi di sini `async` karena database bisa berupa SQLite (sinkron)
+ * atau Postgres (jaringan). SQL-nya sengaja ditulis dengan placeholder `?`
+ * dan tanpa fungsi khusus SQLite, supaya satu kode jalan di dua engine.
+ */
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -161,333 +167,340 @@ const toGuild = (row: GuildRow): GuildSettings => ({
   guildId: row.guild_id,
   persona: row.persona,
   model: row.model,
-  createdAt: row.created_at,
+  createdAt: Number(row.created_at),
 });
 
 const toMemory = (row: MemoryRow): Memory => ({
-  id: row.id,
+  id: Number(row.id),
   guildId: row.guild_id,
   userId: row.user_id,
   content: row.content,
   source: row.source,
-  createdAt: row.created_at,
+  createdAt: Number(row.created_at),
 });
 
 const toKeyword = (row: KeywordRow): Keyword => ({
-  id: row.id,
+  id: Number(row.id),
   guildId: row.guild_id,
   trigger: row.trigger,
   answer: row.answer,
   createdBy: row.created_by,
-  createdAt: row.created_at,
+  createdAt: Number(row.created_at),
 });
 
 const toRoom = (row: RoomRow): Room => ({
   channelId: row.channel_id,
   guildId: row.guild_id,
   userId: row.user_id,
-  createdAt: row.created_at,
-  lastActiveAt: row.last_active_at,
-  messageCount: row.message_count,
+  createdAt: Number(row.created_at),
+  lastActiveAt: Number(row.last_active_at),
+  messageCount: Number(row.message_count),
 });
 
 const toDocument = (row: DocumentRow): DocumentRecord => ({
-  id: row.id,
+  id: Number(row.id),
   guildId: row.guild_id,
   name: row.name,
   source: row.source,
-  chars: row.chars,
-  chunkCount: row.chunk_count,
+  chars: Number(row.chars),
+  chunkCount: Number(row.chunk_count),
   createdBy: row.created_by,
-  createdAt: row.created_at,
+  createdAt: Number(row.created_at),
 });
 
 const toChunk = (row: ChunkRow): ChunkRecord => ({
-  id: row.id,
-  documentId: row.document_id,
+  id: Number(row.id),
+  documentId: Number(row.document_id),
   guildId: row.guild_id,
-  ordinal: row.ordinal,
+  ordinal: Number(row.ordinal),
   content: row.content,
   embedding: row.embedding,
 });
 
 const toMessage = (row: MessageRow): StoredMessage => ({
-  id: row.id,
+  id: Number(row.id),
   channelId: row.channel_id,
   role: row.role === 'assistant' ? 'assistant' : 'user',
   content: row.content,
-  createdAt: row.created_at,
+  createdAt: Number(row.created_at),
 });
 
 /* ------------------------------------------------------------------ */
 /*  Guild settings                                                     */
 /* ------------------------------------------------------------------ */
 
-export function ensureGuild(guildId: string): void {
-  db.prepare('INSERT OR IGNORE INTO guilds (guild_id, created_at) VALUES (?, ?)').run(guildId, Date.now());
+export async function ensureGuild(guildId: string): Promise<void> {
+  await run('INSERT INTO guilds (guild_id, created_at) VALUES (?, ?) ON CONFLICT (guild_id) DO NOTHING', [
+    guildId,
+    Date.now(),
+  ]);
 }
 
-export function getGuildSettings(guildId: string): GuildSettings | null {
-  const row = db.prepare('SELECT * FROM guilds WHERE guild_id = ?').get(guildId) as GuildRow | undefined;
+export async function getGuildSettings(guildId: string): Promise<GuildSettings | null> {
+  const row = await get<GuildRow>('SELECT * FROM guilds WHERE guild_id = ?', [guildId]);
   return row ? toGuild(row) : null;
 }
 
-export function setPersona(guildId: string, persona: string | null): void {
-  ensureGuild(guildId);
-  db.prepare('UPDATE guilds SET persona = ? WHERE guild_id = ?').run(persona, guildId);
+export async function setPersona(guildId: string, persona: string | null): Promise<void> {
+  await ensureGuild(guildId);
+  await run('UPDATE guilds SET persona = ? WHERE guild_id = ?', [persona, guildId]);
 }
 
-export function setGuildModel(guildId: string, model: string | null): void {
-  ensureGuild(guildId);
-  db.prepare('UPDATE guilds SET model = ? WHERE guild_id = ?').run(model, guildId);
+export async function setGuildModel(guildId: string, model: string | null): Promise<void> {
+  await ensureGuild(guildId);
+  await run('UPDATE guilds SET model = ? WHERE guild_id = ?', [model, guildId]);
 }
 
 /* ------------------------------------------------------------------ */
 /*  Memory                                                             */
 /* ------------------------------------------------------------------ */
 
-export function addMemory(
+export async function addMemory(
   guildId: string,
   userId: string,
   content: string,
   source: 'manual' | 'auto' = 'manual',
-): { inserted: boolean; id: number | null } {
+): Promise<{ inserted: boolean; id: number | null }> {
   const cleaned = content.trim();
   if (!cleaned) return { inserted: false, id: null };
 
-  const existing = db
-    .prepare('SELECT id FROM memories WHERE guild_id = ? AND user_id = ? AND content = ?')
-    .get(guildId, userId, cleaned) as { id: number } | undefined;
-  if (existing) return { inserted: false, id: existing.id };
+  const existing = await get<{ id: number }>(
+    'SELECT id FROM memories WHERE guild_id = ? AND user_id = ? AND content = ?',
+    [guildId, userId, cleaned],
+  );
+  if (existing) return { inserted: false, id: Number(existing.id) };
 
-  const info = db
-    .prepare('INSERT INTO memories (guild_id, user_id, content, source, created_at) VALUES (?, ?, ?, ?, ?)')
-    .run(guildId, userId, cleaned, source, Date.now());
+  const id = await insert(
+    'INSERT INTO memories (guild_id, user_id, content, source, created_at) VALUES (?, ?, ?, ?, ?)',
+    [guildId, userId, cleaned, source, Date.now()],
+  );
 
-  return { inserted: true, id: Number(info.lastInsertRowid) };
+  return { inserted: true, id };
 }
 
-export function listMemories(guildId: string, userId: string, limit = 50): Memory[] {
-  const rows = db
-    .prepare('SELECT * FROM memories WHERE guild_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?')
-    .all(guildId, userId, limit) as unknown as MemoryRow[];
+export async function listMemories(guildId: string, userId: string, limit = 50): Promise<Memory[]> {
+  const rows = await all<MemoryRow>(
+    'SELECT * FROM memories WHERE guild_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?',
+    [guildId, userId, limit],
+  );
   return rows.map(toMemory);
 }
 
-export function deleteMemory(guildId: string, userId: string, id: number): boolean {
-  const info = db.prepare('DELETE FROM memories WHERE guild_id = ? AND user_id = ? AND id = ?').run(guildId, userId, id);
-  return Number(info.changes) > 0;
+export async function deleteMemory(guildId: string, userId: string, id: number): Promise<boolean> {
+  const info = await run('DELETE FROM memories WHERE guild_id = ? AND user_id = ? AND id = ?', [guildId, userId, id]);
+  return info.changes > 0;
 }
 
-export function clearMemories(guildId: string, userId: string): number {
-  const info = db.prepare('DELETE FROM memories WHERE guild_id = ? AND user_id = ?').run(guildId, userId);
-  return Number(info.changes);
+export async function clearMemories(guildId: string, userId: string): Promise<number> {
+  const info = await run('DELETE FROM memories WHERE guild_id = ? AND user_id = ?', [guildId, userId]);
+  return info.changes;
 }
 
 /* ------------------------------------------------------------------ */
 /*  Keywords                                                           */
 /* ------------------------------------------------------------------ */
 
-export function addKeyword(
+export async function addKeyword(
   guildId: string,
   trigger: string,
   answer: string,
   createdBy: string | null,
-): { ok: boolean; id?: number; reason?: 'duplicate' } {
+): Promise<{ ok: boolean; id?: number; reason?: 'duplicate' }> {
   const cleanTrigger = trigger.trim().toLowerCase();
   const cleanAnswer = answer.trim();
   if (!cleanTrigger || !cleanAnswer) return { ok: false };
 
-  const existing = db
-    .prepare('SELECT id FROM keywords WHERE guild_id = ? AND trigger = ?')
-    .get(guildId, cleanTrigger) as { id: number } | undefined;
+  const existing = await get<{ id: number }>('SELECT id FROM keywords WHERE guild_id = ? AND trigger = ?', [
+    guildId,
+    cleanTrigger,
+  ]);
   if (existing) return { ok: false, reason: 'duplicate' };
 
-  const info = db
-    .prepare('INSERT INTO keywords (guild_id, trigger, answer, created_by, created_at) VALUES (?, ?, ?, ?, ?)')
-    .run(guildId, cleanTrigger, cleanAnswer, createdBy ?? null, Date.now());
+  const id = await insert(
+    'INSERT INTO keywords (guild_id, trigger, answer, created_by, created_at) VALUES (?, ?, ?, ?, ?)',
+    [guildId, cleanTrigger, cleanAnswer, createdBy ?? null, Date.now()],
+  );
 
-  return { ok: true, id: Number(info.lastInsertRowid) };
+  return { ok: true, id };
 }
 
-export function listKeywords(guildId: string, limit = 100): Keyword[] {
-  const rows = db
-    .prepare('SELECT * FROM keywords WHERE guild_id = ? ORDER BY id DESC LIMIT ?')
-    .all(guildId, limit) as unknown as KeywordRow[];
+export async function listKeywords(guildId: string, limit = 100): Promise<Keyword[]> {
+  const rows = await all<KeywordRow>('SELECT * FROM keywords WHERE guild_id = ? ORDER BY id DESC LIMIT ?', [
+    guildId,
+    limit,
+  ]);
   return rows.map(toKeyword);
 }
 
-export function deleteKeyword(guildId: string, id: number): boolean {
-  const info = db.prepare('DELETE FROM keywords WHERE guild_id = ? AND id = ?').run(guildId, id);
-  return Number(info.changes) > 0;
+export async function deleteKeyword(guildId: string, id: number): Promise<boolean> {
+  const info = await run('DELETE FROM keywords WHERE guild_id = ? AND id = ?', [guildId, id]);
+  return info.changes > 0;
 }
 
 /* ------------------------------------------------------------------ */
 /*  Rooms                                                              */
 /* ------------------------------------------------------------------ */
 
-export function createRoom(channelId: string, guildId: string, userId: string): void {
+export async function createRoom(channelId: string, guildId: string, userId: string): Promise<void> {
   const now = Date.now();
   // Setiap room menyiratkan server: pastikan baris `guilds` ada supaya server
   // muncul di dropdown dashboard (kalau tidak, dashboard tampak kosong).
-  ensureGuild(guildId);
-  db.prepare(
+  await ensureGuild(guildId);
+  await run(
     `INSERT INTO rooms (channel_id, guild_id, user_id, created_at, last_active_at)
      VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(channel_id) DO UPDATE SET guild_id = excluded.guild_id, user_id = excluded.user_id`,
-  ).run(channelId, guildId, userId, now, now);
-}
-
-export function getRoomByChannel(channelId: string): Room | null {
-  const row = db.prepare('SELECT * FROM rooms WHERE channel_id = ?').get(channelId) as RoomRow | undefined;
-  return row ? toRoom(row) : null;
-}
-
-export function getRoomByUser(guildId: string, userId: string): Room | null {
-  const row = db.prepare('SELECT * FROM rooms WHERE guild_id = ? AND user_id = ?').get(guildId, userId) as
-    | RoomRow
-    | undefined;
-  return row ? toRoom(row) : null;
-}
-
-export function listRooms(guildId: string): Room[] {
-  const rows = db.prepare('SELECT * FROM rooms WHERE guild_id = ? ORDER BY last_active_at DESC').all(guildId) as unknown as RoomRow[];
-  return rows.map(toRoom);
-}
-
-export function touchRoom(channelId: string, messagesAdded = 1): void {
-  db.prepare('UPDATE rooms SET last_active_at = ?, message_count = message_count + ? WHERE channel_id = ?').run(
-    Date.now(),
-    messagesAdded,
-    channelId,
+     ON CONFLICT (channel_id) DO UPDATE SET guild_id = excluded.guild_id, user_id = excluded.user_id`,
+    [channelId, guildId, userId, now, now],
   );
 }
 
-export function deleteRoom(channelId: string): void {
-  db.prepare('DELETE FROM rooms WHERE channel_id = ?').run(channelId);
+export async function getRoomByChannel(channelId: string): Promise<Room | null> {
+  const row = await get<RoomRow>('SELECT * FROM rooms WHERE channel_id = ?', [channelId]);
+  return row ? toRoom(row) : null;
+}
+
+export async function getRoomByUser(guildId: string, userId: string): Promise<Room | null> {
+  const row = await get<RoomRow>('SELECT * FROM rooms WHERE guild_id = ? AND user_id = ?', [guildId, userId]);
+  return row ? toRoom(row) : null;
+}
+
+export async function listRooms(guildId: string): Promise<Room[]> {
+  const rows = await all<RoomRow>('SELECT * FROM rooms WHERE guild_id = ? ORDER BY last_active_at DESC', [guildId]);
+  return rows.map(toRoom);
+}
+
+export async function touchRoom(channelId: string, messagesAdded = 1): Promise<void> {
+  await run('UPDATE rooms SET last_active_at = ?, message_count = message_count + ? WHERE channel_id = ?', [
+    Date.now(),
+    messagesAdded,
+    channelId,
+  ]);
+}
+
+export async function deleteRoom(channelId: string): Promise<void> {
+  await run('DELETE FROM rooms WHERE channel_id = ?', [channelId]);
 }
 
 /* ------------------------------------------------------------------ */
 /*  Conversation history                                               */
 /* ------------------------------------------------------------------ */
 
-export function appendMessage(channelId: string, role: ChatRole, content: string): void {
-  db.prepare('INSERT INTO messages (channel_id, role, content, created_at) VALUES (?, ?, ?, ?)').run(
+export async function appendMessage(channelId: string, role: ChatRole, content: string): Promise<void> {
+  await run('INSERT INTO messages (channel_id, role, content, created_at) VALUES (?, ?, ?, ?)', [
     channelId,
     role,
     content,
     Date.now(),
-  );
+  ]);
 }
 
 /** Ambil N pesan terakhir, dikembalikan urut lama -> baru. */
-export function getHistory(channelId: string, limit: number): StoredMessage[] {
+export async function getHistory(channelId: string, limit: number): Promise<StoredMessage[]> {
   if (limit <= 0) return [];
-  const rows = db
-    .prepare('SELECT sub.* FROM (SELECT * FROM messages WHERE channel_id = ? ORDER BY id DESC LIMIT ?) sub ORDER BY sub.id ASC')
-    .all(channelId, limit) as unknown as MessageRow[];
+  const rows = await all<MessageRow>(
+    'SELECT sub.* FROM (SELECT * FROM messages WHERE channel_id = ? ORDER BY id DESC LIMIT ?) sub ORDER BY sub.id ASC',
+    [channelId, limit],
+  );
   return rows.map(toMessage);
 }
 
-export function clearHistory(channelId: string): number {
-  const info = db.prepare('DELETE FROM messages WHERE channel_id = ?').run(channelId);
-  return Number(info.changes);
+export async function clearHistory(channelId: string): Promise<number> {
+  const info = await run('DELETE FROM messages WHERE channel_id = ?', [channelId]);
+  return info.changes;
 }
 
-export function countHistory(channelId: string): number {
-  const row = db.prepare('SELECT COUNT(*) AS total FROM messages WHERE channel_id = ?').get(channelId) as { total: number };
-  return row.total;
+export async function countHistory(channelId: string): Promise<number> {
+  const row = await get<{ total: number }>('SELECT COUNT(*) AS total FROM messages WHERE channel_id = ?', [channelId]);
+  return Number(row?.total ?? 0);
 }
 
 /* ------------------------------------------------------------------ */
 /*  Dokumen (RAG)                                                      */
 /* ------------------------------------------------------------------ */
 
-export function insertDocument(input: {
+export async function insertDocument(input: {
   guildId: string;
   name: string;
   source?: string;
   chars: number;
   createdBy?: string | null;
-}): number {
-  const info = db
-    .prepare(
-      `INSERT INTO documents (guild_id, name, source, chars, chunk_count, created_by, created_at)
-       VALUES (?, ?, ?, ?, 0, ?, ?)`,
-    )
-    .run(input.guildId, input.name, input.source ?? 'upload', input.chars, input.createdBy ?? null, Date.now());
-  return Number(info.lastInsertRowid);
+}): Promise<number> {
+  return insert(
+    `INSERT INTO documents (guild_id, name, source, chars, chunk_count, created_by, created_at)
+     VALUES (?, ?, ?, ?, 0, ?, ?)`,
+    [input.guildId, input.name, input.source ?? 'upload', input.chars, input.createdBy ?? null, Date.now()],
+  );
 }
 
-export function insertChunks(
+export async function insertChunks(
   documentId: number,
   guildId: string,
   chunks: Array<{ content: string; embedding?: number[] | null }>,
-): void {
-  const statement = db.prepare(
-    'INSERT INTO chunks (document_id, guild_id, ordinal, content, embedding) VALUES (?, ?, ?, ?, ?)',
-  );
-
-  chunks.forEach((chunk, index) => {
-    statement.run(
+): Promise<void> {
+  for (const [index, chunk] of chunks.entries()) {
+    await run('INSERT INTO chunks (document_id, guild_id, ordinal, content, embedding) VALUES (?, ?, ?, ?, ?)', [
       documentId,
       guildId,
       index,
       chunk.content,
       chunk.embedding && chunk.embedding.length > 0 ? JSON.stringify(chunk.embedding) : null,
-    );
-  });
+    ]);
+  }
 
-  db.prepare('UPDATE documents SET chunk_count = ? WHERE id = ?').run(chunks.length, documentId);
+  await run('UPDATE documents SET chunk_count = ? WHERE id = ?', [chunks.length, documentId]);
 }
 
-export function listDocuments(guildId: string): DocumentRecord[] {
-  const rows = db
-    .prepare(
-      `SELECT d.*, (SELECT COUNT(*) FROM chunks c WHERE c.document_id = d.id) AS chunk_count
-       FROM documents d WHERE d.guild_id = ? ORDER BY d.id DESC`,
-    )
-    .all(guildId) as unknown as DocumentRow[];
+export async function listDocuments(guildId: string): Promise<DocumentRecord[]> {
+  // LEFT JOIN + GROUP BY (bukan subquery berkorelasi) supaya SQL-nya sama-sama
+  // didukung SQLite dan Postgres.
+  const rows = await all<DocumentRow>(
+    `SELECT d.id, d.guild_id, d.name, d.source, d.chars, d.created_by, d.created_at,
+            COUNT(c.id) AS chunk_count
+     FROM documents d
+     LEFT JOIN chunks c ON c.document_id = d.id
+     WHERE d.guild_id = ?
+     GROUP BY d.id, d.guild_id, d.name, d.source, d.chars, d.created_by, d.created_at
+     ORDER BY d.id DESC`,
+    [guildId],
+  );
   return rows.map(toDocument);
 }
 
-export function getDocument(guildId: string, id: number): DocumentRecord | null {
-  const row = db.prepare('SELECT * FROM documents WHERE guild_id = ? AND id = ?').get(guildId, id) as
-    | DocumentRow
-    | undefined;
+export async function getDocument(guildId: string, id: number): Promise<DocumentRecord | null> {
+  const row = await get<DocumentRow>('SELECT * FROM documents WHERE guild_id = ? AND id = ?', [guildId, id]);
   return row ? toDocument(row) : null;
 }
 
-export function findDocumentByName(guildId: string, name: string): DocumentRecord | null {
-  const row = db
-    .prepare('SELECT * FROM documents WHERE guild_id = ? AND lower(name) = lower(?)')
-    .get(guildId, name.trim()) as DocumentRow | undefined;
+export async function findDocumentByName(guildId: string, name: string): Promise<DocumentRecord | null> {
+  const row = await get<DocumentRow>('SELECT * FROM documents WHERE guild_id = ? AND lower(name) = lower(?)', [
+    guildId,
+    name.trim(),
+  ]);
   return row ? toDocument(row) : null;
 }
 
-export function deleteDocument(guildId: string, id: number): boolean {
+export async function deleteDocument(guildId: string, id: number): Promise<boolean> {
   // Hapus potongan lebih dulu supaya tetap aman walau foreign_keys dimatikan.
-  db.prepare('DELETE FROM chunks WHERE guild_id = ? AND document_id = ?').run(guildId, id);
-  const info = db.prepare('DELETE FROM documents WHERE guild_id = ? AND id = ?').run(guildId, id);
-  return Number(info.changes) > 0;
+  await run('DELETE FROM chunks WHERE guild_id = ? AND document_id = ?', [guildId, id]);
+  const info = await run('DELETE FROM documents WHERE guild_id = ? AND id = ?', [guildId, id]);
+  return info.changes > 0;
 }
 
 /** Semua potongan satu server, lengkap dengan nama dokumennya (untuk indeks pencarian). */
-export function listChunks(guildId: string, limit = 5000): ChunkWithDocument[] {
-  const rows = db
-    .prepare(
-      `SELECT c.*, d.name AS document_name
-       FROM chunks c JOIN documents d ON d.id = c.document_id
-       WHERE c.guild_id = ? ORDER BY c.document_id DESC, c.ordinal ASC LIMIT ?`,
-    )
-    .all(guildId, limit) as unknown as Array<ChunkRow & { document_name: string }>;
+export async function listChunks(guildId: string, limit = 5000): Promise<ChunkWithDocument[]> {
+  const rows = await all<ChunkRow & { document_name: string }>(
+    `SELECT c.*, d.name AS document_name
+     FROM chunks c JOIN documents d ON d.id = c.document_id
+     WHERE c.guild_id = ? ORDER BY c.document_id DESC, c.ordinal ASC LIMIT ?`,
+    [guildId, limit],
+  );
 
   return rows.map((row) => ({ ...toChunk(row), documentName: row.document_name }));
 }
 
-export function countChunks(guildId: string): number {
-  const row = db.prepare('SELECT COUNT(*) AS total FROM chunks WHERE guild_id = ?').get(guildId) as { total: number };
-  return row.total;
+export async function countChunks(guildId: string): Promise<number> {
+  const row = await get<{ total: number }>('SELECT COUNT(*) AS total FROM chunks WHERE guild_id = ?', [guildId]);
+  return Number(row?.total ?? 0);
 }
 
 /**
@@ -498,46 +511,43 @@ export function countChunks(guildId: string): number {
  * Kalau kita hanya membaca `guilds`, dashboard menampilkan "(belum ada server)"
  * padahal data bot jelas ada. UNION membuat data itu tetap muncul.
  */
-export function listGuildIds(): string[] {
-  const rows = db
-    .prepare(
-      `SELECT guild_id FROM guilds
-       UNION SELECT guild_id FROM rooms
-       UNION SELECT guild_id FROM documents
-       UNION SELECT guild_id FROM keywords
-       UNION SELECT guild_id FROM memories
-       ORDER BY guild_id`,
-    )
-    .all() as unknown as Array<{ guild_id: string }>;
+export async function listGuildIds(): Promise<string[]> {
+  const rows = await all<{ guild_id: string }>(
+    `SELECT guild_id FROM guilds
+     UNION SELECT guild_id FROM rooms
+     UNION SELECT guild_id FROM documents
+     UNION SELECT guild_id FROM keywords
+     UNION SELECT guild_id FROM memories
+     ORDER BY guild_id`,
+  );
   return rows.map((row) => row.guild_id);
 }
 
-export function countRows(table: 'memories' | 'keywords' | 'rooms' | 'messages' | 'documents' | 'chunks'): number {
-  const row = db.prepare(`SELECT COUNT(*) AS total FROM ${table}`).get() as { total: number };
-  return row.total;
+export async function countRows(
+  table: 'memories' | 'keywords' | 'rooms' | 'messages' | 'documents' | 'chunks',
+): Promise<number> {
+  const row = await get<{ total: number }>(`SELECT COUNT(*) AS total FROM ${table}`);
+  return Number(row?.total ?? 0);
 }
 
 /** Jumlah baris milik satu server — dipakai dashboard agar angka cocok dengan daftar di bawahnya. */
-export function countGuildRows(
+export async function countGuildRows(
   guildId: string,
   table: 'memories' | 'keywords' | 'rooms' | 'documents' | 'chunks',
-): number {
-  const row = db.prepare(`SELECT COUNT(*) AS total FROM ${table} WHERE guild_id = ?`).get(guildId) as {
-    total: number;
-  };
-  return row.total;
+): Promise<number> {
+  const row = await get<{ total: number }>(`SELECT COUNT(*) AS total FROM ${table} WHERE guild_id = ?`, [guildId]);
+  return Number(row?.total ?? 0);
 }
 
 /** Tabel `messages` tidak menyimpan `guild_id` — hitung lewat room milik server itu. */
-export function countGuildMessages(guildId: string): number {
-  const row = db
-    .prepare(
-      `SELECT COUNT(*) AS total FROM messages m
-       JOIN rooms r ON r.channel_id = m.channel_id
-       WHERE r.guild_id = ?`,
-    )
-    .get(guildId) as { total: number };
-  return row.total;
+export async function countGuildMessages(guildId: string): Promise<number> {
+  const row = await get<{ total: number }>(
+    `SELECT COUNT(*) AS total FROM messages m
+     JOIN rooms r ON r.channel_id = m.channel_id
+     WHERE r.guild_id = ?`,
+    [guildId],
+  );
+  return Number(row?.total ?? 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -584,7 +594,7 @@ function toTranscriptSummary(row: TranscriptRow): TranscriptSummary {
  * atau bot dipindah ke host lain. `size_bytes` disimpan supaya daftar transkrip
  * tidak perlu membaca kolom HTML yang besar.
  */
-export function insertTranscript(input: {
+export async function insertTranscript(input: {
   guildId: string;
   channelId: string;
   channelName: string;
@@ -596,15 +606,13 @@ export function insertTranscript(input: {
   memoryCount: number;
   html: string;
   createdAt?: number;
-}): number {
-  const result = db
-    .prepare(
-      `INSERT INTO transcripts
-        (guild_id, channel_id, channel_name, user_id, user_name, file_name, summary,
-         message_count, memory_count, size_bytes, html, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
+}): Promise<number> {
+  return insert(
+    `INSERT INTO transcripts
+      (guild_id, channel_id, channel_name, user_id, user_name, file_name, summary,
+       message_count, memory_count, size_bytes, html, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
       input.guildId,
       input.channelId,
       input.channelName,
@@ -617,41 +625,39 @@ export function insertTranscript(input: {
       Buffer.byteLength(input.html, 'utf8'),
       input.html,
       input.createdAt ?? Date.now(),
-    );
-  return Number(result.lastInsertRowid);
+    ],
+  );
 }
 
 /** Daftar transkrip satu server, terbaru dulu. Kolom HTML tidak ikut dibaca. */
-export function listTranscripts(guildId: string, limit = 100): TranscriptSummary[] {
-  const rows = db
-    .prepare(
-      `SELECT id, guild_id, channel_id, channel_name, user_id, user_name, file_name, summary,
-              message_count, memory_count, size_bytes, created_at
-       FROM transcripts WHERE guild_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`,
-    )
-    .all(guildId, limit) as unknown as TranscriptRow[];
+export async function listTranscripts(guildId: string, limit = 100): Promise<TranscriptSummary[]> {
+  const rows = await all<TranscriptRow>(
+    `SELECT id, guild_id, channel_id, channel_name, user_id, user_name, file_name, summary,
+            message_count, memory_count, size_bytes, created_at
+     FROM transcripts WHERE guild_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`,
+    [guildId, limit],
+  );
   return rows.map(toTranscriptSummary);
 }
 
 /** Satu transkrip lengkap (dengan HTML) — dipakai untuk unduhan. */
-export function getTranscript(guildId: string, id: number): TranscriptRecord | null {
-  const row = db
-    .prepare('SELECT * FROM transcripts WHERE guild_id = ? AND id = ?')
-    .get(guildId, id) as unknown as (TranscriptRow & { html: string }) | undefined;
+export async function getTranscript(guildId: string, id: number): Promise<TranscriptRecord | null> {
+  const row = await get<TranscriptRow & { html: string }>('SELECT * FROM transcripts WHERE guild_id = ? AND id = ?', [
+    guildId,
+    id,
+  ]);
   if (!row) return null;
   return { ...toTranscriptSummary(row), html: row.html };
 }
 
-export function deleteTranscript(guildId: string, id: number): boolean {
-  const result = db.prepare('DELETE FROM transcripts WHERE guild_id = ? AND id = ?').run(guildId, id);
-  return result.changes > 0;
+export async function deleteTranscript(guildId: string, id: number): Promise<boolean> {
+  const info = await run('DELETE FROM transcripts WHERE guild_id = ? AND id = ?', [guildId, id]);
+  return info.changes > 0;
 }
 
-export function countTranscripts(guildId: string): number {
-  const row = db.prepare('SELECT COUNT(*) AS total FROM transcripts WHERE guild_id = ?').get(guildId) as {
-    total: number;
-  };
-  return row.total;
+export async function countTranscripts(guildId: string): Promise<number> {
+  const row = await get<{ total: number }>('SELECT COUNT(*) AS total FROM transcripts WHERE guild_id = ?', [guildId]);
+  return Number(row?.total ?? 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -665,30 +671,37 @@ export interface MemoryOwner {
 }
 
 /** Pemilik memori di satu server, diurutkan dari yang paling banyak. */
-export function listMemoryOwners(guildId: string): MemoryOwner[] {
-  const rows = db
-    .prepare(
-      `SELECT user_id, COUNT(*) AS total, MAX(created_at) AS last_at
-       FROM memories WHERE guild_id = ?
-       GROUP BY user_id ORDER BY total DESC, last_at DESC`,
-    )
-    .all(guildId) as unknown as Array<{ user_id: string; total: number; last_at: number }>;
+export async function listMemoryOwners(guildId: string): Promise<MemoryOwner[]> {
+  const rows = await all<{ user_id: string; total: number; last_at: number }>(
+    `SELECT user_id, COUNT(*) AS total, MAX(created_at) AS last_at
+     FROM memories WHERE guild_id = ?
+     GROUP BY user_id ORDER BY total DESC, last_at DESC`,
+    [guildId],
+  );
   return rows.map((row) => ({ userId: row.user_id, count: Number(row.total), lastAt: Number(row.last_at) }));
 }
 
 /** Semua memori satu server (untuk halaman Memori). */
-export function listGuildMemories(guildId: string, limit = 500): Memory[] {
-  const rows = db
-    .prepare('SELECT * FROM memories WHERE guild_id = ? ORDER BY id DESC LIMIT ?')
-    .all(guildId, limit) as unknown as MemoryRow[];
+export async function listGuildMemories(guildId: string, limit = 500): Promise<Memory[]> {
+  const rows = await all<MemoryRow>('SELECT * FROM memories WHERE guild_id = ? ORDER BY id DESC LIMIT ?', [
+    guildId,
+    limit,
+  ]);
   return rows.map(toMemory);
 }
 
 /**
  * Jumlah pesan per hari (zona waktu WIB) selama `days` hari terakhir.
  * Dipakai grafik aktivitas di dashboard.
+ *
+ * Pengelompokan tanggal dilakukan di JS (bukan fungsi tanggal SQL) supaya
+ * hasilnya sama di SQLite maupun Postgres.
  */
-export function messagesPerDay(guildId: string, days = 7, timeZone = 'Asia/Jakarta'): Array<{ day: string; count: number }> {
+export async function messagesPerDay(
+  guildId: string,
+  days = 7,
+  timeZone = 'Asia/Jakarta',
+): Promise<Array<{ day: string; count: number }>> {
   const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone,
     year: 'numeric',
@@ -708,13 +721,12 @@ export function messagesPerDay(guildId: string, days = 7, timeZone = 'Asia/Jakar
   }
 
   const since = Date.now() - (days + 1) * 24 * 60 * 60 * 1000;
-  const rows = db
-    .prepare(
-      `SELECT m.created_at AS created_at FROM messages m
-       JOIN rooms r ON r.channel_id = m.channel_id
-       WHERE r.guild_id = ? AND m.created_at >= ?`,
-    )
-    .all(guildId, since) as unknown as Array<{ created_at: number }>;
+  const rows = await all<{ created_at: number }>(
+    `SELECT m.created_at AS created_at FROM messages m
+     JOIN rooms r ON r.channel_id = m.channel_id
+     WHERE r.guild_id = ? AND m.created_at >= ?`,
+    [guildId, since],
+  );
 
   for (const row of rows) {
     const slot = index.get(dayKey(Number(row.created_at)));
@@ -767,10 +779,8 @@ const splitWords = (raw: string): string[] =>
     .filter(Boolean);
 
 /** Pengaturan moderasi tersimpan per server; `null` = belum pernah diatur dari dashboard. */
-export function getModerationSettings(guildId: string): ModerationSettings | null {
-  const row = db.prepare('SELECT * FROM moderation WHERE guild_id = ?').get(guildId) as unknown as
-    | ModerationRow
-    | undefined;
+export async function getModerationSettings(guildId: string): Promise<ModerationSettings | null> {
+  const row = await get<ModerationRow>('SELECT * FROM moderation WHERE guild_id = ?', [guildId]);
   if (!row) return null;
 
   return {
@@ -783,17 +793,17 @@ export function getModerationSettings(guildId: string): ModerationSettings | nul
   };
 }
 
-export function setModerationSettings(input: {
+export async function setModerationSettings(input: {
   guildId: string;
   enabled: boolean;
   words: string[] | string;
   action: ModerationAction;
   timeoutMinutes: number;
-}): void {
+}): Promise<void> {
   const words = Array.isArray(input.words) ? input.words : splitWords(input.words);
   const timeout = Math.min(10080, Math.max(1, Math.round(input.timeoutMinutes)));
 
-  db.prepare(
+  await run(
     `INSERT INTO moderation (guild_id, enabled, words, action, timeout_minutes, updated_at)
      VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT (guild_id) DO UPDATE SET
@@ -802,10 +812,11 @@ export function setModerationSettings(input: {
        action = excluded.action,
        timeout_minutes = excluded.timeout_minutes,
        updated_at = excluded.updated_at`,
-  ).run(input.guildId, input.enabled ? 1 : 0, words.join(','), input.action, timeout, Date.now());
+    [input.guildId, input.enabled ? 1 : 0, words.join(','), input.action, timeout, Date.now()],
+  );
 }
 
-export function addModerationLog(input: {
+export async function addModerationLog(input: {
   guildId: string;
   channelId: string;
   userId: string;
@@ -813,13 +824,11 @@ export function addModerationLog(input: {
   content: string;
   matched: string;
   action: ModerationAction;
-}): number {
-  const result = db
-    .prepare(
-      `INSERT INTO mod_logs (guild_id, channel_id, user_id, user_name, content, matched, action, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
+}): Promise<number> {
+  return insert(
+    `INSERT INTO mod_logs (guild_id, channel_id, user_id, user_name, content, matched, action, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
       input.guildId,
       input.channelId,
       input.userId,
@@ -828,14 +837,12 @@ export function addModerationLog(input: {
       input.matched,
       input.action,
       Date.now(),
-    );
-  return Number(result.lastInsertRowid);
+    ],
+  );
 }
 
-export function listModerationLogs(guildId: string, limit = 50): ModerationLog[] {
-  const rows = db
-    .prepare('SELECT * FROM mod_logs WHERE guild_id = ? ORDER BY created_at DESC, id DESC LIMIT ?')
-    .all(guildId, limit) as unknown as Array<{
+export async function listModerationLogs(guildId: string, limit = 50): Promise<ModerationLog[]> {
+  const rows = await all<{
     id: number;
     guild_id: string;
     channel_id: string;
@@ -845,7 +852,7 @@ export function listModerationLogs(guildId: string, limit = 50): ModerationLog[]
     matched: string;
     action: string;
     created_at: number;
-  }>;
+  }>('SELECT * FROM mod_logs WHERE guild_id = ? ORDER BY created_at DESC, id DESC LIMIT ?', [guildId, limit]);
 
   return rows.map((row) => ({
     id: Number(row.id),
@@ -860,20 +867,17 @@ export function listModerationLogs(guildId: string, limit = 50): ModerationLog[]
   }));
 }
 
-export function deleteModerationLog(guildId: string, id: number): boolean {
-  const result = db.prepare('DELETE FROM mod_logs WHERE guild_id = ? AND id = ?').run(guildId, id);
-  return result.changes > 0;
+export async function deleteModerationLog(guildId: string, id: number): Promise<boolean> {
+  const info = await run('DELETE FROM mod_logs WHERE guild_id = ? AND id = ?', [guildId, id]);
+  return info.changes > 0;
 }
 
-export function clearModerationLogs(guildId: string): number {
-  const result = db.prepare('DELETE FROM mod_logs WHERE guild_id = ?').run(guildId);
-  return Number(result.changes);
+export async function clearModerationLogs(guildId: string): Promise<number> {
+  const info = await run('DELETE FROM mod_logs WHERE guild_id = ?', [guildId]);
+  return info.changes;
 }
 
-export function countModerationLogs(guildId: string): number {
-  const row = db.prepare('SELECT COUNT(*) AS total FROM mod_logs WHERE guild_id = ?').get(guildId) as {
-    total: number;
-  };
-  return row.total;
+export async function countModerationLogs(guildId: string): Promise<number> {
+  const row = await get<{ total: number }>('SELECT COUNT(*) AS total FROM mod_logs WHERE guild_id = ?', [guildId]);
+  return Number(row?.total ?? 0);
 }
-

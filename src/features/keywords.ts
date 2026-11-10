@@ -11,14 +11,14 @@ import { normalize } from '../lib/text.js';
  * Tujuannya: user boleh bertanya dengan kalimat bebas, bukan harus persis
  * seperti trigger yang disimpan admin.
  */
-export function matchKeywords(guildId: string, message: string, limit = 3): Keyword[] {
+export async function matchKeywords(guildId: string, message: string, limit = 3): Promise<Keyword[]> {
   const haystack = normalize(message);
   if (!haystack) return [];
 
   const padded = ` ${haystack} `;
   const scored: Array<{ keyword: Keyword; score: number }> = [];
 
-  for (const keyword of listKeywords(guildId, 200)) {
+  for (const keyword of await listKeywords(guildId, 200)) {
     const trigger = normalize(keyword.trigger);
     if (!trigger) continue;
 

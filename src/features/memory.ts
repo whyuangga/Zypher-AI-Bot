@@ -53,7 +53,7 @@ export const memoryTools: ChatTool[] = [
 ];
 
 /** Ambil memori user, urut terbaru, dibatasi supaya prompt tetap ringkas. */
-export function getMemories(context: MemoryContext, limit = 40): Memory[] {
+export async function getMemories(context: MemoryContext, limit = 40): Promise<Memory[]> {
   return listMemories(context.guildId, context.userId, limit);
 }
 
@@ -71,7 +71,7 @@ interface ToolCallContext extends MemoryContext {
 }
 
 /** Eksekusi tool memory, kembalikan hasil sebagai teks untuk model. */
-export function runMemoryTool(name: string, rawArguments: string, context: ToolCallContext): string {
+export async function runMemoryTool(name: string, rawArguments: string, context: ToolCallContext): Promise<string> {
   let args: Record<string, unknown> = {};
   try {
     args = rawArguments ? (JSON.parse(rawArguments) as Record<string, unknown>) : {};
@@ -83,7 +83,7 @@ export function runMemoryTool(name: string, rawArguments: string, context: ToolC
 
   if (name === 'simpan_memori') {
     if (!fakta) return 'Tidak ada fakta yang bisa disimpan.';
-    const result = addMemory(context.guildId, context.userId, truncate(fakta, 400), context.source ?? 'auto');
+    const result = await addMemory(context.guildId, context.userId, truncate(fakta, 400), context.source ?? 'auto');
     if (result.inserted) {
       logger.info(`Memori baru disimpan untuk user ${context.userId}`);
       return 'Tersimpan.';
@@ -93,10 +93,10 @@ export function runMemoryTool(name: string, rawArguments: string, context: ToolC
 
   if (name === 'hapus_memori') {
     if (!fakta) return 'Tidak ada fakta yang disebutkan untuk dihapus.';
-    const memories = listMemories(context.guildId, context.userId, 200);
+    const memories = await listMemories(context.guildId, context.userId, 200);
     const target = memories.find((memory) => memory.content.toLowerCase().includes(fakta.toLowerCase()));
     if (!target) return 'Tidak menemukan memori yang cocok untuk dihapus.';
-    deleteMemory(context.guildId, context.userId, target.id);
+    await deleteMemory(context.guildId, context.userId, target.id);
     return `Terhapus: ${target.content}`;
   }
 

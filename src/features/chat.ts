@@ -49,9 +49,9 @@ async function generateAnswer(
   context: AnswerContext,
   onDelta?: DeltaHandler,
 ): Promise<{ text: string; sources: RetrievedChunk[] }> {
-  const settings = getGuildSettings(context.guildId);
-  const memories = getMemories({ guildId: context.guildId, userId: context.userId });
-  const keywords = matchKeywords(context.guildId, context.question);
+  const settings = await getGuildSettings(context.guildId);
+  const memories = await getMemories({ guildId: context.guildId, userId: context.userId });
+  const keywords = await matchKeywords(context.guildId, context.question);
 
   // RAG: cari potongan dokumen yang relevan. Gagal mencari tidak boleh menggagalkan jawaban.
   let sources: RetrievedChunk[] = [];
@@ -105,15 +105,18 @@ async function generateAnswer(
     const toolCalls = result.message.tool_calls;
     if (!toolCalls?.length) break;
 
-    const toolMessages: ChatMessage[] = toolCalls.map((call) => ({
-      role: 'tool',
-      tool_call_id: call.id,
-      content: runMemoryTool(call.function.name, call.function.arguments, {
-        guildId: context.guildId,
-        userId: context.userId,
-        source: 'auto',
-      }),
-    }));
+    const toolMessages: ChatMessage[] = [];
+    for (const call of toolCalls) {
+      toolMessages.push({
+        role: 'tool',
+        tool_call_id: call.id,
+        content: await runMemoryTool(call.function.name, call.function.arguments, {
+          guildId: context.guildId,
+          userId: context.userId,
+          source: 'auto',
+        }),
+      });
+    }
 
     messages.push(
       {
@@ -207,7 +210,7 @@ export async function handleRoomMessage(message: Message): Promise<void> {
   if (!message.inGuild()) return;
   if (message.channel.type !== ChannelType.GuildText) return;
 
-  const room = getRoomByChannel(message.channelId);
+  const room = await getRoomByChannel(message.channelId);
   if (!room) return;
 
   // Hanya pesan pemilik room yang dibalas. Staff boleh membaca, tidak memicu AI.
@@ -256,7 +259,7 @@ export async function handleRoomMessage(message: Message): Promise<void> {
 
   try {
     // Riwayat diambil SEBELUM pesan ini disimpan, supaya tidak dobel dengan `question`.
-    const history = config.ai.historyLimit > 0 ? getHistory(message.channelId, config.ai.historyLimit) : [];
+    const history = config.ai.historyLimit > 0 ? await getHistory(message.channelId, config.ai.historyLimit) : [];
 
     await streamer.start();
     started = true;
@@ -278,9 +281,9 @@ export async function handleRoomMessage(message: Message): Promise<void> {
     );
 
     // Simpan ke riwayat hanya setelah jawaban berhasil, agar percakapan gagal tidak mengotori konteks.
-    appendMessage(message.channelId, 'user', question);
-    appendMessage(message.channelId, 'assistant', result.text);
-    touchRoom(message.channelId);
+    await appendMessage(message.channelId, 'user', question);
+    await appendMessage(message.channelId, 'assistant', result.text);
+    await touchRoom(message.channelId);
 
     const sourceNote = summarizeSources(result.sources);
     await streamer.finish(sourceNote ? `${result.text}\n\n-# ${sourceNote}` : result.text);

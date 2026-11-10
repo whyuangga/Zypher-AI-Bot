@@ -20,8 +20,8 @@ export const ingatCommand: Command = {
     if (!(await requireGuild(interaction)) || !interaction.guildId) return;
 
     const fakta = interaction.options.getString('fakta', true);
-    const result = addMemory(interaction.guildId, interaction.user.id, truncate(fakta, 400), 'manual');
-    const total = listMemories(interaction.guildId, interaction.user.id, 500).length;
+    const result = await addMemory(interaction.guildId, interaction.user.id, truncate(fakta, 400), 'manual');
+    const total = (await listMemories(interaction.guildId, interaction.user.id, 500)).length;
 
     if (!result.inserted) {
       await replyEphemeral(interaction, `Aku sudah mengingat itu kok 😊\nTotal memori kamu: **${total}**.`);

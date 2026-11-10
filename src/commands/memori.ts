@@ -27,7 +27,7 @@ export const memoriCommand: Command = {
       return;
     }
 
-    const memories = listMemories(interaction.guildId, target.id, 50);
+    const memories = await listMemories(interaction.guildId, target.id, 50);
 
     if (memories.length === 0) {
       await interaction.reply({

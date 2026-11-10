@@ -272,6 +272,19 @@ Detail: [docs/moderation.md](moderation.md) dan [docs/vision-voice.md](vision-vo
 > Ingat: model teks biasa **tidak bisa** melihat gambar. Kalau `VISION_MODEL` salah,
 > balasan akan berupa error dari provider — matikan `VISION_ENABLED` atau ganti modelnya.
 
+### Database: SQLite atau Postgres
+
+Bawaan proyek ini adalah **SQLite** — satu file di `data/zypher.db`, tidak perlu server
+database, cocok untuk hosting panel gratis. Kalau kamu ingin Postgres (mis. karena hosting
+menyediakannya, atau akan menjalankan beberapa instance bot):
+
+```env
+DATABASE_URL=postgres://user:pass@host:5432/db?sslmode=require
+```
+
+Skema dibuat otomatis saat bot start. Data lama bisa dipindahkan dengan
+`npm run migrate:pg` — detail di [docs/postgres.md](postgres.md).
+
 ---
 
 ## Langkah 7 — Supaya online 24/7

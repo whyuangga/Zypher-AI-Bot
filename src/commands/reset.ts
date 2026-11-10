@@ -12,7 +12,7 @@ export const resetCommand: Command = {
   async execute(interaction) {
     if (!(await requireGuild(interaction))) return;
 
-    const room = interaction.channelId ? getRoomByChannel(interaction.channelId) : null;
+    const room = interaction.channelId ? await getRoomByChannel(interaction.channelId) : null;
     if (!room) {
       await replyEphemeral(
         interaction,
@@ -27,8 +27,8 @@ export const resetCommand: Command = {
       return;
     }
 
-    const before = countHistory(room.channelId);
-    clearHistory(room.channelId);
+    const before = await countHistory(room.channelId);
+    await clearHistory(room.channelId);
 
     await replyEphemeral(
       interaction,

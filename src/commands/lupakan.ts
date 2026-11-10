@@ -21,7 +21,7 @@ export const lupakanCommand: Command = {
     const all = interaction.options.getBoolean('semua') ?? false;
 
     if (!id && !all) {
-      const memories = listMemories(interaction.guildId, interaction.user.id, 50);
+      const memories = await listMemories(interaction.guildId, interaction.user.id, 50);
       if (memories.length === 0) {
         await replyEphemeral(interaction, 'Tidak ada memori yang tersimpan.');
         return;
@@ -38,12 +38,12 @@ export const lupakanCommand: Command = {
     }
 
     if (all) {
-      const removed = clearMemories(interaction.guildId, interaction.user.id);
+      const removed = await clearMemories(interaction.guildId, interaction.user.id);
       await replyEphemeral(interaction, `🗑️ ${removed} memori dihapus. Aku mulai dari nol tentang kamu.`);
       return;
     }
 
-    const removed = deleteMemory(interaction.guildId, interaction.user.id, id as number);
+    const removed = await deleteMemory(interaction.guildId, interaction.user.id, id as number);
     await replyEphemeral(
       interaction,
       removed ? `🗑️ Memori #${id} dihapus.` : `Tidak ada memori #${id} milikmu. Cek daftarnya di \`/memori\`.`,

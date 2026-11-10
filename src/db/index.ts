@@ -1,33 +1,101 @@
-import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { config } from '../config.js';
 import { logger } from '../lib/logger.js';
-import { SCHEMA } from './schema.js';
+import { createPostgresDriver, createSqliteDriver, type Driver, type SqlParam } from './driver.js';
+import { SCHEMA_PG, SCHEMA_SQLITE } from './schema.js';
 
 /**
- * Memakai `node:sqlite` bawaan Node 22 — tidak perlu dependensi native
- * (tanpa node-gyp / build tools saat deploy).
+ * Titik masuk database.
+ *
+ * Default: SQLite lewat `node:sqlite` (tanpa dependensi native).
+ * Kalau `DATABASE_URL` diisi: Postgres (butuh `npm install pg`).
+ *
+ * Inisialisasi dilakukan **lazy** pada query pertama supaya modul ini bisa
+ * diimpor oleh skrip yang hanya butuh tipe/utilitas, dan supaya pengujian bisa
+ * menyuntikkan driver sendiri (`setDriverForTests`).
  */
-const databasePath = config.database.path === ':memory:' ? ':memory:' : resolve(config.database.path);
 
-if (databasePath !== ':memory:') {
-  mkdirSync(dirname(databasePath), { recursive: true });
+let active: Promise<Driver> | null = null;
+let activeLabel = '';
+
+async function initDriver(): Promise<Driver> {
+  if (config.database.url) {
+    logger.info('Menghubungkan database Postgres…');
+    const driver = await createPostgresDriver({ url: config.database.url });
+    await driver.exec(SCHEMA_PG);
+    activeLabel = driver.label;
+    logger.info('Database siap: PostgreSQL (DATABASE_URL)');
+    return driver;
+  }
+
+  const path = config.database.path === ':memory:' ? ':memory:' : resolve(config.database.path);
+  const driver = createSqliteDriver(path);
+  await driver.exec(SCHEMA_SQLITE);
+  activeLabel = driver.label;
+  logger.info(`Database siap: ${path}`);
+  return driver;
 }
 
-export const db = new DatabaseSync(databasePath);
+function driver(): Promise<Driver> {
+  active ??= initDriver().catch((error: unknown) => {
+    // Jangan simpan promise yang gagal: percobaan berikutnya harus bisa mengulang.
+    active = null;
+    throw error;
+  });
+  return active;
+}
 
-db.exec('PRAGMA journal_mode = WAL;');
-db.exec('PRAGMA foreign_keys = ON;');
-db.exec('PRAGMA busy_timeout = 5000;');
-db.exec(SCHEMA);
+/** Engine yang sedang dipakai (`sqlite` / `pg`). */
+export function dialect(): 'sqlite' | 'pg' {
+  return config.database.url ? 'pg' : 'sqlite';
+}
 
-logger.info(`Database siap: ${databasePath}`);
+export async function dbLabel(): Promise<string> {
+  await driver();
+  return activeLabel;
+}
 
-export function closeDatabase(): void {
+/** Semua baris. */
+export async function all<T>(sql: string, params: SqlParam[] = []): Promise<T[]> {
+  return (await driver()).all<T>(sql, params);
+}
+
+/** Satu baris (atau `null`). */
+export async function get<T>(sql: string, params: SqlParam[] = []): Promise<T | null> {
+  return (await driver()).get<T>(sql, params);
+}
+
+/** Query tulis; hasil berisi jumlah baris terpengaruh. */
+export async function run(sql: string, params: SqlParam[] = []) {
+  return (await driver()).run(sql, params);
+}
+
+/** INSERT yang mengembalikan ID baris baru (portable SQLite ↔ Postgres). */
+export async function insert(sql: string, params: SqlParam[] = []): Promise<number> {
+  return (await driver()).insert(sql, params);
+}
+
+/** DDL / pragma. */
+export async function exec(script: string): Promise<void> {
+  return (await driver()).exec(script);
+}
+
+export async function closeDatabase(): Promise<void> {
+  if (!active) return;
+  const current = active;
+  active = null;
+
   try {
-    db.close();
+    await (await current).close();
   } catch (error) {
     logger.warn('Gagal menutup database', error);
   }
 }
+
+/** Hanya untuk pengujian: pakai driver buatan sendiri (mis. pg-mem). */
+export function setDriverForTests(fake: Driver): void {
+  active = Promise.resolve(fake);
+  activeLabel = fake.label;
+}
+
+export type { Driver, SqlParam };

@@ -27,7 +27,7 @@ export const personaCommand: Command = {
     if (!(await requireGuild(interaction)) || !interaction.guildId) return;
 
     const subcommand = interaction.options.getSubcommand(true);
-    const settings = getGuildSettings(interaction.guildId);
+    const settings = await getGuildSettings(interaction.guildId);
 
     if (subcommand === 'lihat') {
       if (!(await requireAdmin(interaction))) return;
@@ -43,14 +43,14 @@ export const personaCommand: Command = {
     if (!(await requireAdmin(interaction))) return;
 
     if (subcommand === 'hapus') {
-      setPersona(interaction.guildId, null);
+      await setPersona(interaction.guildId, null);
       await replyEphemeral(interaction, '✅ Persona dihapus. AI kembali ke gaya default.');
       return;
     }
 
     if (subcommand === 'set') {
       const teks = interaction.options.getString('teks', true).trim();
-      setPersona(interaction.guildId, teks);
+      await setPersona(interaction.guildId, teks);
       await interaction.reply({
         content: ['✅ Persona disimpan.', `> ${truncate(teks, 600).replace(/\n/g, '\n> ')}`, '', 'Berlaku untuk semua room AI di server ini.'].join(
           '\n',

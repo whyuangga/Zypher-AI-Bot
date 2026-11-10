@@ -66,7 +66,7 @@ async function handleEndRequest(interaction: ButtonInteraction): Promise<void> {
     return;
   }
 
-  const room = getRoomByChannel(channel.id);
+  const room = await getRoomByChannel(channel.id);
   if (!room) {
     await interaction.reply({
       content: 'Channel ini bukan room AI aktif.',
@@ -103,7 +103,7 @@ async function handleEndConfirm(interaction: ButtonInteraction): Promise<void> {
     return;
   }
 
-  const room = getRoomByChannel(channel.id);
+  const room = await getRoomByChannel(channel.id);
   if (!room) {
     await interaction.update({ content: 'Room ini sudah tidak aktif (mungkin sudah ditutup).', components: [] });
     return;

@@ -132,6 +132,16 @@ const schema = z.object({
   PUBLIC_URL: optionalHost,
   WEB_PUBLIC_URL: optionalHost,
   DATABASE_PATH: z.string().default('./data/zypher.db'),
+  // Postgres opsional. Terisi = semua data disimpan di Postgres, bukan SQLite.
+  // Contoh: postgres://user:pass@host:5432/db?sslmode=require
+  DATABASE_URL: z
+    .string()
+    .optional()
+    .transform((value) => (value && value.trim() ? value.trim() : undefined)),
+  // Multi-shard: bagi server (guild) ke beberapa instance bot yang berbagi
+  // satu database. SHARD_COUNT=1 (default) = semua server ditangani instance ini.
+  SHARD_INDEX: numberish(0, 0, 255),
+  SHARD_COUNT: numberish(1, 1, 256),
   AUTO_MEMORY: booleanish(true),
   RATE_LIMIT_PER_MINUTE: numberish(12, 0, 240),
   MAX_INPUT_CHARS: numberish(2000, 100, 6000),
@@ -266,6 +276,9 @@ export const config = {
   })(),
   database: {
     path: env.DATABASE_PATH,
+    url: env.DATABASE_URL,
+    shardIndex: env.SHARD_INDEX,
+    shardCount: env.SHARD_COUNT,
   },
   moderation: {
     enabled: env.MODERATION_ENABLED,

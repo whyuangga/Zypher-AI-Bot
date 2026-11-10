@@ -91,7 +91,7 @@ export const dokumenCommand: Command = {
     if (!(await requireAdmin(interaction))) return;
 
     if (subcommand === 'daftar') {
-      const documents = listGuildDocuments(interaction.guildId);
+      const documents = await listGuildDocuments(interaction.guildId);
 
       if (documents.length === 0) {
         await replyEphemeral(
@@ -126,7 +126,7 @@ export const dokumenCommand: Command = {
 
     if (subcommand === 'hapus') {
       const id = interaction.options.getInteger('id', true);
-      const removed = removeDocument(interaction.guildId, id);
+      const removed = await removeDocument(interaction.guildId, id);
       await replyEphemeral(
         interaction,
         removed ? `🗑️ Dokumen #${id} dihapus dari pengetahuan AI.` : `Tidak ada dokumen #${id}. Cek \`/dokumen daftar\`.`,

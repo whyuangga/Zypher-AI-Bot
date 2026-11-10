@@ -41,6 +41,7 @@ Chat bebas → AI menjawab, mengingat fakta, memakai keyword admin
 | 🔁 **Fallback multi-provider** | Provider utama kena limit/error → otomatis pindah ke provider cadangan (Groq → Gemini → OpenRouter), tanpa restart. |
 | 🛡️ **Rate limit & guard** | Batas pesan per menit, validasi input, penanganan error yang ramah, tanpa membocorkan system prompt. |
 | 🐳 **Siap deploy** | Docker multi-stage, volume SQLite, tanpa dependensi native (pakai `node:sqlite` bawaan Node 22). |
+| 🐘 **Postgres & multi-shard** | Cukup isi `DATABASE_URL` untuk pindah dari SQLite ke Postgres (skema otomatis, migrasi data satu perintah). Beberapa instance bisa berbagi satu database lewat `SHARD_COUNT`/`SHARD_INDEX`. Lihat [docs/postgres.md](docs/postgres.md). |
 
 ---
 
@@ -51,14 +52,14 @@ Runtime   Node.js 22 LTS
 Bahasa    TypeScript (strict)
 Discord   discord.js v14
 AI        Groq — openai/gpt-oss-120b (OpenAI-compatible API)
-Database  node:sqlite (built-in Node 22) — tanpa node-gyp, tanpa build tools
+Database  node:sqlite (built-in Node 22) — tanpa node-gyp, tanpa build tools; Postgres opsional lewat `DATABASE_URL`
 Validasi  zod + dotenv
 Deploy    Docker multi-stage + docker-compose
 ```
 
 **Kenapa Node.js, bukan Python?** Hampir seluruh fitur di atas adalah kerjaan **Discord API** (button, permission overwrite, lifecycle channel, transcript), bukan kerjaan ML. `discord.js` paling matang untuk komponen & permission, tutorial pola ticket-AI mayoritas juga JS. Akses LLM cukup HTTP call — tidak ada keuntungan Python di sini. Kalau nanti butuh embedding lokal/fine-tuning, itu lebih sehat dipecah jadi service Python terpisah.
 
-**Kenapa `node:sqlite`?** `better-sqlite3` butuh compile native (node-gyp + build tools) yang sering gagal di VPS kecil/Alpine. Modul `node:sqlite` sudah tersedia di Node 22 sehingga image Docker cukup `node:22-slim` tanpa compiler. Skalanya lebih dari cukup untuk ribuan memori & transcript.
+**Kenapa `node:sqlite`?** `better-sqlite3` butuh compile native (node-gyp + build tools) yang sering gagal di VPS kecil/Alpine. Modul `node:sqlite` sudah tersedia di Node 22 sehingga image Docker cukup `node:22-slim` tanpa compiler. Skalanya lebih dari cukup untuk ribuan memori & transcript. Butuh Postgres atau beberapa instance sekaligus? Semua query sudah async dan portable — cukup isi `DATABASE_URL` (lihat [docs/postgres.md](docs/postgres.md)).
 
 ---
 
@@ -167,6 +168,8 @@ Klik **Buat Room AI** → channel privat muncul → mulai ngobrol.
 | `PUBLIC_URL` | kosong | Alamat publik dashboard yang ditampilkan di log |
 | `NODE_OPTIONS` | — | Set di **panel hosting** (bukan `.env`): `--max-old-space-size=384` untuk container 512 MB |
 | `DATABASE_PATH` | `./data/zypher.db` | Lokasi file SQLite |
+| `DATABASE_URL` | kosong | Postgres opsional. Terisi = SQLite diabaikan (lihat [docs/postgres.md](docs/postgres.md)) |
+| `SHARD_COUNT` / `SHARD_INDEX` | `1` / `0` | Multi-shard: bagi server ke beberapa instance yang berbagi satu database |
 | `AUTO_MEMORY` | `true` | Simpan memori otomatis lewat tool calling |
 | `RATE_LIMIT_PER_MINUTE` | `12` | Batas request AI per user/menit |
 | `MAX_INPUT_CHARS` | `2000` | Panjang pesan user yang diproses |
@@ -334,9 +337,11 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke          # 42 test logika inti (termasuk RAG & chunking)
+npm run smoke          # 78 test logika inti (termasuk RAG, moderasi, vision/voice)
+npm run smoke:pg       # 10 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # uji rantai fallback provider dengan server tiruan
 npm run dashboard      # nyalakan dashboard web saja, tanpa bot Discord
+npm run migrate:pg     # pindahkan data SQLite → Postgres
 npm run bundle         # bikin zypher-deploy.zip untuk panel hosting
 npm run token -- --write   # bikin & pasang DASHBOARD_TOKEN acak di .env
 ```
@@ -404,20 +409,31 @@ src/
 │   ├── keywords.ts          # pencocokan keyword
 │   ├── prompt.ts            # perakitan system prompt
 │   ├── buttons.ts           # router button interaction
+│   ├── moderation.ts        # filter kata terlarang + log pelanggaran
+│   ├── vision.ts            # lampiran gambar → data URI untuk model multimodal
 │   └── ui.ts                # embed & komponen
 ├── web/
 │   ├── server.ts            # dashboard: node:http, auth token, API JSON
-│   ├── views.ts             # halaman HTML server-rendered
+│   ├── ui/                  # theme, shell, ikon SVG, halaman (server-rendered)
 │   └── standalone.ts        # npm run dashboard (tanpa bot Discord)
-├── db/                      # koneksi SQLite, skema, query
-└── lib/                     # llm, transcript, ratelimit, text, chunker, lexical, logger, register
-scripts/smoke.ts             # smoke test tanpa Discord
+├── db/
+│   ├── index.ts             # lazy init driver + helper all/get/run/insert
+│   ├── driver.ts            # driver SQLite (node:sqlite) & Postgres (pg)
+│   ├── schema.ts            # DDL SQLite + DDL Postgres
+│   └── repo.ts              # semua query (async, portable dua engine)
+└── lib/                     # llm, audio (STT/TTS), transcript, ratelimit, text, chunker, lexical, shard, logger
+scripts/smoke.ts             # smoke test tanpa Discord (SQLite)
+scripts/smoke-pg.ts          # smoke test jalur Postgres (pg-mem)
+scripts/migrate-to-pg.ts     # migrasi data SQLite → Postgres
 docs/setup.md                # panduan setup langkah-demi-langkah
 docs/sample-transcript.html  # contoh hasil transkrip
 docs/providers.md            # provider AI free tier + contoh .env
 docs/models.md               # ID model gratis per provider + rekomendasi
 docs/rag.md                  # dokumen pengetahuan AI (RAG)
 docs/dashboard.md            # dashboard web: setup & keamanan
+docs/postgres.md             # Postgres, migrasi data, multi-shard
+docs/moderation.md           # moderasi otomatis + log pelanggaran
+docs/vision-voice.md         # vision gambar, STT/TTS, /ucap
 docs/hosting.md              # hosting bot gratis 24/7 + backup
 ```
 
@@ -432,7 +448,7 @@ docs/hosting.md              # hosting bot gratis 24/7 + backup
 - [x] Riwayat transkrip dari dashboard (arsip di SQLite, unduh & hapus dari web)
 - [x] Moderasi otomatis + logging (filter kata terlarang, halaman `/moderasi`, audit log)
 - [x] Dukungan gambar (vision) & voice (STT Whisper + TTS PlayAI, `/ucap`)
-- [ ] Postgres untuk multi-shard
+- [x] Postgres untuk multi-shard (driver async SQLite ↔ Postgres, `npm run migrate:pg`, `SHARD_COUNT`/`SHARD_INDEX`)
 
 ---
 

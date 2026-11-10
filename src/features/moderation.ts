@@ -78,11 +78,11 @@ export function invalidateModerationCache(guildId?: string): void {
   else cache.clear();
 }
 
-export function resolveModeration(guildId: string): EffectiveModeration {
+export async function resolveModeration(guildId: string): Promise<EffectiveModeration> {
   const cached = cache.get(guildId);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
 
-  const stored = getModerationSettings(guildId);
+  const stored = await getModerationSettings(guildId);
   const value: EffectiveModeration = stored
     ? {
         enabled: stored.enabled,
@@ -127,7 +127,7 @@ export async function moderateMessage(message: Message): Promise<boolean> {
   if (isStaff(message)) return false;
 
   const guildId = message.guildId;
-  const settings = resolveModeration(guildId);
+  const settings = await resolveModeration(guildId);
   if (!settings.enabled || settings.words.length === 0) return false;
 
   // Pesan tanpa teks (hanya lampiran/stiker) tidak bisa dicocokkan.
@@ -168,7 +168,7 @@ export async function moderateMessage(message: Message): Promise<boolean> {
     }
   }
 
-  logAction(message, {
+  await logAction(message, {
     matched: summary,
     action,
     timeoutMinutes: settings.timeoutMinutes,
@@ -177,16 +177,16 @@ export async function moderateMessage(message: Message): Promise<boolean> {
   return true;
 }
 
-function logAction(
+async function logAction(
   message: Message,
   detail: { matched: string; action: ModerationAction; timeoutMinutes: number },
-): void {
+): Promise<void> {
   const guildId = message.guild?.id ?? message.guildId ?? '';
   const userName = message.member?.displayName ?? message.author.username;
   const content = message.content.replace(/\s+/g, ' ').trim();
 
   try {
-    const id = addModerationLog({
+    const id = await addModerationLog({
       guildId,
       channelId: message.channelId,
       userId: message.author.id,
