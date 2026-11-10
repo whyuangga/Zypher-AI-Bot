@@ -329,6 +329,21 @@ atas `.env` karena tersimpan per server. Halaman ini berisi:
 | `DELETE /api/moderasi/logs/<id>` | Hapus satu catatan pelanggaran |
 | `DELETE /api/moderasi/logs` | Bersihkan semua catatan pelanggaran server ini |
 
+Endpoint halaman Sambutan & AI Agent (pratinjau tidak mengirim apa pun;
+`send-test` yang benar-benar mengirim):
+
+| Endpoint | Fungsi |
+|---|---|
+| `POST /api/preview/welcome` \| `/goodbye` \| `/agent` \| `/quiet` | Hasil pratinjau + sumber (AI/template) + alasan gagal. Tanpa efek samping di Discord |
+| `POST /api/send-test/welcome` `{target:'dm'\|'channel', ...form}` | Kirim **satu pesan uji** sambutan ke DM admin atau channel sambutan |
+| `POST /api/send-test/goodbye` `{...form}` | Kirim satu pesan uji salam perpisahan ke channel tersimpan |
+| `POST /api/send-test/agent` `{message, role, channelId}` | Kirim satu pesan uji berisi kutipan + balasan bot |
+
+Semua `send-test` menolak dengan **400** kalau bot tidak jalan di proses
+dashboard (tidak ada koneksi Discord untuk mengirim), dan alasan kegagalan
+dikembalikan apa adanya: channel tidak ditemukan, izin kurang, DM ditutup,
+atau Chromium tidak ada.
+
 Endpoint halaman Panel:
 
 | Endpoint | Fungsi |

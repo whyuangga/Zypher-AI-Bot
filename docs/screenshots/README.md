@@ -98,8 +98,13 @@ Tabel bertumpuk memakai header tersembunyi + label per sel, nama file tidak
 terpotong di tengah kata, dan tidak ada scroll horizontal. Tombol hapus menempel
 di kanan baris terakhir, bukan turun ke baris sendiri.
 
-**Toggle.** Sakelar fitur AI (Dokumen RAG, Vision, Auto Memory, Chat khusus admin,
-Suara balasan AI) tampil sebagai switch di kanan label, sebaris.
+**Toggle.** Sakelar fitur AI (Dokumen RAG, Auto Memory, tombol chat DM khusus
+admin, Suara balasan AI) tampil sebagai switch di kanan label, sebaris. Tidak ada
+sakelar Vision — membaca gambar selalu aktif.
+
+**Badge status.** Badge "Aktif"/"Nonaktif" di judul kartu ikut di tengah tinggi
+kartu, tidak turun ke baris kedua walau judul dan keterangannya dua baris di HP.
+Di layar sempit `.card-head` memakai grid dua kolom untuk itu.
 
 **Tombol kirim tes.** Di halaman Sambutan dan AI Agent ada tombol kirim tes
 sungguhan di samping tombol pratinjau. Di screenshot tombol itu tampak redup

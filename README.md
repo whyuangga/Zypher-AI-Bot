@@ -546,6 +546,7 @@ src/
 │   ├── banner.ts            # banner unggahan admin: validasi, simpan, baca, hapus
 │   ├── greeting-text.ts     # template {user}/{server} — dipakai bot & dashboard
 │   ├── preview.ts           # pratinjau & prompt bersama (sambutan, perpisahan, agent)
+│   ├── test-send.ts         # kirim tes sungguhan ke Discord (sambutan, perpisahan, agent)
 │   ├── agent-core.ts        # logika murni AI Agent: kapan membalas, riwayat, sepi
 │   ├── agent.ts             # lapisan Discord AI Agent (chat & galeri)
 │   └── ui.ts                # embed & komponen
