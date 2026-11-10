@@ -20,8 +20,6 @@ export interface GuildSettings {
   ttsReplyInRoom: boolean | null;
   /** AI boleh jawab dari dokumen. `null` = memakai RAG_ENABLED dari .env. */
   ragEnabled: boolean | null;
-  /** AI boleh baca gambar. `null` = memakai VISION_ENABLED dari .env. */
-  visionEnabled: boolean | null;
   /** AI boleh ingat otomatis. `null` = memakai AUTO_MEMORY dari .env. */
   autoMemory: boolean | null;
   /** Hanya admin yang boleh memulai chat AI. `null` = memakai ADMIN_ONLY_ROOMS dari .env. */
@@ -107,7 +105,6 @@ interface GuildRow {
   model: string | null;
   tts_reply_in_room: number | boolean | null;
   rag_enabled: number | boolean | null;
-  vision_enabled: number | boolean | null;
   auto_memory: number | boolean | null;
   admin_only_rooms: number | boolean | null;
   created_at: number;
@@ -165,8 +162,6 @@ const toGuild = (row: GuildRow): GuildSettings => ({
       : Boolean(row.tts_reply_in_room),
   ragEnabled:
     row.rag_enabled === null || row.rag_enabled === undefined ? null : Boolean(row.rag_enabled),
-  visionEnabled:
-    row.vision_enabled === null || row.vision_enabled === undefined ? null : Boolean(row.vision_enabled),
   autoMemory:
     row.auto_memory === null || row.auto_memory === undefined ? null : Boolean(row.auto_memory),
   adminOnlyRooms:
@@ -259,12 +254,6 @@ export async function setGuildTtsReplyInRoom(guildId: string, enabled: boolean |
 export async function setGuildRagEnabled(guildId: string, enabled: boolean | null): Promise<void> {
   await ensureGuild(guildId);
   await run('UPDATE guilds SET rag_enabled = ? WHERE guild_id = ?', [enabled === null ? null : enabled ? 1 : 0, guildId]);
-}
-
-/** AI boleh baca gambar. `null` = pakai VISION_ENABLED dari .env. */
-export async function setGuildVisionEnabled(guildId: string, enabled: boolean | null): Promise<void> {
-  await ensureGuild(guildId);
-  await run('UPDATE guilds SET vision_enabled = ? WHERE guild_id = ?', [enabled === null ? null : enabled ? 1 : 0, guildId]);
 }
 
 /** AI boleh ingat otomatis. `null` = pakai AUTO_MEMORY dari .env. */

@@ -730,8 +730,6 @@ export function pengaturanPage(
     ttsReplyInRoomDefault: boolean;
     ragEnabledSetting: boolean | null;
     ragEnabledDefault: boolean;
-    visionEnabledSetting: boolean | null;
-    visionEnabledDefault: boolean;
     autoMemorySetting: boolean | null;
     autoMemoryDefault: boolean;
     adminOnlyRoomsSetting: boolean | null;
@@ -803,16 +801,6 @@ export function pengaturanPage(
   </div>
   <div class="toggle-row">
     <div>
-      <div class="cell-title">Vision (Gambar)</div>
-      <div class="cell-sub">AI boleh baca gambar yang dikirim member</div>
-    </div>
-    <label class="switch">
-      <input type="checkbox" id="visionEnabled"${(options.visionEnabledSetting ?? options.visionEnabledDefault) ? ' checked' : ''}>
-      <span class="slider"></span>
-    </label>
-  </div>
-  <div class="toggle-row">
-    <div>
       <div class="cell-title">Auto Memory</div>
       <div class="cell-sub">AI boleh ingat fakta otomatis dari percakapan</div>
     </div>
@@ -822,9 +810,9 @@ export function pengaturanPage(
     </label>
   </div>
   <div class="toggle-row">
-    <div>
-      <div class="cell-title">Chat khusus admin</div>
-      <div class="cell-sub">Hanya admin yang boleh memulai chat AI</div>
+    <div class="toggle-text">
+      <div class="cell-title">Tombol chat DM khusus admin</div>
+      <div class="cell-sub">Hanya admin (izin Manage Server) yang boleh menekan tombol &quot;Chat via DM&quot; di panel. AI Agent di channel tidak terpengaruh.</div>
     </div>
     <label class="switch">
       <input type="checkbox" id="adminOnlyRooms"${(options.adminOnlyRoomsSetting ?? options.adminOnlyRoomsDefault) ? ' checked' : ''}>
@@ -882,7 +870,6 @@ async function saveFeatureToggles() {
   const payload = {
     guild: ${JSON.stringify(options.guildId)},
     ragEnabled: document.getElementById('ragEnabled').checked,
-    visionEnabled: document.getElementById('visionEnabled').checked,
     autoMemory: document.getElementById('autoMemory').checked,
     adminOnlyRooms: document.getElementById('adminOnlyRooms').checked,
   };

@@ -646,8 +646,24 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
 .toggle-row {
   display: flex; align-items: center; justify-content: space-between;
   gap: 16px; width: 100%;
+  /* .toggle-row adalah grid item (induknya display:grid). Grid item punya
+     min-width:auto, jadi tanpa baris ini ia selebar teks penjelasan dan
+     kartu memotong sisanya di layar HP. */
+  min-width: 0;
 }
-.toggle-row > div { min-width: 0; }
+/* Sama untuk anak flex-nya: .switch dikecualikan supaya tetap 40x22 px. */
+.toggle-row > div { min-width: 0; flex: 1 1 auto; }
+.toggle-row > .switch { flex: 0 0 auto; }
+/* Penjelasan boleh turun baris; jangan dihitung selebar satu baris teksnya.
+   Tanpa nowrap-reset, .cell-sub mewarisi white-space dari aturan tabel
+   (nowrap + ellipsis) sehingga kalimatnya terpotong, bukan dibungkus. */
+.toggle-row .toggle-text .cell-sub {
+  max-width: 100%;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  word-break: break-word;
+}
 
 /* Switch: input asli dipakai untuk aksesibilitas, tampilannya kotak geser. */
 .switch {

@@ -40,7 +40,6 @@ import {
   setGuildModel,
   setGuildTtsReplyInRoom,
   setGuildRagEnabled,
-  setGuildVisionEnabled,
   setGuildAutoMemory,
   setGuildAdminOnlyRooms,
   setModerationSettings,
@@ -685,8 +684,6 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         ttsReplyInRoomDefault: config.voice.ttsReplyInRoom,
         ragEnabledSetting: settings?.ragEnabled ?? null,
         ragEnabledDefault: config.rag.enabled,
-        visionEnabledSetting: settings?.visionEnabled ?? null,
-        visionEnabledDefault: config.vision.enabled,
         autoMemorySetting: settings?.autoMemory ?? null,
         autoMemoryDefault: config.features.autoMemory,
         adminOnlyRoomsSetting: settings?.adminOnlyRooms ?? null,
@@ -804,7 +801,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     }
 
     const raw = await readBody(request, 32 * 1024);
-    let payload: { persona?: unknown; model?: unknown; ttsReplyInRoom?: unknown; ragEnabled?: unknown; visionEnabled?: unknown; autoMemory?: unknown; adminOnlyRooms?: unknown };
+    let payload: { persona?: unknown; model?: unknown; ttsReplyInRoom?: unknown; ragEnabled?: unknown; autoMemory?: unknown; adminOnlyRooms?: unknown };
     try {
       payload = JSON.parse(raw) as { persona?: unknown; model?: unknown };
     } catch {
@@ -846,14 +843,6 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       await setGuildRagEnabled(guildId, payload.ragEnabled);
     }
 
-    if (payload.visionEnabled !== undefined) {
-      if (typeof payload.visionEnabled !== 'boolean') {
-        sendJson(response, 400, { error: 'visionEnabled harus boolean.' });
-        return;
-      }
-      await setGuildVisionEnabled(guildId, payload.visionEnabled);
-    }
-
     if (payload.autoMemory !== undefined) {
       if (typeof payload.autoMemory !== 'boolean') {
         sendJson(response, 400, { error: 'autoMemory harus boolean.' });
@@ -877,7 +866,6 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       model: settings?.model ?? null,
       ttsReplyInRoom: settings?.ttsReplyInRoom ?? null,
       ragEnabled: settings?.ragEnabled ?? null,
-      visionEnabled: settings?.visionEnabled ?? null,
       autoMemory: settings?.autoMemory ?? null,
       adminOnlyRooms: settings?.adminOnlyRooms ?? null,
     });

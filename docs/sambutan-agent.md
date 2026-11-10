@@ -270,7 +270,7 @@ member baru, sehingga sambutan tidak terkirim.
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 218 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 219 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

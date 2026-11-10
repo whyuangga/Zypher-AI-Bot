@@ -122,8 +122,8 @@ async function composeReply(
   const name = speakerName(message);
 
   const question = describeIncoming(message);
-  // Gambar hanya dibaca kalau admin mengizinkan — hemat biaya dan lebih aman.
-  // `collectImages` sudah menghormati toggle Vision per server.
+  // Gambar hanya dibaca kalau admin menyalakan opsi gambar AI Agent — hemat
+  // biaya. Vision sendiri selalu aktif, tidak ada toggle global lagi.
   const collected = settings.reactImages ? await collectImages(message) : { dataUris: [], skipped: [] };
   const images = collected.dataUris;
   if (!question && images.length === 0) return null;

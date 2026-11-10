@@ -13,7 +13,7 @@ Yang bisa dilakukan:
 | `/dokumen` | Upload dokumen RAG (file atau tempel teks), daftar dokumen, hapus dokumen, **uji pencarian** |
 | `/keyword` | Tambah & hapus template jawaban owner (FAQ, harga, aturan) |
 | `/moderasi` | Filter kata terlarang per server, tindakan (hapus/tegur/timeout), log pelanggaran |
-| `/pengaturan` | Persona AI & model per server, **toggle fitur AI** (RAG, Vision, Auto Memory, Chat khusus admin, Suara balasan AI), info server + salin Server ID |
+| `/pengaturan` | Persona AI & model per server, **toggle fitur AI** (RAG, Auto Memory, tombol chat DM khusus admin, Suara balasan AI), info server + salin Server ID |
 | `/healthz` | JSON status untuk monitoring (tanpa login) — termasuk engine database |
 
 Tampilan memakai gaya **editorial gelap** (hangat, bukan hitam-putih murni) dengan palet pemilik proyek:
@@ -379,10 +379,21 @@ Semua fitur AI bisa di-toggle per server dari dashboard `/pengaturan` — tidak 
 | Toggle | Arti | Default .env |
 |---|---|---|
 | **Dokumen RAG** | AI boleh jawab dari dokumen yang di-upload | `RAG_ENABLED=true` |
-| **Vision (Gambar)** | AI boleh baca gambar yang dikirim member | `VISION_ENABLED=false` |
 | **Auto Memory** | AI boleh ingat fakta otomatis dari percakapan | `AUTO_MEMORY=true` |
-| **Chat khusus admin** | Hanya admin yang boleh memulai chat AI | `ADMIN_ONLY_ROOMS=false` |
+| **Tombol chat DM khusus admin** | Hanya admin yang boleh menekan tombol "Chat via DM" di panel | `ADMIN_ONLY_ROOMS=false` |
 | **Suara di room** | Jawaban AI di room otomatis dibacakan (TTS) | `TTS_REPLY_IN_ROOM=true` |
+
+**Vision tidak punya toggle.** Membaca gambar selalu aktif: kalau member mengirim
+gambar, AI memakai `VISION_MODEL` untuk membacanya. Yang perlu dipastikan hanya
+modelnya benar-benar **multimodal** — kalau bukan, provider menolak dan pesan
+error-nya diteruskan ke log, bukan gambar diam-diam diabaikan.
+
+**Apa arti toggle "Tombol chat DM khusus admin" persisnya?** Ia hanya menjaga
+tombol **"Chat via DM"** di pesan panel server. Saat aktif, member tanpa izin
+*Manage Server* yang menekan tombol itu ditolak dengan pesan bahwa chat hanya
+bisa dimulai admin. Ia **tidak** memengaruhi AI Agent yang mengobrol di channel,
+keyword, moderasi, maupun slash command `/tanya`. Nama lamanya "Chat khusus
+admin" sengaja diganti karena terbaca seolah membatasi semua chat AI.
 
 Bila belum di-set (default), memakai nilai dari `.env`. Setelah di-set, nilai di database dipakai — overriding `.env`.
 

@@ -10,7 +10,6 @@ CREATE TABLE IF NOT EXISTS guilds (
   model          TEXT,
   tts_reply_in_room INTEGER,
   rag_enabled    INTEGER,
-  vision_enabled INTEGER,
   auto_memory    INTEGER,
   admin_only_rooms INTEGER,
   created_at     INTEGER NOT NULL
@@ -186,7 +185,6 @@ CREATE TABLE IF NOT EXISTS guilds (
   model             TEXT,
   tts_reply_in_room BOOLEAN,
   rag_enabled       BOOLEAN,
-  vision_enabled    BOOLEAN,
   auto_memory       BOOLEAN,
   admin_only_rooms  BOOLEAN,
   created_at        BIGINT NOT NULL

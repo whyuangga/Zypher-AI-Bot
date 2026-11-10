@@ -1155,13 +1155,18 @@ await testAsync('setGuildRagEnabled menyimpan boolean', async () => {
   await setGuildRagEnabled(guild, null);
   assert.equal((await getGuildSettings(guild))?.ragEnabled, null);
 });
-await testAsync('setGuildVisionEnabled menyimpan boolean', async () => {
-  const { setGuildVisionEnabled, getGuildSettings } = await import('../src/db/repo.js');
+await testAsync('vision selalu aktif: tidak ada kolom atau sakelar per server', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { getGuildSettings, setGuildAutoMemory } = repo;
   const guild = '131313131313131313';
-  await setGuildVisionEnabled(guild, true);
-  assert.equal((await getGuildSettings(guild))?.visionEnabled, true);
-  await setGuildVisionEnabled(guild, null);
-  assert.equal((await getGuildSettings(guild))?.visionEnabled, null);
+  await setGuildAutoMemory(guild, true);
+  const settings = await getGuildSettings(guild);
+  assert.ok(settings, 'setelan guild bisa dibaca');
+  assert.equal('visionEnabled' in settings!, false, 'tidak ada field visionEnabled lagi');
+  assert.equal('setGuildVisionEnabled' in repo, false, 'setter vision sudah dihapus');
+
+  const schema = await readFile('src/db/schema.ts', 'utf8');
+  assert.equal(/vision_enabled/.test(schema), false, 'kolom vision_enabled hilang dari skema');
 });
 await testAsync('setGuildAutoMemory menyimpan boolean', async () => {
   const { setGuildAutoMemory, getGuildSettings } = await import('../src/db/repo.js');
@@ -1192,8 +1197,6 @@ test('pengaturanPage menampilkan toggle fitur', () => {
     ttsReplyInRoomDefault: true,
     ragEnabledSetting: null,
     ragEnabledDefault: true,
-    visionEnabledSetting: null,
-    visionEnabledDefault: false,
     autoMemorySetting: null,
     autoMemoryDefault: true,
     adminOnlyRoomsSetting: null,
@@ -1203,9 +1206,17 @@ test('pengaturanPage menampilkan toggle fitur', () => {
     counts: {},
   });
   assert.ok(page.includes('Dokumen RAG'), 'toggle RAG ada');
-  assert.ok(page.includes('Vision'), 'toggle Vision ada');
   assert.ok(page.includes('Auto Memory'), 'toggle Auto Memory ada');
-  assert.ok(page.includes('Chat khusus admin'), 'toggle chat khusus admin ada');
+
+  // Vision selalu aktif: tidak boleh ada sakelar yang bisa mematikannya.
+  assert.equal(page.includes('id="visionEnabled"'), false, 'toggle Vision sudah dihapus');
+
+  // Label lama "Chat khusus admin" ambigu — terbaca seolah membatasi semua chat
+  // AI, padahal hanya tombol DM di panel yang dijaga.
+  assert.equal(page.includes('Chat khusus admin'), false, 'label ambigu sudah diganti');
+  assert.ok(page.includes('Tombol chat DM khusus admin'), 'label baru spesifik');
+  assert.ok(page.includes('Manage Server'), 'menyebut izin yang dicek');
+  assert.ok(page.includes('AI Agent di channel tidak terpengaruh'), 'menjelaskan batasnya');
 });
 
 console.log('\nSlash command di DM');
@@ -2615,6 +2626,24 @@ await testAsync('dashboard: tombol kirim tes ada di kedua halaman', async () => 
   assert.ok(pages.includes("'/api/send-test/agent'"), 'endpoint agent');
   assert.ok(pages.includes('Kirim tes sungguhan'), 'label jelas membedakan dari pratinjau');
   assert.ok(pages.includes('Kirim tes ke channel'), 'tombol agent & perpisahan');
+});
+
+await testAsync('css: baris toggle tidak melebar keluar kartu', async () => {
+  // Bug nyata di HP: .toggle-row adalah grid item, sehingga min-width:auto
+  // membuatnya selebar teks penjelasan (730px di layar 390px) dan kartu
+  // memotong kalimatnya. Dua aturan berikut yang mencegahnya kembali.
+  const theme = await readFile('src/web/ui/theme.ts', 'utf8');
+
+  const rowBlock = theme.slice(theme.indexOf('.toggle-row {'), theme.indexOf('.toggle-row {') + 400);
+  assert.ok(/min-width:\s*0/.test(rowBlock), '.toggle-row punya min-width:0');
+
+  const textBlock = theme.slice(theme.indexOf('.toggle-row .toggle-text .cell-sub'));
+  assert.ok(/white-space:\s*normal/.test(textBlock.slice(0, 300)), 'penjelasan boleh turun baris');
+
+  // Aturan mobile `.cell-sub { white-space:nowrap }` menang bila selektornya
+  // setara — maka selektor kita harus lebih spesifik (3 kelas).
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  assert.ok(pages.includes('class="toggle-text"'), 'teks toggle dibungkus .toggle-text');
 });
 
 await testAsync('kirim tes: pesan benar-benar terkirim lewat channel (channel palsu)', async () => {

@@ -278,8 +278,7 @@ MODERATION_WORDS=kata1,kata2,frasa tiga kata
 MODERATION_ACTION=delete          # delete | warn | timeout
 MODERATION_TIMEOUT_MINUTES=10
 
-# Vision — AI membaca gambar yang dikirim di DM (butuh model multimodal)
-VISION_ENABLED=true
+# Vision — AI membaca gambar yang dikirim di DM (selalu aktif, butuh model multimodal)
 VISION_MODEL=meta-llama/llama-4-scout-17b-16e-instruct
 
 # Voice — transkrip voice note + balasan suara
@@ -292,8 +291,9 @@ TTS_VOICE=Fritz-PlayAI
 
 Detail: [docs/moderation.md](moderation.md) dan [docs/vision-voice.md](vision-voice.md).
 
-> Ingat: model teks biasa **tidak bisa** melihat gambar. Kalau `VISION_MODEL` salah,
-> balasan akan berupa error dari provider — matikan `VISION_ENABLED` atau ganti modelnya.
+> Ingat: model teks biasa **tidak bisa** melihat gambar, dan membaca gambar tidak
+> bisa dimatikan. Jadi pastikan `VISION_MODEL` memang multimodal — kalau salah,
+> balasan berupa error dari provider. Ganti modelnya, bukan menunggu sakelar.
 
 ### Database: SQLite atau Postgres
 

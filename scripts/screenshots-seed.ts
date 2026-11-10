@@ -50,8 +50,8 @@ const hour = 3_600_000;
 const day = 24 * hour;
 
 await run(
-  `INSERT INTO guilds (guild_id, name, persona, model, rag_enabled, vision_enabled, auto_memory, admin_only_rooms, tts_reply_in_room, created_at)
-   VALUES (?, ?, ?, ?, 1, 0, 1, 0, 0, ?)`,
+  `INSERT INTO guilds (guild_id, name, persona, model, rag_enabled, auto_memory, admin_only_rooms, tts_reply_in_room, created_at)
+   VALUES (?, ?, ?, ?, 1, 1, 0, 0, ?)`,
   [
     GUILD,
     GUILD_NAME,

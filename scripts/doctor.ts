@@ -203,7 +203,7 @@ function printFeatureStatus(): void {
     ],
     [
       'Vision',
-      `${on('VISION_ENABLED') ? `${GREEN}aktif${RESET}` : `${DIM}mati${RESET}`}`,
+      `${GREEN}selalu aktif${RESET}`,
       `${DIM}model ${text('VISION_MODEL', 'meta-llama/llama-4-scout-17b-16e-instruct')}${RESET}`,
     ],
     [

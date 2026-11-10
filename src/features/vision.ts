@@ -1,6 +1,5 @@
 import type { Message } from 'discord.js';
 import { config } from '../config.js';
-import { getGuildSettings } from '../db/repo.js';
 import { errorMessage, logger } from '../lib/logger.js';
 
 /**
@@ -55,8 +54,9 @@ const EMPTY: CollectedImages = { dataUris: [], skipped: [] };
  */
 export async function collectImages(message: Message, limit = 3): Promise<CollectedImages> {
   if (!message.guildId) return EMPTY;
-  const settings = await getGuildSettings(message.guildId);
-  if (!(settings?.visionEnabled ?? config.vision.enabled) || message.attachments.size === 0) return EMPTY;
+  // Vision selalu aktif — tidak ada sakelar per server. Gambar apa pun yang
+  // lolos filter di bawah akan dicoba dibaca model multimodal.
+  if (message.attachments.size === 0) return EMPTY;
 
   const candidates = [...message.attachments.values()]
     .filter((attachment) => isImageAttachment(attachment.name, attachment.contentType))
