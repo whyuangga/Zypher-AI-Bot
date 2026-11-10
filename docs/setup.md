@@ -49,11 +49,12 @@ yang benar (`https://api.groq.com/openai/v1` dan `openai/gpt-oss-120b`).
 5. Tab **OAuth2 → URL Generator**:
    - Scopes: `bot`, `applications.commands`
    - Bot Permissions: `Manage Channels`, `View Channels`, `Send Messages`, `Manage Messages`,
-     `Embed Links`, `Attach Files`, `Read Message History`, `Add Reactions`, `Use External Emojis`
+     `Embed Links`, `Attach Files`, `Read Message History`, `Add Reactions`, `Use External Emojis`,
+     `Moderate Members` *(hanya perlu kalau memakai `MODERATION_ACTION=timeout`)*
    - Buka URL yang muncul → pilih server → **Authorize**
 
 > URL siap pakai (ganti `YOUR_CLIENT_ID`):
-> `https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=388176&scope=bot%20applications.commands`
+> `https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=1099909803952&scope=bot%20applications.commands`
 
 ### Cara mendapatkan `DEV_GUILD_ID`
 
@@ -185,7 +186,7 @@ Kalau berhasil, log akan menampilkan:
 INFO  Database siap: /app/data/zypher.db
 INFO  Provider AI aktif (fallback berurutan): groq/gpt-oss-120b → gemini/gemini-3.8-flash → ...
 INFO  🤖 Login sebagai NamaBot#1234 (1 server)
-INFO  ✅ 10 slash command didaftarkan di guild "Server Kamu".
+INFO  ✅ 11 slash command didaftarkan di guild "Server Kamu".
 ```
 
 Di Discord:
@@ -223,7 +224,8 @@ Di Discord (kamu harus admin server):
 ```
 
 Kalau pencarian menampilkan potongan yang benar, tanyakan hal yang sama di room AI — jawabannya akan
-menyebut `-# 📚 Sumber: faq.txt`. Format yang didukung: `.txt`, `.md`, `.csv`, `.json`, `.html`, `.log`.
+menyebut `-# 📚 Sumber: faq.txt`. Format yang didukung: `.txt`, `.md`, `.csv`, `.json`, `.html`, `.log`, `.pdf`, `.docx`
+(maks **8 MB**; PDF harus berisi teks — hasil scan perlu OCR dulu).
 Panduan lengkap: [rag.md](rag.md).
 
 ### Dashboard web — kelola dari browser

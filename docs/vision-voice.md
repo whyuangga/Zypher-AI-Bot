@@ -26,6 +26,13 @@ Alur:
 4. Model vision menjawab; tanpa teks dari member, pertanyaannya otomatis
    “Jelaskan isi gambar ini secara detail.”
 
+Cek dulu ID model yang benar-benar tersedia di providermu (daftar default menyaring model
+non-chat, jadi pakai `--all`):
+
+```bash
+npm run models -- groq --all
+```
+
 Catatan penting:
 
 - **Model teks biasa tidak bisa melihat gambar.** Saat ada gambar, bot **memaksa**
@@ -36,6 +43,9 @@ Catatan penting:
   dikenali provider cadangan juga.
 - Gambar terlalu besar atau gagal diunduh **dilewati**, bukan menggagalkan jawaban —
   bot akan memberi ringkasan singkat tentang lampiran yang dilewati.
+- Bot mengirim gambar apa adanya (tanpa kompresi, karena tidak ada library image native).
+  Gambar 5 MB menjadi ±6,7 MB setelah base64; sebagian provider menolak body sebesar itu.
+  Untuk foto dari HP, `VISION_MAX_MB=2` biasanya lebih aman.
 - Riwayat percakapan tetap menyimpan teks saja; gambar tidak disimpan di database.
 
 Dukungan format lain (PDF/DOCX) tetap lewat RAG: gunakan `/dokumen tambah` atau dashboard,

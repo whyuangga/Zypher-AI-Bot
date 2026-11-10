@@ -30,8 +30,8 @@ Chat bebas → AI menjawab, mengingat fakta, memakai keyword admin
 | ⚡ **Streaming jawaban** | Jawaban muncul bertahap (edit pesan tiap ±1,4 detik, menghormati rate limit Discord), bukan menunggu jeda panjang. Otomatis jatuh ke mode non-streaming kalau provider menolaknya. |
 | 💬 **Chat AI** | Konteks percakapan (20 pesan terakhir), jawaban panjang otomatis dipecah ke beberapa pesan. |
 | 🧠 **Memori jangka panjang** | AI otomatis menyimpan fakta penting lewat *tool calling*, plus perintah manual `/ingat`. Memori dipakai lagi di sesi berikutnya. |
-| 🖥️ **Dashboard web** | `/`, `/dokumen`, `/keyword`, `/memori`, `/transkrip`, `/moderasi`, `/pengaturan` — gaya editorial monokrom (latar `#0D0D0F`, teks putih, tombol solid tanpa gradient): sidebar kiri, grafik aktivitas 7 hari, kartu statistik per server. Aktif kalau `DASHBOARD_TOKEN` diisi; tanpa framework, satu proses dengan bot. |
-| 📚 **Dokumen RAG** | Upload `.txt`/`.md`/`.csv`/`.json` lewat `/dokumen tambah` atau dashboard. AI menjawab dari isi dokumen dan menyebut sumbernya (`📚 Sumber: faq.md`). Pencarian BM25 bawaan — **tanpa API key tambahan**. |
+| 🖥️ **Dashboard web** | `/`, `/dokumen`, `/keyword`, `/memori`, `/transkrip`, `/moderasi`, `/pengaturan` — gaya editorial gelap (latar `#0D0D0F`, teks Wafer `#E2D1CC`, aksen Kimberly, tombol solid tanpa gradient): sidebar kiri, grafik aktivitas 7 hari, kartu statistik per server. Aktif kalau `DASHBOARD_TOKEN` diisi; tanpa framework, satu proses dengan bot. |
+| 📚 **Dokumen RAG** | Upload `.txt`/`.md`/`.csv`/`.json`/`.pdf`/`.docx` (maks 8 MB) lewat `/dokumen tambah` atau dashboard. AI menjawab dari isi dokumen dan menyebut sumbernya (`📚 Sumber: faq.md`). Pencarian BM25 bawaan — **tanpa API key tambahan**. |
 | 🔑 **Keyword kustom** | Admin menulis jawaban acuan; AI memakainya sebagai **fakta** dan menyusun ulang kalimatnya agar **bervariasi setiap kali** (bukan copy-paste). |
 | 🎭 **Persona per server** | Mis. "kamu guru bahasa Inggris yang sabar" — berlaku untuk semua room di server itu. |
 | 📄 **Transkrip sesi** | HTML mandiri (dark mode, rapi, aman dari XSS) berisi percakapan + memori + ringkasan AI. Dikirim ke DM dan/atau channel arsip. |
@@ -83,11 +83,11 @@ Deploy    Docker multi-stage + docker-compose
    - ✅ **Message Content Intent** ← *wajib*, tanpa ini bot tidak bisa membaca isi chat
    - ✅ Server Members Intent *(opsional, untuk menampilkan nama tampilan member)*
 5. **OAuth2 → URL Generator**, centang `bot` + `applications.commands`, izin yang dibutuhkan:
-   `Manage Channels`, `View Channels`, `Send Messages`, `Manage Messages`, `Embed Links`, `Attach Files`, `Read Message History`, `Add Reactions`, `Use External Emojis`.
+   `Manage Channels`, `View Channels`, `Send Messages`, `Manage Messages`, `Embed Links`, `Attach Files`, `Read Message History`, `Add Reactions`, `Use External Emojis`, `Moderate Members` *(untuk timeout moderasi — kalau tidak ada, timeout gagal dan hanya tercatat di log)*.
 6. Buka URL hasil generate, pilih server, authorize.
 
 > URL siap pakai (ganti `YOUR_CLIENT_ID`):
-> `https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=388176&scope=bot%20applications.commands`
+> `https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=1099909803952&scope=bot%20applications.commands`
 
 ### 2. Ambil API key Groq
 
@@ -165,6 +165,7 @@ Klik **Buat Room AI** → channel privat muncul → mulai ngobrol.
 | `DASHBOARD_TOKEN` | kosong | Token login dashboard web. **Kosong = dashboard mati** |
 | `DASHBOARD_PORT` | `3000` | Port dashboard. Alias dari panel: `WEB_PORT`, `PORT`, `SERVER_PORT` (nilai `0` = belum diisi) |
 | `WEB_ENABLED` | `true` | `false` = matikan dashboard walau token terisi |
+| `WEB_HOST` | `0.0.0.0` | Alamat bind dashboard. Pakai `127.0.0.1` bila dashboard hanya diakses lewat reverse proxy |
 | `PUBLIC_URL` | kosong | Alamat publik dashboard yang ditampilkan di log |
 | `NODE_OPTIONS` | — | Set di **panel hosting** (bukan `.env`): `--max-old-space-size=384` untuk container 512 MB |
 | `DATABASE_PATH` | `./data/zypher.db` | Lokasi file SQLite |
@@ -177,16 +178,16 @@ Klik **Buat Room AI** → channel privat muncul → mulai ngobrol.
 | `TRANSCRIPT_CHANNEL_ID` | kosong | Channel arsip transkrip & ringkasan sesi |
 | `STAFF_ROLE_ID` | kosong | Role staff yang boleh melihat/menutup room member |
 | `ADMIN_ONLY_ROOMS` | `false` | `true` = hanya admin yang bisa membuat room |
-| `MODERATION_ENABLED` | `false` | Aktifkan filter kata terlarang (bisa juga dari `/moderasi`) |
+| `MODERATION_ENABLED` | `false` | Aktifkan filter kata terlarang (bisa juga dari `/moderasi`) — [docs](docs/moderation.md) |
 | `MODERATION_WORDS` | kosong | Daftar kata terlarang, dipisah koma |
 | `MODERATION_ACTION` | `delete` | `delete` · `warn` (hapus + tegur) · `timeout` (hapus + bisukan) |
 | `MODERATION_TIMEOUT_MINUTES` | `10` | Durasi timeout moderasi (1–10080 menit) |
-| `VISION_ENABLED` | `false` | AI membaca gambar di room AI |
+| `VISION_ENABLED` | `false` | AI membaca gambar di room AI — [docs](docs/vision-voice.md) |
 | `VISION_MODEL` | `meta-llama/llama-4-scout-17b-16e-instruct` | Model multimodal yang dipakai saat ada gambar |
 | `VISION_MAX_MB` | `5` | Batas ukuran gambar yang diunduh bot |
-| `VOICE_ENABLED` | `false` | Transkrip voice note jadi pertanyaan |
+| `VOICE_ENABLED` | `false` | Transkrip voice note jadi pertanyaan — [docs](docs/vision-voice.md) |
 | `STT_MODEL` | `whisper-large-v3` | Model transkrip |
-| `TTS_ENABLED` | `true` | Balas voice note dengan pesan suara |
+| `TTS_ENABLED` | `true` | Balas voice note dengan pesan suara — [docs](docs/vision-voice.md) |
 | `TTS_MODEL` / `TTS_VOICE` | `playai-tts` / `Fritz-PlayAI` | Model & suara TTS |
 | `VOICE_MAX_MB` | `20` | Batas ukuran audio yang ditranskrip |
 
@@ -384,7 +385,13 @@ diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai u
 | Bot mati saat `npm install` di panel hosting | RAM hosting habis. Upload folder `node_modules` dari laptop, atau pakai image/hosting dengan RAM ≥512 MB. |
 | Jawaban muncul sekaligus, bukan streaming | Normal bila provider/model menolak `stream: true` — bot otomatis memakai mode non-streaming di provider tersebut (lihat log). |
 | AI tidak menjawab dari dokumen | Cek `/dokumen cari pertanyaan:...`. Kalau kosong, kata kuncinya tidak ada di dokumen — tambahkan sinonim atau pakai istilah yang dipakai member. |
-| "Format PDF belum didukung" | Konversi dulu ke `.txt`/`.md`. Lihat [docs/rag.md](docs/rag.md). |
+| Upload PDF/DOCX gagal | Maksimal **8 MB**, PDF harus berisi teks (hasil scan perlu OCR dulu), dan file tidak boleh terkunci password. Lihat [docs/rag.md](docs/rag.md). |
+| AI menjawab "belum bisa membaca gambar" | `VISION_ENABLED` masih `false`. Nyalakan dan pastikan `VISION_MODEL` benar-benar model **multimodal** (`npm run models -- groq --all`). |
+| Error `model ... does not support image input` | `VISION_MODEL` bukan model vision, atau provider tidak mendukung `image_url`. Ganti model atau matikan `VISION_ENABLED`. |
+| Voice note tidak ditranskrip | `VOICE_ENABLED` belum aktif, file > `VOICE_MAX_MB`, atau provider menolak endpoint `/audio/transcriptions`. Cek log: nama provider ikut dicatat. |
+| Balasan suara tidak muncul | `TTS_ENABLED=false`, kuota TTS habis, atau model suara tidak ada di provider. Jawaban teks tetap dikirim — tidak ada yang hilang. |
+| Moderasi tidak bereaksi | Pastikan dulu: moderasi aktif di `/moderasi` (menang atas `.env`), daftar kata tidak kosong, dan pengirimnya bukan staff/Manage Messages. Bot juga perlu izin **Manage Messages** untuk menghapus dan **Moderate Members** untuk timeout. |
+| `connect ECONNREFUSED` / `SSL required` (Postgres) | `DATABASE_URL` salah atau `sslmode=require` belum ditambahkan. Tes cepat: `DATABASE_URL=... npm run migrate:pg`. Lihat [docs/postgres.md](docs/postgres.md). |
 | Mau ganti token dashboard | `npm run token -- --write`, lalu perbarui juga variabel di panel hosting dan restart. |
 | Dashboard tidak bisa dibuka | `DASHBOARD_TOKEN` kosong atau kurang dari 12 karakter. Cek log: harus ada `🌐 Dashboard: …`. |
 | Data hilang setelah redeploy | Hosting tanpa disk persisten. Lihat [docs/hosting.md](docs/hosting.md) + unduh backup `zypher.db`. |

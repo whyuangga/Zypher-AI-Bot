@@ -44,6 +44,11 @@ MODERATION_TIMEOUT_MINUTES=10   # 1–10080 (maks 7 hari)
 
 ## Cara pencocokan kata
 
+Ketiga tindakan sama-sama **menghapus pesan** lebih dulu; bedanya hanya apa yang terjadi
+sesudahnya (`warn` = tegur publik, `timeout` = bisukan member). Kalau bot tidak punya izin
+**Manage Messages**, pesan tidak bisa dihapus — bot memberi tahu member agar menghapus sendiri,
+dan pelanggaran tetap tercatat di dashboard/log.
+
 | Input member | Kata terlarang | Tertangkap? |
 |---|---|---|
 | `Dasar ANJING` | `anjing` | ✅ (tidak peduli huruf besar/kecil) |

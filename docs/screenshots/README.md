@@ -1,9 +1,10 @@
 # Screenshot Dashboard
 
-Pratinjau tampilan dashboard setelah redesign gaya **editorial monokrom** — latar `#0D0D0F`,
+Pratinjau tampilan dashboard bergaya **editorial gelap** — latar `#0D0D0F`,
 teks Wafer `#E2D1CC`, aksen Kimberly `#716C98`, garis rambut 1px, huruf **General Sans**
 (self-host), tombol solid tanpa gradient.
-Diambil dari build terbaru dengan data demo: 1 server, 3 room AI, 84 pesan, 3 dokumen, 5 keyword, 5 memori.
+Diambil dari build terbaru dengan data demo: 1 server, 3 room AI, 84 pesan, 5 dokumen (tiga di antaranya
+`.pdf`/`.docx`), 5 keyword, 5 memori, 3 arsip transkrip, dan 4 catatan moderasi.
 
 | File | Halaman | Ukuran layar |
 | --- | --- | --- |

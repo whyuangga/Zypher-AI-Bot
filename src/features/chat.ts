@@ -37,8 +37,6 @@ interface AnswerContext {
   model?: string | null;
   /** data URI gambar (sudah lolos batas ukuran) — memicu mode multimodal */
   images?: string[];
-  /** transkrip suara; bila ada, bot ikut membalas dengan audio */
-  fromVoice?: boolean;
 }
 
 /**
@@ -275,7 +273,6 @@ export async function handleRoomMessage(message: Message): Promise<void> {
         history: history.map((entry) => ({ role: entry.role, content: truncate(entry.content, 2000) })),
         allowTools: true,
         images: images.dataUris,
-        fromVoice: Boolean(voice.text),
       },
       (delta) => streamer.push(delta),
     );

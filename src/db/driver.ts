@@ -153,18 +153,29 @@ export async function createPostgresDriver(options: PostgresDriverOptions): Prom
   if (options.pool) {
     pool = options.pool;
   } else {
-    const pgModule = (await import('pg')) as unknown as {
-      default?: { Pool: new (config: unknown) => PoolLike & { on: (event: string, handler: (error: unknown) => void) => void } };
-      Pool?: new (config: unknown) => PoolLike & { on: (event: string, handler: (error: unknown) => void) => void };
-    };
+    interface PgPoolInstance extends PoolLike {
+      on: (event: string, handler: (error: unknown) => void) => void;
+    }
+    interface PgModule {
+      Pool?: new (config: unknown) => PgPoolInstance;
+      types?: { setTypeParser: (oid: number, parse: (value: string) => unknown) => void };
+      default?: {
+        Pool?: new (config: unknown) => PgPoolInstance;
+        types?: { setTypeParser: (oid: number, parse: (value: string) => unknown) => void };
+      };
+    }
+    const pgModule = (await import('pg')) as unknown as PgModule;
     const Pool = pgModule.Pool ?? pgModule.default?.Pool;
 
     if (!Pool) throw new Error('Paket `pg` tidak bisa dimuat.');
 
     // BIGINT (int8) → number: COUNT()/SUM()/timestamp di Postgres dikembalikan
     // sebagai string, padahal seluruh kode menganggapnya angka.
-    const types = (await import('pg')).types as unknown as { setTypeParser: (oid: number, parse: (value: string) => unknown) => void };
-    types.setTypeParser(20, (value: string) => Number(value));
+    // int8 (BIGINT) → number. Akses `types` dibuat defensif karena `pg` adalah
+    // paket CJS dan bentuk namespace-nya bisa berbeda antar versi/bundler.
+    const pgTypes = (pgModule as { types?: { setTypeParser: (oid: number, parse: (value: string) => unknown) => void } }).types ??
+      (pgModule.default as { types?: { setTypeParser: (oid: number, parse: (value: string) => unknown) => void } } | undefined)?.types;
+    pgTypes?.setTypeParser(20, (value: string) => Number(value));
 
     const instance = new Pool({
       connectionString: options.url,

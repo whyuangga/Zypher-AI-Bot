@@ -137,27 +137,24 @@ export async function moderateMessage(message: Message): Promise<boolean> {
   const action = settings.action;
   const summary = matched.join(', ');
 
-  // Hapus pesan lebih dulu: kalau gagal (izin kurang), tetap lanjut memberi tahu.
+  // Pesan selalu dihapus lebih dulu (ketiga tindakan mengandalkan ini).
+  // Kalau bot kurang izin, kita tetap memberi tahu member agar pesannya
+  // dihapus sendiri — moderasi tidak boleh gagal diam-diam.
   let deleted = false;
-  if (action !== 'warn') {
-    try {
-      await message.delete();
-      deleted = true;
-    } catch (error) {
-      logger.warn('Moderasi: gagal menghapus pesan', errorMessage(error));
-    }
+  try {
+    await message.delete();
+    deleted = true;
+  } catch (error) {
+    logger.warn('Moderasi: gagal menghapus pesan', errorMessage(error));
   }
 
-  if (action === 'warn' || (action === 'timeout' && !deleted)) {
-    await message
-      .reply({
-        content:
-          action === 'warn'
-            ? `⚠️ <@${message.author.id}> pesanmu mengandung kata terlarang (${summary}). Mohon jangan diulang ya.`
-            : `⚠️ <@${message.author.id}> pesanmu mengandung kata terlarang dan tidak bisa dihapus otomatis (izin bot kurang). Tolong hapus sendiri ya.`,
-        allowedMentions: { repliedUser: false, parse: [] },
-      })
-      .catch(() => undefined);
+  if (action === 'warn') {
+    await notify(message, `⚠️ <@${message.author.id}> pesanmu mengandung kata terlarang (${summary}). Mohon jangan diulang ya.`);
+  } else if (!deleted) {
+    await notify(
+      message,
+      `⚠️ <@${message.author.id}> pesanmu mengandung kata terlarang dan tidak bisa dihapus otomatis (izin bot kurang). Tolong hapus sendiri ya.`,
+    );
   }
 
   if (action === 'timeout') {
@@ -175,6 +172,20 @@ export async function moderateMessage(message: Message): Promise<boolean> {
   });
 
   return true;
+}
+
+/**
+ * Beri tahu pelanggar. `reply` diutamakan supaya konteksnya jelas, tapi pesan
+ * yang sudah dihapus tidak bisa dijadikan target reply (Discord menolak
+ * `message_reference` ke pesan yang hilang), jadi jatuh ke kirim biasa.
+ */
+async function notify(message: Message, content: string): Promise<void> {
+  try {
+    await message.reply({ content, allowedMentions: { repliedUser: false, parse: [] } });
+  } catch {
+    if (message.channel.type !== ChannelType.GuildText) return;
+    await message.channel.send({ content, allowedMentions: { repliedUser: false, parse: [] } }).catch(() => undefined);
+  }
 }
 
 async function logAction(

@@ -56,7 +56,7 @@ import {
   ringkasanPage,
   transkripPage,
 } from './ui/pages.js';
-import { dialect } from '../db/index.js';
+import { dbLabel, dialect } from '../db/index.js';
 import { parseLoginLink } from './login-link.js';
 import { dashboardStatus } from './status.js';
 
@@ -302,6 +302,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     sendJson(response, 200, {
       ok: true,
       uptimeSeconds: Math.round(process.uptime()),
+      database: await dbLabel(),
       rag: config.rag.enabled,
       documents: await countRows('documents'),
       rooms: await countRows('rooms'),

@@ -15,9 +15,9 @@ Yang bisa dilakukan:
 | `/transkrip` | Arsip HTML tiap sesi AI yang sudah ditutup — unduh, lihat ringkasan, hapus |
 | `/moderasi` | Filter kata terlarang per server, tindakan (hapus/tegur/timeout), log pelanggaran |
 | `/pengaturan` | Persona AI & model per server, info server + salin Server ID |
-| `/healthz` | JSON status untuk monitoring (tanpa login) |
+| `/healthz` | JSON status untuk monitoring (tanpa login) — termasuk engine database |
 
-Tampilan memakai gaya **editorial monokrom** dengan palet pemilik proyek:
+Tampilan memakai gaya **editorial gelap** (hangat, bukan hitam-putih murni) dengan palet pemilik proyek:
 
 | Peran | Warna | Hex |
 |---|---|---|
