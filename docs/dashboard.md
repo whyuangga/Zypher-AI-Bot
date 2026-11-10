@@ -190,8 +190,8 @@ Demi privasi member, dashboard **tidak** menyimpan dan **tidak** menampilkan:
 
 - **Transkrip percakapan** — tidak ada tabel `transcripts`, tidak ada halaman `/transkrip`,
   tidak ada endpoint unduhan. Saat member menekan **Akhiri Sesi**, transkrip HTML hanya dikirim
-  ke **DM member**. Kalau DM tertutup, file dilampirkan di room AI dan channel sengaja tidak
-  dihapus supaya member bisa mengunduhnya sendiri.
+  ke **DM member**. Kalau DM tertutup, file dilampirkan di room AI dan channel dihapus
+  **60 detik** kemudian (bukan 3 detik) supaya member sempat mengunduhnya sendiri.
 - **Memori member** — tidak ada halaman `/memori`, tidak ada API baca/hapus memori, dan tidak ada
   kartu statistik memori di Ringkasan. Memori tetap berfungsi penuh di Discord (`/ingat`,
   `/lupakan`, `/memori`, `/konsolidasi`) dan tetap dipakai AI untuk menjawab.

@@ -224,7 +224,20 @@ async function deliverFile(channel: TextChannel, fileName: string, html: string)
 }
 
 /**
- * Tutup room: buat transkrip, kirim ke DM user + channel arsip, lalu hapus channel.
+ * Jeda sebelum channel room dihapus, dalam milidetik.
+ *
+ * DM terkirim → 3 detik (member sudah punya arsipnya).
+ * DM gagal → 60 detik, karena transkrip hanya ada sebagai lampiran di room dan
+ * member butuh waktu untuk mengunduhnya sebelum channel hilang.
+ */
+export function roomDeleteDelayMs(dmSent: boolean): number {
+  return dmSent ? 3000 : 60_000;
+}
+
+/**
+ * Tutup room: buat transkrip, kirim ke DM user, lalu hapus channel.
+ * Kalau DM tertutup, transkrip dilampirkan di room dan channel tetap dihapus
+ * dengan jeda lebih panjang agar member sempat mengunduhnya.
  * Dipanggil setelah user menekan tombol konfirmasi.
  */
 export async function endAiRoom(interaction: ButtonInteraction, channel: TextChannel, room: Room): Promise<void> {
@@ -286,38 +299,39 @@ export async function endAiRoom(interaction: ButtonInteraction, channel: TextCha
     }
   }
 
-  // DM tertutup: jangan hapus channel, supaya transkrip tidak hilang.
-  // File dilampirkan langsung di room — hanya pemilik room & staff yang bisa lihat.
+  const deleteDelayMs = roomDeleteDelayMs(dmSent);
+
   if (!dmSent) {
     await deliverFile(channel, fileName, html).catch(() => undefined);
     await channel
       .send({
         content: [
           '⚠️ Aku tidak bisa mengirim DM ke kamu (DM tertutup).',
-          'Transkrip aku lampirkan di atas — **unduh dulu**, lalu klik **Akhiri Sesi** lagi kalau sudah membuka DM.',
-          'Channel ini sengaja belum dihapus agar percakapanmu tidak hilang.',
+          'Transkrip aku lampirkan di atas — **unduh sekarang**, karena channel ini akan dihapus 60 detik lagi.',
+          'Kalau ingin transkrip dikirim lewat DM, buka **Privasi & Keamanan → Izinkan pesan langsung dari server** lalu buat room baru.',
         ].join('\n'),
         allowedMentions: { parse: [] },
       })
       .catch(() => undefined);
-    return;
   }
 
   await clearHistory(channel.id);
   await deleteRoom(channel.id);
 
-  await channel
-    .send({
-      content: '✅ Sesi diakhiri. Channel ini akan dihapus dalam beberapa detik.',
-      allowedMentions: { parse: [] },
-    })
-    .catch(() => undefined);
+  if (dmSent) {
+    await channel
+      .send({
+        content: '✅ Sesi diakhiri. Channel ini akan dihapus dalam beberapa detik.',
+        allowedMentions: { parse: [] },
+      })
+      .catch(() => undefined);
+  }
 
   setTimeout(() => {
     channel
       .delete(`Sesi AI diakhiri oleh ${interaction.user.username}`)
       .catch((error) => logger.warn('Gagal menghapus channel room AI', errorMessage(error)));
-  }, 3000);
+  }, deleteDelayMs);
 
   logger.info(`Sesi AI ditutup: #${channel.name} (${messages.length} pesan, DM ${dmSent ? 'terkirim' : 'gagal'})`);
 }

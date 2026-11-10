@@ -374,7 +374,7 @@ diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai u
 | Slash command tidak muncul | Isi `DEV_GUILD_ID` (instan), atau tunggu hingga 1 jam untuk command global. Pastikan undangan memakai scope `applications.commands`. |
 | Bot diam saja di room | **Message Content Intent** belum aktif di Developer Portal → Bot. |
 | `Gagal membuat room AI` + permission | Bot butuh **Manage Channels**; taruh role bot di atas role lain yang relevan. |
-| Transkrip tidak masuk DM | User menutup DM. Bot **tidak** mengarsipkan transkrip di mana pun — file dilampirkan di room dan channel tidak dihapus agar member bisa mengunduhnya sendiri. |
+| Transkrip tidak masuk DM | User menutup DM. Bot **tidak** mengarsipkan transkrip di mana pun — file dilampirkan di room, lalu channel dihapus **60 detik** kemudian agar member sempat mengunduh. |
 | `AI_API_KEY wajib diisi` padahal sudah diisi | Key Groq tertaruh di `GROQ_API_KEY`. Saat Groq utama, taruh di `AI_API_KEY` — lihat [docs/setup.md](docs/setup.md). |
 | `API key AI ditolak` | `AI_API_KEY` salah/kedaluwarsa di `.env`. Jalankan `npm run doctor` untuk memastikan provider mana yang bermasalah. |
 | `Kuota AI sedang penuh` | Rate limit provider tercapai — turunkan `RATE_LIMIT_PER_MINUTE`, atau isi `AI_FALLBACKS` agar otomatis pindah provider. |

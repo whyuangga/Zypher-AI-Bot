@@ -347,7 +347,7 @@ Isi `DEV_GUILD_ID`, lalu restart bot. Pastikan undangan memakai scope `applicati
 Bot butuh izin **Manage Channels**. Cek juga role bot berada di atas role channel terkait.
 
 **Transkrip tidak masuk DM.**
-Member menutup DM. Bot **tidak** mengarsipkan transkrip di mana pun — file dilampirkan langsung di room AI dan channel sengaja tidak dihapus supaya member bisa mengunduh sendiri. Transkrip hanya ada di DM member (atau lampiran room), tidak pernah masuk dashboard admin.
+Member menutup DM. Bot **tidak** mengarsipkan transkrip di mana pun — file dilampirkan langsung di room AI, dan channel dihapus **60 detik** kemudian (bukan 3 detik) supaya member sempat mengunduhnya. Transkrip tidak pernah masuk dashboard admin. Saran untuk member: buka **Privasi & Keamanan → Izinkan pesan langsung dari server** agar transkrip terkirim lewat DM.
 
 **`.env` aman di-commit?**
 Tidak pernah. `.env` sudah ada di `.gitignore` — jangan dihapus dari sana.

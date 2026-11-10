@@ -1,6 +1,6 @@
 /**
  * Smoke test tanpa koneksi Discord / tanpa API key asli.
- * Menguji logika inti: database, memori, keyword, prompt, transkrip, chunking.
+ * Menguji logika inti: database, memori, keyword, prompt, privasi, chunking.
  *
  * Jalankan: npm run smoke
  */
@@ -13,6 +13,7 @@ process.env.AI_FALLBACKS = 'gemini:gemini-3.8-flash,openrouter:google/gemma-4-31
 process.env.GEMINI_API_KEY = 'smoke-gemini-key';
 
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 
 const { addMemory, listMemories, deleteMemory, clearMemories, addKeyword, listKeywords, deleteKeyword } = await import(
@@ -754,6 +755,24 @@ test('halaman dashboard tidak menyebut channel arsip transkrip', async () => {
   });
   assert.ok(!html.includes('TRANSCRIPT_CHANNEL_ID'), 'nama env lama masih dipakai');
   assert.ok(html.includes('MODLOG_CHANNEL_ID'), 'nama env log moderasi yang baru harus dipakai');
+});
+
+test('channel room tetap dihapus walau DM tertutup (jeda lebih panjang)', async () => {
+  const { roomDeleteDelayMs } = await import('../src/features/rooms.js');
+  assert.equal(roomDeleteDelayMs(true), 3000, 'DM terkirim → jeda pendek');
+  assert.equal(roomDeleteDelayMs(false), 60_000, 'DM gagal → 60 detik untuk mengunduh');
+  assert.ok(roomDeleteDelayMs(false) > roomDeleteDelayMs(true), 'jeda DM gagal harus lebih panjang');
+});
+
+test('endAiRoom tidak lagi menyisakan channel saat DM tertutup', async () => {
+  const source = await readFile(new URL('../src/features/rooms.ts', import.meta.url), 'utf8');
+  assert.ok(!source.includes('Channel ini sengaja belum dihapus'), 'masih ada jalur yang menahan channel');
+  // penghapusan channel harus terjadi di luar cabang dmSent
+  const idx = source.indexOf('setTimeout(() => {');
+  assert.ok(idx > 0, 'tidak ada setTimeout penghapus channel');
+  const after = source.slice(idx);
+  assert.ok(after.includes('channel'), 'setTimeout harus menghapus channel');
+  assert.ok(source.includes('roomDeleteDelayMs(dmSent)'), 'jeda harus mengikuti hasil DM');
 });
 
 console.log('\nModerasi otomatis');
