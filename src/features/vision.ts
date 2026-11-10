@@ -53,9 +53,10 @@ const EMPTY: CollectedImages = { dataUris: [], skipped: [] };
  * menggagalkan yang lain — pesan tetap dijawab dengan gambar yang berhasil.
  */
 export async function collectImages(message: Message, limit = 3): Promise<CollectedImages> {
-  if (!message.guildId) return EMPTY;
-  // Vision selalu aktif — tidak ada sakelar per server. Gambar apa pun yang
-  // lolos filter di bawah akan dicoba dibaca model multimodal.
+  // CATATAN: dulu ada `if (!message.guildId) return EMPTY` di sini, yang
+  // membuat gambar di DM tidak pernah dibaca sama sekali — padahal DM adalah
+  // tempat utama fitur ini dipakai. Vision tidak butuh guild: batasnya
+  // ukuran file dan tipe gambar.
   if (message.attachments.size === 0) return EMPTY;
 
   const candidates = [...message.attachments.values()]

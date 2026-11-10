@@ -48,6 +48,10 @@ Discord. Karena Discord hanya menerima PNG/JPG, konversi ini butuh Chromium:
 Kalau Chromium tidak ada, kartu dilewati dan sambutan dikirim sebagai embed teks
 biasa — tidak ada error, hanya tanpa gambar.
 
+**Banner di dashboard.** Halaman Sambutan tidak lagi menyisipkan banner sebagai data
+URI ke HTML (dua banner 8 MB = HTML belasan MB, praktis mati di HP). Gambarnya diambil
+dari `GET /api/banner/welcome|goodbye` dan bisa di-cache browser.
+
 **Banner tanpa kartu.** Saat kartu dimatikan tapi banner diunggah, banner dipakai
 sebagai gambar embed. Discord **menolak** gambar embed berisi data URI (balasannya
 samar: `Received one or more errors`), jadi banner dikirim sebagai **lampiran**
@@ -276,7 +280,7 @@ member baru, sehingga sambutan tidak terkirim.
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 224 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 229 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

@@ -14,7 +14,6 @@ import { config } from '../config.js';
 import {
   addKeyword,
   clearModerationLogs,
-  countChunks,
   countModerationLogs,
   deleteModerationLog,
   countGuildMessages,
@@ -33,7 +32,6 @@ import {
   getGoodbyeSettings,
   saveGoodbyeSettings,
   listKeywords,
-  listMemories,
   listModerationLogs,
   listDmSessions,
   messagesPerDay,
@@ -47,8 +45,8 @@ import {
   setPersona,
 } from '../db/repo.js';
 import { invalidateModerationCache } from '../features/moderation.js';
-import { listPanelChannels, PanelError, panelState, publishPanel, removePanel } from '../features/panel.js';
-import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
+import { listPanelChannels, PanelError, publishPanel, removePanel } from '../features/panel.js';
+import { DocumentError, ingestDocument, removeDocument } from '../features/rag.js';
 import {
   previewAgentReply,
   previewGoodbye,
@@ -61,6 +59,7 @@ import {
   BannerError,
   bannerExists,
   deleteBanner,
+  readBannerBytes,
   readBannerDataUri,
   saveBanner,
 } from '../features/banner.js';
@@ -74,7 +73,6 @@ import { previewAgentReply as composeAgentPreview } from '../features/preview.js
 import { MAX_BINARY_BYTES } from '../lib/chunker.js';
 import { embeddingModelName } from '../features/rag-embed.js';
 import { errorMessage, logger } from '../lib/logger.js';
-import { truncate } from '../lib/text.js';
 import {
   dokumenPage,
   keywordPage,
@@ -515,7 +513,8 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
             style: welcome.style,
             example: welcome.example,
             bannerPath: welcome.bannerPath,
-            bannerPreview: await readBannerDataUri(welcome.bannerPath),
+            // Hanya status ada/tidak — gambarnya diambil lewat /api/banner/welcome.
+            hasBanner: bannerExists(welcome.bannerPath),
           },
           goodbye: {
             enabled: goodbye.enabled,
@@ -525,7 +524,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
             style: goodbye.style,
             example: goodbye.example,
             bannerPath: goodbye.bannerPath,
-            bannerPreview: await readBannerDataUri(goodbye.bannerPath),
+            hasBanner: bannerExists(goodbye.bannerPath),
             imageEnabled: goodbye.imageEnabled,
             includeAvatar: goodbye.includeAvatar,
           },
@@ -894,12 +893,6 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     const current = await getWelcomeSettings(guildId);
     const bool = (value: unknown, fallback: boolean): boolean =>
       value === undefined || value === null ? fallback : Boolean(value);
-    /** String opsional: tidak dikirim = pakai nilai lama, dikirim kosong = null. */
-    const optionalText = (key: string, current: string | null, max = 300): string | null => {
-      if (!(key in payload)) return current;
-      const value = typeof payload[key] === 'string' ? (payload[key] as string).trim() : '';
-      return value ? value.slice(0, max) : null;
-    };
 
     await saveWelcomeSettings(guildId, {
       enabled: bool(payload.enabled, current.enabled),
@@ -994,12 +987,6 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     const current = await getAgentSettings(guildId);
     const bool = (value: unknown, fallback: boolean): boolean =>
       value === undefined || value === null ? fallback : Boolean(value);
-    /** String opsional: tidak dikirim = pakai nilai lama, dikirim kosong = null. */
-    const optionalText = (key: string, current: string | null, max = 300): string | null => {
-      if (!(key in payload)) return current;
-      const value = typeof payload[key] === 'string' ? (payload[key] as string).trim() : '';
-      return value ? value.slice(0, max) : null;
-    };
 
     await saveAgentSettings(guildId, {
       channelId: channelId || null,
@@ -1021,6 +1008,36 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
   // tersimpan adalah tabel pengaturan masing-masing. Body berupa JSON berisi
   // data URI, bukan multipart — tidak perlu parser tambahan dan ukurannya sudah
   // dibatasi (8 MB) sebelum diproses.
+
+  // Gambar banner disajikan sebagai respons biner, bukan data URI di HTML.
+  //
+  // Dulu halaman Sambutan menyisipkan data URI banner ke HTML. Karena batas
+  // unggah 8 MB dan ada dua banner (sambutan + perpisahan), satu kunjungan
+  // halaman bisa menarik belasan MB — mematikan di HP atau koneksi lambat.
+  // Sekarang browser mengambil gambarnya sendiri dan bisa men-cache.
+  if ((path === '/api/banner/welcome' || path === '/api/banner/goodbye') && method === 'GET') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const kind = path.endsWith('/welcome') ? 'welcome' : 'goodbye';
+    const settings = kind === 'welcome' ? await getWelcomeSettings(guildId) : await getGoodbyeSettings(guildId);
+    const file = await readBannerBytes(settings.bannerPath);
+    if (!file) {
+      response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+      response.end('Banner belum ada.');
+      return;
+    }
+    response.writeHead(200, {
+      'content-type': file.mime,
+      'content-length': String(file.bytes.byteLength),
+      // Nama file banner berisi hash acak, jadi aman di-cache lama: banner baru
+      // = nama baru = URL baru.
+      'cache-control': 'private, max-age=86400',
+    });
+    response.end(file.bytes);
+    return;
+  }
 
   if ((path === '/api/banner/welcome' || path === '/api/banner/goodbye') && method === 'POST') {
     if (!guildId) {
@@ -1057,12 +1074,12 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       if (kind === 'welcome') await saveWelcomeSettings(guildId, { bannerPath: saved.name });
       else await saveGoodbyeSettings(guildId, { bannerPath: saved.name });
 
-      // Kembalikan data URI-nya supaya dashboard bisa langsung menampilkan.
-      const preview = await readBannerDataUri(saved.name);
+      // Kembalikan URL (bukan data URI) supaya dashboard tinggal memasang <img src>.
+      // Query `v` = nama file, jadi browser tidak menampilkan banner lama dari cache.
       sendJson(response, 200, {
         ok: true,
         banner: saved,
-        preview,
+        preview: `/api/banner/${kind}?v=${encodeURIComponent(saved.name ?? '')}`,
         note: 'Banner tersimpan. Tekan Simpan untuk memastikan pengaturan lain ikut tersimpan.',
       });
       return;

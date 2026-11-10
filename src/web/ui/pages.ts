@@ -15,7 +15,7 @@ import {
   relativeTime,
   statCard,
 } from './base.js';
-import { appShell, guildLabel, pageHead, SHARED_JS, type PageKey } from './shell.js';
+import { appShell, pageHead, SHARED_JS, type PageKey } from './shell.js';
 import { STYLE } from './theme.js';
 
 export interface ShellStatus {
@@ -916,7 +916,7 @@ export interface WelcomePageOptions extends PageContext {
     /** Nama file banner (null = latar bawaan). */
     bannerPath: string | null;
     /** Banner tersimpan sebagai data URI, untuk langsung ditampilkan. */
-    bannerPreview: string | null;
+    hasBanner: boolean;
   };
   goodbye: {
     enabled: boolean;
@@ -926,7 +926,7 @@ export interface WelcomePageOptions extends PageContext {
     style: string | null;
     example: string | null;
     bannerPath: string | null;
-    bannerPreview: string | null;
+    hasBanner: boolean;
     imageEnabled: boolean;
     includeAvatar: boolean;
   };
@@ -972,18 +972,22 @@ const CHECK_ROW = 'style="display:flex;align-items:center;gap:10px;font-size:13.
 function bannerBlock(
   kind: 'welcome' | 'goodbye',
   currentPath: string | null,
-  preview: string | null,
+  /** true = ada file banner. Boolean, bukan string: penanda "ada" tidak boleh
+   *  bergantung pada truthiness string kosong. */
+  hasBanner: boolean,
 ): string {
   const label = kind === 'welcome' ? 'sambutan' : 'perpisahan';
-  // Server sudah mengirim data URI banner yang tersimpan, jadi halaman bisa
-  // langsung menampilkannya tanpa permintaan tambahan.
+  // Gambar diambil lewat URL, BUKAN data URI di dalam HTML. Banner boleh sampai
+  // 8 MB dan ada dua (sambutan & perpisahan) — menyisipkannya sebagai data URI
+  // membuat satu kunjungan halaman menarik belasan MB dan berat di HP.
+  // Versi path dipakai sebagai query supaya banner baru tidak memakai cache lama.
 
   return `<div>
     <label class="field">Banner ${label} <span class="hint" style="margin:0;text-transform:none;letter-spacing:0">(opsional)</span></label>
     <div class="banner-row">
       <div class="banner-preview" id="bannerBox-${kind}">
-        <img id="bannerImg-${kind}" alt="Banner ${label}"${preview ? ` src="${esc(preview)}"` : ' hidden'}>
-        <span id="bannerEmpty-${kind}"${preview ? ' hidden' : ''}>Belum ada banner — kartu memakai latar bawaan.</span>
+        <img id="bannerImg-${kind}" alt="Banner ${label}"${hasBanner ? ` src="/api/banner/${kind}?v=${esc(currentPath ?? '')}"` : ' hidden'}>
+        <span id="bannerEmpty-${kind}"${hasBanner ? ' hidden' : ''}>Belum ada banner — kartu memakai latar bawaan.</span>
       </div>
       <div class="banner-actions">
         <input type="file" id="bannerFile-${kind}" accept="image/png,image/jpeg,image/webp" hidden
@@ -1062,7 +1066,7 @@ export function welcomePage(options: WelcomePageOptions): string {
     <span>Tampilkan avatar member di kartu</span>
   </label>
 
-  ${bannerBlock('welcome', options.welcome.bannerPath, options.welcome.bannerPreview)}
+  ${bannerBlock('welcome', options.welcome.bannerPath, options.welcome.hasBanner)}
   ${rendererWarning}
 
   <div><button class="btn-primary" type="button" onclick="saveWelcome()">${icon('check', 16)} Simpan sambutan</button></div>
@@ -1124,7 +1128,7 @@ export function welcomePage(options: WelcomePageOptions): string {
     <span>Tampilkan avatar member di kartu</span>
   </label>
 
-  ${bannerBlock('goodbye', options.goodbye.bannerPath, options.goodbye.bannerPreview)}
+  ${bannerBlock('goodbye', options.goodbye.bannerPath, options.goodbye.hasBanner)}
 
   <div><button class="btn-primary" type="button" onclick="saveGoodbye()">${icon('check', 16)} Simpan salam</button></div>
 </div>`,

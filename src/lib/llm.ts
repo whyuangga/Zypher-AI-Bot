@@ -434,6 +434,16 @@ export async function streamChat(request: ChatRequest, options: StreamOptions): 
         },
       );
 
+      // Sama seperti chat(): stream bisa selesai tanpa satu potong teks pun
+      // (model reasoning kehabisan jatah). Tanpa pemeriksaan ini, fallback
+      // tidak pernah dicoba dan user melihat pesan kosong.
+      if (!emitted) {
+        const detail = 'stream selesai tanpa teks (jatah token mungkin habis untuk berpikir)';
+        failures.push(`${provider.name}: ${detail}`);
+        logger.warn(`Provider ${provider.name} ${detail} — mencoba provider berikutnya.`);
+        continue;
+      }
+
       if (index > 0) {
         logger.info(`Provider utama gagal — jawaban streaming diberikan oleh fallback ${result.provider}/${result.model}.`);
       }

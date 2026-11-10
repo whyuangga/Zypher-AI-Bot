@@ -2653,6 +2653,124 @@ await testAsync('kirim tes: error Discord yang samar diterjemahkan', async () =>
   );
 });
 
+await testAsync('vision: gambar di DM ikut dibaca (tidak lagi langsung kosong)', async () => {
+  // Bug: collectImages langsung `return EMPTY` bila message.guildId kosong,
+  // sehingga gambar di DM tidak pernah dibaca walau modelnya multimodal.
+  const source = await readFile('src/features/vision.ts', 'utf8');
+  const fn = source.slice(source.indexOf('export async function collectImages'));
+  // Hanya periksa kode, bukan komentar yang menjelaskan bug lama.
+  const code = fn
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('//') && !line.trim().startsWith('*'))
+    .join('\n');
+  assert.equal(
+    /if \(!message\.guildId\)/.test(code),
+    false,
+    'tidak lagi menolak pesan DM',
+  );
+
+  const { collectImages } = await import('../src/features/vision.js');
+  const { AttachmentBuilder } = await import('discord.js');
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  const attachment = new AttachmentBuilder(png, { name: 'foto.png' });
+  const fake = {
+    guildId: null,
+    attachments: new Map([['1', { name: 'foto.png', contentType: 'image/png', size: png.length, url: 'https://contoh.invalid/foto.png' }]]),
+  };
+
+  // Unduhan di-stub supaya test tidak menyentuh jaringan.
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(png, { headers: { 'content-type': 'image/png' } })) as never;
+  try {
+    const result = await collectImages(fake as never);
+    assert.equal(result.dataUris.length, 1, 'gambar DM terkirim ke model');
+    assert.ok(result.dataUris[0]!.startsWith('data:image/png;base64,'), 'berupa data URI');
+    assert.equal(attachment.name, 'foto.png');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+await testAsync('voice: voice note di DM ditranskrip, bukan ditolak', async () => {
+  const dm = await readFile('src/features/dm.ts', 'utf8');
+  const code = dm
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('//') && !line.trim().startsWith('*'))
+    .join('\n');
+  // Panggilan sebenarnya, bukan sekadar nama di komentar/import.
+  assert.ok(/await readVoiceNote\(/.test(code), 'memanggil readVoiceNote');
+  assert.ok(/await replyWithSpeech\(/.test(code), 'memanggil replyWithSpeech untuk balasan suara');
+  assert.ok(/if \(voiceNoteText && config\.voice\.ttsEnabled\)/.test(code), 'TTS hanya untuk voice note');
+  // Penolakan teks hanya boleh muncul kalau tidak ada teks DAN tidak ada gambar.
+  assert.ok(
+    /if \(!question && collected\.dataUris\.length === 0\)/.test(dm),
+    'tidak menolak pesan yang punya lampiran',
+  );
+
+  const chat = await readFile('src/features/chat.ts', 'utf8');
+  assert.ok(chat.includes('export async function readVoiceNote'), 'helper bisa dipakai DM');
+  assert.ok(chat.includes('export async function replyWithSpeech'), 'TTS bisa dipakai DM');
+});
+
+await testAsync('stream: stream kosong memicu provider berikutnya', async () => {
+  // Pasangan dari chat(): stream bisa selesai tanpa satu potong teks pun.
+  const llm = await readFile('src/lib/llm.ts', 'utf8');
+  const streamFn = llm.slice(llm.indexOf('export async function streamChat'));
+  assert.ok(/if \(!emitted\) \{/.test(streamFn), 'stream kosong diperiksa');
+  assert.ok(streamFn.includes('continue;'), 'lanjut ke provider berikutnya');
+});
+
+await testAsync('banner: halaman tidak menyisipkan data URI (bisa belasan MB)', async () => {
+  // Dua banner 8 MB sebagai data URI = HTML belasan MB; di HP praktis mati.
+  const { welcomePage } = await import('../src/web/ui/pages.js');
+  const page = welcomePage({
+    guildId: '1',
+    guildName: 'Server',
+    welcome: {
+      enabled: true, useAi: false, channelId: null, template: 'Halo {user}!',
+      imageEnabled: false, includeAvatar: false, style: null, example: null,
+      bannerPath: 'banner-abc.png', hasBanner: true,
+    },
+    goodbye: {
+      enabled: false, useAi: false, channelId: null, template: 'Bye {user}!',
+      imageEnabled: false, includeAvatar: false, style: null, example: null,
+      bannerPath: 'banner-def.png', hasBanner: true,
+    },
+    channels: [],
+    botOnline: false,
+    sampleName: 'Sky',
+    cardRenderer: { available: false, path: null },
+    persona: null, model: null, defaultModel: 'x', embedModel: null, ragEnabled: false,
+    ttsReplyInRoom: null, ttsReplyInRoomDefault: true, ragEnabledSetting: null,
+    ragEnabledDefault: true, autoMemorySetting: null, autoMemoryDefault: true,
+    adminOnlyRoomsSetting: null, adminOnlyRoomsDefault: false,
+    stats: { rooms: 0, messages: 0, documents: 0 },
+    status: { online: false, mode: 'standalone', uptimeSeconds: 0 },
+    counts: {},
+  } as never);
+
+  // Favicon memang data URI SVG kecil — yang dilarang adalah gambar base64
+  // (banner bisa 8 MB dan ada dua).
+  assert.equal(page.includes('data:image/png;base64,'), false, 'tidak ada banner base64 di HTML');
+  assert.equal(page.includes('data:image/jpeg;base64,'), false, 'tidak ada banner JPEG base64');
+  assert.equal(page.includes('data:image/webp;base64,'), false, 'tidak ada banner WebP base64');
+  assert.ok(page.includes('/api/banner/welcome?v=banner-abc.png'), 'gambar diambil lewat URL');
+  assert.ok(page.includes('/api/banner/goodbye?v=banner-def.png'), 'banner perpisahan juga URL');
+  // Penanda "ada banner" harus boolean, bukan string kosong (falsy).
+  assert.ok(page.includes('src="/api/banner/welcome'), 'gambar tampil saat ada banner');
+});
+
+await testAsync('banner: ada endpoint gambar + penanda boolean', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(/method === 'GET'/.test(server) && server.includes("path.endsWith('/welcome')"), 'endpoint GET banner ada');
+  assert.ok(server.includes('readBannerBytes'), 'menyajikan byte gambar');
+  assert.ok(server.includes("'cache-control': 'private, max-age=86400'"), 'gambar bisa di-cache');
+  assert.ok(server.includes('hasBanner: bannerExists('), 'penanda boolean, bukan string');
+});
+
 await testAsync('kirim: banner dikirim sebagai lampiran, bukan data URI', async () => {
   // Bug nyata: embed.setImage(dataUri) ditolak Discord dengan pesan samar
   // "Received one or more errors", sehingga sambutan, salam perpisahan, dan

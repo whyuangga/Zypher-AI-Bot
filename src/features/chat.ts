@@ -1,13 +1,11 @@
 import {
   AttachmentBuilder,
-  ChannelType,
   MessageFlags,
   type ChatInputCommandInteraction,
   type Message,
 } from 'discord.js';
 import { config } from '../config.js';
-import { appendMessage, getGuildSettings, getHistory } from '../db/repo.js';
-import { DiscordStreamer } from '../lib/discord-stream.js';
+import { getGuildSettings } from '../db/repo.js';
 import { chat, streamChat, type ChatMessage, type ChatTool } from '../lib/llm.js';
 import { logger, errorMessage } from '../lib/logger.js';
 import { checkRateLimit } from '../lib/ratelimit.js';
@@ -17,7 +15,7 @@ import { getMemories, memoryTools, runMemoryTool } from './memory.js';
 import { matchKeywords } from './keywords.js';
 import { buildSystemPrompt } from './prompt.js';
 import { buildKnowledgeBlock, searchKnowledge, summarizeSources, type RetrievedChunk } from './rag.js';
-import { collectImages, visionUserContent } from './vision.js';
+import { visionUserContent } from './vision.js';
 import { isAudioAttachment, synthesizeSpeech, transcribeAudio } from '../lib/audio.js';
 
 const MAX_TOOL_ROUNDS = 2;
@@ -137,7 +135,7 @@ export async function generateAnswer(
   };
 }
 
-interface VoiceNote {
+export interface VoiceNote {
   text: string | null;
   error: string | null;
 }
@@ -145,7 +143,7 @@ interface VoiceNote {
 const DOWNLOAD_TIMEOUT_MS = 15_000;
 
 /** Unduh voice note / audio dari pesan lalu transkrip jadi teks. */
-async function readVoiceNote(message: Message): Promise<VoiceNote> {
+export async function readVoiceNote(message: Message): Promise<VoiceNote> {
   if (!config.voice.enabled || message.attachments.size === 0) return { text: null, error: null };
 
   const attachment = [...message.attachments.values()].find((item) =>
@@ -183,7 +181,7 @@ async function readVoiceNote(message: Message): Promise<VoiceNote> {
 }
 
 /** Kirim jawaban sebagai file audio; best-effort, tidak pernah melempar error. */
-async function replyWithSpeech(message: Message, text: string): Promise<void> {
+export async function replyWithSpeech(message: Message, text: string): Promise<void> {
   if (!config.voice.ttsEnabled || !text.trim()) return;
 
   try {

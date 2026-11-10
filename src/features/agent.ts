@@ -5,13 +5,12 @@
  * Discord: membaca mention/sticker/gambar dan mengirim balasan.
  */
 import {
-  ChannelType,
   type AnyThreadChannel,
   type Message,
   type TextChannel,
 } from 'discord.js';
 import { config } from '../config.js';
-import { getAgentSettings, getGuildSettings, hasAgentReaction, markAgentReaction, pruneAgentReactions, type AgentSettings } from '../db/repo.js';
+import { getAgentSettings, getGuildSettings, hasAgentReaction, type AgentSettings } from '../db/repo.js';
 import { chat, type ChatMessage, type ChatTool } from '../lib/llm.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { chunkMessage, truncate } from '../lib/text.js';

@@ -330,6 +330,9 @@ atas `.env` karena tersimpan per server. Halaman ini berisi:
 | `DELETE /api/moderasi/logs/<id>` | Hapus satu catatan pelanggaran |
 | `DELETE /api/moderasi/logs` | Bersihkan semua catatan pelanggaran server ini |
 
+| `GET /api/banner/welcome` \| `/goodbye` | Gambar banner mentah (PNG/JPG/WebP) untuk `<img>` di dashboard. Di-cache browser; tanpa ini banner 8 MB harus ikut di HTML |
+| `POST /api/banner/welcome` \| `/goodbye` | Unggah/ganti/hapus banner (JSON `dataUri` atau `{remove:true}`) |
+
 Endpoint halaman Sambutan & AI Agent (pratinjau tidak mengirim apa pun;
 `send-test` yang benar-benar mengirim):
 

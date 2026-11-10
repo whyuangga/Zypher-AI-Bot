@@ -194,6 +194,24 @@ export async function saveBanner(dataUri: string, randomId: string): Promise<Ban
 }
 
 /**
+ * Baca banner sebagai byte + mime, untuk disajikan lewat HTTP
+ * (mis. `<img src="/api/banner/welcome">` di dashboard).
+ */
+export async function readBannerBytes(
+  name: string | null,
+): Promise<{ bytes: Buffer; mime: string } | null> {
+  if (!isSafeBannerName(name)) return null;
+  try {
+    const buffer = await readFile(bannerPath(name));
+    const meta = detectImage(buffer);
+    if (!meta) return null;
+    return { bytes: buffer, mime: meta.mime };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Baca banner sebagai lampiran Discord.
  *
  * Penting: Discord **menolak** `embed.setImage()` berisi data URI dengan pesan

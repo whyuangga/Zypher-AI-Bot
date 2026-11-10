@@ -242,11 +242,38 @@ export async function handleDmMessage(message: Message): Promise<void> {
   }
 
   const settings = await getGuildSettings(guild.id);
-  const question = truncate(raw, config.features.maxInputChars);
-  if (!question) {
+
+  // Gambar dikirim ke model multimodal. Dulu tidak pernah dikumpulkan di DM,
+  // jadi AI menjawab "belum bisa membaca gambar" walau modelnya mendukung.
+  const { collectImages } = await import('./vision.js');
+  const collected = await collectImages(message).catch(() => ({ dataUris: [], skipped: [] }));
+
+  // Voice note & gambar harus dibaca SEBELUM menyerah pada teks kosong.
+  //
+  // Dulu pesan tanpa teks langsung dijawab "tulis pertanyaannya dalam bentuk
+  // teks", sehingga voice note dan foto tidak pernah diproses — padahal
+  // VOICE_ENABLED dan vision didokumentasikan sebagai fitur yang jalan.
+  let question = truncate(raw, config.features.maxInputChars);
+  let voiceNoteText: string | null = null;
+
+  if (!question && message.attachments.size > 0) {
+    const { readVoiceNote } = await import('./chat.js');
+    const voice = await readVoiceNote(message);
+    if (voice.text) {
+      voiceNoteText = voice.text;
+      question = truncate(voice.text, config.features.maxInputChars);
+    } else if (voice.error) {
+      await message.reply({ content: `🎙️ ${voice.error}` }).catch(() => undefined);
+      return;
+    }
+  }
+
+  if (!question && collected.dataUris.length === 0) {
     await message.reply({ content: 'Tulis pertanyaannya dalam bentuk teks ya 🙏' }).catch(() => undefined);
     return;
   }
+  // Hanya gambar tanpa teks: beri pertanyaan bawaan supaya model tahu maksudnya.
+  if (!question) question = 'Jelaskan isi gambar ini.';
 
   // Sesi baru dibuka otomatis (mis. baru selesai `/akhiri`).
   if (!session) {
@@ -294,6 +321,7 @@ export async function handleDmMessage(message: Message): Promise<void> {
       userName: user.username,
       question,
       history: history.map((entry) => ({ role: entry.role, content: truncate(entry.content, 2000) })),
+      images: collected.dataUris,
       settings,
       onDelta: (delta) => {
         if (preview.length < 1900) preview = (preview + delta).slice(0, 1900);
@@ -317,6 +345,14 @@ export async function handleDmMessage(message: Message): Promise<void> {
     } else {
       await user.send({ content: first }).catch(() => undefined);
     }
+
+    // Balasan suara: hanya kalau member mengirim voice note DAN TTS menyala.
+    // `replyWithSpeech` ada sejak awal tapi tidak pernah dipanggil, sehingga
+    // TTS_ENABLED tidak berefek apa pun di DM.
+    if (voiceNoteText && config.voice.ttsEnabled) {
+      const { replyWithSpeech } = await import('./chat.js');
+      await replyWithSpeech(message, result);
+    }
   } catch (error) {
     if (timer) clearInterval(timer);
     logger.error('Gagal menjawab pesan DM', errorMessage(error));
@@ -338,6 +374,8 @@ async function generateDmAnswer(input: {
   userName: string;
   question: string;
   history: Array<{ role: 'user' | 'assistant'; content: string }>;
+  /** data URI gambar dari pesan member — memicu mode multimodal. */
+  images?: string[];
   settings: Awaited<ReturnType<typeof getGuildSettings>>;
   onDelta: (delta: string) => void;
 }): Promise<string> {
@@ -352,6 +390,7 @@ async function generateDmAnswer(input: {
       userName: input.userName,
       question: input.question,
       history: input.history,
+      images: input.images,
       allowTools: true,
     },
     input.onDelta,

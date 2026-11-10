@@ -1,5 +1,5 @@
 import type { Keyword, Memory } from '../db/repo.js';
-import { detectLanguage, type LanguageCode } from '../lib/language.js';
+import type { LanguageCode } from '../lib/language.js';
 import { formatMemoriesForPrompt } from './memory.js';
 
 export interface PromptContext {
