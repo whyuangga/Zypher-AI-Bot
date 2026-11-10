@@ -22,13 +22,11 @@ import {
   type TextChannel,
   type AnyThreadChannel,
 } from 'discord.js';
-import { config } from '../config.js';
 import { getGoodbyeSettings, getWelcomeSettings, type GoodbyeSettings, type WelcomeSettings } from '../db/repo.js';
-import { chat } from '../lib/llm.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
 import { renderWelcomeCard } from './welcome-card.js';
-import { buildWelcomePrompt, partOfDay, previewGoodbye, previewWelcome } from './preview.js';
+import { previewGoodbye, previewWelcome } from './preview.js';
 import { readBannerDataUri } from './banner.js';
 import { DEFAULT_GOODBYE_TEMPLATE, DEFAULT_WELCOME_TEMPLATE, fillText } from './greeting-text.js';
 
@@ -51,28 +49,21 @@ function memberShape(member: GuildMember): { name: string; guildName: string } {
 }
 
 /** Minta AI menulis sapaan. `null` = gagal, pemanggil memakai template. */
+/**
+ * Minta AI menulis sapaan.
+ *
+ * Memakai `previewWelcome` — fungsi yang sama dengan tombol "Tes sambutan" di
+ * dashboard. Kalau logikanya ditulis dua kali, hasil tes bisa berbeda dari
+ * sapaan yang benar-benar dikirim, dan itu sulit dilacak.
+ *
+ * `null` = AI gagal, pemanggil memakai template.
+ */
 async function generateGreeting(
   settings: WelcomeSettings,
   member: GuildMember,
 ): Promise<string | null> {
-  const when = partOfDay();
-  try {
-    const result = await chat({
-      messages: [
-        { role: 'system', content: 'Kamu menulis satu sapaan singkat. Balas hanya teks sapaannya.' },
-        { role: 'user', content: buildWelcomePrompt(settings, memberShape(member), when) },
-      ],
-      temperature: 0.9,
-      maxTokens: 120,
-    });
-
-    const text = (result.message.content ?? '').trim().replace(/^["'“”]|["'“”]$/g, '').trim();
-    if (!text) return null;
-    return truncate(text, 260);
-  } catch (error) {
-    logger.warn(`Gagal membuat sapaan AI untuk ${member.user.tag} — pakai template`, errorMessage(error));
-    return null;
-  }
+  const result = await previewWelcome({ settings, ...memberShape(member) });
+  return result.source === 'ai' ? result.text : null;
 }
 
 /** Unduh avatar member sebagai data URI untuk kartu. Gagal = tanpa avatar. */

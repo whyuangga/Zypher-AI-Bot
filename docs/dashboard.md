@@ -212,6 +212,24 @@ bot ini hanya melayani satu server.
 
 ---
 
+## Apa yang disimpan dashboard (dan apa yang tidak)
+
+Dashboard menyimpan **pengaturan**, bukan isi percakapan member:
+
+| Disimpan | Lokasi | Keterangan |
+|---|---|---|
+| Pengaturan fitur | SQLite/Postgres | sambutan, perpisahan, AI Agent, moderasi, keyword, panel |
+| Dokumen RAG | database (`rag_chunks`) | teks dokumen yang **admin sendiri** unggah |
+| Banner sambutan/perpisahan | `data/banners/` | gambar unggahan admin, nama file acak |
+| Memori member | database | **hanya** lewat perintah Discord; dashboard tidak bisa membacanya |
+| Isi percakapan | — | **tidak disimpan**; riwayat AI Agent hanya di memori proses |
+
+Banner adalah satu-satunya file yang ditulis dashboard ke disk. Tidak ada isi
+pesan member yang pernah ditulis ke sana.
+
+
+---
+
 ## Panel chat AI (`/panel`)
 
 Halaman ini menggantikan ketikan `/panel` di Discord untuk urusan sehari-hari.

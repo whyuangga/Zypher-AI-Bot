@@ -1444,8 +1444,11 @@ await testAsync('screenshot: tidak ada file yang membocorkan halaman privasi', a
     'tidak ada screenshot memori/transkrip',
   );
 
-  // Setiap halaman yang masih ada harus punya versi desktop + mobile.
-  const pages = ['ringkasan', 'panel', 'dokumen', 'keyword', 'moderasi', 'pengaturan'];
+  // Daftar halaman diambil dari script screenshot itu sendiri, supaya halaman
+  // baru tidak bisa lolos tanpa screenshot (dulu 'agent' tidak ikut dicek).
+  const shots = await readFile('scripts/screenshots.ts', 'utf8');
+  const pages = [...shots.matchAll(/\['([a-z-]+)', '\//g)].map((m) => m[1]);
+  assert.ok(pages.length >= 8, `ada ${pages.length} halaman yang di-screenshot`);
   for (const slug of pages) {
     assert.ok(names.includes(`${slug}-desktop.png`), `screenshot ${slug}-desktop.png ada`);
     assert.ok(names.includes(`${slug}-mobile.png`), `screenshot ${slug}-mobile.png ada`);
@@ -2458,5 +2461,114 @@ await testAsync('banner: data/banners tidak ikut Git', async () => {
   assert.ok(/^data\/$/m.test(gitignore), 'folder data diabaikan Git');
 });
 
+
+await testAsync('pratinjau: bot & dashboard memakai jalur AI yang sama', async () => {
+  // Dulu generateGreeting di welcome.ts menulis ulang prompt & pemanggilan model,
+  // sehingga hasil tombol tes bisa berbeda dari sapaan sungguhan.
+  const welcome = await readFile('src/features/welcome.ts', 'utf8');
+  const preview = await readFile('src/features/preview.ts', 'utf8');
+
+  assert.ok(welcome.includes('previewWelcome('), 'sambutan memakai previewWelcome');
+  assert.ok(welcome.includes('previewGoodbye('), 'perpisahan memakai previewGoodbye');
+  assert.equal(welcome.includes("from '../lib/llm.js'"), false, 'welcome tidak memanggil model sendiri');
+  assert.ok(preview.includes('export async function previewWelcome'));
+  assert.ok(preview.includes('export async function previewGoodbye'));
+});
+
+
+console.log('\nKonsistensi dokumen');
+
+await testAsync('dokumen: semua halaman dashboard disebut di README', async () => {
+  const shell = await readFile('src/web/ui/shell.ts', 'utf8');
+  const hrefs = [...shell.matchAll(/href: '(\/[^']*)'/g)].map((m) => m[1]);
+  const readme = await readFile('README.md', 'utf8');
+
+  assert.ok(hrefs.length >= 8, `ada ${hrefs.length} halaman di navigasi`);
+  for (const href of hrefs) {
+    assert.ok(readme.includes(`\`${href}\``), `halaman ${href} belum disebut di README`);
+  }
+});
+
+await testAsync('dokumen: intent wajib tidak ditulis "opsional"', async () => {
+  // Kesalahan ini pernah terjadi: Server Members Intent ditulis opsional padahal
+  // sambutan & perpisahan tidak jalan tanpa itu.
+  for (const file of ['README.md', 'docs/setup.md', 'docs/sambutan-agent.md']) {
+    const text = await readFile(file, 'utf8');
+    assert.equal(
+      /Server Members Intent\**\s*\*?\(?\*?opsional/i.test(text),
+      false,
+      `${file} masih menulis Server Members Intent sebagai opsional`,
+    );
+  }
+  const setup = await readFile('docs/setup.md', 'utf8');
+  assert.ok(/Server Members Intent.*wajib/is.test(setup), 'setup.md menyebut intent ini wajib');
+});
+
+await testAsync('dokumen: file di docs/ terdokumentasi & tidak ada link rusak', async () => {
+  const { readdir, stat } = await import('node:fs/promises');
+  const entries = await readdir('docs');
+  const readme = await readFile('README.md', 'utf8');
+
+  for (const entry of entries) {
+    if (entry === 'screenshots' || entry.endsWith('.png')) continue;
+    const info = await stat(`docs/${entry}`);
+    if (!info.isFile()) continue;
+    assert.ok(readme.includes(entry), `docs/${entry} belum disebut di README`);
+  }
+});
+
+await testAsync('dokumen: banner dijelaskan sebagai data yang perlu disk persisten', async () => {
+  // Banner ada di data/banners/, bukan di database. Panduan hosting harus
+  // menyebutnya, atau banner hilang saat redeploy tanpa disadari.
+  const hosting = await readFile('docs/hosting.md', 'utf8');
+  assert.ok(hosting.includes('data/banners'), 'hosting.md menyebut folder banner');
+  assert.ok(/backup/i.test(hosting), 'panduan backup ada');
+});
+
+
+
+/*
+ * Pemeriksaan terakhir: angka test di dokumentasi harus sama dengan jumlah test
+ * yang benar-benar dijalankan.
+ *
+ * Ditempatkan di akhir (bukan sebagai `testAsync`) karena `passed` baru bernilai
+ * final setelah semua test selesai. Dulu angka di dokumen tertinggal jauh
+ * (82 dan 176 padahal sudah ratusan) dan tidak ada yang menyadarinya.
+ */
+{
+  const docFile = [
+    ['README.md', /npm run smoke\s+#\s*(\d+) test/],
+    ['docs/postgres.md', /npm run smoke\s+#\s*(\d+) test/],
+    ['docs/sambutan-agent.md', /npm run smoke\s+#\s*(\d+) test/],
+  ] as const;
+
+  const stale: string[] = [];
+  for (const [file, pattern] of docFile) {
+    const text = await readFile(file, 'utf8');
+    const match = pattern.exec(text);
+    if (match && Number(match[1]) !== passed) {
+      stale.push(`${file} menulis ${match[1]} test, seharusnya ${passed}`);
+    }
+  }
+
+  // Angka smoke:pg dihitung dengan cara yang sama (panggilan `await test(`).
+  const pgSource = await readFile('scripts/smoke-pg.ts', 'utf8');
+  const pgTotal = (pgSource.match(/\bawait test\(/g) ?? []).length;
+  for (const file of ['README.md', 'docs/postgres.md']) {
+    const text = await readFile(file, 'utf8');
+    const match = /npm run smoke:pg\s+#\s*(\d+) test/.exec(text);
+    if (match && Number(match[1]) !== pgTotal) {
+      stale.push(`${file} menulis ${match[1]} test pg, seharusnya ${pgTotal}`);
+    }
+  }
+
+  if (stale.length > 0) {
+    console.error('\n  ❌ dokumen: angka test usang');
+    for (const line of stale) console.error(`     ${line}`);
+    process.exitCode = 1;
+  } else {
+    console.log('  ✅ dokumen: angka test sama dengan jumlah test yang dijalankan');
+  }
+}
 
 console.log(`\n${process.exitCode ? '❌ Ada test gagal' : '🎉 Semua test lulus'} — ${passed} test.\n`);

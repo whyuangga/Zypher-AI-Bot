@@ -239,8 +239,9 @@ dashboard. Test `pratinjau: prompt hanya punya SATU sumber` menjaga ini.
 **Butuh intent tambahan di Developer Portal** (Discord → Applications → Bot →
 Privileged Gateway Intents):
 
-- **Server Members Intent** — wajib untuk sambutan **dan** perpisahan
-  (`GuildMemberAdd` / `GuildMemberRemove`).
+- **Server Members Intent** — **wajib** untuk sambutan **dan** perpisahan
+  (`GuildMemberAdd` / `GuildMemberRemove` tidak dikirim tanpa intent ini).
+  Ini satu-satunya intent tambahan yang dibutuhkan fitur di halaman ini.
 - **Message Content Intent** — sudah dipakai; wajib untuk agent.
 
 Tanpa Server Members Intent, bot tetap jalan tapi tidak pernah menerima event
@@ -251,7 +252,7 @@ member baru, sehingga sambutan tidak terkirim.
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 176 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 204 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

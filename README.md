@@ -65,7 +65,7 @@ platform Discord yang tidak bisa dilewati bot. Karena itu fitur room/thread diha
 | 🧠 **Memori jangka panjang** | AI otomatis menyimpan fakta penting lewat *tool calling*, plus perintah manual `/ingat`. Memori dipakai lagi di sesi berikutnya; `/konsolidasi` menggabungkan memori yang berulang. |
 | 👋 **Sambutan & perpisahan** | Sapaan yang **digenerate AI per orang** — pakai nama panggilan + waktu setempat, jadi kalimatnya beda tiap member (bukan template seragam). Bisa disertai **kartu PNG** berisi nama & sapaan, dikirim lewat DM atau channel. Saat member keluar, bot mengucapkan **salam perpisahan** dengan nada sopan. Lihat [docs/sambutan-agent.md](docs/sambutan-agent.md). |
 | 🗣️ **AI Agent di channel** | Di **dua** channel: bot ikut ngobrol seperti anggota komunitas di channel ngobrol (balas mention/reply, tanggapi emoji/sticker, menyapa saat sepi), dan **mengomentari gambar & video** di channel galeri. **Diam saat obrolan ramai**, dibatasi N balasan per jam, dan riwayat obrolannya **hanya di memori** — tidak ditulis ke database. |
-| 🖥️ **Dashboard web** | `/`, `/panel`, `/sambutan`, `/dokumen`, `/keyword`, `/moderasi`, `/pengaturan` — gaya editorial gelap ([pratinjau](docs/screenshots/README.md)), **toggle fitur AI per server** (RAG, Vision, Auto Memory, Chat khusus admin, Suara balasan AI). Sidebar kiri, grafik aktivitas 7 hari, kartu statistik per server. Nama server tampil di topbar (bukan ID mentah), dan panel "Chat via DM" bisa dikirim, dipindah, atau dimatikan dari `/panel`. **Dashboard tidak menyimpan isi percakapan maupun memori member.** |
+| 🖥️ **Dashboard web** | `/`, `/panel`, `/sambutan`, `/agent`, `/dokumen`, `/keyword`, `/moderasi`, `/pengaturan` (8 halaman) — gaya editorial gelap ([pratinjau](docs/screenshots/README.md)), **toggle fitur AI per server** (RAG, Vision, Auto Memory, Chat khusus admin, Suara balasan AI). Sidebar kiri, grafik aktivitas 7 hari, kartu statistik per server. Nama server tampil di topbar (bukan ID mentah), dan panel "Chat via DM" bisa dikirim, dipindah, atau dimatikan dari `/panel`. **Dashboard tidak menyimpan isi percakapan maupun memori member.** |
 | 📚 **Dokumen RAG** | Upload `.txt`/`.md`/`.csv`/`.json`/`.pdf`/`.docx` (maks 8 MB) lewat `/dokumen tambah` atau dashboard. AI menjawab dari isi dokumen dan menyebut sumbernya (`📚 Sumber: faq.md — bagian 3`). Pencarian BM25 bawaan — **tanpa API key tambahan**. |
 | 🔑 **Keyword kustom** | Admin menulis jawaban acuan; AI memakainya sebagai **fakta** dan menyusun ulang kalimatnya agar **bervariasi setiap kali** (bukan copy-paste). |
 | 🎭 **Persona per server** | Mis. "kamu guru bahasa Inggris yang sabar" — berlaku untuk semua chat yang memakai server itu sebagai konteks. |
@@ -116,7 +116,7 @@ Deploy    Docker multi-stage + docker-compose
 3. **Bot** → **Reset Token** → salin → jadi `DISCORD_TOKEN` (jangan pernah dibagikan).
 4. Masih di **Bot**, aktifkan:
    - ✅ **Message Content Intent** ← *wajib*, tanpa ini bot tidak bisa membaca isi chat
-   - ✅ Server Members Intent *(opsional, untuk menampilkan nama tampilan member)*
+   - ✅ **Server Members Intent** ← *wajib untuk sambutan & salam perpisahan* (event `GuildMemberAdd`/`GuildMemberRemove` tidak terkirim tanpa ini). Kalau dimatikan, kedua fitur itu tidak akan pernah jalan.
 5. **OAuth2 → URL Generator**, centang `bot` + `applications.commands`, izin yang dibutuhkan:
    `Manage Channels`, `Manage Threads`, `Create Private Threads`, `View Channels`, `Send Messages`, `Manage Messages`, `Embed Links`, `Attach Files`, `Read Message History`, `Add Reactions`, `Use External Emojis`, `Moderate Members` *(untuk timeout moderasi — kalau tidak ada, timeout gagal dan hanya tercatat di log)*.
 6. Buka URL hasil generate, pilih server, authorize.
@@ -455,8 +455,8 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke          # 82 test logika inti (termasuk RAG, moderasi, vision/voice, panel)
-npm run smoke:pg       # 12 test jalur Postgres (pg-mem, tanpa server database)
+npm run smoke          # 204 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
+npm run smoke:pg       # 14 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # uji rantai fallback provider dengan server tiruan
 npm run dashboard      # nyalakan dashboard web saja, tanpa bot Discord
 npm run migrate:pg     # pindahkan data SQLite → Postgres
@@ -541,7 +541,18 @@ src/
 │   ├── moderation.ts        # filter kata terlarang + log pelanggaran
 │   ├── vision.ts            # lampiran gambar → data URI untuk model multimodal
 │   ├── panel.ts             # kirim/hapus panel "Chat via DM" (dipakai /panel & dashboard)
+│   ├── welcome.ts           # sambutan member baru + salam perpisahan (kirim & fallback)
+│   ├── welcome-card.ts      # render kartu PNG lewat Chromium (opsional, ada fallback)
+│   ├── banner.ts            # banner unggahan admin: validasi, simpan, baca, hapus
+│   ├── greeting-text.ts     # template {user}/{server} — dipakai bot & dashboard
+│   ├── preview.ts           # pratinjau & prompt bersama (sambutan, perpisahan, agent)
+│   ├── agent-core.ts        # logika murni AI Agent: kapan membalas, riwayat, sepi
+│   ├── agent.ts             # lapisan Discord AI Agent (chat & galeri)
 │   └── ui.ts                # embed & komponen
+├── events/
+│   ├── messageCreate.ts     # router pesan (DM, agent, moderasi)
+│   ├── guildMemberAdd.ts    # sambutan member baru + salam perpisahan
+│   └── interactionCreate.ts # router slash command & button
 ├── web/
 │   ├── server.ts            # dashboard: node:http, auth token, API JSON
 │   ├── ui/                  # theme, shell, ikon SVG, halaman (server-rendered)
@@ -560,7 +571,8 @@ docs/sample-transcript.html  # contoh hasil transkrip
 docs/providers.md            # provider AI free tier + contoh .env
 docs/models.md               # ID model gratis per provider + rekomendasi
 docs/rag.md                  # dokumen pengetahuan AI (RAG)
-docs/dashboard.md            # dashboard web: setup & keamanan
+docs/dashboard.md            # dashboard web: setup, halaman, keamanan
+docs/sambutan-agent.md       # sambutan, perpisahan, AI Agent, banner & pratinjau
 docs/postgres.md             # Postgres, migrasi data, multi-shard
 docs/moderation.md           # moderasi otomatis + log pelanggaran
 docs/vision-voice.md         # vision gambar, STT/TTS, /ucap
@@ -579,6 +591,9 @@ docs/hosting.md              # hosting bot gratis 24/7 + backup
 - [x] Moderasi otomatis + logging (filter kata terlarang, halaman `/moderasi`, audit log)
 - [x] Dukungan gambar (vision) & voice (STT Whisper + TTS PlayAI, `/ucap`)
 - [x] Postgres untuk multi-shard (driver async SQLite ↔ Postgres, `npm run migrate:pg`, `SHARD_COUNT`/`SHARD_INDEX`)
+- [x] Sambutan & salam perpisahan ber-AI, kartu PNG, dan banner unggahan sendiri
+- [x] AI Agent dua channel (ngobrol + galeri) dengan riwayat obrolan di memori
+- [x] Pratinjau & tombol tes di dashboard (tanpa menunggu member / tanpa kirim pesan)
 
 ---
 

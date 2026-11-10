@@ -254,6 +254,71 @@ await test('moderasi: pengaturan upsert + log', async () => {
   assert.equal(await repo.countModerationLogs(GUILD), 0);
 });
 
+
+/* ------------------------------------------------------------------ */
+/*  Sambutan, perpisahan & AI Agent (kolom baru)                       */
+/* ------------------------------------------------------------------ */
+
+// Fitur ini menambah kolom & tabel baru (banner_path, image_enabled,
+// include_avatar, tabel goodbye). Tanpa test di sini, Postgres bisa gagal
+// hanya di produksi sementara SQLite tetap hijau.
+await test('welcome: kolom banner_path ada & bisa disimpan', async () => {
+  const repo = await import('../src/db/repo.js');
+  const guild = 'g-welcome-pg';
+
+  const awal = await repo.getWelcomeSettings(guild);
+  assert.equal(awal.bannerPath, null, 'default tanpa banner');
+
+  await repo.saveWelcomeSettings(guild, { enabled: true, bannerPath: 'banner-abc.png', style: 'santai' });
+  const saved = await repo.getWelcomeSettings(guild);
+  assert.equal(saved.enabled, true);
+  assert.equal(saved.bannerPath, 'banner-abc.png');
+  assert.equal(saved.style, 'santai');
+
+  await repo.saveWelcomeSettings(guild, { bannerPath: null });
+  assert.equal((await repo.getWelcomeSettings(guild)).bannerPath, null, 'banner bisa dihapus');
+});
+
+await test('goodbye: tabel ada di Postgres & patch sebagian aman', async () => {
+  const repo = await import('../src/db/repo.js');
+  const guild = 'g-goodbye-pg';
+
+  const awal = await repo.getGoodbyeSettings(guild);
+  assert.equal(awal.enabled, false);
+  assert.equal(awal.imageEnabled, false, 'kartu perpisahan default mati');
+  assert.equal(awal.includeAvatar, true);
+
+  await repo.saveGoodbyeSettings(guild, {
+    enabled: true,
+    channelId: '1400000000000000002',
+    bannerPath: 'banner-xyz.webp',
+    imageEnabled: true,
+  });
+  await repo.saveGoodbyeSettings(guild, { enabled: false });
+
+  const saved = await repo.getGoodbyeSettings(guild);
+  assert.equal(saved.enabled, false);
+  assert.equal(saved.channelId, '1400000000000000002', 'channel lama dipertahankan');
+  assert.equal(saved.bannerPath, 'banner-xyz.webp', 'banner lama dipertahankan');
+  assert.equal(saved.imageEnabled, true, 'toggle kartu dipertahankan');
+});
+
+await test('agent: gallery_channel_id ada di Postgres', async () => {
+  const repo = await import('../src/db/repo.js');
+  const guild = 'g-agent-pg';
+
+  await repo.saveAgentSettings(guild, {
+    channelId: '1400000000000000003',
+    galleryChannelId: '1400000000000000004',
+  });
+  const saved = await repo.getAgentSettings(guild);
+  assert.equal(saved.channelId, '1400000000000000003');
+  assert.equal(saved.galleryChannelId, '1400000000000000004', 'channel galeri tersimpan');
+
+  await repo.saveAgentSettings(guild, { galleryChannelId: null });
+  assert.equal((await repo.getAgentSettings(guild)).galleryChannelId, null);
+});
+
 /* ------------------------------------------------------------------ */
 
 await driver.close();

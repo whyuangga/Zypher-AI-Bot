@@ -45,7 +45,9 @@ yang benar (`https://api.groq.com/openai/v1` dan `openai/gpt-oss-120b`).
    *Token hanya ditampilkan sekali. Kalau hilang, reset lagi.*
 4. Masih di tab **Bot**, scroll ke **Privileged Gateway Intents** → aktifkan:
    - ✅ **Message Content Intent** ← **wajib**, tanpa ini bot tidak bisa membaca isi chat
-   - ✅ **Server Members Intent** *(opsional)*
+   - ✅ **Server Members Intent** ← **wajib untuk sambutan & salam perpisahan**
+     (tanpa ini, event member bergabung/keluar tidak dikirim dan kedua fitur itu
+     tidak pernah jalan). Aman dimatikan hanya kalau kamu tidak memakai keduanya.
 5. Tab **OAuth2 → URL Generator**:
    - Scopes: `bot`, `applications.commands`
    - Bot Permissions: `Manage Channels`, `Manage Threads`, `Create Private Threads`, `View Channels`, `Send Messages`, `Manage Messages`,
