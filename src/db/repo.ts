@@ -303,6 +303,9 @@ export function deleteKeyword(guildId: string, id: number): boolean {
 
 export function createRoom(channelId: string, guildId: string, userId: string): void {
   const now = Date.now();
+  // Setiap room menyiratkan server: pastikan baris `guilds` ada supaya server
+  // muncul di dropdown dashboard (kalau tidak, dashboard tampak kosong).
+  ensureGuild(guildId);
   db.prepare(
     `INSERT INTO rooms (channel_id, guild_id, user_id, created_at, last_active_at)
      VALUES (?, ?, ?, ?, ?)
@@ -462,12 +465,52 @@ export function countChunks(guildId: string): number {
   return row.total;
 }
 
+/**
+ * Daftar server untuk dropdown dashboard.
+ *
+ * Sumbernya bukan hanya tabel `guilds`: database lama (atau bot yang baru saja
+ * dipasang) bisa sudah punya room/dokumen/keyword/memori tanpa baris `guilds`.
+ * Kalau kita hanya membaca `guilds`, dashboard menampilkan "(belum ada server)"
+ * padahal data bot jelas ada. UNION membuat data itu tetap muncul.
+ */
 export function listGuildIds(): string[] {
-  const rows = db.prepare('SELECT guild_id FROM guilds ORDER BY guild_id').all() as unknown as Array<{ guild_id: string }>;
+  const rows = db
+    .prepare(
+      `SELECT guild_id FROM guilds
+       UNION SELECT guild_id FROM rooms
+       UNION SELECT guild_id FROM documents
+       UNION SELECT guild_id FROM keywords
+       UNION SELECT guild_id FROM memories
+       ORDER BY guild_id`,
+    )
+    .all() as unknown as Array<{ guild_id: string }>;
   return rows.map((row) => row.guild_id);
 }
 
 export function countRows(table: 'memories' | 'keywords' | 'rooms' | 'messages' | 'documents' | 'chunks'): number {
   const row = db.prepare(`SELECT COUNT(*) AS total FROM ${table}`).get() as { total: number };
+  return row.total;
+}
+
+/** Jumlah baris milik satu server — dipakai dashboard agar angka cocok dengan daftar di bawahnya. */
+export function countGuildRows(
+  guildId: string,
+  table: 'memories' | 'keywords' | 'rooms' | 'documents' | 'chunks',
+): number {
+  const row = db.prepare(`SELECT COUNT(*) AS total FROM ${table} WHERE guild_id = ?`).get(guildId) as {
+    total: number;
+  };
+  return row.total;
+}
+
+/** Tabel `messages` tidak menyimpan `guild_id` — hitung lewat room milik server itu. */
+export function countGuildMessages(guildId: string): number {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS total FROM messages m
+       JOIN rooms r ON r.channel_id = m.channel_id
+       WHERE r.guild_id = ?`,
+    )
+    .get(guildId) as { total: number };
   return row.total;
 }

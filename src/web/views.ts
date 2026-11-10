@@ -73,7 +73,14 @@ function layout(options: {
   guilds: string[];
   active: 'dashboard' | 'dokumen';
 }): string {
-  const options_ = options.guilds
+  // Server yang diketik manual (belum ada datanya di database) tetap ditampilkan
+  // sebagai pilihan terpilih — kalau tidak, dropdown memperlihatkan server lain.
+  const guildChoices =
+    options.guildId && !options.guilds.includes(options.guildId)
+      ? [options.guildId, ...options.guilds]
+      : options.guilds;
+
+  const options_ = guildChoices
     .map(
       (id) =>
         `<option value="${esc(id)}"${id === options.guildId ? ' selected' : ''}>${esc(id)}</option>`,
@@ -101,8 +108,8 @@ function layout(options: {
     <select id="guild" name="guild" onchange="this.form.submit()" style="width:auto;min-width:150px">
       ${options_ || '<option value="">(belum ada server)</option>'}
     </select>
-    <input type="text" name="guild" placeholder="atau tempel Server ID" inputmode="numeric"
-      value="${esc(options.guildId)}" style="width:190px" title="ID server Discord — berguna kalau bot belum pernah join">
+    <input type="text" name="guild_manual" placeholder="atau tempel Server ID" inputmode="numeric"
+      value="" style="width:190px" title="ID server Discord — berguna kalau bot belum pernah join">
     <button type="submit" class="ghost">Pakai</button>
     <a href="/logout"><button type="button" class="ghost">Keluar</button></a>
   </form>

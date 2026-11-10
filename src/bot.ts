@@ -1,6 +1,7 @@
 import { ActivityType, Client, Events, GatewayIntentBits } from 'discord.js';
 import { config } from './config.js';
 import { closeDatabase } from './db/index.js';
+import { ensureGuild } from './db/repo.js';
 import { onChannelDelete } from './events/channelDelete.js';
 import { onInteractionCreate } from './events/interactionCreate.js';
 import { onMessageCreate } from './events/messageCreate.js';
@@ -21,6 +22,16 @@ const client = new Client({
 client.once(Events.ClientReady, async (ready) => {
   logger.info(`🤖 Login sebagai ${ready.user.tag} (${ready.guilds.cache.size} server)`);
 
+  // Daftarkan semua server ke tabel `guilds` supaya dashboard langsung punya
+  // daftar server yang bisa dipilih, bahkan sebelum ada room/dokumen dibuat.
+  for (const guild of ready.guilds.cache.values()) {
+    try {
+      ensureGuild(guild.id);
+    } catch (error) {
+      logger.warn(`Gagal mendaftarkan server ${guild.id} ke database: ${errorMessage(error)}`);
+    }
+  }
+
   ready.user.setPresence({
     activities: [{ name: '/panel • room AI privat', type: ActivityType.Listening }],
     status: 'online',
@@ -39,6 +50,16 @@ client.on(Events.MessageCreate, (message) => {
 
 client.on(Events.ChannelDelete, (channel) => {
   void onChannelDelete(channel);
+});
+
+// Bot baru diundang ke server → langsung masuk daftar dashboard.
+client.on(Events.GuildCreate, (guild) => {
+  try {
+    ensureGuild(guild.id);
+    logger.info(`Bergabung ke server baru: ${guild.name} (${guild.id})`);
+  } catch (error) {
+    logger.warn(`Gagal mendaftarkan server ${guild.id}: ${errorMessage(error)}`);
+  }
 });
 
 client.on(Events.Error, (error) => logger.error('Discord client error', errorMessage(error)));

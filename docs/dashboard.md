@@ -112,6 +112,16 @@ Dashboard menampilkan satu server pada satu waktu (query `?guild=<id>`). Pilih d
 atas, atau **tempel Server ID** di kotak sebelahnya — berguna untuk bot yang belum pernah join server
 (database masih kosong).
 
+**Daftar server di dropdown datang dari dua sumber:**
+
+1. server yang di-join bot (didaftarkan otomatis saat login, tiap kali bot masuk server baru, dan saat
+   room AI pertama dibuat di server itu);
+2. server yang sudah punya data di SQLite — room, dokumen, keyword, atau memori.
+
+Jadi database lama tetap tampil walau tabel `guilds`-nya belum pernah terisi. Semua angka di halaman
+Ringkasan (Room AI, Dokumen, Keyword, Memori, Pesan) juga **dihitung per server yang dipilih**, supaya
+cocok dengan tabel di bawahnya.
+
 Cara mendapatkan Server ID: Discord → Server Settings → Widget, atau klik kanan server (mode
 developer) → *Copy Server ID*.
 
@@ -183,6 +193,8 @@ dan kosongkan `DASHBOARD_TOKEN`.
 | Login terus gagal | Token salah / ada spasi. Salin ulang dari `.env` tanpa tanda kutip |
 | "Terlalu banyak percobaan" | Tunggu 10 menit, atau restart bot (menghapus hitungan di memori) |
 | Halaman kosong padahal bot punya data | Server ID belum dipilih — tempel Server ID di kanan atas |
+| Server bot tidak muncul di dropdown | Restart bot (daftar server diperbarui saat login) atau tempel Server ID manual |
+| Angka berbeda dengan daftar di bawah | Sudah diperbaiki: angka kini per server. Update ke versi terbaru |
 | Data hilang setelah redeploy | Hosting tanpa disk persisten. Lihat [hosting.md](hosting.md) |
 
 ---
