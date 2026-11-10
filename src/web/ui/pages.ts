@@ -65,7 +65,17 @@ export function loginPage(error?: string): string {
       </div>
       <button class="btn-primary" type="submit">Masuk ke dashboard</button>
     </form>
-    <p class="login-foot">Sesi berlaku 12 jam · cookie httpOnly</p>
+    <details class="card" style="margin-top:12px;overflow:hidden">
+      <summary style="padding:12px 16px;cursor:pointer;font-size:13px;color:var(--text-2)">Login cepat lewat link</summary>
+      <div style="padding:0 16px 14px;color:var(--text-3);font-size:12.5px;line-height:1.65">
+        Buka <code>/masuk/&lt;token&gt;</code> di address bar — dashboard langsung terbuka tanpa mengetik.
+        Halaman perantara mengalihkan dengan <code>location.replace()</code>, jadi URL bertoken tidak
+        tertinggal di riwayat browser.
+        <br><br><b style="color:var(--warn)">Jangan bagikan link itu</b> — siapa pun yang membukanya
+        mendapat akses penuh ke dashboard.
+      </div>
+    </details>
+    <p class="login-foot">Sesi berlaku 12 jam · cookie httpOnly · token di URL tidak disimpan di riwayat</p>
   </div>
 </div>
 <script>

@@ -283,7 +283,8 @@ pm2 start dist/index.js --name zypher-ai-bot
 pm2 save
 ```
 
-Dashboard web ikut menyala di port 3000 kalau `DASHBOARD_TOKEN` diisi.
+Dashboard web ikut menyala di port 3000 kalau `DASHBOARD_TOKEN` diisi. Login lewat form `/login`
+atau link cepat `/masuk/<token>` (langsung masuk, URL-nya tidak tertinggal di riwayat browser).
 `docker-compose.yml` sudah meneruskan portnya.
 
 ### Panel hosting (tanpa VPS, gratis)

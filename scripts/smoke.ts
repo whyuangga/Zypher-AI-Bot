@@ -22,6 +22,7 @@ const { setPersona, getGuildSettings } = await import('../src/db/repo.js');
 const { listGuildIds, countGuildRows, countGuildMessages, listMemoryOwners, listGuildMemories, messagesPerDay } =
   await import('../src/db/repo.js');
 const { ringkasanPage, keywordPage, memoriPage } = await import('../src/web/ui/pages.js');
+const { parseLoginLink } = await import('../src/web/login-link.js');
 const { matchKeywords } = await import('../src/features/keywords.js');
 const { buildSystemPrompt } = await import('../src/features/prompt.js');
 const { buildTranscriptHtml, transcriptFileName } = await import('../src/lib/transcript.js');
@@ -270,6 +271,24 @@ test('memori dikelompokkan per user', () => {
   assert.equal(owners.length, 2);
   assert.equal(owners[0]?.count, 2, 'user dengan memori terbanyak di atas');
   assert.equal(listGuildMemories(guildId).length, 3);
+});
+
+console.log('\nLogin lewat link');
+test('mengurai /masuk/<token>', () => {
+  assert.deepEqual(parseLoginLink('/masuk/abc123'), { matched: true, token: 'abc123' });
+  assert.deepEqual(parseLoginLink('/login/abc123'), { matched: true, token: 'abc123' });
+});
+test('token dengan karakter spesial di-decode', () => {
+  assert.deepEqual(parseLoginLink('/masuk/a%2Bb%3D'), { matched: true, token: 'a+b=' });
+  // base64 punya "/" — harus tetap terbaca utuh, bukan dianggap sub-path
+  assert.deepEqual(parseLoginLink('/masuk/ab/cd=='), { matched: true, token: 'ab/cd==' });
+});
+test('link tanpa token dan path lain tidak dianggap login link', () => {
+  assert.deepEqual(parseLoginLink('/masuk'), { matched: true, token: null });
+  assert.deepEqual(parseLoginLink('/masuk/'), { matched: true, token: null });
+  assert.deepEqual(parseLoginLink('/'), { matched: false });
+  assert.deepEqual(parseLoginLink('/dokumen'), { matched: false });
+  assert.deepEqual(parseLoginLink('/masukan/abc'), { matched: false });
 });
 
 console.log('\nHalaman dashboard');

@@ -33,6 +33,7 @@ import { embeddingModelName } from '../features/rag-embed.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
 import { dokumenPage, keywordPage, loginPage, memoriPage, pengaturanPage, ringkasanPage } from './ui/pages.js';
+import { parseLoginLink } from './login-link.js';
 import { dashboardStatus } from './status.js';
 
 const SESSION_COOKIE = 'zp_session';
@@ -94,6 +95,8 @@ function sendHtml(response: ServerResponse, status: number, html: string): void 
   response.writeHead(status, {
     'content-type': 'text/html; charset=utf-8',
     'cache-control': 'no-store',
+    // Jangan bocorkan URL (yang bisa berisi token) ke situs lain lewat Referer.
+    'referrer-policy': 'no-referrer',
   });
   response.end(html);
 }
@@ -113,6 +116,76 @@ function tokenMatches(candidate: string): boolean {
   const b = Buffer.from(expected);
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
+}
+
+function loginBlocked(ip: string): boolean {
+  const attempt = loginAttempts.get(ip);
+  return Boolean(attempt && attempt.resetAt > Date.now() && attempt.count >= LOGIN_MAX_ATTEMPTS);
+}
+
+function recordLoginFailure(ip: string): void {
+  const attempt = loginAttempts.get(ip);
+  const next = attempt && attempt.resetAt > Date.now() ? attempt : { count: 0, resetAt: Date.now() + LOGIN_WINDOW_MS };
+  next.count += 1;
+  loginAttempts.set(ip, next);
+}
+
+/**
+ * IP untuk rate limit login.
+ *
+ * `X-Forwarded-For` hanya dipercaya kalau koneksi datang dari reverse proxy
+ * lokal (127.0.0.1 / ::1) — mis. Cloudflare Tunnel. Dari koneksi luar, header
+ * itu bisa dipalsukan siapa saja, jadi yang dipakai alamat socket.
+ */
+function clientIp(request: IncomingMessage): string {
+  const socket = request.socket.remoteAddress ?? 'unknown';
+  const fromLocalProxy = socket === '127.0.0.1' || socket === '::1' || socket === '::ffff:127.0.0.1';
+  if (fromLocalProxy) {
+    const forwarded = request.headers['x-forwarded-for'];
+    const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+    const first = value?.split(',')[0]?.trim();
+    if (first) return first;
+  }
+  return socket;
+}
+
+/** Buat sesi baru dan kembalikan nilai header `set-cookie`. */
+function issueSessionCookie(request: IncomingMessage): string {
+  const sessionId = randomBytes(24).toString('hex');
+  sessions.set(sessionId, Date.now() + SESSION_TTL_MS);
+
+  const secure = (request.headers['x-forwarded-proto'] ?? '').toString() === 'https' ? '; Secure' : '';
+  return `${SESSION_COOKIE}=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}${secure}`;
+}
+
+/**
+ * Halaman perantara untuk login lewat link. `location.replace()` menimpa entri
+ * riwayat, jadi token tidak tertinggal di tombol Back / daftar riwayat.
+ */
+function loginHandoffPage(): string {
+  return `<!doctype html>
+<html lang="id"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Masuk… · Zypher AI</title>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body { display: grid; place-items: center; background: #080a0f; color: #a7afc2;
+    font: 15px/1.6 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .box { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  .spin { width: 30px; height: 30px; border-radius: 50%; border: 2.5px solid rgba(255,255,255,.12);
+    border-top-color: #7c5cff; animation: spin .8s linear infinite; }
+  a { color: #8fb0ff; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style></head>
+<body>
+<div class="box">
+  <span class="spin"></span>
+  <span>Membuka dashboard…</span>
+  <noscript><a href="/">Lanjut ke dashboard</a></noscript>
+</div>
+<script>location.replace('/');</script>
+</body></html>`;
 }
 
 function hasSession(request: IncomingMessage): boolean {
@@ -171,10 +244,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
   }
 
   if (path === '/login' && method === 'POST') {
-    const ip = request.socket.remoteAddress ?? 'unknown';
-    const attempt = loginAttempts.get(ip);
+    const ip = clientIp(request);
 
-    if (attempt && attempt.resetAt > Date.now() && attempt.count >= LOGIN_MAX_ATTEMPTS) {
+    if (loginBlocked(ip)) {
       sendHtml(response, 429, loginPage('Terlalu banyak percobaan. Tunggu beberapa menit.'));
       return;
     }
@@ -183,24 +255,47 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     const submitted = new URLSearchParams(body).get('token') ?? '';
 
     if (!tokenMatches(submitted)) {
-      const next = attempt && attempt.resetAt > Date.now() ? attempt : { count: 0, resetAt: Date.now() + LOGIN_WINDOW_MS };
-      next.count += 1;
-      loginAttempts.set(ip, next);
+      recordLoginFailure(ip);
       logger.warn(`Login dashboard gagal dari ${ip}`);
       sendHtml(response, 401, loginPage('Token salah.'));
       return;
     }
 
     loginAttempts.delete(ip);
-    const sessionId = randomBytes(24).toString('hex');
-    sessions.set(sessionId, Date.now() + SESSION_TTL_MS);
+    redirect(response, '/', issueSessionCookie(request));
+    return;
+  }
 
-    const secure = (request.headers['x-forwarded-proto'] ?? '').toString() === 'https' ? '; Secure' : '';
-    redirect(
-      response,
-      '/',
-      `${SESSION_COOKIE}=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}${secure}`,
-    );
+  /* --- Login lewat link: /masuk/<token> atau /login/<token> --- */
+  const loginLink = parseLoginLink(path);
+  if (loginLink.matched && method === 'GET') {
+    if (!loginLink.token) {
+      redirect(response, '/login');
+      return;
+    }
+
+    const ip = clientIp(request);
+    if (loginBlocked(ip)) {
+      sendHtml(response, 429, loginPage('Terlalu banyak percobaan. Tunggu beberapa menit.'));
+      return;
+    }
+
+    if (!tokenMatches(loginLink.token)) {
+      recordLoginFailure(ip);
+      logger.warn(`Login lewat link gagal dari ${ip} (token tidak cocok)`);
+      sendHtml(response, 401, loginPage('Token di link tidak cocok. Salin ulang dari panel hosting.'));
+      return;
+    }
+
+    loginAttempts.delete(ip);
+    logger.info('Login dashboard lewat link (token di URL) — sesi 12 jam dibuat');
+    response.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer',
+      'set-cookie': issueSessionCookie(request),
+    });
+    response.end(loginHandoffPage());
     return;
   }
 

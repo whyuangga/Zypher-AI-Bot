@@ -162,6 +162,36 @@ kamu akan terpakai saat member bertanya.
 
 ---
 
+## Login lewat link (`/masuk/<token>`)
+
+Malas mengetik token di HP? Buka dashboard lewat address bar:
+
+```
+http://<alamat-panel>:<port>/masuk/<DASHBOARD_TOKEN>
+```
+
+Alurnya:
+
+1. Server memeriksa token (tetap timing-safe, sama seperti form login).
+2. Sesi 12 jam dibuat → cookie `zp_session` httpOnly dipasang.
+3. Halaman perantara menjalankan `location.replace('/')`, sehingga **entri riwayat berisi token
+   diganti** dengan `/` — tombol Back tidak membuka URL bertoken lagi.
+4. Semua halaman dikirim dengan `Referrer-Policy: no-referrer`, jadi token tidak bocor ke situs lain
+   lewat header Referer.
+
+`/login/<token>` juga jalan (alias). Tanpa token → dialihkan ke form login biasa.
+
+**Yang tetap perlu kamu waspadai:**
+
+| Risiko | Mitigasi |
+|---|---|
+| Token terlihat di log proxy / panel hosting | Jangan pakai link di komputer bersama; ganti token bila ragu |
+| Link tak sengaja terkirim ke orang lain | Siapa pun pemegang link = admin. Rotasi token: `npm run token -- --write` lalu perbarui env panel |
+| Brute force lewat link | Batas 8 percobaan / 10 menit per IP, sama dengan form login |
+| Browser menyimpan autocomplete | Tidak berlaku — token tidak pernah diketik di form |
+
+---
+
 ## Keamanan — baca ini sebelum online
 
 | Aturan | Alasan |
