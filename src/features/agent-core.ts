@@ -19,6 +19,16 @@ export interface ChannelTrace {
   at: number;
 }
 
+/** Percakapan singkat di MEMORI (bukan database) supaya obrolan nyambung. */
+export interface MemoryTurn {
+  userId: string;
+  userName: string;
+  /** 'user' = member, 'bot' = balasan AI. */
+  role: 'user' | 'bot';
+  text: string;
+  at: number;
+}
+
 /** State in-memory per channel. Tidak pernah ditulis ke database. */
 export interface AgentState {
   /** Timestamp balasan bot terakhir. 0 = belum pernah. */
@@ -27,10 +37,37 @@ export interface AgentState {
   repliesLastHour: number[];
   /** Jejak pesan member, terlama di depan. */
   traces: ChannelTrace[];
+  /** Beberapa percakapan terakhir — hanya di memori, hilang saat restart. */
+  turns: MemoryTurn[];
 }
 
 export function emptyState(): AgentState {
-  return { lastReplyAt: 0, repliesLastHour: [], traces: [] };
+  return { lastReplyAt: 0, repliesLastHour: [], traces: [], turns: [] };
+}
+
+/** Berapa banyak giliran percakapan yang disimpan sebagai konteks. */
+export const MEMORY_TURNS = 8;
+
+/** Tambah satu giliran percakapan, dibatasi `MEMORY_TURNS` terakhir. */
+export function pushTurn(state: AgentState, turn: MemoryTurn): AgentState {
+  return { ...state, turns: [...state.turns, turn].slice(-MEMORY_TURNS) };
+}
+
+/** Channel ini termasuk yang dikelola agent? */
+export type AgentChannelRole = 'chat' | 'gallery' | null;
+
+/**
+ * Tentukan peran sebuah channel.
+ *
+ * Satu channel bisa dipakai sebagai galeri tanpa punya channel ngobrol —
+ * karena itu `chat` dicek lebih dulu supaya channel yang sama tidak dianggap
+ * galeri (kalau admin mengisinya dua kali, obrolan menang).
+ */
+export function channelRole(settings: AgentSettings, channelId: string): AgentChannelRole {
+  if (!settings.channelId && !settings.galleryChannelId) return null;
+  if (settings.channelId === channelId) return 'chat';
+  if (settings.galleryChannelId === channelId) return 'gallery';
+  return null;
 }
 
 export type SkipReason = 'disabled' | 'other-channel' | 'from-bot' | 'cooldown' | 'hourly-limit' | 'busy';
@@ -72,8 +109,11 @@ export interface ShouldReplyInput {
 export function shouldReply(input: ShouldReplyInput): ReplyDecision {
   const { settings, state, channelId, fromBot, summoned, now } = input;
 
-  if (!settings.channelId) return { reply: false, reason: 'disabled' };
-  if (channelId !== settings.channelId) return { reply: false, reason: 'other-channel' };
+  const role = channelRole(settings, channelId);
+  if (!role) {
+    // Bedakan "fitur mati" dari "channel lain" untuk memudahkan debugging.
+    return { reply: false, reason: settings.channelId || settings.galleryChannelId ? 'other-channel' : 'disabled' };
+  }
   if (fromBot) return { reply: false, reason: 'from-bot' };
 
   // Jatah per jam SELALU berlaku, termasuk saat dipanggil — pengaman biaya.
@@ -96,6 +136,7 @@ export function shouldReply(input: ShouldReplyInput): ReplyDecision {
 
 /** Boleh menyapa duluan karena channel sudah sepi? */
 export function shouldBreakSilence(settings: AgentSettings, state: AgentState, now: number): boolean {
+  // Channel galeri tidak pernah disapa sendiri — isinya foto, bukan obrolan.
   if (!settings.channelId || settings.quietMinutes <= 0) return false;
   if (settings.cooldownSeconds > 0 && now - state.lastReplyAt < settings.cooldownSeconds * 1000) return false;
 

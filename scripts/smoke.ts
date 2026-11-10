@@ -1595,6 +1595,7 @@ console.log('\nAI Agent di channel');
 const agentSettings = (patch: Record<string, unknown> = {}) => ({
   guildId: GUILD,
   channelId: '444444444444444444',
+  galleryChannelId: null,
   quietMinutes: 45,
   maxPerHour: 6,
   reactEmoji: true,
@@ -1891,15 +1892,23 @@ await testAsync('kartu sambutan membungkus teks panjang tanpa melewati lebar', a
   assert.ok(terpotong[terpotong.length - 1]?.endsWith('…'), 'penanda potongan');
 });
 
-await testAsync('dashboard: halaman Sambutan & Agent terdaftar di navigasi', async () => {
+await testAsync('dashboard: Sambutan dan AI Agent jadi DUA halaman terpisah', async () => {
   const shell = await readFile('src/web/ui/shell.ts', 'utf8');
-  assert.ok(shell.includes("'sambutan'"), 'key halaman ada');
-  assert.ok(shell.includes("href: '/sambutan'"), 'menu sidebar ada');
+  assert.ok(shell.includes("href: '/sambutan'"), 'menu Sambutan ada');
+  assert.ok(shell.includes("href: '/agent'"), 'menu AI Agent ada');
+  assert.ok(shell.includes("key: 'agent'"), 'key halaman agent terdaftar');
 
   const server = await readFile('src/web/server.ts', 'utf8');
-  assert.ok(server.includes("path === '/sambutan'"), 'route halaman ada');
+  assert.ok(server.includes("path === '/agent'"), 'route agent ada');
   assert.ok(server.includes("path === '/api/welcome'"), 'API sambutan ada');
+  assert.ok(server.includes("path === '/api/goodbye'"), 'API perpisahan ada');
   assert.ok(server.includes("path === '/api/agent'"), 'API agent ada');
+
+  // Halaman gabungan sudah tidak ada lagi.
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  assert.equal(pages.includes('sambutanPage'), false, 'halaman gabungan dihapus');
+  assert.ok(pages.includes('export function welcomePage'), 'halaman sambutan ada');
+  assert.ok(pages.includes('export function agentPage'), 'halaman agent ada');
 });
 
 await testAsync('dashboard: input angka agent dibatasi sebelum disimpan', async () => {
@@ -1962,6 +1971,170 @@ await testAsync('API agent & sambutan mempertahankan nilai yang tidak dikirim', 
 
   const welcomeBlock = server.slice(server.indexOf("path === '/api/welcome'"), server.indexOf("path === '/api/agent'"));
   assert.ok(welcomeBlock.includes("'template' in payload"), 'template hanya diubah kalau dikirim');
+});
+
+
+console.log('\nAI Agent: channel galeri');
+
+await testAsync('galeri: channel galeri dikenali sebagai peran "gallery"', async () => {
+  const { channelRole } = await import('../src/features/agent-core.js');
+  const settings = agentSettings({ galleryChannelId: '555555555555555555' });
+
+  assert.equal(channelRole(settings, '444444444444444444'), 'chat', 'channel ngobrol');
+  assert.equal(channelRole(settings, '555555555555555555'), 'gallery', 'channel galeri');
+  assert.equal(channelRole(settings, '999999999999999999'), null, 'channel lain');
+});
+
+await testAsync('galeri: bisa hidup tanpa channel ngobrol', async () => {
+  const { channelRole, shouldReply, emptyState } = await import('../src/features/agent-core.js');
+  const settings = agentSettings({ channelId: null, galleryChannelId: '555555555555555555' });
+
+  assert.equal(channelRole(settings, '555555555555555555'), 'gallery');
+  const decision = shouldReply({
+    settings,
+    state: emptyState(),
+    channelId: '555555555555555555',
+    fromBot: false,
+    summoned: false,
+    now: Date.now(),
+  });
+  assert.equal(decision.reply, true, 'galeri tetap boleh membalas walau channel ngobrol mati');
+});
+
+await testAsync('galeri: fitur mati total hanya kalau kedua channel kosong', async () => {
+  const { shouldReply, emptyState } = await import('../src/features/agent-core.js');
+  const decision = shouldReply({
+    settings: agentSettings({ channelId: null, galleryChannelId: null }),
+    state: emptyState(),
+    channelId: '444444444444444444',
+    fromBot: false,
+    summoned: true,
+    now: Date.now(),
+  });
+  assert.equal(decision.reason, 'disabled');
+});
+
+await testAsync('galeri: tidak pernah menyapa sendiri saat sepi', async () => {
+  const { shouldBreakSilence, recordTrace, emptyState } = await import('../src/features/agent-core.js');
+  const now = Date.now();
+  // Hanya galeri yang aktif — tidak ada channel ngobrol untuk disapa.
+  const settings = agentSettings({ channelId: null, galleryChannelId: '555555555555555555', quietMinutes: 1 });
+  assert.equal(shouldBreakSilence(settings, recordTrace(emptyState(), 'u1', now - 10 * 60_000), now), false);
+});
+
+console.log('\nAI Agent: riwayat percakapan di memori');
+
+await testAsync('riwayat: giliran percakapan dibatasi 8 terakhir', async () => {
+  const { pushTurn, emptyState, MEMORY_TURNS } = await import('../src/features/agent-core.js');
+  let state = emptyState();
+  for (let i = 0; i < 20; i += 1) {
+    state = pushTurn(state, { userId: 'u1', userName: 'Sky', role: i % 2 === 0 ? 'user' : 'bot', text: `pesan ${i}`, at: i });
+  }
+  assert.equal(state.turns.length, MEMORY_TURNS, 'dibatasi supaya prompt tidak membengkak');
+  assert.equal(state.turns[state.turns.length - 1]?.text, 'pesan 19', 'yang terbaru dipertahankan');
+});
+
+await testAsync('riwayat: disimpan di MEMORI, bukan database', async () => {
+  const source = await readFile('src/features/agent.ts', 'utf8');
+  assert.ok(source.includes('state.turns'), 'riwayat dibaca dari state');
+  assert.ok(source.includes('pushTurn'), 'percakapan dicatat ke state');
+  // Privasi: tidak boleh ada INSERT ke tabel pesan untuk channel publik.
+  assert.equal(/appendMessage|INSERT INTO messages/.test(source), false, 'tidak menulis ke tabel messages');
+});
+
+console.log('\nSalam perpisahan (goodbye)');
+
+await testAsync('goodbye: default mati', async () => {
+  const { getGoodbyeSettings } = await import('../src/db/repo.js');
+  const settings = await getGoodbyeSettings('999999999999999001');
+  assert.equal(settings.enabled, false);
+  assert.equal(settings.channelId, null, 'wajib pilih channel — DM tidak mungkin');
+  assert.equal(settings.useAi, true);
+});
+
+await testAsync('goodbye: template mengisi {user} dan {server}', async () => {
+  const { fillGoodbyeTemplate } = await import('../src/features/welcome.js');
+  const member = {
+    displayName: 'Sky',
+    user: { username: 'sky123' },
+    guild: { name: 'Komunitas Zypher' },
+  } as unknown as Parameters<typeof fillGoodbyeTemplate>[1];
+
+  assert.equal(
+    fillGoodbyeTemplate('{user} keluar dari {server}.', member),
+    'Sky keluar dari Komunitas Zypher.',
+  );
+});
+
+await testAsync('goodbye: prompt tidak menanyakan alasan keluar & singkat', async () => {
+  const { buildGoodbyePrompt } = await import('../src/features/welcome.js');
+  const member = {
+    displayName: 'Sky',
+    user: { username: 'sky123' },
+    guild: { name: 'Komunitas Zypher' },
+  } as unknown as Parameters<typeof buildGoodbyePrompt>[1];
+
+  const prompt = buildGoodbyePrompt(
+    { guildId: GUILD, channelId: '123', enabled: true, useAi: true, template: null, style: null, example: null, updatedAt: 0 },
+    member,
+  );
+  assert.ok(/[Jj]angan menanyakan alasan keluar/.test(prompt), 'melarang menanyakan alasan');
+  assert.ok(prompt.includes('180 karakter'), 'membatasi panjang');
+  assert.ok(prompt.includes('Sky'), 'menyebut nama');
+});
+
+await testAsync('goodbye: tidak dikirim kalau channel belum diatur', async () => {
+  const source = await readFile('src/features/welcome.ts', 'utf8');
+  const block = source.slice(source.indexOf('export async function goodbyeMember'));
+  // Member sudah keluar → DM mustahil; tanpa channel, lebih baik diam.
+  assert.ok(/if \(!channel\)/.test(block), 'berhenti kalau channel tidak ada');
+  assert.ok(block.includes('channel belum diatur'), 'alasannya dicatat di log');
+});
+
+await testAsync('goodbye: event GuildMemberRemove terpasang', async () => {
+  const bot = await readFile('src/bot.ts', 'utf8');
+  assert.ok(bot.includes('Events.GuildMemberRemove'), 'event terpasang');
+  assert.ok(bot.includes('onGuildMemberRemove'), 'handler dipanggil');
+
+  const events = await readFile('src/events/guildMemberAdd.ts', 'utf8');
+  assert.ok(events.includes('goodbyeMember'), 'memanggil fitur goodbye');
+  assert.ok(events.includes('homeGuildId'), 'hanya untuk server rumah');
+});
+
+await testAsync('goodbye: settings tersimpan dan patch sebagian aman', async () => {
+  const { getGoodbyeSettings, saveGoodbyeSettings } = await import('../src/db/repo.js');
+  const guild = '999999999999999002';
+  await saveGoodbyeSettings(guild, { enabled: true, channelId: '121212121212121212', style: 'sopan' });
+
+  await saveGoodbyeSettings(guild, { enabled: false });
+  const saved = await getGoodbyeSettings(guild);
+  assert.equal(saved.enabled, false);
+  assert.equal(saved.channelId, '121212121212121212', 'channel lama dipertahankan');
+  assert.equal(saved.style, 'sopan', 'gaya lama dipertahankan');
+});
+
+await testAsync('agent: gallery_channel_id tersimpan & bisa dikosongkan', async () => {
+  const { getAgentSettings, saveAgentSettings } = await import('../src/db/repo.js');
+  const guild = '999999999999999003';
+  await saveAgentSettings(guild, { channelId: '111111111111111111', galleryChannelId: '222222222222222222' });
+  assert.equal((await getAgentSettings(guild)).galleryChannelId, '222222222222222222');
+
+  await saveAgentSettings(guild, { galleryChannelId: null });
+  const saved = await getAgentSettings(guild);
+  assert.equal(saved.galleryChannelId, null);
+  assert.equal(saved.channelId, '111111111111111111', 'channel ngobrol tidak ikut terhapus');
+});
+
+await testAsync('API agent: channel ngobrol & galeri tidak boleh sama', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(server.includes('Channel ngobrol dan galeri harus berbeda'), 'ada validasi');
+});
+
+await testAsync('screening: video dihitung konten visual untuk galeri', async () => {
+  const source = await readFile('src/features/agent.ts', 'utf8');
+  assert.ok(source.includes('hasVisualContent'), 'ada deteksi konten visual');
+  assert.ok(source.includes('video/'), 'video ikut dikenali');
+  assert.ok(/mp4|mov\|webm/.test(source) || source.includes('VIDEO_EXT'), 'ekstensi video dikenali');
 });
 
 

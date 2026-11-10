@@ -23,7 +23,7 @@ import {
   type AnyThreadChannel,
 } from 'discord.js';
 import { config } from '../config.js';
-import { getWelcomeSettings, type WelcomeSettings } from '../db/repo.js';
+import { getGoodbyeSettings, getWelcomeSettings, type GoodbyeSettings, type WelcomeSettings } from '../db/repo.js';
 import { chat } from '../lib/llm.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
@@ -213,4 +213,93 @@ async function buildCard(
   // Nama file diberi penanda AI/template supaya mudah dibedakan saat diuji.
   const suffix = usedAi ? 'ai' : 'template';
   return new AttachmentBuilder(png, { name: `selamat-datang-${suffix}.png` });
+}
+
+
+/* ------------------------------------------------------------------ */
+/*  Salam perpisahan (goodbye)                                         */
+/* ------------------------------------------------------------------ */
+
+const DEFAULT_GOODBYE = '{user} sudah keluar dari **{server}**. Semoga urusannya lancar!';
+
+/**
+ * Instruksi gaya salam perpisahan.
+ *
+ * Nadanya sengaja berbeda dari sambutan: tidak berpura-pura gembira, tidak
+ * menanyakan alasan keluar, dan tidak menyebut nama member yang sensitif
+ * kalau ternyata ia keluar karena masalah.
+ */
+export function buildGoodbyePrompt(settings: GoodbyeSettings, member: GuildMember): string {
+  const name = member.displayName || member.user.username;
+  return [
+    'Kamu anggota komunitas yang santai.',
+    `Tulis SATU salam perpisahan singkat untuk "${name}" yang baru saja keluar dari server "${member.guild.name}".`,
+    `Gaya: ${settings.style?.trim() || 'sopan, hangat, tanpa berlebihan'}.`,
+    settings.example?.trim() ? `Contoh nada yang ingin ditiru (jangan disalin): "${settings.example.trim()}"` : '',
+    'Aturan:',
+    '- Maksimal 1–2 kalimat pendek, tidak lebih dari 180 karakter.',
+    '- Jangan menanyakan alasan keluar, jangan menyindir, jangan menyebut aturan server.',
+    '- Jangan memakai kata "member" atau "user".',
+    '- Boleh mendoakan hal baik secara umum.',
+    'Balas HANYA dengan teks salamnya.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+/** Isi placeholder untuk salam perpisahan. */
+export function fillGoodbyeTemplate(template: string, member: GuildMember): string {
+  return template
+    .replace(/\{user\}/g, member.displayName || member.user.username)
+    .replace(/\{server\}/g, member.guild.name);
+}
+
+async function generateGoodbye(settings: GoodbyeSettings, member: GuildMember): Promise<string | null> {
+  try {
+    const result = await chat({
+      messages: [
+        { role: 'system', content: 'Kamu menulis satu salam perpisahan singkat. Balas hanya teksnya.' },
+        { role: 'user', content: buildGoodbyePrompt(settings, member) },
+      ],
+      temperature: 0.8,
+      maxTokens: 100,
+    });
+    const text = (result.message.content ?? '').trim().replace(/^["'“”]|["'“”]$/g, '').trim();
+    return text ? truncate(text, 220) : null;
+  } catch (error) {
+    logger.warn(`Gagal membuat salam perpisahan untuk ${member.user.tag} — pakai template`, errorMessage(error));
+    return null;
+  }
+}
+
+/**
+ * Kirim salam perpisahan.
+ *
+ * Catatan penting: member sudah keluar, jadi **DM tidak mungkin** dikirim.
+ * Kalau tidak ada channel yang diatur, salam tidak dikirim sama sekali —
+ * lebih baik diam daripada mengirim ke channel acak.
+ */
+export async function goodbyeMember(member: GuildMember): Promise<boolean> {
+  if (member.user.bot) return false;
+
+  const settings = await getGoodbyeSettings(member.guild.id);
+  if (!settings.enabled) return false;
+
+  const channel = settings.channelId ? await fetchChannel(member, settings.channelId) : null;
+  if (!channel) {
+    logger.info(`Salam perpisahan untuk ${member.user.tag} dilewati: channel belum diatur.`);
+    return false;
+  }
+
+  const greeting = settings.useAi ? await generateGoodbye(settings, member) : null;
+  const text = greeting ?? fillGoodbyeTemplate(settings.template?.trim() || DEFAULT_GOODBYE, member);
+
+  try {
+    await channel.send({ content: text, allowedMentions: { parse: [] } });
+    logger.info(`Salam perpisahan untuk ${member.user.tag} terkirim${greeting ? ' (AI)' : ' (template)'}.`);
+    return true;
+  } catch (error) {
+    logger.warn(`Gagal mengirim salam perpisahan untuk ${member.user.tag}`, errorMessage(error));
+    return false;
+  }
 }

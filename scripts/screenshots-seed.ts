@@ -202,9 +202,14 @@ await run(
   [GUILD, 'Halo {user}, selamat datang di {server}!', 'hangat, santai, sedikit bercanda', 'Pagi Sky! Ngapain aja hari ini?', now - 2 * day],
 );
 await run(
-  `INSERT INTO agent (guild_id, channel_id, quiet_minutes, max_per_hour, react_emoji, react_images, busy_mute, cooldown_seconds, updated_at)
-   VALUES (?, ?, 45, 6, 1, 1, 1, 90, ?)`,
-  [GUILD, '130000000000000009', now - 2 * day],
+  `INSERT INTO goodbye (guild_id, channel_id, enabled, use_ai, template, style, example, updated_at)
+   VALUES (?, ?, 1, 1, ?, ?, ?, ?)`,
+  [GUILD, '130000000000000005', '{user} sudah keluar dari **{server}**. Semoga lancar!', 'sopan, hangat, singkat', 'Semoga urusannya lancar ya.', now - 2 * day],
+);
+await run(
+  `INSERT INTO agent (guild_id, channel_id, gallery_channel_id, quiet_minutes, max_per_hour, react_emoji, react_images, busy_mute, cooldown_seconds, updated_at)
+   VALUES (?, ?, ?, 45, 6, 1, 1, 1, 90, ?)`,
+  [GUILD, '130000000000000009', '130000000000000010', now - 2 * day],
 );
 
 console.log(`Data demo siap di ${dbPath}`);

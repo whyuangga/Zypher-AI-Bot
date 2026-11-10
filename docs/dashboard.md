@@ -238,14 +238,29 @@ Hal yang perlu diketahui:
 
 ---
 
-## Sambutan & Agent (`/sambutan`)
+## Sambutan (`/sambutan`)
 
-Halaman untuk dua fitur kehadiran:
+Dua kartu berdampingan, satu tema "kehadiran":
 
 - **Sambutan member baru** — kirim ke DM atau channel, tulis dengan AI atau
   template, kartu PNG opsional.
-- **AI Agent** — pilih satu channel tempat bot boleh nimbrung, beserta batas
-  per jam, jeda, dan aturan "diam saat ramai".
+- **Salam perpisahan** — saat member keluar. **Wajib pilih channel**: DM tidak
+  mungkin dikirim ke orang yang sudah keluar, jadi kalau channel kosong salam
+  tidak dikirim sama sekali.
+
+---
+
+## AI Agent (`/agent`)
+
+Halaman sendiri, sengaja terpisah dari sambutan karena yang diatur bukan
+"kehadiran" melainkan cara bot ikut mengobrol:
+
+- **Channel ngobrol** — bot nimbrung seperti anggota: balas mention/reply,
+  tanggapi emoji/sticker, menyapa saat sepi.
+- **Channel galeri** — bot **hanya** mengomentari gambar & video; teks biasa
+  diabaikan. Isi satu channel di kedua kolom akan ditolak.
+- Batas per jam (gabungan kedua channel), jeda minimum, dan sakelar "diam saat
+  ramai".
 
 Detail perilaku & biaya API: [sambutan-agent.md](sambutan-agent.md).
 

@@ -18,8 +18,17 @@ import { chunkMessage, truncate } from '../lib/text.js';
 import { getMemories, memoryTools, runMemoryTool } from './memory.js';
 import { buildSystemPrompt } from './prompt.js';
 import { buildKnowledgeBlock, searchKnowledge } from './rag.js';
-import { collectImages, visionUserContent } from './vision.js';
-import { recordReply, recordTrace, shouldBreakSilence, shouldReply, type AgentState } from './agent-core.js';
+import { collectImages, isImageAttachment, visionUserContent } from './vision.js';
+import {
+  channelRole,
+  emptyState,
+  pushTurn,
+  recordReply,
+  recordTrace,
+  shouldBreakSilence,
+  shouldReply,
+  type AgentState,
+} from './agent-core.js';
 
 const MAX_TOOL_ROUNDS = 2;
 /** Balasan nimbrung harus pendek — ini obrolan, bukan jawaban tiket. */
@@ -39,7 +48,7 @@ const channels = new Map<string, ChannelMemory>();
 function memoryFor(channelId: string): ChannelMemory {
   let entry = channels.get(channelId);
   if (!entry) {
-    entry = { state: { lastReplyAt: 0, repliesLastHour: [], traces: [] }, lastSeenAt: 0 };
+    entry = { state: emptyState(), lastSeenAt: 0 };
     channels.set(channelId, entry);
   }
   return entry;
@@ -48,6 +57,25 @@ function memoryFor(channelId: string): ChannelMemory {
 /** Sebutan untuk member: nickname di server, fallback username. */
 function speakerName(message: Message): string {
   return message.member?.displayName || message.author.displayName || message.author.username;
+}
+
+const VIDEO_EXT = /\.(mp4|mov|webm|mkv)$/i;
+
+/**
+ * Apakah pesan berisi sesuatu yang "visual" — gambar, video, atau embed
+ * (tautan galeri/tenor). Dipakai channel galeri untuk memutuskan apakah
+ * pesan ini layak dikomentari.
+ */
+export function hasVisualContent(message: Message): boolean {
+  const visualAttachment = [...message.attachments.values()].some(
+    (attachment) =>
+      isImageAttachment(attachment.name, attachment.contentType) ||
+      Boolean(attachment.contentType?.startsWith('video/')) ||
+      VIDEO_EXT.test(attachment.name ?? ''),
+  );
+  if (visualAttachment) return true;
+  // Embed dari tautan (mis. Instagram/Tenor) juga dianggap kiriman galeri.
+  return message.embeds.length > 0;
 }
 
 /**
@@ -63,8 +91,12 @@ export function describeIncoming(message: Message): string | null {
   const sticker = message.stickers.first();
   if (sticker) parts.push(`(mengirim sticker: ${sticker.name})`);
 
+  const video = [...message.attachments.values()].find(
+    (attachment) => attachment.contentType?.startsWith('video/') || VIDEO_EXT.test(attachment.name ?? ''),
+  );
+  if (video) parts.push('(mengirim video tanpa teks)');
   if (message.embeds.length > 0 && !text) parts.push('(mengirim embed/link tanpa teks)');
-  if (message.attachments.size > 0 && !text) parts.push('(mengirim lampiran tanpa teks)');
+  if (message.attachments.size > 0 && !text && !video) parts.push('(mengirim lampiran tanpa teks)');
 
   const joined = parts.join(' ').trim();
   return joined ? truncate(joined, config.features.maxInputChars) : null;
@@ -79,7 +111,11 @@ export function isSummoned(message: Message): boolean {
 }
 
 /** Susun dan panggil model untuk membalas satu pesan di channel agent. */
-async function composeReply(message: Message, settings: AgentSettings): Promise<string | null> {
+async function composeReply(
+  message: Message,
+  settings: AgentSettings,
+  role: 'chat' | 'gallery',
+): Promise<string | null> {
   const guildId = message.guildId!;
   const guild = message.guild!;
   const name = speakerName(message);
@@ -115,8 +151,18 @@ async function composeReply(message: Message, settings: AgentSettings): Promise<
     }),
     '',
     '## Mode nimbrung di channel publik',
-    'Kamu sedang ikut ngobrol di channel komunitas, bukan menjawab tiket bantuan.',
-    '- Balas seperti anggota komunitas: singkat, santai, maksimal 3 kalimat.',
+    role === 'gallery'
+      ? [
+          'Kamu sedang menanggapi kiriman di channel galeri komunitas.',
+          '- Komentari isi gambarnya secara spesifik: suasana, warna, objek, ekspresi.',
+          '- Maksimal 2 kalimat, hangat dan apresiatif — bukan penilaian teknis foto.',
+          '- Jangan pernah menyebut orang lain tanpa diminta; cukup komentari karyanya.',
+        ].join('\n')
+      : [
+          'Kamu sedang ikut ngobrol di channel komunitas, bukan menjawab tiket bantuan.',
+          '- Balas seperti anggota komunitas: singkat, santai, maksimal 3 kalimat.',
+          '- Sambung pembicaraan sebelumnya kalau masih nyambung; jangan mengulang sapaan.',
+        ].join('\n'),
     '- Jangan memakai pembuka khas bot, jangan menyebut dirimu AI.',
     '- Boleh menanggapi sticker, emoji, atau gambar dengan reaksi ringan.',
     '- Jangan membahas data pribadi siapa pun; kalau ditanya hal sensitif, alihkan dengan ramah.',
@@ -132,7 +178,15 @@ async function composeReply(message: Message, settings: AgentSettings): Promise<
     images.length === 0 && (guildSettings?.autoMemory ?? config.features.autoMemory) ? memoryTools : undefined;
   const model = images.length > 0 ? config.vision.model : (guildSettings?.model ?? undefined);
 
-  const payload: ChatMessage[] = [{ role: 'system', content: systemPrompt }, userMessage];
+  // Riwayat obrolan diambil dari MEMORI (bukan database) supaya balasan
+  // nyambung dengan percakapan sebelumnya. Hilang saat bot restart.
+  const history: ChatMessage[] = memoryFor(message.channelId).state.turns.map((turn) =>
+    turn.role === 'bot'
+      ? { role: 'assistant', content: turn.text }
+      : { role: 'user', content: `${turn.userName}: ${turn.text}` },
+  );
+
+  const payload: ChatMessage[] = [{ role: 'system', content: systemPrompt }, ...history, userMessage];
   let result = await chat({ messages: payload, tools, model, maxTokens: 220 });
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
@@ -182,13 +236,20 @@ async function replyInChannel(message: Message, text: string, summoned: boolean)
 
 /**
  * Titik masuk untuk setiap pesan di server.
- * Mengembalikan tanpa efek apa pun kalau channel bukan channel agent.
+ *
+ * Dua peran channel:
+ *   - **chat**   → nimbrung seperti anggota komunitas (aturan ramai/cooldown).
+ *   - **gallery** → hanya menanggapi kiriman gambar/video; teks biasa diabaikan
+ *                  supaya bot tidak mengomentari obrolan di channel galeri.
+ *
+ * Mengembalikan tanpa efek apa pun kalau channel bukan milik agent.
  */
 export async function handleAgentMessage(message: Message): Promise<void> {
   if (!message.inGuild() || !message.channel.isTextBased() || message.channel.isDMBased()) return;
 
   const settings = await getAgentSettings(message.guildId);
-  if (!settings.channelId || settings.channelId !== message.channelId) return;
+  const role = channelRole(settings, message.channelId);
+  if (!role) return;
 
   const now = Date.now();
   const entry = memoryFor(message.channelId);
@@ -197,6 +258,14 @@ export async function handleAgentMessage(message: Message): Promise<void> {
   const summoned = isSummoned(message);
   // Aktivitas dicatat walau bot tidak membalas — dipakai aturan "ramai".
   if (!message.author.bot) entry.state = recordTrace(entry.state, message.author.id, now);
+
+  // ---- galeri: hanya gambar/video yang ditanggapi ----
+  const hasVisual = hasVisualContent(message);
+  if (role === 'gallery') {
+    // Mention di galeri tetap dijawab, tapi tanpa gambar bot tidak berkomentar.
+    if (!hasVisual && !summoned) return;
+    if (hasVisual && !settings.reactImages) return;
+  }
 
   const decision = shouldReply({
     settings,
@@ -208,29 +277,57 @@ export async function handleAgentMessage(message: Message): Promise<void> {
   });
   if (!decision.reply) return;
 
-  // Sticker & emoji saja: tetap perlu jawaban, dan dijaga agar tidak dobel.
+  // Di channel ngobrol, sticker & emoji saja dijaga agar tidak dobel.
   const onlyEmoji =
-    message.stickers.size > 0 ||
-    (message.content.length > 0 &&
-      message.attachments.size === 0 &&
-      message.embeds.length === 0 &&
-      /^\p{Extended_Pictographic}+$/u.test(message.content.trim()));
+    role === 'chat' &&
+    (message.stickers.size > 0 ||
+      (message.content.length > 0 &&
+        message.attachments.size === 0 &&
+        message.embeds.length === 0 &&
+        /^\p{Extended_Pictographic}+$/u.test(message.content.trim())));
   if (onlyEmoji && settings.reactEmoji && !summoned) {
     if (await hasAgentReaction(message.id)) return;
-    const reply = await composeReply(message, settings);
-    if (!reply) return;
-    await replyInChannel(message, reply, false);
-    await markAgentReaction(message.id);
-    entry.state = recordReply(entry.state, now);
-    await pruneAgentReactions(7 * 86_400_000).catch(() => undefined);
+    await respond(message, settings, role, entry, now, false);
     return;
   }
 
-  const reply = await composeReply(message, settings);
+  await respond(message, settings, role, entry, now, summoned);
+}
+
+/** Susun balasan, kirim, lalu catat ke state (riwayat + jatah per jam). */
+async function respond(
+  message: Message,
+  settings: AgentSettings,
+  role: 'chat' | 'gallery',
+  entry: ChannelMemory,
+  now: number,
+  summoned: boolean,
+): Promise<void> {
+  // Pesan member masuk ke riwayat SEBELUM model dipanggil, supaya balasan
+  // yang dihasilkan sudah mempertimbangkan pesan itu sebagai konteks.
+  const text = describeIncoming(message) ?? '';
+  if (text && !message.author.bot) {
+    entry.state = pushTurn(entry.state, {
+      userId: message.author.id,
+      userName: speakerName(message),
+      role: 'user',
+      text,
+      at: now,
+    });
+  }
+
+  const reply = await composeReply(message, settings, role);
   if (!reply) return;
 
   await replyInChannel(message, reply, summoned);
   entry.state = recordReply(entry.state, now);
+  entry.state = pushTurn(entry.state, {
+    userId: message.client.user?.id ?? 'bot',
+    userName: message.client.user?.username ?? 'bot',
+    role: 'bot',
+    text: reply,
+    at: now,
+  });
 }
 
 /**

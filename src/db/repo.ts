@@ -587,7 +587,10 @@ export async function getGuildName(guildId: string): Promise<string | null> {
 /** Pengaturan AI Agent. `channelId` null = fitur mati. */
 export interface AgentSettings {
   guildId: string;
+  /** Channel ngobrol utama. null = fitur agent mati. */
   channelId: string | null;
+  /** Channel galeri: bot hanya mengomentari gambar/video + memberi reaksi. */
+  galleryChannelId: string | null;
   /** Dianggap "sepi" setelah sekian menit tanpa pesan. 0 = jangan menyapa sendiri. */
   quietMinutes: number;
   /** Batas balasan AI per jam — pengaman biaya API. */
@@ -615,6 +618,7 @@ export const AGENT_DEFAULTS = {
 interface AgentRow {
   guild_id: string;
   channel_id: string | null;
+  gallery_channel_id: string | null;
   quiet_minutes: number;
   max_per_hour: number;
   react_emoji: number | boolean;
@@ -631,6 +635,7 @@ export async function getAgentSettings(guildId: string): Promise<AgentSettings> 
     return {
       guildId,
       channelId: null,
+      galleryChannelId: null,
       ...AGENT_DEFAULTS,
       updatedAt: 0,
     };
@@ -639,6 +644,7 @@ export async function getAgentSettings(guildId: string): Promise<AgentSettings> 
   return {
     guildId: row.guild_id,
     channelId: row.channel_id?.trim() || null,
+    galleryChannelId: row.gallery_channel_id?.trim() || null,
     quietMinutes: Number(row.quiet_minutes),
     maxPerHour: Number(row.max_per_hour),
     reactEmoji: Boolean(row.react_emoji),
@@ -656,10 +662,11 @@ export async function saveAgentSettings(
   const current = await getAgentSettings(guildId);
   const next = { ...current, ...patch };
   await run(
-    `INSERT INTO agent (guild_id, channel_id, quiet_minutes, max_per_hour, react_emoji, react_images, busy_mute, cooldown_seconds, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO agent (guild_id, channel_id, gallery_channel_id, quiet_minutes, max_per_hour, react_emoji, react_images, busy_mute, cooldown_seconds, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (guild_id) DO UPDATE SET
        channel_id = excluded.channel_id,
+       gallery_channel_id = excluded.gallery_channel_id,
        quiet_minutes = excluded.quiet_minutes,
        max_per_hour = excluded.max_per_hour,
        react_emoji = excluded.react_emoji,
@@ -670,6 +677,7 @@ export async function saveAgentSettings(
     [
       guildId,
       next.channelId,
+      next.galleryChannelId,
       next.quietMinutes,
       next.maxPerHour,
       next.reactEmoji ? 1 : 0,
@@ -793,6 +801,85 @@ export async function saveWelcomeSettings(
       next.style,
       next.example,
       next.includeAvatar ? 1 : 0,
+      Date.now(),
+    ],
+  );
+}
+
+/** Pengaturan salam perpisahan. `enabled` false = tidak mengirim apa pun. */
+export interface GoodbyeSettings {
+  guildId: string;
+  /** null = kirim ke channel default (member sudah keluar, DM tidak mungkin). */
+  channelId: string | null;
+  enabled: boolean;
+  useAi: boolean;
+  template: string | null;
+  style: string | null;
+  example: string | null;
+  updatedAt: number;
+}
+
+interface GoodbyeRow {
+  guild_id: string;
+  channel_id: string | null;
+  enabled: number | boolean;
+  use_ai: number | boolean;
+  template: string | null;
+  style: string | null;
+  example: string | null;
+  updated_at: number;
+}
+
+export const GOODBYE_DEFAULTS = {
+  channelId: null,
+  enabled: false,
+  useAi: true,
+  template: null,
+  style: null,
+  example: null,
+} as const;
+
+export async function getGoodbyeSettings(guildId: string): Promise<GoodbyeSettings> {
+  const row = await get<GoodbyeRow>('SELECT * FROM goodbye WHERE guild_id = ?', [guildId]);
+  if (!row) return { guildId, ...GOODBYE_DEFAULTS, updatedAt: 0 };
+
+  return {
+    guildId: row.guild_id,
+    channelId: row.channel_id?.trim() || null,
+    enabled: Boolean(row.enabled),
+    useAi: Boolean(row.use_ai),
+    template: row.template,
+    style: row.style,
+    example: row.example,
+    updatedAt: Number(row.updated_at),
+  };
+}
+
+export async function saveGoodbyeSettings(
+  guildId: string,
+  patch: Partial<Omit<GoodbyeSettings, 'guildId' | 'updatedAt'>>,
+): Promise<void> {
+  const current = await getGoodbyeSettings(guildId);
+  const next = { ...current, ...patch };
+  await run(
+    `INSERT INTO goodbye (guild_id, channel_id, enabled, use_ai, template, style, example, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (guild_id) DO UPDATE SET
+       channel_id = excluded.channel_id,
+       enabled = excluded.enabled,
+       use_ai = excluded.use_ai,
+       template = excluded.template,
+       style = excluded.style,
+       example = excluded.example,
+       updated_at = excluded.updated_at`,
+    [
+      guildId,
+      next.channelId,
+      next.enabled ? 1 : 0,
+      next.useAi ? 1 : 0,
+      next.template,
+      next.style,
+      next.example,
       Date.now(),
     ],
   );

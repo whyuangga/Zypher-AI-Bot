@@ -913,10 +913,10 @@ async function saveFeatureToggles() {
 export { SHARED_JS };
 
 /* ------------------------------------------------------------------ */
-/*  Sambutan & AI Agent                                                */
+/*  Sambutan & perpisahan                                              */
 /* ------------------------------------------------------------------ */
 
-export interface SambutanOptions extends PageContext {
+export interface WelcomePageOptions extends PageContext {
   welcome: {
     enabled: boolean;
     useAi: boolean;
@@ -927,20 +927,19 @@ export interface SambutanOptions extends PageContext {
     style: string | null;
     example: string | null;
   };
-  agent: {
+  goodbye: {
+    enabled: boolean;
+    useAi: boolean;
     channelId: string | null;
-    quietMinutes: number;
-    maxPerHour: number;
-    reactEmoji: boolean;
-    reactImages: boolean;
-    busyMute: boolean;
-    cooldownSeconds: number;
+    template: string | null;
+    style: string | null;
+    example: string | null;
   };
   channels: Array<{ id: string; name: string }>;
   botOnline: boolean;
 }
 
-/** Opsi channel: kosong = DM / fitur mati. */
+/** Opsi channel: nilai kosong dipakai untuk "mati" atau "DM". */
 function channelOptions(
   channels: Array<{ id: string; name: string }>,
   selected: string | null,
@@ -952,23 +951,25 @@ function channelOptions(
       `<option value="${esc(channel.id)}"${channel.id === selected ? ' selected' : ''}>#${esc(channel.name)}</option>`,
     );
   }
-  // Channel yang tersimpan tapi tidak ada di cache (bot offline) tetap ditampilkan.
+  // Channel yang tersimpan tapi tidak ada di cache (bot offline) tetap tampil.
   if (selected && !channels.some((channel) => channel.id === selected)) {
     options.push(`<option value="${esc(selected)}" selected>#${esc(selected)}</option>`);
   }
   return options.join('');
 }
 
-export function sambutanPage(options: SambutanOptions): string {
+const CHECK_ROW = 'style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-2)"';
+
+export function welcomePage(options: WelcomePageOptions): string {
   const welcomeStatus = options.welcome.enabled ? badge('Aktif', 'ok') : badge('Nonaktif', 'warn');
-  const agentStatus = options.agent.channelId ? badge('Aktif', 'ok') : badge('Nonaktif', 'warn');
+  const goodbyeStatus = options.goodbye.enabled ? badge('Aktif', 'ok') : badge('Nonaktif', 'warn');
 
   const welcomeCard = card({
     title: 'Sambutan member baru',
     hint: 'satu pesan per member baru',
     right: welcomeStatus,
     body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
-  <label class="check-row" style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-2)">
+  <label class="check-row" ${CHECK_ROW}>
     <input type="checkbox" id="welcomeEnabled" ${options.welcome.enabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
     <span>Sapa setiap member yang baru bergabung</span>
   </label>
@@ -984,7 +985,7 @@ export function sambutanPage(options: SambutanOptions): string {
     <p class="hint">DM lebih sopan dan tidak membanjiri channel. Pilih channel kalau ingin disambut ramai-ramai.</p>
   </div>
 
-  <label class="check-row" style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-2)">
+  <label class="check-row" ${CHECK_ROW}>
     <input type="checkbox" id="welcomeUseAi" ${options.welcome.useAi ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
     <span>Tulis sapaan dengan AI — kalimatnya beda tiap orang</span>
   </label>
@@ -1008,49 +1009,175 @@ export function sambutanPage(options: SambutanOptions): string {
     </div>
   </div>
 
-  <label class="check-row" style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-2)">
+  <label class="check-row" ${CHECK_ROW}>
     <input type="checkbox" id="welcomeImage" ${options.welcome.imageEnabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
     <span>Kirim kartu sambutan (gambar PNG berisi nama &amp; sapaan)</span>
   </label>
-  <label class="check-row" style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-2)">
+  <label class="check-row" ${CHECK_ROW}>
     <input type="checkbox" id="welcomeAvatar" ${options.welcome.includeAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
     <span>Tampilkan avatar member di kartu</span>
   </label>
 
-  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-    <button class="btn-primary" type="button" onclick="saveWelcome()">${icon('check', 16)} Simpan sambutan</button>
-  </div>
+  <div><button class="btn-primary" type="button" onclick="saveWelcome()">${icon('check', 16)} Simpan sambutan</button></div>
 </div>`,
   });
 
-  const agentCard = card({
-    title: 'AI Agent di channel',
-    hint: 'satu channel per server',
-    right: agentStatus,
+  const goodbyeCard = card({
+    title: 'Salam perpisahan',
+    hint: 'saat member keluar',
+    right: goodbyeStatus,
     body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
-  <div class="notice">${icon('alert', 16)}<span>Di channel ini AI membalas <b>di depan semua orang</b>. Percakapan pribadi tetap hanya di DM. Sebaiknya sediakan channel khusus seperti <code>#ngobrol-ai</code>.</span></div>
+  <label class="check-row" ${CHECK_ROW}>
+    <input type="checkbox" id="goodbyeEnabled" ${options.goodbye.enabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Kirim salam saat ada member keluar</span>
+  </label>
+
+  <div class="notice">${icon('alert', 16)}<span>Member yang keluar tidak bisa dikirimi DM. Pilih channel — kalau kosong, salam tidak dikirim (lebih baik diam daripada menulis ke channel acak).</span></div>
 
   <div>
-    <label class="field" for="agentChannel">Channel tempat AI boleh nimbrung</label>
+    <label class="field" for="goodbyeChannel">Kirim ke</label>
     <span class="select-shell" style="width:100%">
-      <select id="agentChannel" style="width:100%">
-        ${channelOptions(options.channels, options.agent.channelId, 'Mati — AI tidak membalas di channel')}
+      <select id="goodbyeChannel" style="width:100%">
+        ${channelOptions(options.channels, options.goodbye.channelId, 'Belum dipilih — salam tidak dikirim')}
       </select>
       ${icon('chevron', 15)}
     </span>
-    <p class="hint">Channel lain tidak disentuh sama sekali. Membersihkan pilihan ini mematikan fitur.</p>
+  </div>
+
+  <label class="check-row" ${CHECK_ROW}>
+    <input type="checkbox" id="goodbyeUseAi" ${options.goodbye.useAi ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Tulis salam dengan AI</span>
+  </label>
+
+  <div>
+    <label class="field" for="goodbyeTemplate">Template (dipakai kalau AI mati / gagal)</label>
+    <textarea id="goodbyeTemplate" rows="2" placeholder="{user} sudah keluar dari **{server}**. Semoga lancar!">${esc(
+      options.goodbye.template ?? '',
+    )}</textarea>
+    <p class="hint">Nada AI-nya sopan dan tidak menanyakan alasan keluar.</p>
+  </div>
+
+  <div class="grid cols-2-even" style="gap:14px">
+    <div>
+      <label class="field" for="goodbyeStyle">Gaya salam</label>
+      <input type="text" id="goodbyeStyle" value="${esc(options.goodbye.style ?? '')}" placeholder="sopan, hangat, singkat">
+    </div>
+    <div>
+      <label class="field" for="goodbyeExample">Contoh nada</label>
+      <input type="text" id="goodbyeExample" value="${esc(options.goodbye.example ?? '')}" placeholder="Semoga urusannya lancar ya.">
+    </div>
+  </div>
+
+  <div><button class="btn-primary" type="button" onclick="saveGoodbye()">${icon('check', 16)} Simpan salam</button></div>
+</div>`,
+  });
+
+  const body = `${pageHead({
+    kicker: '03 — Kehadiran',
+    title: 'Sambutan & Perpisahan',
+    subtitle: 'Sapa member yang baru datang, dan ucapkan salam saat mereka pamit. Dua-duanya mati secara default.',
+  })}
+<div class="grid cols-2-even mt">${welcomeCard}${goodbyeCard}</div>
+
+<script>
+async function saveWelcome() {
+  await postJson('/api/welcome', {
+    enabled: document.getElementById('welcomeEnabled').checked,
+    channelId: document.getElementById('welcomeChannel').value || null,
+    useAi: document.getElementById('welcomeUseAi').checked,
+    template: document.getElementById('welcomeTemplate').value.trim() || null,
+    style: document.getElementById('welcomeStyle').value.trim() || null,
+    example: document.getElementById('welcomeExample').value.trim() || null,
+    imageEnabled: document.getElementById('welcomeImage').checked,
+    includeAvatar: document.getElementById('welcomeAvatar').checked,
+  }, 'Sambutan disimpan.');
+}
+
+async function saveGoodbye() {
+  await postJson('/api/goodbye', {
+    enabled: document.getElementById('goodbyeEnabled').checked,
+    channelId: document.getElementById('goodbyeChannel').value || null,
+    useAi: document.getElementById('goodbyeUseAi').checked,
+    template: document.getElementById('goodbyeTemplate').value.trim() || null,
+    style: document.getElementById('goodbyeStyle').value.trim() || null,
+    example: document.getElementById('goodbyeExample').value.trim() || null,
+  }, 'Salam perpisahan disimpan.');
+}
+</script>`;
+
+  return appShell({
+    title: 'Sambutan & Perpisahan',
+    guildId: options.guildId,
+    guildName: options.guildName ?? null,
+    active: 'sambutan',
+    body,
+    counts: options.counts,
+    status: options.status,
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/*  AI Agent                                                           */
+/* ------------------------------------------------------------------ */
+
+export interface AgentPageOptions extends PageContext {
+  agent: {
+    channelId: string | null;
+    galleryChannelId: string | null;
+    quietMinutes: number;
+    maxPerHour: number;
+    reactEmoji: boolean;
+    reactImages: boolean;
+    busyMute: boolean;
+    cooldownSeconds: number;
+  };
+  channels: Array<{ id: string; name: string }>;
+  botOnline: boolean;
+}
+
+export function agentPage(options: AgentPageOptions): string {
+  const active = Boolean(options.agent.channelId || options.agent.galleryChannelId);
+  const agentStatus = active ? badge('Aktif', 'ok') : badge('Nonaktif', 'warn');
+
+  const channelsCard = card({
+    title: 'Channel AI',
+    hint: 'dua channel, dua peran',
+    right: agentStatus,
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+  <div class="notice">${icon('alert', 16)}<span>AI membalas <b>di depan semua orang</b> di channel ini. Itu memang tujuannya — bikin obrolan lebih hidup. Percakapan pribadi tetap hanya di DM.</span></div>
+
+  <div>
+    <label class="field" for="agentChannel">Channel ngobrol</label>
+    <span class="select-shell" style="width:100%">
+      <select id="agentChannel" style="width:100%">
+        ${channelOptions(options.channels, options.agent.channelId, 'Mati — AI tidak ikut ngobrol')}
+      </select>
+      ${icon('chevron', 15)}
+    </span>
+    <p class="hint">Bot nimbrung seperti anggota: balas mention/reply, tanggapi emoji, dan menyapa saat sepi.</p>
+  </div>
+
+  <div>
+    <label class="field" for="agentGallery">Channel galeri</label>
+    <span class="select-shell" style="width:100%">
+      <select id="agentGallery" style="width:100%">
+        ${channelOptions(options.channels, options.agent.galleryChannelId, 'Mati — AI tidak mengomentari foto')}
+      </select>
+      ${icon('chevron', 15)}
+    </span>
+    <p class="hint">Bot hanya menanggapi <b>gambar &amp; video</b> di channel ini — teks biasa diabaikan supaya tidak berisik.</p>
   </div>
 
   <div class="grid cols-2-even" style="gap:14px">
     <div>
       <label class="field" for="agentQuiet">Sapa saat sepi setelah (menit)</label>
       <input type="text" id="agentQuiet" class="mono" inputmode="numeric" value="${options.agent.quietMinutes}">
-      <p class="hint">0 = jangan pernah menyapa duluan.</p>
+      <p class="hint">0 = jangan pernah menyapa duluan. Berlaku di channel ngobrol.</p>
     </div>
     <div>
       <label class="field" for="agentMax">Batas balasan per jam</label>
       <input type="text" id="agentMax" class="mono" inputmode="numeric" value="${options.agent.maxPerHour}">
-      <p class="hint">Pengaman biaya API. 1–60.</p>
+      <p class="hint">Pengaman biaya API, gabungan kedua channel. 1–60.</p>
     </div>
   </div>
 
@@ -1060,17 +1187,17 @@ export function sambutanPage(options: SambutanOptions): string {
     <p class="hint">Supaya bot tidak mendominasi obrolan. 0 = tanpa jeda.</p>
   </div>
 
-  <label class="check-row" style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-2)">
+  <label class="check-row" ${CHECK_ROW}>
     <input type="checkbox" id="agentBusy" ${options.agent.busyMute ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
     <span>Diam saat obrolan sedang ramai (beberapa member aktif bersamaan)</span>
   </label>
-  <label class="check-row" style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-2)">
+  <label class="check-row" ${CHECK_ROW}>
     <input type="checkbox" id="agentEmoji" ${options.agent.reactEmoji ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
     <span>Tanggapi emoji &amp; sticker member</span>
   </label>
-  <label class="check-row" style="display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--text-2)">
+  <label class="check-row" ${CHECK_ROW}>
     <input type="checkbox" id="agentImages" ${options.agent.reactImages ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
-    <span>Tanggapi gambar yang dikirim member (butuh Vision aktif)</span>
+    <span>Komentari gambar &amp; video (butuh Vision aktif)</span>
   </label>
 
   <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
@@ -1080,47 +1207,47 @@ export function sambutanPage(options: SambutanOptions): string {
 </div>`,
   });
 
+  const behaviourCard = card({
+    title: 'Kapan bot membalas',
+    body: `<div class="list">
+  <div class="kv"><span>Di-mention atau dibalas</span><b>Selalu dijawab</b></div>
+  <div class="kv"><span>Satu member ngobrol sendiri</span><b>Dibalas, dengan jeda</b></div>
+  <div class="kv"><span>Beberapa member aktif bersamaan</span><b>Diam — tidak menyela</b></div>
+  <div class="kv"><span>Channel ngobrol sepi</span><b>Menyapa sekali</b></div>
+  <div class="kv"><span>Kiriman foto/video di galeri</span><b>Dikomentari</b></div>
+  <div class="kv"><span>Teks biasa di galeri</span><b>Diabaikan</b></div>
+  <div class="kv"><span>Pesan dari bot lain</span><b>Tidak pernah dibalas</b></div>
+</div>
+<div class="card-pad"><p class="hint" style="margin:0">Riwayat obrolan channel <b>tidak disimpan ke database</b> — hanya di memori bot, dan hilang saat restart. Yang tersimpan permanen cuma ID pesan yang sudah ditanggapi (tanpa teks).</p></div>`,
+  });
+
   const body = `${pageHead({
-    kicker: '03 — Kehadiran',
-    title: 'Sambutan & Agent',
-    subtitle: 'Bot menyapa member baru dan ikut ngobrol di satu channel pilihanmu. Dua-duanya mati secara default.',
+    kicker: '04 — Kehadiran',
+    title: 'AI Agent',
+    subtitle: 'Bot ikut menghidupkan channel ngobrol, dan mengomentari foto di channel galeri.',
   })}
-<div class="grid cols-2-even mt">${welcomeCard}${agentCard}</div>
+<div class="grid cols-2 mt">${channelsCard}${behaviourCard}</div>
 
 <script>
-async function saveWelcome() {
-  const payload = {
-    enabled: document.getElementById('welcomeEnabled').checked,
-    channelId: document.getElementById('welcomeChannel').value || null,
-    useAi: document.getElementById('welcomeUseAi').checked,
-    template: document.getElementById('welcomeTemplate').value.trim() || null,
-    style: document.getElementById('welcomeStyle').value.trim() || null,
-    example: document.getElementById('welcomeExample').value.trim() || null,
-    imageEnabled: document.getElementById('welcomeImage').checked,
-    includeAvatar: document.getElementById('welcomeAvatar').checked,
-  };
-  await postJson('/api/welcome', payload, 'Sambutan disimpan.');
-}
-
 async function saveAgent() {
-  const payload = {
+  await postJson('/api/agent', {
     channelId: document.getElementById('agentChannel').value || null,
+    galleryChannelId: document.getElementById('agentGallery').value || null,
     quietMinutes: Number(document.getElementById('agentQuiet').value) || 0,
     maxPerHour: Number(document.getElementById('agentMax').value) || 6,
     cooldownSeconds: Number(document.getElementById('agentCooldown').value) || 0,
     busyMute: document.getElementById('agentBusy').checked,
     reactEmoji: document.getElementById('agentEmoji').checked,
     reactImages: document.getElementById('agentImages').checked,
-  };
-  await postJson('/api/agent', payload, 'Pengaturan agent disimpan.');
+  }, 'Pengaturan agent disimpan.');
 }
 </script>`;
 
   return appShell({
-    title: 'Sambutan & Agent',
+    title: 'AI Agent',
     guildId: options.guildId,
-    guildName: options.guildName,
-    active: 'sambutan',
+    guildName: options.guildName ?? null,
+    active: 'agent',
     body,
     counts: options.counts,
     status: options.status,

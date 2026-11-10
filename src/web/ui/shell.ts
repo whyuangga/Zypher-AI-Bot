@@ -11,6 +11,7 @@ export type PageKey =
   | 'ringkasan'
   | 'panel'
   | 'sambutan'
+  | 'agent'
   | 'dokumen'
   | 'keyword'
   | 'moderasi'
@@ -31,7 +32,8 @@ export interface ShellOptions {
 const NAV: Array<{ key: PageKey; label: string; href: string; icon: IconName }> = [
   { key: 'ringkasan', label: 'Ringkasan', href: '/', icon: 'home' },
   { key: 'panel', label: 'Panel', href: '/panel', icon: 'sparkles' },
-  { key: 'sambutan', label: 'Sambutan & Agent', href: '/sambutan', icon: 'message' },
+  { key: 'sambutan', label: 'Sambutan', href: '/sambutan', icon: 'users' },
+  { key: 'agent', label: 'AI Agent', href: '/agent', icon: 'message' },
   { key: 'dokumen', label: 'Dokumen RAG', href: '/dokumen', icon: 'book' },
   { key: 'keyword', label: 'Keyword', href: '/keyword', icon: 'tag' },
   { key: 'moderasi', label: 'Moderasi', href: '/moderasi', icon: 'shield' },

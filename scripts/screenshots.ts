@@ -37,7 +37,8 @@ if (!TOKEN) {
 const PAGES: Array<[string, string, string]> = [
   ['ringkasan', '/', 'Ringkasan'],
   ['panel', '/panel', 'Panel'],
-  ['sambutan', '/sambutan', 'Sambutan & Agent'],
+  ['sambutan', '/sambutan', 'Sambutan & Perpisahan'],
+  ['agent', '/agent', 'AI Agent'],
   ['dokumen', '/dokumen', 'Dokumen RAG'],
   ['keyword', '/keyword', 'Keyword'],
   ['moderasi', '/moderasi', 'Moderasi'],

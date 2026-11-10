@@ -30,6 +30,8 @@ import {
   saveAgentSettings,
   getWelcomeSettings,
   saveWelcomeSettings,
+  getGoodbyeSettings,
+  saveGoodbyeSettings,
   listKeywords,
   listMemories,
   listModerationLogs,
@@ -60,7 +62,8 @@ import {
   panelPage,
   pengaturanPage,
   ringkasanPage,
-  sambutanPage,
+  welcomePage,
+  agentPage,
 } from './ui/pages.js';
 import { dbLabel, dialect } from '../db/index.js';
 import { parseLoginLink } from './login-link.js';
@@ -453,9 +456,10 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
 
-  if (path === '/sambutan' && method === 'GET') {
-    const [welcome, agent, guildName] = await Promise.all([
+  if ((path === '/sambutan' || path === '/agent') && method === 'GET') {
+    const [welcome, goodbye, agent, guildName] = await Promise.all([
       getWelcomeSettings(guildId),
+      getGoodbyeSettings(guildId),
       getAgentSettings(guildId),
       getGuildName(guildId),
     ]);
@@ -465,29 +469,57 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     let channels: Array<{ id: string; name: string }> = [];
     if (botClient?.isReady()) {
       channels = await listPanelChannels(botClient, guildId).catch((error: unknown) => {
-        logger.warn(`Sambutan: gagal membaca daftar channel — ${errorMessage(error)}`);
+        logger.warn(`Gagal membaca daftar channel — ${errorMessage(error)}`);
         return [];
       });
+    }
+
+    const status = dashboardStatus();
+    const counts = await navCounts(guildId);
+
+    if (path === '/sambutan') {
+      sendHtml(
+        response,
+        200,
+        welcomePage({
+          guildId,
+          guildName,
+          welcome: {
+            enabled: welcome.enabled,
+            useAi: welcome.useAi,
+            channelId: welcome.channelId,
+            template: welcome.template,
+            imageEnabled: welcome.imageEnabled,
+            includeAvatar: welcome.includeAvatar,
+            style: welcome.style,
+            example: welcome.example,
+          },
+          goodbye: {
+            enabled: goodbye.enabled,
+            useAi: goodbye.useAi,
+            channelId: goodbye.channelId,
+            template: goodbye.template,
+            style: goodbye.style,
+            example: goodbye.example,
+          },
+          channels,
+          botOnline: status.online,
+          status,
+          counts,
+        }),
+      );
+      return;
     }
 
     sendHtml(
       response,
       200,
-      sambutanPage({
+      agentPage({
         guildId,
         guildName,
-        welcome: {
-          enabled: welcome.enabled,
-          useAi: welcome.useAi,
-          channelId: welcome.channelId,
-          template: welcome.template,
-          imageEnabled: welcome.imageEnabled,
-          includeAvatar: welcome.includeAvatar,
-          style: welcome.style,
-          example: welcome.example,
-        },
         agent: {
           channelId: agent.channelId,
+          galleryChannelId: agent.galleryChannelId,
           quietMinutes: agent.quietMinutes,
           maxPerHour: agent.maxPerHour,
           reactEmoji: agent.reactEmoji,
@@ -496,9 +528,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
           cooldownSeconds: agent.cooldownSeconds,
         },
         channels,
-        botOnline: dashboardStatus().online,
-        status: dashboardStatus(),
-        counts: await navCounts(guildId),
+        botOnline: status.online,
+        status,
+        counts,
       }),
     );
     return;
@@ -843,6 +875,12 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     const current = await getWelcomeSettings(guildId);
     const bool = (value: unknown, fallback: boolean): boolean =>
       value === undefined || value === null ? fallback : Boolean(value);
+    /** String opsional: tidak dikirim = pakai nilai lama, dikirim kosong = null. */
+    const optionalText = (key: string, current: string | null, max = 300): string | null => {
+      if (!(key in payload)) return current;
+      const value = typeof payload[key] === 'string' ? (payload[key] as string).trim() : '';
+      return value ? value.slice(0, max) : null;
+    };
 
     await saveWelcomeSettings(guildId, {
       enabled: bool(payload.enabled, current.enabled),
@@ -859,7 +897,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
 
-  if (path === '/api/agent' && method === 'POST') {
+  if (path === '/api/goodbye' && method === 'POST') {
     const raw = await readBody(request, 16 * 1024);
     let payload: Record<string, unknown>;
     try {
@@ -875,6 +913,55 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       return;
     }
 
+    const current = await getGoodbyeSettings(guildId);
+    const bool = (value: unknown, fallback: boolean): boolean =>
+      value === undefined || value === null ? fallback : Boolean(value);
+    /** String opsional: tidak dikirim = pakai nilai lama, dikirim kosong = null. */
+    const optionalText = (key: string, current: string | null, max = 300): string | null => {
+      if (!(key in payload)) return current;
+      const value = typeof payload[key] === 'string' ? (payload[key] as string).trim() : '';
+      return value ? value.slice(0, max) : null;
+    };
+
+    await saveGoodbyeSettings(guildId, {
+      enabled: bool(payload.enabled, current.enabled),
+      channelId: 'channelId' in payload ? channelId || null : current.channelId,
+      useAi: bool(payload.useAi, current.useAi),
+      template: optionalText('template', current.template, 1000),
+      style: optionalText('style', current.style),
+      example: optionalText('example', current.example),
+    });
+
+    sendJson(response, 200, { ok: true, goodbye: await getGoodbyeSettings(guildId) });
+    return;
+  }
+
+  if (path === '/api/agent' && method === 'POST') {
+    const raw = await readBody(request, 16 * 1024);
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      sendJson(response, 400, { error: 'Format JSON tidak valid.' });
+      return;
+    }
+
+    const channelId = typeof payload.channelId === 'string' ? payload.channelId.trim() : '';
+    const galleryChannelId =
+      typeof payload.galleryChannelId === 'string' ? payload.galleryChannelId.trim() : '';
+    for (const value of [channelId, galleryChannelId]) {
+      if (value && !/^\d{17,20}$/.test(value)) {
+        sendJson(response, 400, { error: 'Channel ID tidak valid.' });
+        return;
+      }
+    }
+    // Satu channel tidak boleh dipakai untuk dua peran sekaligus — obrolan
+    // akan menang dan galeri tidak pernah jalan, membingungkan admin.
+    if (channelId && galleryChannelId && channelId === galleryChannelId) {
+      sendJson(response, 400, { error: 'Channel ngobrol dan galeri harus berbeda.' });
+      return;
+    }
+
     const clamp = (value: unknown, min: number, max: number, fallback: number): number => {
       const number = Math.round(Number(value));
       if (!Number.isFinite(number)) return fallback;
@@ -886,9 +973,16 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     const current = await getAgentSettings(guildId);
     const bool = (value: unknown, fallback: boolean): boolean =>
       value === undefined || value === null ? fallback : Boolean(value);
+    /** String opsional: tidak dikirim = pakai nilai lama, dikirim kosong = null. */
+    const optionalText = (key: string, current: string | null, max = 300): string | null => {
+      if (!(key in payload)) return current;
+      const value = typeof payload[key] === 'string' ? (payload[key] as string).trim() : '';
+      return value ? value.slice(0, max) : null;
+    };
 
     await saveAgentSettings(guildId, {
       channelId: channelId || null,
+      galleryChannelId: galleryChannelId || null,
       quietMinutes: clamp(payload.quietMinutes, 0, 1440, current.quietMinutes),
       maxPerHour: clamp(payload.maxPerHour, 1, 60, current.maxPerHour),
       cooldownSeconds: clamp(payload.cooldownSeconds, 0, 3600, current.cooldownSeconds),

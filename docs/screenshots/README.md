@@ -26,8 +26,10 @@ Semua gambar diambil dari build terbaru dengan **data demo**:
 | `ringkasan-mobile.png` | Ringkasan | HP 390px |
 | `panel-desktop.png` | Panel (kirim/hapus panel) | Desktop 1440px |
 | `panel-mobile.png` | Panel | HP 390px |
-| `sambutan-desktop.png` | Sambutan member & AI Agent | Desktop 1440px |
-| `sambutan-mobile.png` | Sambutan & Agent | HP 390px |
+| `sambutan-desktop.png` | Sambutan & perpisahan | Desktop 1440px |
+| `sambutan-mobile.png` | Sambutan & perpisahan | HP 390px |
+| `agent-desktop.png` | AI Agent (channel ngobrol + galeri) | Desktop 1440px |
+| `agent-mobile.png` | AI Agent | HP 390px |
 | `dokumen-desktop.png` | Dokumen RAG (upload PDF/DOCX) | Desktop 1440px |
 | `dokumen-mobile.png` | Dokumen RAG | HP 390px |
 | `keyword-desktop.png` | Keyword template | Desktop 1440px |

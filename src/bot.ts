@@ -9,7 +9,7 @@ import {
 import { config } from './config.js';
 import { closeDatabase } from './db/index.js';
 import { ensureGuild, setGuildName } from './db/repo.js';
-import { onGuildMemberAdd } from './events/guildMemberAdd.js';
+import { onGuildMemberAdd, onGuildMemberRemove } from './events/guildMemberAdd.js';
 import { onInteractionCreate } from './events/interactionCreate.js';
 import { onMessageCreate } from './events/messageCreate.js';
 import { handleQuietChannel, pruneAgentState } from './features/agent.js';
@@ -123,6 +123,11 @@ async function leaveOtherGuilds(client: Client): Promise<void> {
 // Member baru bergabung → sambutan (AI atau template, sesuai pengaturan).
 client.on(Events.GuildMemberAdd, (member) => {
   void onGuildMemberAdd(member);
+});
+
+// Member keluar → salam perpisahan (satu kesatuan dengan sambutan).
+client.on(Events.GuildMemberRemove, (member) => {
+  void onGuildMemberRemove(member);
 });
 
 /**

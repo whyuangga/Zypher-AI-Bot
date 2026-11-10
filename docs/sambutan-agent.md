@@ -1,7 +1,14 @@
-# Sambutan member baru & AI Agent
+# Sambutan, perpisahan & AI Agent
 
-Dua fitur "kehadiran" di dashboard → **Sambutan & Agent**. Keduanya **mati secara
-default** — server lama tidak berubah perilakunya sampai admin menyalakannya.
+Tiga fitur "kehadiran" di dua halaman dashboard:
+
+| Halaman | Isi |
+|---|---|
+| **Sambutan** (`/sambutan`) | Sambutan member baru + salam perpisahan member keluar |
+| **AI Agent** (`/agent`) | Bot nimbrung di channel ngobrol + mengomentari foto di channel galeri |
+
+Semuanya **mati secara default** — server lama tidak berubah perilakunya sampai
+admin menyalakannya.
 
 ---
 
@@ -47,11 +54,45 @@ data URI supaya hasilnya sama di server mana pun.
 
 ---
 
-## 2. AI Agent di satu channel
+## 1b. Salam perpisahan (goodbye)
 
-Di **satu** channel pilihanmu, bot ikut ngobrol seperti anggota komunitas:
-membalas sapaan, menanggapi emoji/sticker, mengomentari gambar, dan sesekali
-menyapa saat channel sepi.
+Kebalikan sambutan: saat member keluar, bot mengucapkan salam. Satu kesatuan
+dengan sambutan, jadi pengaturannya ada di halaman yang sama.
+
+| Pengaturan | Arti |
+|---|---|
+| **Kirim salam saat ada member keluar** | sakelar utama |
+| **Kirim ke** | channel — **wajib dipilih** |
+| **Tulis salam dengan AI** | kalau mati, template dipakai |
+| **Template** | `{user}` → nama panggilan, `{server}` → nama server |
+| **Gaya / contoh nada** | mis. `sopan, hangat, singkat` |
+
+**Kenapa tidak bisa DM?** Member yang keluar sudah tidak berbagi server dengan bot,
+jadi DM tidak mungkin dikirim. Kalau channel belum dipilih, salam **tidak dikirim
+sama sekali** — lebih baik diam daripada menulis ke channel acak.
+
+Nada AI-nya sengaja berbeda dari sambutan: tidak menanyakan alasan keluar, tidak
+menyindir, dan tidak menyebut aturan server. Orang bisa keluar karena masalah
+pribadi; bot tidak perlu mengomentari itu.
+
+---
+
+## 2. AI Agent: channel ngobrol + channel galeri
+
+Agent punya **dua channel** dengan peran berbeda — keduanya opsional, dan bisa
+hanya salah satu yang dipakai:
+
+| Channel | Perilaku bot |
+|---|---|
+| **Channel ngobrol** | Nimbrung seperti anggota: balas mention/reply, tanggapi emoji/sticker, menyapa saat sepi |
+| **Channel galeri** | **Hanya** menanggapi gambar & video. Teks biasa diabaikan |
+
+Pemisahan ini penting: channel galeri biasanya tempat orang memamerkan foto, dan
+kalau bot ikut mengomentari setiap teks di sana hasilnya berisik. Di galeri bot
+mengomentari isi gambarnya (suasana, warna, objek) dengan maksimal 2 kalimat.
+
+> Kalau satu channel diisi di kedua kolom, dashboard menolaknya — supaya tidak ada
+> pengaturan yang diam-diam tidak pernah jalan.
 
 > ⚠️ **Ini satu-satunya tempat AI membalas di depan publik.** Semua channel lain
 > tetap tidak disentuh, dan percakapan pribadi tetap hanya di DM. Dashboard admin
@@ -72,25 +113,30 @@ menyapa saat channel sepi.
 
 | Pengaturan | Default | Arti |
 |---|---|---|
-| **Channel** | *mati* | satu channel; mengosongkannya mematikan fitur |
+| **Channel ngobrol** | *mati* | mengosongkannya mematikan obrolan |
+| **Channel galeri** | *mati* | komentar gambar/video saja |
+| **Batas balasan per jam** | gabungan kedua channel | supaya biaya API tidak meledak kalau dua-duanya aktif |
 | **Sapa saat sepi setelah** | 45 menit | `0` = jangan pernah menyapa duluan |
-| **Batas balasan per jam** | 6 | pengaman biaya API (1–60) |
 | **Jeda minimum antar balasan** | 90 detik | supaya bot tidak mendominasi |
 | **Diam saat ramai** | aktif | dianggap ramai bila ≥2 member bicara dalam 60 detik |
 | **Tanggapi emoji & sticker** | aktif | |
 | **Tanggapi gambar** | aktif | memakai `VISION_MODEL`, dan tetap menghormati toggle Vision |
 
-### Yang tidak pernah disimpan
+### Riwayat percakapan: di memori, bukan database
 
-Riwayat obrolan channel **tidak ditulis ke database**. Bot hanya menyimpan di
-memori proses:
+Supaya obrolan terasa nyambung, bot mengingat **8 giliran percakapan terakhir**
+(pertanyaan member + balasannya) di channel ngobrol.
 
-- waktu balasan terakhir (untuk jeda dan jatah per jam),
-- jejak pesan 10 menit terakhir (untuk menghitung "sedang ramai").
+Riwayat itu **hanya ada di memori bot** dan hilang saat restart. Alasannya: isi
+channel publik memang sudah terbaca siapa saja, tapi menyimpannya permanen berarti
+menumpuk data member tanpa manfaat — dan admin dashboard jadi bisa membacanya
+kembali. Dengan cara ini tidak ada yang tersimpan.
 
-Keduanya hilang saat bot restart. Yang tersimpan permanen hanya
-`agent_reactions` — berisi **ID pesan** dan timestamp, tanpa teks apa pun, supaya
-bot tidak menanggapi pesan yang sama dua kali.
+Konkretnya, di memori hanya ada: waktu balasan terakhir, jejak pesan 10 menit
+terakhir (untuk menghitung "sedang ramai"), dan 8 giliran percakapan tadi.
+
+Yang tersimpan permanen di database hanya `agent_reactions`: **ID pesan** +
+timestamp, tanpa teks apa pun, supaya bot tidak menanggapi pesan yang sama dua kali.
 
 ### Biaya API
 
@@ -102,15 +148,19 @@ dengan sadar; turunkan kalau kuota terasa cepat habis.
 
 ## Menyalakan
 
-1. Buka dashboard → **Sambutan & Agent**.
-2. Pilih channel di kartu **AI Agent** (mis. `#ngobrol-ai`), lalu simpan.
-3. Untuk sambutan: centang **Sapa setiap member baru**, pilih DM atau channel,
-   lalu simpan.
+1. Buka dashboard → **Sambutan**.
+2. Sambutan: centang **Sapa setiap member baru**, pilih DM atau channel, simpan.
+3. Perpisahan: centang **Kirim salam saat ada member keluar**, **pilih channel**
+   (wajib), simpan.
+4. Buka dashboard → **AI Agent**.
+5. Isi **Channel ngobrol** (mis. `#ngobrol-ai`) dan/atau **Channel galeri**
+   (mis. `#galeri`), lalu simpan. Cukup salah satu kalau hanya itu yang dipakai.
 
 **Butuh intent tambahan di Developer Portal** (Discord → Applications → Bot →
 Privileged Gateway Intents):
 
-- **Server Members Intent** — wajib untuk sambutan (`GuildMemberAdd`).
+- **Server Members Intent** — wajib untuk sambutan **dan** perpisahan
+  (`GuildMemberAdd` / `GuildMemberRemove`).
 - **Message Content Intent** — sudah dipakai; wajib untuk agent.
 
 Tanpa Server Members Intent, bot tetap jalan tapi tidak pernah menerima event
@@ -121,8 +171,10 @@ member baru, sehingga sambutan tidak terkirim.
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 161 test, termasuk logika agent & sambutan
+npm run smoke     # 176 test, termasuk logika agent, sambutan & perpisahan
 ```
 
-Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi) dan
-`sambutan:` (template, prompt, kartu, privasi).
+Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),
+`galeri:` (peran channel, tanpa channel ngobrol), `riwayat:` (batas 8 giliran,
+tidak menulis ke database), `sambutan:` dan `goodbye:` (template, prompt, kartu,
+privasi).

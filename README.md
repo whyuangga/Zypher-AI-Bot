@@ -63,8 +63,8 @@ platform Discord yang tidak bisa dilewati bot. Karena itu fitur room/thread diha
 | ⚡ **Streaming jawaban** | Jawaban muncul bertahap (edit pesan tiap ±1,4 detik, menghormati rate limit Discord), bukan menunggu jeda panjang. Otomatis jatuh ke mode non-streaming kalau provider menolaknya. |
 | 💬 **Chat AI** | Konteks percakapan (20 pesan terakhir), jawaban panjang otomatis dipecah ke beberapa pesan. **Multilingual** — otomatis mengikuti bahasa user (Indonesia/Inggris). |
 | 🧠 **Memori jangka panjang** | AI otomatis menyimpan fakta penting lewat *tool calling*, plus perintah manual `/ingat`. Memori dipakai lagi di sesi berikutnya; `/konsolidasi` menggabungkan memori yang berulang. |
-| 👋 **Sambutan member baru** | Sapaan yang **digenerate AI per orang** — pakai nama panggilan + waktu setempat, jadi kalimatnya beda tiap member (bukan template seragam). Bisa disertai **kartu PNG** berisi nama & sapaan. Dikirim lewat DM atau channel pilihan admin. Lihat [docs/sambutan-agent.md](docs/sambutan-agent.md). |
-| 🗣️ **AI Agent di channel** | Di **satu** channel pilihanmu, bot ikut ngobrol seperti anggota komunitas: membalas mention/reply, menanggapi emoji/sticker & gambar, dan menyapa saat channel sepi. **Diam saat obrolan ramai**, dibatasi N balasan per jam, dan riwayatnya **tidak disimpan ke database**. |
+| 👋 **Sambutan & perpisahan** | Sapaan yang **digenerate AI per orang** — pakai nama panggilan + waktu setempat, jadi kalimatnya beda tiap member (bukan template seragam). Bisa disertai **kartu PNG** berisi nama & sapaan, dikirim lewat DM atau channel. Saat member keluar, bot mengucapkan **salam perpisahan** dengan nada sopan. Lihat [docs/sambutan-agent.md](docs/sambutan-agent.md). |
+| 🗣️ **AI Agent di channel** | Di **dua** channel: bot ikut ngobrol seperti anggota komunitas di channel ngobrol (balas mention/reply, tanggapi emoji/sticker, menyapa saat sepi), dan **mengomentari gambar & video** di channel galeri. **Diam saat obrolan ramai**, dibatasi N balasan per jam, dan riwayat obrolannya **hanya di memori** — tidak ditulis ke database. |
 | 🖥️ **Dashboard web** | `/`, `/panel`, `/sambutan`, `/dokumen`, `/keyword`, `/moderasi`, `/pengaturan` — gaya editorial gelap ([pratinjau](docs/screenshots/README.md)), **toggle fitur AI per server** (RAG, Vision, Auto Memory, Chat khusus admin, Suara balasan AI). Sidebar kiri, grafik aktivitas 7 hari, kartu statistik per server. Nama server tampil di topbar (bukan ID mentah), dan panel "Chat via DM" bisa dikirim, dipindah, atau dimatikan dari `/panel`. **Dashboard tidak menyimpan isi percakapan maupun memori member.** |
 | 📚 **Dokumen RAG** | Upload `.txt`/`.md`/`.csv`/`.json`/`.pdf`/`.docx` (maks 8 MB) lewat `/dokumen tambah` atau dashboard. AI menjawab dari isi dokumen dan menyebut sumbernya (`📚 Sumber: faq.md — bagian 3`). Pencarian BM25 bawaan — **tanpa API key tambahan**. |
 | 🔑 **Keyword kustom** | Admin menulis jawaban acuan; AI memakainya sebagai **fakta** dan menyusun ulang kalimatnya agar **bervariasi setiap kali** (bukan copy-paste). |
@@ -314,14 +314,19 @@ Lampiran di DM: **gambar** (JPG/PNG/WebP) dibaca AI bila `VISION_ENABLED=true`,
 Tombol di panel server: **Chat via DM** (mengirim DM pembuka) dan **Cara Kerja**.
 Tidak ada channel/thread yang dibuat — tidak ada yang bisa dibaca admin.
 
-### Sambutan & AI Agent (tanpa command)
+### Sambutan, perpisahan & AI Agent (tanpa command)
 
-Dua fitur ini diatur **dari dashboard** → **Sambutan & Agent**, bukan lewat slash command:
+Fitur-fitur ini diatur **dari dashboard**, bukan lewat slash command:
 
-- **Sambutan** — bot menyapa member baru (AI, template, atau keduanya) dengan
-  kartu PNG opsional. Default mati.
-- **AI Agent** — bot ikut ngobrol di satu channel. Default mati, perlu memilih
-  channel dulu. Bot diam saat obrolan ramai dan dibatasi per jam.
+- **Sambutan** (`/sambutan`) — bot menyapa member baru (AI, template, atau
+  keduanya) dengan kartu PNG opsional.
+- **Salam perpisahan** (`/sambutan`, kartu kedua) — ucapan saat member keluar.
+  Wajib memilih channel; tanpa channel salam tidak dikirim.
+- **AI Agent** (`/agent`) — bot ikut menghidupkan obrolan di **channel ngobrol**,
+  dan mengomentari **gambar/video di channel galeri**. Bot diam saat obrolan
+  ramai dan dibatasi per jam.
+
+Semua default mati.
 
 Panduan lengkap: **[docs/sambutan-agent.md](docs/sambutan-agent.md)**.
 

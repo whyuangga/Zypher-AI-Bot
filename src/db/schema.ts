@@ -107,8 +107,11 @@ CREATE INDEX IF NOT EXISTS idx_mod_logs_guild ON mod_logs (guild_id, created_at 
 -- ---------- AI Agent: nimbrung di satu channel publik ----------
 -- channel_id NULL = fitur mati. Satu channel per server, sama seperti panel.
 CREATE TABLE IF NOT EXISTS agent (
-  guild_id         TEXT PRIMARY KEY,
-  channel_id       TEXT,
+  guild_id           TEXT PRIMARY KEY,
+  -- channel utama untuk ngobrol
+  channel_id         TEXT,
+  -- channel galeri: komentar gambar/video + reaksi saja
+  gallery_channel_id TEXT,
   quiet_minutes    INTEGER NOT NULL DEFAULT 45,
   max_per_hour     INTEGER NOT NULL DEFAULT 6,
   react_emoji      INTEGER NOT NULL DEFAULT 1,
@@ -123,6 +126,34 @@ CREATE TABLE IF NOT EXISTS agent (
 CREATE TABLE IF NOT EXISTS agent_reactions (
   message_id TEXT PRIMARY KEY,
   created_at INTEGER NOT NULL
+);
+
+-- ---------- Salam perpisahan member ----------
+-- Melengkapi sambutan: pesan saat member keluar dengan sopan.
+-- channel_id NULL = DM (kemungkinan gagal, karena member sudah keluar).
+CREATE TABLE IF NOT EXISTS goodbye (
+  guild_id        TEXT PRIMARY KEY,
+  channel_id      TEXT,
+  enabled         INTEGER NOT NULL DEFAULT 0,
+  use_ai          INTEGER NOT NULL DEFAULT 1,
+  template        TEXT,
+  style           TEXT,
+  example         TEXT,
+  updated_at      INTEGER NOT NULL
+);
+
+-- ---------- Salam perpisahan member ----------
+-- Melengkapi sambutan: pesan saat member keluar dengan sopan.
+-- channel_id NULL = DM (kemungkinan gagal, karena member sudah keluar).
+CREATE TABLE IF NOT EXISTS goodbye (
+  guild_id        TEXT PRIMARY KEY,
+  channel_id      TEXT,
+  enabled         INTEGER NOT NULL DEFAULT 0,
+  use_ai          INTEGER NOT NULL DEFAULT 1,
+  template        TEXT,
+  style           TEXT,
+  example         TEXT,
+  updated_at      BIGINT NOT NULL
 );
 
 -- ---------- Sambutan member baru ----------
@@ -257,8 +288,11 @@ CREATE TABLE IF NOT EXISTS mod_logs (
 CREATE INDEX IF NOT EXISTS idx_mod_logs_guild ON mod_logs (guild_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS agent (
-  guild_id         TEXT PRIMARY KEY,
-  channel_id       TEXT,
+  guild_id           TEXT PRIMARY KEY,
+  -- channel utama untuk ngobrol
+  channel_id         TEXT,
+  -- channel galeri: komentar gambar/video + reaksi saja
+  gallery_channel_id TEXT,
   quiet_minutes    INTEGER NOT NULL DEFAULT 45,
   max_per_hour     INTEGER NOT NULL DEFAULT 6,
   react_emoji      INTEGER NOT NULL DEFAULT 1,
