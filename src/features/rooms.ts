@@ -11,7 +11,7 @@ import {
   type TextChannel,
 } from 'discord.js';
 import { config } from '../config.js';
-import { createRoom, deleteRoom, getRoomByUser, insertTranscript, listMemories, clearHistory, type Room } from '../db/repo.js';
+import { createRoom, deleteRoom, getRoomByUser, listMemories, clearHistory, type Room } from '../db/repo.js';
 import { chat } from '../lib/llm.js';
 import { logger, errorMessage } from '../lib/logger.js';
 import { buildTranscriptHtml, transcriptFileName, type TranscriptMessage } from '../lib/transcript.js';
@@ -263,26 +263,8 @@ export async function endAiRoom(interaction: ButtonInteraction, channel: TextCha
   const buffer = Buffer.from(html, 'utf8');
   const stats = `📄 **${messages.length} pesan** • ${memories.length} memori • ${Math.max(1, Math.round((endedAt.getTime() - startedAt.getTime()) / 60000))} menit`;
 
-  // Arsipkan dulu ke database supaya dashboard punya riwayat transkrip,
-  // apa pun hasil pengiriman file ke user/ channel arsip di bawah.
-  try {
-    await insertTranscript({
-      guildId: guild.id,
-      channelId: channel.id,
-      channelName: channel.name,
-      userId: room.userId,
-      userName,
-      fileName,
-      summary,
-      messageCount: messages.length,
-      memoryCount: memories.length,
-      html,
-      createdAt: endedAt.getTime(),
-    });
-  } catch (error) {
-    logger.warn('Gagal menyimpan transkrip ke database dashboard', errorMessage(error));
-  }
-
+  // Transkrip TIDAK disimpan di database. Satu-satunya tujuan adalah DM user,
+  // supaya admin server tidak bisa membaca percakapan member dari dashboard.
   let dmSent = false;
   if (user) {
     try {
@@ -300,43 +282,18 @@ export async function endAiRoom(interaction: ButtonInteraction, channel: TextCha
       });
       dmSent = true;
     } catch {
-      logger.warn(`Tidak bisa DM ${userName} (DM ditutup). Transkrip dikirim ke channel arsip saja.`);
+      logger.warn(`Tidak bisa DM ${userName} (DM ditutup). Transkrip dikirim ke room sebagai lampiran.`);
     }
   }
 
-  let archiveSent = false;
-  if (config.ids.transcriptChannel) {
-    const archive = await guild.channels.fetch(config.ids.transcriptChannel).catch(() => null);
-    if (archive?.type === ChannelType.GuildText) {
-      archiveSent = await archive
-        .send({
-          content: [
-            `📥 **Sesi AI ditutup** — <@${room.userId}>`,
-            stats,
-            `Room: \`#${channel.name}\` • ${endedAt.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}`,
-            dmSent ? '' : '⚠️ Transkrip tidak terkirim ke DM user (DM ditutup), file dilampirkan di sini.',
-          ]
-            .filter(Boolean)
-            .join('\n'),
-          files: [new AttachmentBuilder(buffer, { name: fileName })],
-          allowedMentions: { parse: [] },
-        })
-        .then(() => true)
-        .catch((error) => {
-          logger.warn('Gagal mengirim transkrip ke channel arsip', errorMessage(error));
-          return false;
-        });
-    }
-  }
-
-  // Jalur darurat: DM tertutup & belum ada channel arsip.
-  // Jangan hapus channel, supaya transkrip tidak hilang begitu saja.
-  if (!dmSent && !archiveSent) {
+  // DM tertutup: jangan hapus channel, supaya transkrip tidak hilang.
+  // File dilampirkan langsung di room — hanya pemilik room & staff yang bisa lihat.
+  if (!dmSent) {
     await deliverFile(channel, fileName, html).catch(() => undefined);
     await channel
       .send({
         content: [
-          '⚠️ Aku tidak bisa mengirim DM ke kamu (DM tertutup), dan channel arsip belum diatur admin.',
+          '⚠️ Aku tidak bisa mengirim DM ke kamu (DM tertutup).',
           'Transkrip aku lampirkan di atas — **unduh dulu**, lalu klik **Akhiri Sesi** lagi kalau sudah membuka DM.',
           'Channel ini sengaja belum dihapus agar percakapanmu tidak hilang.',
         ].join('\n'),

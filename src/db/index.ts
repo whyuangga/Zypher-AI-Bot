@@ -54,6 +54,16 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
       // Kolom sudah ada (SQLite tidak punya IF NOT EXISTS untuk ALTER TABLE).
     }
   }
+
+  // Dashboard tidak lagi menyimpan transkrip percakapan. Tabel lama dihapus
+  // supaya isi percakapan member tidak tertinggal di database setelah upgrade.
+  // Transkrip sekarang hanya dikirim ke DM user (dan tidak diarsipkan).
+  try {
+    await driver.exec('DROP TABLE IF EXISTS transcripts');
+    await driver.exec('DROP INDEX IF EXISTS idx_transcripts_guild');
+  } catch {
+    // Tabel memang belum ada — tidak apa-apa.
+  }
 }
 
 async function initDriver(): Promise<Driver> {

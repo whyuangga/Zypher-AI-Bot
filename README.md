@@ -34,7 +34,7 @@ Chat bebas → AI menjawab, mengingat fakta, memakai keyword admin
 | 📚 **Dokumen RAG** | Upload `.txt`/`.md`/`.csv`/`.json`/`.pdf`/`.docx` (maks 8 MB) lewat `/dokumen tambah` atau dashboard. AI menjawab dari isi dokumen dan menyebut sumbernya (`📚 Sumber: faq.md — bagian 3`). Pencarian BM25 bawaan — **tanpa API key tambahan**. |
 | 🔑 **Keyword kustom** | Admin menulis jawaban acuan; AI memakainya sebagai **fakta** dan menyusun ulang kalimatnya agar **bervariasi setiap kali** (bukan copy-paste). |
 | 🎭 **Persona per server** | Mis. "kamu guru bahasa Inggris yang sabar" — berlaku untuk semua room di server itu. |
-| 📄 **Transkrip sesi** | HTML mandiri (dark mode, rapi, aman dari XSS) berisi percakapan + memori + ringkasan AI. Dikirim ke DM dan/atau channel arsip. |
+| 📄 **Transkrip sesi** | HTML mandiri (dark mode, rapi, aman dari XSS) berisi percakapan + memori + ringkasan AI. **Hanya dikirim ke DM member** — tidak diarsipkan di dashboard. |
 | 🛡️ **Moderasi otomatis** | Filter kata terlarang di semua channel teks: hapus pesan / tegur / timeout. Pola `k0nt0l` tetap tertangkap, staff dikecualikan, semua pelanggaran tercatat di dashboard `/moderasi`. Lihat [docs/moderation.md](docs/moderation.md). |
 | 🖼️ **Vision (gambar)** | Member kirim gambar di room AI → AI membacanya dengan model multimodal. Gambar dikirim sebagai data URI (tanpa storage). Lihat [docs/vision-voice.md](docs/vision-voice.md). |
 | 🎙️ **Voice (STT/TTS)** | Voice note ditranskrip jadi pertanyaan, dan bot bisa membalas dengan pesan suara. Ada `/ucap` untuk mengubah teks jadi audio. **RAG suara di room** — jawaban AI di room otomatis dibacakan (TTS) bila `TTS_REPLY_IN_ROOM=true`. |
@@ -175,7 +175,7 @@ Klik **Buat Room AI** → channel privat muncul → mulai ngobrol.
 | `RATE_LIMIT_PER_MINUTE` | `12` | Batas request AI per user/menit |
 | `MAX_INPUT_CHARS` | `2000` | Panjang pesan user yang diproses |
 | `AI_CATEGORY_ID` | kosong | Kategori tempat room dibuat (kosong = bot buat "AI Lounge") |
-| `TRANSCRIPT_CHANNEL_ID` | kosong | Channel arsip transkrip & ringkasan sesi |
+| `MODLOG_CHANNEL_ID` | kosong | Channel log moderasi (opsional). Transkrip tidak diarsipkan ke sini. |
 | `STAFF_ROLE_ID` | kosong | Role staff yang boleh melihat/menutup room member |
 | `ADMIN_ONLY_ROOMS` | `false` | `true` = hanya admin yang bisa membuat room |
 | `MODERATION_ENABLED` | `false` | Aktifkan filter kata terlarang (bisa juga dari `/moderasi`) — [docs](docs/moderation.md) |
@@ -263,7 +263,7 @@ paling relevan (BM25, digabung embeddings kalau `EMBED_MODEL` diisi), lalu menye
 sebagai **rujukan tertinggi**. Potongan yang berdampingan ikut diambil agar konteks tidak terpotong, dan
 nama dokumen muncul di bawah jawaban. Tidak ada hasil relevan = AI menjawab seperti biasa.
 
-**5. Transkrip** — pesan channel diambil (hingga 600), di-escape, dirender jadi HTML mandiri bertema gelap, ditambah daftar memori dan **ringkasan sesi** dari AI. Dikirim ke DM + channel arsip, lalu channel dihapus.
+**5. Transkrip** — pesan channel diambil (hingga 600), di-escape, dirender jadi HTML mandiri bertema gelap, ditambah daftar memori dan **ringkasan sesi** dari AI. Dikirim ke **DM member saja** (tidak disimpan di database, tidak ke channel arsip), lalu channel dihapus.
 
 **6. Streaming** — jawaban dikirim lewat SSE dari provider, ditampung, lalu `DiscordStreamer`
 meng-edit pesan berkala (±1,4 detik, di bawah batas edit Discord) dan menyelesaikan sisanya sebagai
@@ -374,7 +374,7 @@ diterima bertahap**, dan **tool call yang datang sebagai delta tetap terangkai u
 | Slash command tidak muncul | Isi `DEV_GUILD_ID` (instan), atau tunggu hingga 1 jam untuk command global. Pastikan undangan memakai scope `applications.commands`. |
 | Bot diam saja di room | **Message Content Intent** belum aktif di Developer Portal → Bot. |
 | `Gagal membuat room AI` + permission | Bot butuh **Manage Channels**; taruh role bot di atas role lain yang relevan. |
-| Transkrip tidak masuk DM | User menutup DM. Set `TRANSCRIPT_CHANNEL_ID` sebagai arsip; bot juga tidak akan menghapus channel agar transkrip tidak hilang. |
+| Transkrip tidak masuk DM | User menutup DM. Bot **tidak** mengarsipkan transkrip di mana pun — file dilampirkan di room dan channel tidak dihapus agar member bisa mengunduhnya sendiri. |
 | `AI_API_KEY wajib diisi` padahal sudah diisi | Key Groq tertaruh di `GROQ_API_KEY`. Saat Groq utama, taruh di `AI_API_KEY` — lihat [docs/setup.md](docs/setup.md). |
 | `API key AI ditolak` | `AI_API_KEY` salah/kedaluwarsa di `.env`. Jalankan `npm run doctor` untuk memastikan provider mana yang bermasalah. |
 | `Kuota AI sedang penuh` | Rate limit provider tercapai — turunkan `RATE_LIMIT_PER_MINUTE`, atau isi `AI_FALLBACKS` agar otomatis pindah provider. |

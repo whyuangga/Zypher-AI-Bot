@@ -11,7 +11,7 @@ import { normalize } from '../lib/text.js';
  *   pernah mengaturnya, dipakai nilai dari `.env` sebagai cadangan.
  * - Staff (role `STAFF_ROLE_ID` atau izin Manage Messages) tidak terkena filter.
  * - Setiap tindakan dicatat ke tabel `mod_logs` dan dikirim ke channel log
- *   (`TRANSCRIPT_CHANNEL_ID`) bila tersedia.
+ *   (`MODLOG_CHANNEL_ID`) bila tersedia.
  */
 
 export interface EffectiveModeration {
@@ -217,7 +217,7 @@ async function logAction(
     logger.error('Moderasi: gagal menyimpan log', errorMessage(error));
   }
 
-  const logChannelId = config.ids.transcriptChannel;
+  const logChannelId = config.ids.modLogChannel;
   if (!logChannelId) return;
 
   const channel = message.guild?.channels.cache.get(logChannelId);

@@ -76,7 +76,7 @@ tanda baca jadi spasi, dan substitusi umum (`4→a`, `0→o`, `1→i`, `3→e`, 
 Setiap pelanggaran dicatat ke tabel `mod_logs` dan tampil di dashboard `/moderasi`:
 pelaku, kata yang cocok, cuplikan pesan (maks 500 karakter), tindakan, waktu.
 
-Kalau `TRANSCRIPT_CHANNEL_ID` diisi, ringkasannya juga dikirim ke channel itu:
+Kalau `MODLOG_CHANNEL_ID` diisi, ringkasannya juga dikirim ke channel itu:
 
 ```
 🛡️ Moderasi · timeout 30 menit

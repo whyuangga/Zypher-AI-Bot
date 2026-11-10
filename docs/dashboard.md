@@ -8,12 +8,10 @@ Yang bisa dilakukan:
 
 | Halaman | Isi |
 |---|---|
-| `/` | 4 kartu statistik, **grafik aktivitas 7 hari**, status sistem, room terbaru, dokumen terbaru |
+| `/` | 3 kartu statistik, **grafik aktivitas 7 hari**, status sistem, room terbaru, dokumen terbaru |
 | `/panel` | Kelola panel "Buat Room AI": kirim ke satu channel, ganti channel, hapus, atau matikan tombolnya |
 | `/dokumen` | Upload dokumen RAG (file atau tempel teks), daftar dokumen, hapus dokumen, **uji pencarian** |
 | `/keyword` | Tambah & hapus template jawaban owner (FAQ, harga, aturan) |
-| `/memori` | Fakta yang diingat AI per user, dikelompokkan per member, bisa dihapus + **konsolidasi AI** (gabung duplikat, hapus noise) |
-| `/transkrip` | Arsip HTML tiap sesi AI yang sudah ditutup — unduh, lihat ringkasan, hapus |
 | `/moderasi` | Filter kata terlarang per server, tindakan (hapus/tegur/timeout), log pelanggaran |
 | `/pengaturan` | Persona AI & model per server, **toggle fitur AI** (RAG, Vision, Auto Memory, Admin Only Rooms, Suara di room), info server + salin Server ID |
 | `/healthz` | JSON status untuk monitoring (tanpa login) — termasuk engine database |
@@ -132,11 +130,11 @@ Kalau panel menampilkan port tertentu (mis. `25566` di tab Startup/Network), tul
 
 ## Tampilan & navigasi
 
-- **Sidebar** berisi Ringkasan, Panel, Dokumen RAG, Keyword, Memori, Transkrip, Moderasi, Pengaturan,
+- **Sidebar** berisi Ringkasan, Panel, Dokumen RAG, Keyword, Moderasi, Pengaturan,
   dan pintu ke Health check. Di layar HP sidebar jadi menu geser (tombol ☰ di kiri atas).
 - **Topbar** berisi pemilih server, nama server aktif, dan tombol keluar.
 - **Kartu statistik** dan **grafik 7 hari** dihitung per server yang dipilih.
-- Aksi destruktif (hapus dokumen/keyword/memori) memakai dialog konfirmasi, bukan `confirm()` bawaan browser.
+- Aksi destruktif (hapus dokumen/keyword) memakai dialog konfirmasi, bukan `confirm()` bawaan browser.
 - Semua notifikasi muncul sebagai *toast* di kanan bawah.
 
 > Grafik memakai zona waktu **Asia/Jakarta**, jadi batang "Hari ini" mengikuti tanggal WIB — bukan UTC server.
@@ -156,7 +154,7 @@ atas, atau **tempel Server ID** di kotak sebelahnya — berguna untuk bot yang b
 2. server yang sudah punya data di SQLite — room, dokumen, keyword, atau memori.
 
 Jadi database lama tetap tampil walau tabel `guilds`-nya belum pernah terisi. Semua angka di halaman
-Ringkasan (Room AI, Dokumen, Keyword, Memori, Pesan) juga **dihitung per server yang dipilih**, supaya
+Ringkasan (Room AI, Dokumen, Keyword, Pesan) juga **dihitung per server yang dipilih**, supaya
 cocok dengan tabel di bawahnya.
 
 **Nama server:** bot menyimpan nama server Discord ke tabel `guilds` saat login, saat masuk server baru,
@@ -186,26 +184,23 @@ kamu akan terpakai saat member bertanya.
 
 ---
 
-## Riwayat transkrip (`/transkrip`)
+## Transkrip & memori: tidak ada di dashboard
 
-Setiap kali member menekan **Akhiri Sesi**, transkrip HTML-nya bukan cuma dikirim ke DM dan channel
-arsip — salinannya juga disimpan di tabel `transcripts` (SQLite), jadi tetap ada walau file di Discord
-sudah tenggelam atau folder `transcripts/` di panel dibersihkan.
+Demi privasi member, dashboard **tidak** menyimpan dan **tidak** menampilkan:
 
-Halaman `/transkrip` menampilkan: user, channel asal, jumlah pesan, jumlah memori, ukuran file,
-waktu sesi ditutup, cuplikan ringkasan AI, plus tombol **Unduh** dan **Hapus**.
+- **Transkrip percakapan** — tidak ada tabel `transcripts`, tidak ada halaman `/transkrip`,
+  tidak ada endpoint unduhan. Saat member menekan **Akhiri Sesi**, transkrip HTML hanya dikirim
+  ke **DM member**. Kalau DM tertutup, file dilampirkan di room AI dan channel sengaja tidak
+  dihapus supaya member bisa mengunduhnya sendiri.
+- **Memori member** — tidak ada halaman `/memori`, tidak ada API baca/hapus memori, dan tidak ada
+  kartu statistik memori di Ringkasan. Memori tetap berfungsi penuh di Discord (`/ingat`,
+  `/lupakan`, `/memori`, `/konsolidasi`) dan tetap dipakai AI untuk menjawab.
 
-| Endpoint | Fungsi |
-|---|---|
-| `GET /api/transkrip/<id>` | Unduh file HTML sebagai attachment (`content-disposition`) |
-| `DELETE /api/transkrip/<id>` | Hapus satu arsip dari database |
+Admin server tidak bisa membaca isi percakapan atau fakta pribadi member lewat dashboard.
+Database dari versi lama akan otomatis **menghapus tabel `transcripts`** saat bot dijalankan ulang.
 
-Semua endpoint tetap butuh sesi login, dan `<id>` hanya bisa diakses oleh server (guild) pemiliknya.
-Transkrip dikirim sebagai **attachment** dengan `x-content-type-options: nosniff`, jadi isi HTML dari
-member tidak pernah dieksekusi di origin dashboard.
-
-> Ukuran penyimpanan: transkrip ~30–100 KB per sesi. Seribu sesi kira-kira 50 MB, masih aman di
-> disk 1 GB Wispbyte. Hapus arsip lama dari halaman ini kalau mulai menumpuk.
+> Catatan: isi percakapan tetap dibaca AI untuk menjawab, dan tetap disimpan sementara di tabel
+> `messages` per channel room selama sesi berjalan — baris itu dihapus saat sesi berakhir.
 
 ---
 
@@ -259,7 +254,6 @@ Endpoint halaman Panel:
 | `POST /api/panel` `{action:'send',channelId}` | Kirim/kirim ulang panel ke channel itu (panel lama dihapus) |
 | `POST /api/panel` `{action:'remove'}` | Hapus pesan panel dari Discord |
 | `POST /api/panel` `{action:'toggle',enabled}` | Nyalakan/matikan tombol "Buat Room AI" tanpa menyentuh pesannya |
-| `POST /api/memori/consolidate?guild=…&user=…` | AI meninjau memori user, menggabungkan duplikat, menghapus yang tidak berguna |
 
 Penjelasan cara pencocokan kata, pengecualian staff, dan pengiriman log ke channel ada di
 [docs/moderation.md](moderation.md). Perubahan dari dashboard langsung dipakai pada pesan
@@ -283,15 +277,15 @@ Bila belum di-set (default), memakai nilai dari `.env`. Setelah di-set, nilai di
 
 ---
 
-## Konsolidasi memori (dashboard + `/konsolidasi`)
+## Konsolidasi memori (`/konsolidasi`)
 
 AI bisa meninjau memori user secara periodik: menggabungkan fakta yang berulang
 ("Namaku Bagas" × 3 → satu fakta), dan menghapus obrolan basi yang tidak berguna untuk
 percakapan nanti. Di ruang privat (room AI), AI otomatis memanggil ini setelah 40 memori
 terkumpul; admin juga bisa menjalankannya dari dashboard atau slash command:
 
-1. **Dashboard**: buka `/memori` → pilih user → klik **Konsolidasi AI** → konfirmasi.
-2. **Discord**: `/konsolidasi [user]` — bisa dipakai member untuk dirinya sendiri, atau admin untuk member lain.
+**Discord**: `/konsolidasi [user]` — bisa dipakai member untuk dirinya sendiri, atau admin untuk member lain.
+(Dashboard tidak lagi menyediakan konsolidasi, karena isi memori tidak lagi ditampilkan di sana.)
 
 Keamanan: konsolidasi gagal (AI error, output tidak valid) → **tidak menghapus apa pun**. Memori lama
 dihapus hanya setelah AI mengembalikan daftar fakta yang valid.

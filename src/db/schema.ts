@@ -81,23 +81,6 @@ CREATE INDEX IF NOT EXISTS idx_chunks_guild ON chunks (guild_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks (document_id, ordinal);
 
 -- ---------- arsip transkrip room AI ----------
-CREATE TABLE IF NOT EXISTS transcripts (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  guild_id      TEXT NOT NULL,
-  channel_id    TEXT NOT NULL,
-  channel_name  TEXT NOT NULL DEFAULT '',
-  user_id       TEXT NOT NULL,
-  user_name     TEXT NOT NULL,
-  file_name     TEXT NOT NULL,
-  summary       TEXT,
-  message_count INTEGER NOT NULL DEFAULT 0,
-  memory_count  INTEGER NOT NULL DEFAULT 0,
-  size_bytes    INTEGER NOT NULL DEFAULT 0,
-  html          TEXT NOT NULL,
-  created_at    INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_transcripts_guild ON transcripts (guild_id, created_at DESC);
-
 -- ---------- moderasi otomatis ----------
 CREATE TABLE IF NOT EXISTS moderation (
   guild_id        TEXT PRIMARY KEY,
@@ -214,23 +197,6 @@ CREATE TABLE IF NOT EXISTS chunks (
 );
 CREATE INDEX IF NOT EXISTS idx_chunks_guild ON chunks (guild_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks (document_id, ordinal);
-
-CREATE TABLE IF NOT EXISTS transcripts (
-  id            SERIAL PRIMARY KEY,
-  guild_id      TEXT NOT NULL,
-  channel_id    TEXT NOT NULL,
-  channel_name  TEXT NOT NULL DEFAULT '',
-  user_id       TEXT NOT NULL,
-  user_name     TEXT NOT NULL,
-  file_name     TEXT NOT NULL,
-  summary       TEXT,
-  message_count INTEGER NOT NULL DEFAULT 0,
-  memory_count  INTEGER NOT NULL DEFAULT 0,
-  size_bytes    INTEGER NOT NULL DEFAULT 0,
-  html          TEXT NOT NULL,
-  created_at    BIGINT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_transcripts_guild ON transcripts (guild_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS moderation (
   guild_id        TEXT PRIMARY KEY,

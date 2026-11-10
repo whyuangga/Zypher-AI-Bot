@@ -208,37 +208,7 @@ await test('dokumen: insert, chunk, hitung, hapus', async () => {
   assert.equal((await repo.listDocuments(GUILD)).length, 0);
 });
 
-console.log('\nTranskrip & moderasi');
-
-await test('transkrip: simpan, daftar, unduh, hapus', async () => {
-  const id = await repo.insertTranscript({
-    guildId: GUILD,
-    channelId: CHANNEL,
-    channelName: 'room-ai-0001',
-    userId: USER,
-    userName: 'Bagas',
-    fileName: 'transkrip-bagas.html',
-    summary: 'Ringkasan.',
-    messageCount: 10,
-    memoryCount: 1,
-    html: '<!doctype html><html><body>Halo</body></html>',
-    createdAt: 1_700_000_000_000,
-  });
-
-  assert.ok(id > 0);
-  assert.equal(await repo.countTranscripts(GUILD), 1);
-
-  const [item] = await repo.listTranscripts(GUILD);
-  assert.equal(item?.id, id);
-  assert.equal(item?.createdAt, 1_700_000_000_000, 'BIGINT harus jadi number');
-
-  const full = await repo.getTranscript(GUILD, id);
-  assert.match(full?.html ?? '', /<!doctype html>/);
-  assert.equal(await repo.getTranscript('g-lain', id), null);
-
-  assert.equal(await repo.deleteTranscript(GUILD, id), true);
-  assert.equal(await repo.countTranscripts(GUILD), 0);
-});
+console.log('\nModerasi');
 
 await test('moderasi: pengaturan upsert + log', async () => {
   assert.equal(await repo.getModerationSettings(GUILD), null);

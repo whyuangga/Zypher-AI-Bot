@@ -146,7 +146,7 @@ const schema = z.object({
   RATE_LIMIT_PER_MINUTE: numberish(12, 0, 240),
   MAX_INPUT_CHARS: numberish(2000, 100, 6000),
   AI_CATEGORY_ID: optionalId,
-  TRANSCRIPT_CHANNEL_ID: optionalId,
+  MODLOG_CHANNEL_ID: optionalId,
   STAFF_ROLE_ID: optionalId,
   ADMIN_ONLY_ROOMS: booleanish(false),
   // ---------- Moderasi otomatis ----------
@@ -313,7 +313,7 @@ export const config = {
   },
   ids: {
     category: env.AI_CATEGORY_ID,
-    transcriptChannel: env.TRANSCRIPT_CHANNEL_ID,
+    modLogChannel: env.MODLOG_CHANNEL_ID,
     staffRole: env.STAFF_ROLE_ID,
   },
   isDev: Boolean(env.DEV_GUILD_ID),
