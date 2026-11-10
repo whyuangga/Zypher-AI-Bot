@@ -287,9 +287,9 @@ export async function handleRoomMessage(message: Message): Promise<void> {
     const sourceNote = summarizeSources(result.sources);
     await streamer.finish(sourceNote ? `${result.text}\n\n-# ${sourceNote}` : result.text);
 
-    // Balas voice note dengan suara juga, kalau TTS aktif. Gagal TTS tidak boleh
-    // menghapus jawaban teks yang sudah terkirim.
-    if (voice.text) await replyWithSpeech(message, result.text);
+    // Balas dengan suara juga: voice note (selalu) atau semua jawaban room
+    // (TTS_REPLY_IN_ROOM=true). Gagal TTS tidak boleh menghapus jawaban teks.
+    if (voice.text || config.voice.ttsReplyInRoom) await replyWithSpeech(message, result.text);
   } catch (error) {
     logger.error('Gagal menjawab pesan room AI', errorMessage(error));
     const note = `Maaf, ada gangguan: ${errorMessage(error).slice(0, 200)}\nCoba lagi sebentar lagi ya.`;

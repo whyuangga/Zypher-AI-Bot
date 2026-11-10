@@ -84,7 +84,17 @@ Alur voice note:
 Kalau transkrip gagal (kuota habis, format ditolak, file rusak), member melihat alasan
 singkatnya dan percakapan tetap bisa lanjut dengan teks.
 
-### `/ucap` — teks jadi suara
+### Suara di room AI (TTS otomatis)
+
+Bot bisa membalas jawaban AI di room dengan suara — tanpa harus dikirim voice note dulu.
+
+1. Isi `VOICE_ENABLED=true`, `TTS_ENABLED=true`, dan `TTS_REPLY_IN_ROOM=true` di `.env`.
+2. Pastikan bot punya izin **Send Messages** di channel room.
+3. Setiap jawaban AI di room otomatis dibacakan via TTS (Groq PlayAI atau provider OpenAI-compatible).
+
+Batas: teks jawaban dibatasi 4000 karakter (satu pesan audio). Gagal TTS tidak menghapus jawaban teks.
+
+## `/ucap` — teks jadi suara
 
 ```
 /ucap teks:Selamat pagi semuanya, event dimulai jam 8 malam ya

@@ -167,6 +167,8 @@ const schema = z.object({
   TTS_MODEL: z.string().default('playai-tts'),
   TTS_VOICE: z.string().default('Fritz-PlayAI'),
   VOICE_MAX_MB: numberish(20, 1, 25),
+  /** Otomatis membalas jawaban room AI dengan suara (TTS). */
+  TTS_REPLY_IN_ROOM: booleanish(true),
 });
 
 const schemaWithAliases = schema
@@ -300,6 +302,7 @@ export const config = {
     ttsEnabled: env.TTS_ENABLED,
     ttsModel: env.TTS_MODEL,
     ttsVoice: env.TTS_VOICE,
+    ttsReplyInRoom: env.TTS_REPLY_IN_ROOM,
     maxBytes: env.VOICE_MAX_MB * 1024 * 1024,
   },
   features: {

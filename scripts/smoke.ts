@@ -6,12 +6,14 @@
  */
 process.env.DISCORD_TOKEN = 'smoke-test-token-0000000000000000';
 process.env.CLIENT_ID = '123456789012345678';
+process.env.VOICE_ENABLED = 'true';
 process.env.AI_API_KEY = 'smoke-test-key-0000';
 process.env.DATABASE_PATH = ':memory:';
 process.env.AI_FALLBACKS = 'gemini:gemini-3.8-flash,openrouter:google/gemma-4-31b-it:free';
 process.env.GEMINI_API_KEY = 'smoke-gemini-key';
 
 import assert from 'node:assert/strict';
+
 
 const { addMemory, listMemories, deleteMemory, clearMemories, addKeyword, listKeywords, deleteKeyword } = await import(
   '../src/db/repo.js'
@@ -64,6 +66,8 @@ const {
   buildKnowledgeBlock,
   summarizeSources,
 } = await import('../src/features/rag.js');
+
+const { config } = await import('../src/config.js');
 
 let passed = 0;
 async function testAsync(name: string, fn: () => Promise<void>): Promise<void> {
@@ -984,6 +988,18 @@ await testAsync('publishPanel mengirim panel & menghapus panel lama', async () =
     () => publishPanel({ isReady: () => false } as unknown as Parameters<typeof publishPanel>[0], guild, '1400000000000000002'),
     (error: unknown) => error instanceof PanelError && /offline/i.test(error.message),
   );
+});
+
+console.log('\nSuara di room (TTS_REPLY_IN_ROOM)');
+test('config voice.ttsReplyInRoom default true', () => {
+  // Smoke env tidak setting TTS_REPLY_IN_ROOM → default harus true.
+  assert.equal(config.voice.ttsReplyInRoom, true);
+});
+test('config voice.ttsEnabled default true', () => {
+  assert.equal(config.voice.ttsEnabled, true);
+});
+test('config voice.sttModel default whisper-large-v3', () => {
+  assert.equal(config.voice.sttModel, 'whisper-large-v3');
 });
 
 console.log('\nVision & voice');
