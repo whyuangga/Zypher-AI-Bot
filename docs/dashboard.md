@@ -145,29 +145,24 @@ Kalau panel menampilkan port tertentu (mis. `25566` di tab Startup/Network), tul
 
 ---
 
-## Pilih server
+## Server yang dikelola
 
-Dashboard menampilkan satu server pada satu waktu (query `?guild=<id>`). Pilih dari dropdown di kanan
-atas, atau **tempel Server ID** di kotak sebelahnya — berguna untuk bot yang belum pernah join server
-(database masih kosong).
+Bot ini untuk **satu server**, jadi dashboard tidak punya pemilih server: yang tampil
+selalu server yang ID-nya diisi di `GUILD_ID`. Badge di topbar menampilkan **nama server**
+(bukan ID mentah) plus ID-nya sebagai detail.
 
-**Daftar server di dropdown datang dari dua sumber:**
+Semua angka di halaman Ringkasan (Sesi DM, Dokumen, Keyword, Pesan) dihitung untuk server
+itu saja, supaya cocok dengan tabel di bawahnya.
 
-1. server yang di-join bot (didaftarkan otomatis saat login, tiap kali bot masuk server baru, dan saat
-   sesi DM pertama memakai server itu sebagai konteks);
-2. server yang sudah punya data di SQLite — sesi DM, dokumen, keyword, atau memori.
+Nama server disimpan ke tabel `guilds` saat bot login dan saat server di-rename. Kalau bot
+belum pernah jalan (mode dashboard-saja), badge menampilkan `Server 577090` — enam digit
+terakhir ID — sampai bot dijalankan sekali.
 
-Jadi database lama tetap tampil walau tabel `guilds`-nya belum pernah terisi. Semua angka di halaman
-Ringkasan (Sesi DM, Dokumen, Keyword, Pesan) juga **dihitung per server yang dipilih**, supaya
-cocok dengan tabel di bawahnya.
+Cara mendapatkan Server ID: Discord → Server Settings → Widget, atau klik kanan server
+(mode developer) → *Copy Server ID*.
 
-**Nama server:** bot menyimpan nama server Discord ke tabel `guilds` saat login, saat masuk server baru,
-dan saat server di-rename — jadi dropdown menampilkan nama, bukan deretan angka. Server yang belum
-pernah dilihat bot (mis. Anda hanya membuka mode dashboard-saja) tampil sebagai `Server 577090`
-(enam digit terakhir ID) sampai bot dijalankan sekali.
-
-Cara mendapatkan Server ID: Discord → Server Settings → Widget, atau klik kanan server (mode
-developer) → *Copy Server ID*.
+> Mau mengelola server lain? Jalankan instance sendiri: fork repo, lalu isi `GUILD_ID`
+> dengan ID server itu. Satu instance = satu server.
 
 ---
 
@@ -212,9 +207,8 @@ dijalankan ulang, termasuk menghapus riwayat `messages` milik room lama.
 > menjalankan `/akhiri` atau `/reset`.
 
 Setelah `/akhiri`, sesi boleh dimulai lagi langsung dari DM: bot membuat baris `dm_sessions`
-baru memakai server konteks yang tersimpan di **`dm_prefs`** (tabel terpisah yang tidak ikut
-dihapus). Isi `dm_prefs` hanya dua ID dan satu timestamp — tidak ada data percakapan maupun
-memori member di sana.
+baru dengan server dari `GUILD_ID`. Tidak ada lagi pilihan server yang perlu diingat, karena
+bot ini hanya melayani satu server.
 
 ---
 
@@ -298,9 +292,9 @@ Yang **tetap** terlihat admin di dashboard: **jumlah sesi DM** dan **jumlah pesa
 Karena tidak ada channel, dashboard juga menampilkan kolom **Member** (ID member) alih-alih
 ID channel. Riwayat percakapan dihapus dari database saat member menjalankan `/akhiri`.
 
-**Konteks server.** Karena DM tidak terikat satu server, konteks (persona, dokumen RAG, memori)
-dipilih lewat `/server`. Pilihannya disimpan di tabel `dm_sessions`. Kalau member hanya ada di
-satu server, konteks dipilih otomatis saat ia mengetik pesan pertama.
+**Konteks server.** Bot ini untuk satu server, jadi konteks (persona, dokumen RAG, memori)
+selalu milik server `GUILD_ID`. Tidak ada pilihan server yang perlu diatur member; member yang
+bukan anggota server itu ditolak dengan sopan.
 
 ---
 
@@ -415,7 +409,7 @@ dan kosongkan `DASHBOARD_TOKEN`.
 | Login terus gagal | Token salah / ada spasi. Salin ulang dari `.env` tanpa tanda kutip |
 | "Terlalu banyak percobaan" | Tunggu 10 menit, atau restart bot (menghapus hitungan di memori) |
 | Halaman kosong padahal bot punya data | Server ID belum dipilih — tempel Server ID di kanan atas |
-| Server bot tidak muncul di dropdown | Restart bot (daftar server diperbarui saat login) atau tempel Server ID manual |
+| Nama server tampil sebagai `Server 577090` | Bot belum pernah login sejak `GUILD_ID` diisi — jalankan bot sekali supaya namanya tersimpan |
 | Dropdown menampilkan `Server 577090` | Nama server diambil dari Discord saat bot login. Jalankan bot sekali (`npm run dev`) — di mode dashboard-saja nama belum diketahui |
 | Panel tidak bisa dikirim dari dashboard | Halaman Panel butuh bot hidup; mode dashboard-saja hanya bisa menyimpan tombol aktif/nonaktif |
 | Angka berbeda dengan daftar di bawah | Sudah diperbaiki: angka kini per server. Update ke versi terbaru |

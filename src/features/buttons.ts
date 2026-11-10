@@ -6,7 +6,7 @@ import {
 } from 'discord.js';
 import { config } from '../config.js';
 import { getGuildSettings, getPanel } from '../db/repo.js';
-import { chooseContextGuild, dmHelpEphemeral, listGuildChoices, startDmSession } from './dm.js';
+import { dmHelpEphemeral, startDmSession } from './dm.js';
 import { errorMessage, logger } from '../lib/logger.js';
 
 async function resolveMember(interaction: ButtonInteraction): Promise<GuildMember | null> {
@@ -82,41 +82,8 @@ async function handleStartDm(interaction: ButtonInteraction): Promise<void> {
   }
 }
 
-/**
- * Tombol pilihan server di embed `/server` (`dm:server:<guildId>`).
- *
- * Hanya server tempat member benar-benar bergabung yang boleh dipilih —
- * kalau tidak, siapa pun bisa memakai dokumen server yang bukan miliknya.
- */
-async function handleDmServerPick(interaction: ButtonInteraction): Promise<void> {
-  const guildId = interaction.customId.slice('dm:server:'.length);
-  if (!guildId) return;
-
-  const choices = await listGuildChoices(interaction.client, interaction.user.id);
-  const match = choices.find((choice) => choice.id === guildId);
-
-  if (!match) {
-    await interaction.reply({
-      content: 'Server itu tidak ada di daftar keanggotaanmu. Jalankan `/server` untuk melihat pilihan.',
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
-  await chooseContextGuild(interaction.user.id, match.id);
-  await interaction.reply({
-    content: `✅ Konteks sekarang memakai **${match.name}**. Lanjutkan tanya jawab di chat ini ya.`,
-    flags: MessageFlags.Ephemeral,
-  });
-}
-
 /** Router semua button interaction milik bot. */
 export async function handleButton(interaction: ButtonInteraction): Promise<void> {
-  if (interaction.customId.startsWith('dm:server:')) {
-    await handleDmServerPick(interaction);
-    return;
-  }
-
   switch (interaction.customId) {
     case 'dm:start':
       await handleStartDm(interaction);

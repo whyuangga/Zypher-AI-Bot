@@ -15,7 +15,7 @@ import {
   relativeTime,
   statCard,
 } from './base.js';
-import { appShell, guildLabel, pageHead, SHARED_JS, type GuildChoice, type PageKey } from './shell.js';
+import { appShell, guildLabel, pageHead, SHARED_JS, type PageKey } from './shell.js';
 import { STYLE } from './theme.js';
 
 export interface ShellStatus {
@@ -26,7 +26,7 @@ export interface ShellStatus {
 
 export interface PageContext {
   guildId: string;
-  guilds: GuildChoice[];
+  guildName: string | null;
   status: ShellStatus;
   counts?: Partial<Record<PageKey, number>>;
 }
@@ -198,8 +198,8 @@ export function ringkasanPage(data: DashboardData): string {
     kicker: '01 — Ikhtisar',
     title: 'Ringkasan',
     subtitle: `${
-      data.guilds.find((guild) => guild.id === data.guildId)?.name
-        ? `${esc(data.guilds.find((guild) => guild.id === data.guildId)?.name ?? '')} · <span class="mono">${esc(data.guildId)}</span>`
+      data.guildName
+        ? `${esc(data.guildName)} · <span class="mono">${esc(data.guildId)}</span>`
         : `Server <span class="mono">${esc(data.guildId || '—')}</span>`
     } · data langsung dari ${esc(data.storage ?? 'SQLite')} bot`,
     actions: `<a class="btn-primary" href="/dokumen">${icon('upload', 16)} Upload dokumen</a>`,
@@ -208,7 +208,7 @@ ${stats}
 <div class="grid cols-2 mt">${chartCard}${statusCard}</div>
 <div class="grid cols-2 mt">${roomsCard}${docsCard}</div>`;
 
-  return appShell({ title: 'Ringkasan', guildId: data.guildId, guilds: data.guilds, active: 'ringkasan', body, counts: data.counts, status: data.status });
+  return appShell({ title: 'Ringkasan', guildId: data.guildId, guildName: data.guildName, active: 'ringkasan', body, counts: data.counts, status: data.status });
 }
 
 /* ------------------------------------------------------------------ */
@@ -362,7 +362,7 @@ async function togglePanel() {
   return appShell({
     title: 'Panel',
     guildId: options.guildId,
-    guilds: options.guilds,
+    guildName: options.guildName,
     active: 'panel',
     body,
     counts: options.counts,
@@ -590,7 +590,7 @@ async function runSearch() {
   return appShell({
     title: 'Dokumen',
     guildId: options.guildId,
-    guilds: options.guilds,
+    guildName: options.guildName,
     active: 'dokumen',
     body,
     counts: options.counts,
@@ -705,7 +705,7 @@ async function removeKeyword(id, trigger) {
   return appShell({
     title: 'Keyword',
     guildId: options.guildId,
-    guilds: options.guilds,
+    guildName: options.guildName,
     active: 'keyword',
     body,
     counts: options.counts,
@@ -902,7 +902,7 @@ async function saveFeatureToggles() {
   return appShell({
     title: 'Pengaturan',
     guildId: options.guildId,
-    guilds: options.guilds,
+    guildName: options.guildName,
     active: 'pengaturan',
     body,
     counts: options.counts,
@@ -1120,7 +1120,7 @@ async function clearModLogs() {
   return appShell({
     title: 'Moderasi',
     guildId: options.guildId,
-    guilds: options.guilds,
+    guildName: options.guildName,
     active: 'moderasi',
     body,
     counts: options.counts,

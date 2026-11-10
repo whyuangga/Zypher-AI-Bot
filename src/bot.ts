@@ -1,4 +1,11 @@
-import { ActivityType, Client, Events, GatewayIntentBits } from 'discord.js';
+import {
+  ActivityType,
+  Client,
+  Events,
+  GatewayIntentBits,
+  PermissionFlagsBits,
+  type GuildBasedChannel,
+} from 'discord.js';
 import { config } from './config.js';
 import { closeDatabase } from './db/index.js';
 import { ensureGuild, setGuildName } from './db/repo.js';
@@ -20,20 +27,29 @@ const client = new Client({
 });
 
 client.once(Events.ClientReady, async (ready) => {
-  logger.info(`🤖 Login sebagai ${ready.user.tag} (${ready.guilds.cache.size} server)`);
-  markBotOnline(true);
+  const homeId = config.discord.homeGuildId;
+  const home = ready.guilds.cache.get(homeId);
+  logger.info(`🤖 Login sebagai ${ready.user.tag} — server: ${home ? home.name : `GUILD_ID ${homeId} (belum diundang)`}`);
 
-  // Daftarkan semua server ke tabel `guilds` supaya dashboard langsung punya
-  // daftar server yang bisa dipilih, bahkan sebelum ada sesi DM/dokumen.
-  // Nama server ikut disimpan agar dropdown dashboard tidak menampilkan ID mentah.
-  for (const guild of ready.guilds.cache.values()) {
-    try {
-      await ensureGuild(guild.id);
-      await setGuildName(guild.id, guild.name);
-    } catch (error) {
-      logger.warn(`Gagal mendaftarkan server ${guild.id} ke database: ${errorMessage(error)}`);
-    }
+  if (!home) {
+    logger.error(
+      `Bot tidak ada di server GUILD_ID=${homeId}. ` +
+        'Undang bot ke server itu, atau perbaiki GUILD_ID di .env.',
+    );
   }
+
+  // Bot ini untuk satu server: keluarkan diri dari server lain yang tidak sengaja
+  // mengundangnya. Tanpa ini, orang lain bisa memakai bot beserta API key pemilik.
+  await leaveOtherGuilds(ready);
+
+  try {
+    await ensureGuild(homeId);
+    if (home) await setGuildName(homeId, home.name);
+  } catch (error) {
+    logger.warn(`Gagal mendaftarkan server ${homeId} ke database: ${errorMessage(error)}`);
+  }
+
+  markBotOnline(true);
 
   ready.user.setPresence({
     activities: [{ name: '/panel • chat AI via DM', type: ActivityType.Listening }],
@@ -51,13 +67,67 @@ client.on(Events.MessageCreate, (message) => {
   void onMessageCreate(message);
 });
 
-// Bot baru diundang ke server → langsung masuk daftar dashboard.
+/**
+ * Keluarkan bot dari semua server selain `GUILD_ID`.
+ *
+ * Bot ini dirancang untuk satu server: satu token, satu set API key. Kalau
+ * diundang ke server lain, biaya API dan data server itu bercampur — jadi
+ * lebih aman menolak dengan sopan lalu keluar.
+ */
+async function leaveOtherGuilds(client: Client): Promise<void> {
+  const homeId = config.discord.homeGuildId;
+
+  for (const guild of client.guilds.cache.values()) {
+    if (guild.id === homeId) continue;
+
+    logger.warn(`Keluar dari server lain: ${guild.name} (${guild.id}) — bot ini hanya untuk satu server.`);
+
+    // Cari channel tempat bot boleh menulis, supaya alasannya bisa dibaca admin.
+    const me = guild.members.me;
+    const channel = guild.channels.cache.find(
+      (candidate): candidate is GuildBasedChannel & { send: (content: string) => Promise<unknown> } =>
+        Boolean(
+          me &&
+            candidate.isTextBased() &&
+            !candidate.isDMBased() &&
+            candidate.permissionsFor(me)?.has(PermissionFlagsBits.SendMessages),
+        ),
+    );
+
+    if (channel) {
+      await channel
+        .send(
+          [
+            '👋 Bot ini **hanya untuk satu server**.',
+            '',
+            'Kalau ingin memakai versi sendiri: fork repo-nya, pakai API key dan token milikmu,',
+            'lalu isi `GUILD_ID` dengan ID server kamu. Bot akan keluar dari server ini sekarang.',
+          ].join('\n'),
+        )
+        .catch(() => undefined);
+    }
+
+    await guild.leave().catch((error: unknown) => {
+      logger.warn(`Gagal keluar dari server ${guild.id}: ${errorMessage(error)}`);
+    });
+  }
+}
+
+// Bot diundang ke server: kalau bukan server rumah, tolak dengan sopan.
 client.on(Events.GuildCreate, (guild) => {
-  logger.info(`Bergabung ke server baru: ${guild.name} (${guild.id})`);
-  void (async () => {
-    await ensureGuild(guild.id);
-    await setGuildName(guild.id, guild.name);
-  })().catch((error: unknown) => logger.warn(`Gagal mendaftarkan server ${guild.id}: ${errorMessage(error)}`));
+  if (guild.id === config.discord.homeGuildId) {
+    logger.info(`Bergabung ke server rumah: ${guild.name} (${guild.id})`);
+    void (async () => {
+      await ensureGuild(guild.id);
+      await setGuildName(guild.id, guild.name);
+    })().catch((error: unknown) => logger.warn(`Gagal mendaftarkan server ${guild.id}: ${errorMessage(error)}`));
+    return;
+  }
+
+  logger.warn(`Diundang ke server lain: ${guild.name} (${guild.id}) — keluar.`);
+  void leaveOtherGuilds(client).catch((error: unknown) =>
+    logger.warn(`Gagal keluar dari server ${guild.id}: ${errorMessage(error)}`),
+  );
 });
 
 // Server di-rename (atau ikonnya diganti): nama di dashboard ikut diperbarui.

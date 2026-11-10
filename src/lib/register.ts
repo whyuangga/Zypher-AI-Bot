@@ -6,13 +6,13 @@ import { errorMessage, logger } from './logger.js';
 /**
  * Daftarkan slash command.
  *
- * **Global selalu didaftarkan**, bukan hanya saat `DEV_GUILD_ID` kosong.
+ * **Global selalu didaftarkan**.
  * Alasannya: command per-guild (`guild.commands.set`) **tidak pernah muncul di
  * DM bot**. Karena seluruh percakapan AI pindah ke DM, command seperti
- * `/akhiri` dan `/server` wajib ada di scope global.
+ * `/akhiri` wajib ada di scope global.
  *
- * `DEV_GUILD_ID` tetap dipakai supaya command langsung muncul di satu server
- * untuk pengujian, tapi itu tambahan — bukan pengganti.
+ * Command juga didaftarkan di server rumah (`GUILD_ID`) supaya langsung muncul
+ * tanpa menunggu cache global — itu tambahan, bukan pengganti.
  */
 export async function registerCommands(client: Client): Promise<void> {
   const application = client.application;
@@ -34,17 +34,16 @@ export async function registerCommands(client: Client): Promise<void> {
     logger.error('Gagal mendaftarkan slash command global', errorMessage(error));
   }
 
-  // 2. Guild pengembangan — instan, untuk mencoba tanpa menunggu cache global.
-  if (config.discord.devGuildId) {
-    try {
-      const guild = await client.guilds.fetch(config.discord.devGuildId);
-      await guild.commands.set(body);
-      logger.info(`✅ ${body.length} slash command juga didaftarkan di guild "${guild.name}" (instan).`);
-    } catch (error) {
-      logger.warn(
-        `Gagal mendaftarkan command di DEV_GUILD_ID (${config.discord.devGuildId}) — command global tetap jalan.`,
-        errorMessage(error),
-      );
-    }
+  // 2. Server rumah — didaftarkan juga per-guild supaya muncul instan tanpa
+  //    menunggu cache global Discord (bisa sampai 1 jam).
+  try {
+    const guild = await client.guilds.fetch(config.discord.homeGuildId);
+    await guild.commands.set(body);
+    logger.info(`✅ ${body.length} slash command juga didaftarkan di guild "${guild.name}" (instan).`);
+  } catch (error) {
+    logger.warn(
+      `Gagal mendaftarkan command di GUILD_ID (${config.discord.homeGuildId}) — command global tetap jalan.`,
+      errorMessage(error),
+    );
   }
 }

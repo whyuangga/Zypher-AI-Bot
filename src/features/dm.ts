@@ -32,13 +32,11 @@ import {
   clearHistory,
   countHistory,
   deleteDmSession,
-  getDmPrefGuild,
   getDmSession,
   getGuildSettings,
   getHistory,
   listMemories,
   appendMessage,
-  setDmPrefGuild,
   setDmSession,
   touchDmSession,
   type DmSession,
@@ -54,33 +52,36 @@ import { BRAND_COLOR } from './ui.js';
 const rateKey = (userId: string) => `dm:${userId}`;
 
 /**
- * Daftar server (guild) yang bisa dipilih member untuk memulai chat DM.
+ * Server tempat bot ini tinggal — satu bot, satu server.
  *
- * Hanya server yang bot-nya ada, yang member-nya masih anggota, dan yang punya
- * baris di tabel `guilds`/`dm_sessions` (artinya pernah memakai panel).
+ * Bot tidak lagi memilih di antara beberapa server: konteksnya selalu server
+ * yang ID-nya diisi di `GUILD_ID`. Kalau bot tidak ada di server itu (atau
+ * member sudah keluar), pemanggil mendapat `null` dan harus memberi tahu.
  */
-export async function listGuildChoices(client: Client, userId: string): Promise<Array<{ id: string; name: string }>> {
-  const choices: Array<{ id: string; name: string }> = [];
+export function homeGuild(client: Client): Guild | null {
+  return client.guilds.cache.get(config.discord.homeGuildId) ?? null;
+}
 
-  for (const guild of client.guilds.cache.values()) {
-    const member = await guild.members.fetch(userId).catch(() => null);
-    if (!member) continue;
-    choices.push({ id: guild.id, name: guild.name });
-  }
-
-  return choices.sort((a, b) => a.name.localeCompare(b.name));
+/** Versi async: mengambil dari REST bila cache belum terisi. */
+export async function homeGuildAsync(client: Client): Promise<Guild | null> {
+  return client.guilds.fetch(config.discord.homeGuildId).catch(() => null);
 }
 
 /**
- * Tetapkan server konteks untuk member dan ingat pilihannya.
+ * Pastikan member masih anggota server ini, lalu buat/perbarui sesi DM-nya.
  *
- * Selalu dipakai berpasangan: `dm_sessions` bisa hilang saat `/akhiri`, jadi
- * pilihan server disimpan terpisah di `dm_prefs` agar sesi berikutnya tidak
- * diam-diam berpindah ke server lain.
+ * Mengembalikan `null` bila bot tidak ada di server rumah atau member sudah
+ * keluar — pemanggil yang memberi tahu member.
  */
-export async function chooseContextGuild(userId: string, guildId: string): Promise<void> {
-  await setDmSession(userId, guildId, userId);
-  await setDmPrefGuild(userId, guildId);
+export async function openDmSession(client: Client, userId: string): Promise<DmSession | null> {
+  const guild = homeGuild(client);
+  if (!guild) return null;
+
+  const member = await guild.members.fetch(userId).catch(() => null);
+  if (!member) return null;
+
+  await setDmSession(userId, guild.id, userId);
+  return getDmSession(userId);
 }
 
 /** Embed pembuka saat member pertama kali membuka DM ke bot. */
@@ -98,61 +99,15 @@ export function dmWelcomeEmbed(botName: string): EmbedBuilder {
         '',
         '**Cara mulai**',
         '> Tulis pertanyaan apa saja di chat ini — AI langsung menjawab.',
-        '> Pakai `/server` untuk memilih server mana yang konteksnya dipakai',
-        '> (persona, dokumen, dan memori mengikuti server itu).',
         '> Pakai `/akhiri` untuk menutup sesi + menerima transkrip percakapan.',
         '',
         '**Perintah**',
-        '> `/server` · `/akhiri` · `/reset` · `/ingat` · `/memori`',
+        '> `/akhiri` · `/reset` · `/ingat` · `/memori`',
         '',
         '-# Bot tidak menyimpan transkrip di server mana pun. Riwayat percakapan hanya',
         '-# dipakai untuk konteks dan dihapus saat kamu menjalankan `/akhiri`.',
       ].join('\n'),
     );
-}
-
-/** Embed pilihan server saat member punya lebih dari satu server. */
-export function dmServerPickerEmbed(
-  choices: Array<{ id: string; name: string }>,
-  current: DmSession | null,
-): EmbedBuilder {
-  const active = current ? `\n\n**Aktif sekarang:** ${choices.find((c) => c.id === current.guildId)?.name ?? current.guildId}` : '';
-  return new EmbedBuilder()
-    .setColor(BRAND_COLOR)
-    .setTitle('🌐 Pilih server konteks')
-    .setDescription(
-      [
-        '**`/server` bukan perintah untuk membuat channel.** Ini hanya memilih',
-        '**server mana** yang dipakai sebagai sumber konteks AI di DM ini:',
-        '',
-        '> 🎭 **Persona** — gaya bicara yang diatur admin server itu',
-        '> 📚 **Dokumen** — FAQ, aturan, dan catatan yang di-upload ke server itu',
-        '> 🧠 **Memori** — fakta yang kamu simpan lewat `/ingat` di server itu',
-        '',
-        'Chat tetap berjalan di DM ini. Tidak ada channel atau room yang dibuat,',
-        'dan admin server tetap tidak bisa membaca percakapan kita.',
-        '',
-        `**Server yang kamu ikuti (${choices.length}):**`,
-        ...choices.map((choice, index) => `**${index + 1}.** ${choice.name}`),
-        active,
-      ].join('\n'),
-    )
-    .setFooter({ text: 'Klik tombol di bawah, atau /server nama:<nama server>' });
-}
-
-export function dmServerPickerRow(
-  choices: Array<{ id: string; name: string }>,
-): ActionRowBuilder<ButtonBuilder> {
-  const row = new ActionRowBuilder<ButtonBuilder>();
-  for (const [index, choice] of choices.slice(0, 5).entries()) {
-    row.addComponents(
-      new ButtonBuilder()
-        .setCustomId(`dm:server:${choice.id}`)
-        .setLabel(choice.name.slice(0, 80))
-        .setStyle(index === 0 ? ButtonStyle.Primary : ButtonStyle.Secondary),
-    );
-  }
-  return row;
 }
 
 /** Tombol kirim panel di server (tombol "Chat via DM"). */
@@ -204,7 +159,7 @@ export function dmPanelRow(): ActionRowBuilder<ButtonBuilder> {
 export async function startDmSession(user: User, guild: Guild): Promise<boolean> {
   const existing = await getDmSession(user.id);
   if (!existing || existing.guildId !== guild.id) {
-    await chooseContextGuild(user.id, guild.id);
+    await setDmSession(user.id, guild.id, user.id);
   } else {
     await touchDmSession(user.id);
   }
@@ -219,9 +174,8 @@ export async function startDmSession(user: User, guild: Guild): Promise<boolean>
         'Tulis pertanyaanmu langsung di chat ini.',
         '',
         '**Perintah**',
-        '> `/server` — ganti server konteks',
         '> `/akhiri` — tutup sesi + terima transkrip',
-        '> `/reset` — hapus riwayat, mulai topik baru',
+        '> `/reset` — lupakan obrolan lama, mulai topik baru',
         '> `/ingat` · `/memori` — kelola memori',
       ].join('\n'),
     )
@@ -242,46 +196,39 @@ export async function handleDmMessage(message: Message): Promise<void> {
   if (message.channel.type !== ChannelType.DM) return;
 
   const user = message.author;
-  const session = await getDmSession(user.id);
 
-  // Belum punya sesi (mis. baru selesai `/akhiri`): buat sesi baru memakai
-  // server konteks TERAKHIR yang dipilih member, bukan server pertama yang
-  // kebetulan ada di cache bot — dulu itu diam-diam memindahkan konteks AI
-  // (persona, dokumen, memori) ke server lain.
-  let active = session;
-  if (!active) {
-    const choices = await listGuildChoices(message.client, user.id);
-    if (choices.length === 0) {
-      await message
-        .reply({
-          content:
-            'Kamu belum terdaftar di server mana pun yang memakai bot ini. ' +
-            'Masuk ke server dulu, lalu klik tombol **Chat via DM** di panel.',
-        })
-        .catch(() => undefined);
-      return;
-    }
-
-    const preferred = await getDmPrefGuild(user.id);
-    const remembered = preferred ? choices.find((choice) => choice.id === preferred) : undefined;
-    // Kalau member sudah keluar dari server itu, lupakan preferensinya.
-    if (preferred && !remembered) await setDmPrefGuild(user.id, choices[0]!.id);
-
-    await chooseContextGuild(user.id, (remembered ?? choices[0]!).id);
-    active = await getDmSession(user.id);
-  }
-
-  if (!active) return;
-
-  const guild = message.client.guilds.cache.get(active.guildId);
+  // Bot ini untuk SATU server. Server konteks tidak lagi dipilih member:
+  // selalu server yang ID-nya diisi di GUILD_ID.
+  const guild = await homeGuildAsync(message.client);
   if (!guild) {
-    await deleteDmSession(user.id);
     await message
-      .reply({ content: 'Server konteksmu sudah tidak tersedia. Jalankan `/server` untuk memilih server lain.' })
+      .reply({
+        content:
+          'Bot ini hanya melayani satu server, dan server itu tidak bisa ditemukan. ' +
+          'Pastikan `GUILD_ID` di `.env` benar dan bot sudah diundang ke server tersebut.',
+      })
       .catch(() => undefined);
     return;
   }
 
+  // Member harus masih ada di server rumah — kalau tidak, tidak ada konteks resmi
+  // (persona, dokumen, memori) yang boleh dipakai.
+  const member = await guild.members.fetch(user.id).catch(() => null);
+  if (!member) {
+    await message
+      .reply({
+        content: [
+          `Kamu bukan anggota **${guild.name}**, jadi belum bisa memakai bot ini.`,
+          '',
+          'Bot ini memang dibuat untuk satu server. Kalau mau versi sendiri,',
+          'fork repo-nya lalu jalankan dengan `GUILD_ID` dan API key milikmu.',
+        ].join('\n'),
+      })
+      .catch(() => undefined);
+    return;
+  }
+
+  const session = await getDmSession(user.id);
   const raw = message.content.trim();
   if (!raw && message.attachments.size === 0) return;
 
@@ -301,16 +248,14 @@ export async function handleDmMessage(message: Message): Promise<void> {
     return;
   }
 
-  // Sesi baru dibuka otomatis (baru selesai `/akhiri`): beri tahu sekali supaya
-  // member tahu konteks mana yang dipakai — bukan diam-diam memakai server lain.
+  // Sesi baru dibuka otomatis (mis. baru selesai `/akhiri`).
   if (!session) {
-    const label = guild.name ?? active.guildId;
     await message
       .reply({
         content: [
-          `💬 Sesi baru dimulai — konteks **${label}**.`,
+          `💬 Sesi baru dimulai — konteks **${guild.name}**.`,
           'Riwayat sebelumnya sudah dihapus, jadi bot mulai dari nol.',
-          '-# Ganti server konteks dengan `/server`, atau tutup lagi dengan `/akhiri`.',
+          '-# Tutup lagi dengan `/akhiri`, atau mulai topik baru dengan `/reset`.',
         ].join('\n'),
       })
       .catch(() => undefined);
@@ -344,7 +289,7 @@ export async function handleDmMessage(message: Message): Promise<void> {
     const history = config.ai.historyLimit > 0 ? await getHistory(`dm:${user.id}`, config.ai.historyLimit) : [];
 
     const result = await generateDmAnswer({
-      session: active,
+      session: session!,
       guild,
       userName: user.username,
       question,
@@ -520,7 +465,7 @@ export async function dmHelpEphemeral(interaction: ButtonInteraction): Promise<v
     content: [
       '**Cara pakai chat DM**',
       '> Tulis pertanyaan langsung di chat ini.',
-      '> `/server` — pilih server konteks (persona & dokumen)',
+      '> `/reset` — lupakan obrolan lama, mulai topik baru',
       '> `/akhiri` — tutup sesi dan terima transkrip',
       '> `/reset` — hapus riwayat, mulai topik baru',
       '',

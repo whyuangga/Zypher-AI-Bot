@@ -8,6 +8,7 @@
  * Jalankan: npm run smoke:pg
  */
 process.env.DISCORD_TOKEN = 'smoke-test-token-0000000000000000';
+process.env.GUILD_ID = '123456789012345678';
 process.env.CLIENT_ID = '123456789012345678';
 process.env.AI_API_KEY = 'smoke-test-key-0000';
 process.env.DATABASE_URL = 'postgres://smoke:smoke@localhost:5432/smoke';
@@ -89,14 +90,12 @@ await test('guild dibuat sekali (idempotent)', async () => {
   await repo.ensureGuild(GUILD);
   const settings = await repo.getGuildSettings(GUILD);
   assert.equal(settings?.guildId, GUILD);
-  assert.equal((await repo.listGuilds()).some((guild) => guild.id === GUILD), true);
 });
 
-await test('nama server tersimpan & muncul di daftar server', async () => {
+await test('nama server tersimpan & bisa dibaca dashboard', async () => {
   await repo.setGuildName(GUILD, 'Server pg-mem');
   assert.equal((await repo.getGuildSettings(GUILD))?.name, 'Server pg-mem');
-  const listed = (await repo.listGuilds()).find((guild) => guild.id === GUILD);
-  assert.equal(listed?.name, 'Server pg-mem');
+  assert.equal(await repo.getGuildName(GUILD), 'Server pg-mem');
 });
 
 await test('panel: upsert pesan + toggle aktif/nonaktif', async () => {

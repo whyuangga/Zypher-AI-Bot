@@ -30,11 +30,6 @@ export interface GuildSettings {
 }
 
 /** Satu pilihan server di dropdown dashboard. */
-export interface GuildChoice {
-  id: string;
-  name: string | null;
-}
-
 export interface Memory {
   id: number;
   guildId: string;
@@ -444,28 +439,6 @@ export async function deleteDmSession(userId: string): Promise<void> {
   await run('DELETE FROM dm_sessions WHERE user_id = ?', [userId]);
 }
 
-/**
- * Simpan pilihan server konteks member.
- *
- * Terpisah dari `dm_sessions` karena `/akhiri` menghapus sesi — pilihan server
- * harus tetap diingat supaya percakapan berikutnya memakai konteks yang sama,
- * bukan server pertama yang kebetulan ada di cache bot.
- */
-export async function setDmPrefGuild(userId: string, guildId: string): Promise<void> {
-  await run(
-    `INSERT INTO dm_prefs (user_id, guild_id, updated_at)
-     VALUES (?, ?, ?)
-     ON CONFLICT (user_id) DO UPDATE SET guild_id = excluded.guild_id, updated_at = excluded.updated_at`,
-    [userId, guildId, Date.now()],
-  );
-}
-
-/** Server konteks terakhir yang dipilih member (null = belum pernah memilih). */
-export async function getDmPrefGuild(userId: string): Promise<string | null> {
-  const row = await get<{ guild_id: string }>('SELECT guild_id FROM dm_prefs WHERE user_id = ?', [userId]);
-  return row?.guild_id ?? null;
-}
-
 /* ------------------------------------------------------------------ */
 /*  Conversation history                                               */
 /* ------------------------------------------------------------------ */
@@ -597,26 +570,14 @@ export async function countChunks(guildId: string): Promise<number> {
  * padahal data bot jelas ada. UNION membuat data itu tetap muncul.
  */
 /**
- * Server yang punya data + nama tampilannya (bila sudah diketahui bot).
+ * Nama tampilan server (bila bot sudah pernah melihatnya).
  *
- * Dipakai dashboard: dropdown menampilkan nama, bukan ID mentah. Server yang
- * belum pernah dilihat bot (mode dashboard saja) tetap muncul dengan `name: null`
- * supaya datanya tidak "hilang" dari dashboard.
+ * Dashboard hanya mengelola satu server, jadi tidak perlu lagi daftar server —
+ * cukup satu nama untuk ditampilkan di topbar.
  */
-export async function listGuilds(): Promise<GuildChoice[]> {
-  const rows = await all<{ guild_id: string; name: string | null }>(
-    `SELECT ids.guild_id AS guild_id, guilds.name AS name
-     FROM (
-       SELECT guild_id FROM guilds
-       UNION SELECT guild_id FROM dm_sessions
-       UNION SELECT guild_id FROM documents
-       UNION SELECT guild_id FROM keywords
-       UNION SELECT guild_id FROM memories
-     ) AS ids
-     LEFT JOIN guilds ON guilds.guild_id = ids.guild_id
-     ORDER BY ids.guild_id`,
-  );
-  return rows.map((row) => ({ id: row.guild_id, name: row.name?.trim() || null }));
+export async function getGuildName(guildId: string): Promise<string | null> {
+  const row = await get<{ name: string | null }>('SELECT name FROM guilds WHERE guild_id = ?', [guildId]);
+  return row?.name?.trim() || null;
 }
 
 export async function countRows(

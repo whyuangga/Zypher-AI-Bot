@@ -154,7 +154,8 @@ code {
   padding: 13px 40px; border-bottom: 1px solid var(--line);
   background: rgba(13, 13, 15, .94); backdrop-filter: blur(10px);
 }
-.guild-picker { display: flex; align-items: center; gap: 8px; }
+/* Badge server di topbar. Bukan kontrol: bot ini untuk satu server,
+   jadi yang perlu diketahui admin hanya server mana yang sedang dibuka. */
 /* Shell mengikuti lebar <select>, bukan sebaliknya.
    Dulu shell bisa width:100% sementara select dibatasi max-width:260px,
    jadi chevron (position:absolute; right:10px) menempel ke tepi shell —
@@ -167,11 +168,18 @@ code {
   color: var(--text); font-family: var(--font-mono); font-size: 12.5px; letter-spacing: .02em;
 }
 .select-shell select:hover { border-bottom-color: var(--text); }
-.guild-manual { display: flex; gap: 6px; }
-.guild-manual input {
-  width: 168px; padding: 8px 10px; background: transparent; border: 1px solid var(--line);
-  border-radius: var(--r-sm); color: var(--text); font-family: var(--font-mono); font-size: 12px;
+
+.guild-static {
+  display: inline-flex; align-items: center; gap: 9px; min-width: 0;
+  padding: 7px 12px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, .015); color: var(--text);
 }
+.guild-static svg { color: var(--text-3); flex: none; }
+.guild-static > span:not(.guild-static-id) {
+  font-size: 13.5px; font-weight: 500; letter-spacing: -.01em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 34vw;
+}
+.guild-static-id { color: var(--text-3); font-size: 11px; letter-spacing: .02em; }
 .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
 .search { position: relative; display: flex; align-items: center; }
 .search svg { position: absolute; left: 0; color: var(--text-3); }
@@ -555,9 +563,12 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   .backdrop.show { display: block; }
   .burger { display: inline-grid; }
   .topbar { padding: 10px 16px; gap: 10px; }
-  .guild-manual { display: none; }
   .topbar-right .chip { display: none; }
   .select-shell select { min-width: 0; max-width: 52vw; font-size: 11.5px; padding: 7px 26px 7px 0; }
+  /* Di layar sempit ID-nya disembunyikan — nama server sudah cukup. */
+  .guild-static { padding: 6px 10px; gap: 7px; flex: 1; min-width: 0; }
+  .guild-static-id { display: none; }
+  .guild-static > span:not(.guild-static-id) { max-width: 100%; font-size: 12.5px; }
   .content { padding: 26px 16px 96px; }
   h1 { font-size: 33px; }
   .page-head { margin-bottom: 24px; padding-bottom: 16px; gap: 16px; }

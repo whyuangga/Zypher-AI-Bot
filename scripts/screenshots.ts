@@ -27,7 +27,6 @@ import { join } from 'node:path';
 const BASE_URL = process.env.SCREENSHOT_URL ?? `http://127.0.0.1:${process.env.DASHBOARD_PORT ?? 8899}`;
 const TOKEN = process.env.DASHBOARD_TOKEN ?? '';
 const OUT_DIR = process.env.SCREENSHOT_DIR ?? 'docs/screenshots';
-const GUILD = process.env.SCREENSHOT_GUILD ?? '';
 
 if (!TOKEN) {
   console.error('DASHBOARD_TOKEN kosong — isi DASHBOARD_TOKEN (sama dengan yang dipakai dashboard).');
@@ -116,7 +115,8 @@ try {
   console.log(`Login OK — ${page.url()}`);
 
   for (const [slugPath, path, title] of PAGES) {
-    const url = GUILD ? `${BASE_URL}${path}?guild=${GUILD}` : `${BASE_URL}${path}`;
+    // Dashboard hanya punya satu server (GUILD_ID) — tidak ada query ?guild= lagi.
+    const url = `${BASE_URL}${path}`;
 
     for (const [size, width, height] of VIEWPORTS) {
       await page.setViewport({ width, height, deviceScaleFactor: 2 });

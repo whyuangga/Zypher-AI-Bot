@@ -35,13 +35,6 @@ export function helpEmbed(botName: string): EmbedBuilder {
         ].join('\n'),
       },
       {
-        name: '🌐 Konteks server',
-        value: [
-          '`/server` — pilih server konteks (persona, dokumen, memori)',
-          'Bisa dipakai di DM maupun di server',
-        ].join('\n'),
-      },
-      {
         name: '🧠 Memori',
         value: [
           '`/ingat fakta:<teks>` — simpan fakta tentang kamu',

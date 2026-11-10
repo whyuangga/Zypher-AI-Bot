@@ -126,13 +126,14 @@ melewati build karena `tsc` tidak dipasang — memang begitu yang diinginkan: `d
 > |---|---|
 > | `DISCORD_TOKEN` | `DISCORD_BOT_TOKEN` |
 > | `CLIENT_ID` | `DISCORD_CLIENT_ID` |
-> | `DEV_GUILD_ID` | `DISCORD_GUILD_ID` |
+> | `GUILD_ID` | `DEV_GUILD_ID`, `DISCORD_GUILD_ID`, `SERVER_ID` |
 
-Tempel blok ini sekaligus di **Startup → Environment → Tempel**, ganti tiga nilai pertama:
+Tempel blok ini sekaligus di **Startup → Environment → Tempel**, ganti tiga nilai pertama (`GUILD_ID` ikut wajib):
 
 ```env
 DISCORD_TOKEN=ganti-dengan-token-bot
 CLIENT_ID=ganti-dengan-angka-application-id
+GUILD_ID=ganti-dengan-id-server
 AI_API_KEY=ganti-dengan-key-groq
 NODE_OPTIONS=--max-old-space-size=384
 ```
@@ -141,7 +142,7 @@ NODE_OPTIONS=--max-old-space-size=384
 |---|---|
 | `NODE_OPTIONS=--max-old-space-size=384` | Tanpa ini V8 mengambil heap lebih besar dari container 512 MB → proses dibunuh panel padahal RAM-nya cukup |
 | `AI_FALLBACKS` | *(opsional)* mis. `gemini:gemini-3.8-flash` + `GEMINI_API_KEY` |
-| `DEV_GUILD_ID` | *(opsional)* ID server untuk pendaftaran command instan |
+| `GUILD_ID` | **wajib** — ID server tempat bot ini tinggal (bot menolak start tanpa ini) |
 | `DASHBOARD_TOKEN` | *(opsional)* menyalakan dashboard |
 
 **Jangan upload file `.env`** ke folder repo: panel bisa menimpanya saat menarik ulang kode.

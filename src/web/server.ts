@@ -25,7 +25,7 @@ import {
   getModerationSettings,
   getPanel,
   listDocuments,
-  listGuilds,
+  getGuildName,
   listKeywords,
   listMemories,
   listModerationLogs,
@@ -62,7 +62,6 @@ import { parseLoginLink } from './login-link.js';
 import { dashboardStatus } from './status.js';
 
 const SESSION_COOKIE = 'zp_session';
-const GUILD_COOKIE = 'zp_guild';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const LOGIN_WINDOW_MS = 10 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 8;
@@ -272,20 +271,15 @@ function hasSession(request: IncomingMessage): boolean {
   return true;
 }
 
-async function resolveGuild(request: IncomingMessage, url: URL): Promise<string> {
-  // Form header punya dua kolom: dropdown `guild` dan kotak ketik `guild_manual`.
-  // Yang diketik manual menang, supaya ID server yang belum terdaftar di database
-  // tetap bisa dibuka.
-  const manual = url.searchParams.get('guild_manual')?.trim();
-  if (manual) return manual;
-
-  const fromQuery = url.searchParams.get('guild')?.trim();
-  if (fromQuery) return fromQuery;
-
-  const fromCookie = parseCookies(request.headers.cookie)[GUILD_COOKIE];
-  if (fromCookie) return fromCookie;
-
-  return (await listGuilds())[0]?.id ?? '';
+/**
+ * Server yang dikelola dashboard.
+ *
+ * Bot ini untuk satu server, jadi tidak ada lagi pemilih server: nilainya selalu
+ * `GUILD_ID` dari `.env`. Kalau kosong, bot memang tidak pernah sampai ke sini
+ * karena config menolak start.
+ */
+function resolveGuild(): string {
+  return config.discord.homeGuildId;
 }
 
 /* ------------------------------------------------------------------ */
@@ -395,17 +389,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
 
-  let guildId = await resolveGuild(request, url);
-  // Mode dashboard-saja (bot belum pernah join server): izinkan ID dikirim header.
-  if (!guildId) {
-    const header = request.headers['x-guild'];
-    const value = Array.isArray(header) ? header[0] : header;
-    if (value && value.trim()) guildId = value.trim();
-  }
-  const guildCookie = guildId ? `${GUILD_COOKIE}=${encodeURIComponent(guildId)}; Path=/; SameSite=Lax` : undefined;
-  if (url.searchParams.get('guild') && guildCookie) {
-    response.setHeader('set-cookie', guildCookie);
-  }
+  const guildId = resolveGuild();
 
   /* ---------------- halaman ---------------- */
 
@@ -427,7 +411,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       200,
       ringkasanPage({
         guildId,
-        guilds: await listGuilds(),
+        guildName: await getGuildName(guildId),
         // Angka di dashboard harus mencerminkan server yang sedang dipilih.
         // Dulu ini global, jadi user melihat "1 ROOM AI" sementara daftar room
         // di bawahnya kosong — dua bagian halaman seolah saling bertentangan.
@@ -470,7 +454,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       200,
       dokumenPage({
         guildId,
-        guilds: await listGuilds(),
+        guildName: await getGuildName(guildId),
         documents: guildId
           ? (await listDocuments(guildId)).map((document) => ({
               id: document.id,
@@ -495,7 +479,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       200,
       keywordPage({
         guildId,
-        guilds: await listGuilds(),
+        guildName: await getGuildName(guildId),
         keywords: guildId
           ? (await listKeywords(guildId)).map((keyword) => ({
               id: keyword.id,
@@ -518,7 +502,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       200,
       moderasiPage({
         guildId,
-        guilds: await listGuilds(),
+        guildName: await getGuildName(guildId),
         enabled: stored ? stored.enabled : config.moderation.enabled,
         words: stored ? stored.words : config.moderation.words,
         action: stored ? stored.action : config.moderation.action,
@@ -551,7 +535,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       200,
       panelPage({
         guildId,
-        guilds: await listGuilds(),
+        guildName: await getGuildName(guildId),
         enabled: state?.enabled ?? true,
         channelId: state?.channelId ?? null,
         messageId: state?.messageId ?? null,
@@ -572,7 +556,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       200,
       pengaturanPage({
         guildId,
-        guilds: await listGuilds(),
+        guildName: await getGuildName(guildId),
         persona: settings?.persona ?? null,
         model: settings?.model ?? null,
         defaultModel: config.ai.model,

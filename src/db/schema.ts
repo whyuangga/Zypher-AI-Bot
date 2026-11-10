@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS keywords (
 CREATE INDEX IF NOT EXISTS idx_keywords_guild ON keywords (guild_id);
 
 -- ---------- sesi chat DM per member ----------
--- Konteks server (persona, dokumen, memori) dipilih member lewat /server.
+-- Konteks server (persona, dokumen, memori) mengikuti GUILD_ID — bot ini satu server.
 -- Tidak ada channel: percakapan berjalan di DM yang tidak bisa dibaca admin.
 CREATE TABLE IF NOT EXISTS dm_sessions (
   user_id        TEXT PRIMARY KEY,
@@ -46,26 +46,6 @@ CREATE TABLE IF NOT EXISTS dm_sessions (
   created_at     BIGINT NOT NULL,
   last_active_at BIGINT NOT NULL,
   message_count  INTEGER NOT NULL DEFAULT 0
-);
-
--- Preferensi server konteks member. SENGAJA dipisah dari dm_sessions:
--- /akhiri menghapus baris dm_sessions, tapi pilihan server harus tetap diingat
--- supaya member yang lanjut ngobrol tidak diam-diam pindah ke server lain
--- (dulu ia jatuh ke server pertama yang kebetulan ada di cache bot).
-CREATE TABLE IF NOT EXISTS dm_prefs (
-  user_id    TEXT PRIMARY KEY,
-  guild_id   TEXT NOT NULL,
-  updated_at BIGINT NOT NULL
-);
-
--- Preferensi server konteks member. SENGAJA dipisah dari dm_sessions:
--- /akhiri menghapus baris dm_sessions, tapi pilihan server harus tetap diingat
--- supaya member yang lanjut ngobrol tidak diam-diam pindah ke server lain
--- (dulu ia jatuh ke server pertama yang kebetulan ada di cache bot).
-CREATE TABLE IF NOT EXISTS dm_prefs (
-  user_id    TEXT PRIMARY KEY,
-  guild_id   TEXT NOT NULL,
-  updated_at BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -177,7 +157,7 @@ CREATE TABLE IF NOT EXISTS keywords (
 CREATE INDEX IF NOT EXISTS idx_keywords_guild ON keywords (guild_id);
 
 -- ---------- sesi chat DM per member ----------
--- Konteks server (persona, dokumen, memori) dipilih member lewat /server.
+-- Konteks server (persona, dokumen, memori) mengikuti GUILD_ID — bot ini satu server.
 -- Tidak ada channel: percakapan berjalan di DM yang tidak bisa dibaca admin.
 CREATE TABLE IF NOT EXISTS dm_sessions (
   user_id        TEXT PRIMARY KEY,

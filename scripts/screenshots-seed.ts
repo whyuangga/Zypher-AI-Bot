@@ -32,6 +32,8 @@ rmSync(dbPath, { force: true });
 process.env.DASHBOARD_TOKEN ??= 'screenshot-token-0000';
 process.env.DISCORD_TOKEN ??= 'screenshot-standalone-token';
 process.env.CLIENT_ID ??= '123456789012345678';
+// GUILD_ID wajib: dashboard dan seed harus menunjuk server demo yang sama.
+process.env.GUILD_ID ??= '156942477750257766';
 process.env.AI_API_KEY ??= 'screenshot-key';
 
 const { exec, run, insert } = await import('../src/db/index.js');

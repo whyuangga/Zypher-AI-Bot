@@ -42,12 +42,6 @@ const TABLES: TablePlan[] = [
     columns: ['user_id', 'guild_id', 'created_at', 'last_active_at', 'message_count'],
   },
   {
-    // Pilihan server konteks — sengaja terpisah dari dm_sessions supaya
-    // tetap ada setelah /akhiri menghapus sesi.
-    name: 'dm_prefs',
-    columns: ['user_id', 'guild_id', 'updated_at'],
-  },
-  {
     name: 'messages',
     columns: ['id', 'channel_id', 'role', 'content', 'created_at'],
     identity: true,
