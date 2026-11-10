@@ -58,7 +58,7 @@ export function loginPage(error?: string): string {
       <div>
         <label class="field" for="token">Token admin</label>
         <span class="pw-shell">
-          <input type="password" id="token" name="token" placeholder="••••••••••••••••" autofocus
+          <input type="password" id="token" name="token" placeholder="Tempel token di sini" autofocus
             autocomplete="current-password" spellcheck="false">
           <button class="pw-toggle" type="button" id="pwToggle" aria-label="Tampilkan token">${icon('eye', 17)}</button>
         </span>
@@ -107,10 +107,10 @@ export interface DashboardData extends PageContext {
 
 export function ringkasanPage(data: DashboardData): string {
   const stats = `<div class="grid stats">
-  ${statCard({ label: 'Room AI', value: data.stats.rooms, icon: 'message', foot: '<b>chat privat</b> per member' })}
+  ${statCard({ label: 'Room AI', value: data.stats.rooms, icon: 'message', foot: 'privat per member' })}
   ${statCard({ label: 'Dokumen RAG', value: data.stats.documents, icon: 'book', foot: `<b>${formatNumber(data.stats.chunks)}</b> potongan teks` })}
-  ${statCard({ label: 'Keyword', value: data.stats.keywords, icon: 'tag', foot: 'template jawaban owner' })}
-  ${statCard({ label: 'Memori user', value: data.stats.memories, icon: 'brain', foot: 'diingat antar sesi' })}
+  ${statCard({ label: 'Keyword', value: data.stats.keywords, icon: 'tag', foot: 'template owner' })}
+  ${statCard({ label: 'Memori user', value: data.stats.memories, icon: 'brain', foot: 'antar sesi' })}
 </div>`;
 
   const chartCard = card({
@@ -140,8 +140,8 @@ export function ringkasanPage(data: DashboardData): string {
       <div class="cell-main">
         <span class="avatar-sm">${esc(initials(room.userId))}</span>
         <span>
-          <div class="cell-title">Room <span class="mono">${esc(room.channelId.slice(-6))}</span></div>
-          <div class="cell-sub mono">pemilik ${esc(room.userId)}</div>
+          <div class="cell-title">Room <span class="mono">…${esc(room.channelId.slice(-4))}</span></div>
+          <div class="cell-sub mono" title="Pemilik: ${esc(room.userId)}">pemilik …${esc(room.userId.slice(-4))}</div>
         </span>
       </div>
     </td>

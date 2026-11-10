@@ -35,6 +35,8 @@ export const STYLE = `
 }
 
 * { box-sizing: border-box; }
+/* Ikon tidak boleh ikut menyusut di dalam flex (tombol 34px bisa mengecilkan svg jadi 2px). */
+svg { flex: 0 0 auto; }
 html, body { height: 100%; }
 body {
   margin: 0;
@@ -165,6 +167,7 @@ code { background: var(--surface-2); border: 1px solid var(--line); padding: 1px
 .card {
   background: linear-gradient(180deg, rgba(255, 255, 255, .022), rgba(255, 255, 255, 0) 60%), var(--surface);
   border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow);
+  overflow: hidden;
 }
 .card-pad { padding: 18px 20px; }
 .card-head {
@@ -178,7 +181,7 @@ code { background: var(--surface-2); border: 1px solid var(--line); padding: 1px
 .grid { display: grid; gap: 14px; }
 .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .cols-2 { grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); }
-.cols-2-even { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cols-2-even { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
 .mt { margin-top: 14px; }
 
 .stat { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; position: relative; overflow: hidden; }
@@ -194,7 +197,7 @@ code { background: var(--surface-2); border: 1px solid var(--line); padding: 1px
 
 /* ---------------- chart ---------------- */
 .chart { padding: 14px 20px 6px; }
-.bars { display: flex; align-items: flex-end; gap: 10px; height: 172px; }
+.bars { display: flex; align-items: flex-end; gap: 10px; height: 158px; }
 .bar-col {
   flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center;
   gap: 8px; height: 100%; position: relative; cursor: default;
@@ -217,7 +220,7 @@ code { background: var(--surface-2); border: 1px solid var(--line); padding: 1px
   font-size: 11.5px; font-weight: 600; color: var(--text-2); opacity: 0; transition: opacity .15s;
 }
 .bar-col:hover .bar-val { opacity: 1; }
-.bar-day { font-size: 11.5px; color: var(--text-3); }
+.bar-day { font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
 .bar-col.today .bar-day { color: var(--text); font-weight: 600; }
 .chart-legend { display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--text-3); padding: 6px 20px 16px; }
 .legend-key { display: inline-flex; align-items: center; gap: 6px; }
@@ -261,7 +264,7 @@ tbody tr:hover { background: rgba(255, 255, 255, .022); }
   background: var(--surface-2); border: 1px solid var(--line); font-size: 12.5px; color: var(--text-2);
 }
 
-button, .btn {
+button, .btn, .btn-primary, .btn-ghost, .btn-danger {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   font: inherit; font-size: 13.5px; font-weight: 600; padding: 9px 15px; border-radius: 10px;
   cursor: pointer; border: 1px solid transparent; transition: transform .06s, filter .15s, background .15s;
@@ -409,9 +412,10 @@ dialog.confirm::backdrop { background: rgba(4, 6, 10, .68); backdrop-filter: blu
   .backdrop { position: fixed; inset: 0; background: rgba(4, 6, 10, .6); z-index: 35; display: none; }
   .backdrop.show { display: block; }
   .burger { display: inline-grid; }
-  .topbar { padding: 10px 16px; gap: 10px; }
+  .topbar { padding: 10px 16px; gap: 8px; }
   .guild-manual { display: none; }
-  .select-shell select { min-width: 0; max-width: 46vw; }
+  .topbar-right .chip { display: none; }
+  .select-shell select { min-width: 0; max-width: 54vw; font-size: 12.5px; padding: 8px 28px 8px 10px; }
   .content { padding: 18px 16px 86px; }
   .page-head h1 { font-size: 22px; }
   .card-head, .chart { padding-left: 16px; padding-right: 16px; }
@@ -421,9 +425,15 @@ dialog.confirm::backdrop { background: rgba(4, 6, 10, .68); backdrop-filter: blu
   .toast { left: 16px; right: 16px; max-width: none; bottom: 16px; }
 }
 @media (max-width: 520px) {
-  .stats { grid-template-columns: minmax(0, 1fr); }
-  .page-actions { width: 100%; }
-  .page-actions .btn { flex: 1; }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .stat { padding: 14px; }
+  .stat-value { font-size: 24px; }
+  .page-head { display: block; }
+  .page-actions { width: 100%; margin-top: 12px; }
+  .page-actions .btn, .page-actions .btn-primary, .page-actions .badge { flex: 1; justify-content: center; }
+  /* avatar di tabel memakan ruang di layar sempit — sembunyikan, ID sudah cukup */
+  td .cell-main .avatar-sm { display: none; }
+  .cell-sub { white-space: nowrap; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; transition-duration: .01ms !important; }

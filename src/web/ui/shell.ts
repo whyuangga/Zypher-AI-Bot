@@ -125,7 +125,6 @@ function guildPicker(options: ShellOptions): string {
 
   return `<form class="guild-picker" method="get" action="/" id="guildForm">
   <span class="select-shell">
-    ${icon('users', 15)}
     <select name="guild" onchange="this.form.submit()" aria-label="Pilih server">${optionTags}</select>
     ${icon('chevron', 15)}
   </span>
