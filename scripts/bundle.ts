@@ -159,7 +159,10 @@ function main(): void {
     files.push({ name: relative(root, full).split('\\').join('/'), data: readFileSync(full) });
   }
 
-  for (const name of ['package.json', 'package-lock.json']) {
+  // File pendukung: dipakai `npm install` di server.
+  // `scripts/prepare.mjs` wajib ikut — tanpa itu, hook "prepare" gagal
+  // (npm install mencoba menjalankan file yang tidak ada).
+  for (const name of ['package.json', 'package-lock.json', 'scripts/prepare.mjs']) {
     const full = join(root, name);
     if (statSync(full, { throwIfNoEntry: false })) {
       files.push({ name, data: readFileSync(full) });
