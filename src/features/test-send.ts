@@ -38,7 +38,6 @@ import { truncate } from '../lib/text.js';
 import { previewGoodbye, previewWelcome } from './preview.js';
 import { readBannerDataUri, readBannerAttachment } from './banner.js';
 import { displayModeLabel, normalizeDisplayMode } from './display-mode.js';
-import { buildContainerCard, containerPayload } from './container-card.js';
 import { renderWelcomeCard } from './welcome-card.js';
 import { cardDetail, composePayload } from './welcome.js';
 
