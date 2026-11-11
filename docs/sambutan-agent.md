@@ -90,7 +90,19 @@ Sambutan punya dua tingkat pengujian:
 | **Kirim tes sungguhan / Kirim tes ke channel** | ya, 1 pesan | membuktikan izin, channel, DM, dan kartu benar-benar jalan |
 
 Pesan uji diawali penanda *"🧪 Pesan uji dari dashboard"* dan tidak memicu
-mention, jadi aman dites di channel yang sudah dipakai member. Sambutan
+mention, jadi aman dites di channel yang sudah dipakai member.
+
+**Banner ikut terkirim di pesan uji.** Kalau mode **Card** dipilih tapi Chromium
+tidak tersedia (selalu begitu di panel hosting seperti Pterodactyl), pesan jatuh
+ke **embed** — dan banner tetap dikirim sebagai lampiran yang dirujuk
+`attachment://`, bukan dibuang. Sebelumnya keputusan banner memakai mode yang
+**diinginkan** (`card`), bukan yang **benar-benar dipakai** (`embed`), sehingga
+sambutan uji terkirim tanpa banner tanpa satu pun error di log. Test
+`banner: tetap terkirim saat mode card jatuh ke embed` mengunci perilaku ini.
+
+> Kalau banner tetap tidak terlihat, periksa **izin `Attach Files`** bot di
+> channel itu: tanpa izin tersebut banner tidak bisa dilampirkan, dan bot
+> mengirim teks saja alih-alih gagal. Sambutan
 default ke DM kamu (atau channel kalau dipilih); salam perpisahan selalu ke
 channel. Kalau DM gagal karena privasi Discord, alasannya muncul dan kamu bisa
 mengulang dengan target channel.
@@ -470,7 +482,7 @@ Tiga penyebab yang sudah diperbaiki:
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 289 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 293 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

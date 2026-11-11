@@ -2333,6 +2333,229 @@ await testAsync('banner: dipulihkan dari database saat file hilang', async () =>
   assert.equal(gagal, null, 'tanpa salinan tidak bisa dipulihkan');
 });
 
+await testAsync('banner: tetap terkirim saat mode card jatuh ke embed', async () => {
+  // Bug nyata dari hosting user: mode "Card" dipilih, Chromium tidak ada
+  // (Pterodactyl tidak menyediakannya), jadi pesan jatuh ke embed — tapi
+  // keputusan banner masih memakai `wanted` ('card'), sehingga banner dibuang
+  // dan sambutan uji terkirim tanpa gambar. Tidak ada error di log.
+  const { sendWelcomeTest } = await import('../src/features/test-send.js');
+  const { WELCOME_DEFAULTS } = await import('../src/db/repo.js');
+  const { saveBanner, deleteBanner } = await import('../src/features/banner.js');
+
+  const png = await buatPngMinimal(400, 120);
+  const banner = await saveBanner(`data:image/png;base64,${png.toString('base64')}`, 'uji-card-fallback');
+
+  const sent: Record<string, unknown>[] = [];
+  const channel = {
+    id: '111111111111111111',
+    name: 'sambutan',
+    isTextBased: () => true,
+    isDMBased: () => false,
+    permissionsFor: () => ({ has: () => true }),
+    send: async (payload: Record<string, unknown>) => {
+      sent.push(payload);
+      return { id: '1' };
+    },
+  };
+  const guild = {
+    id: '156942477750257766',
+    name: 'Komunitas Zypher',
+    memberCount: 12,
+    channels: { fetch: async () => channel },
+    members: { me: { id: '999999999999999999' } },
+  };
+  const member = {
+    id: '222222222222222222',
+    displayName: 'Sky',
+    guild,
+    displayAvatarURL: () => 'https://x/y.png',
+    user: { username: 'sky', tag: 'sky#0000', displayAvatarURL: () => 'https://x/y.png' },
+  };
+  const client = { guilds: { fetch: async () => guild } } as never;
+
+  try {
+    // Mode card + Chromium TIDAK tersedia (sandbox & hosting panel).
+    // Kalau runner punya Chromium, kartu jadi PNG dan banner ada di dalamnya —
+    // itu juga benar, jadi kedua hasil diterima. Yang TIDAK boleh: embed tanpa
+    // banner sama sekali.
+    await sendWelcomeTest(client, {
+      guildId: guild.id,
+      member: member as never,
+      target: 'channel',
+      settings: {
+        ...WELCOME_DEFAULTS,
+        guildId: guild.id,
+        enabled: true,
+        useAi: false,
+        channelId: channel.id,
+        displayMode: 'card',
+        bannerPath: banner.name,
+        updatedAt: 0,
+      } as never,
+    });
+
+    const payload = sent.at(-1)!;
+    const files = (payload.files ?? []) as unknown[];
+    const embeds = (payload.embeds ?? []) as unknown[];
+
+    assert.ok(files.length >= 1, 'ada lampiran (kartu PNG atau banner)');
+
+    if (embeds.length === 1) {
+      // Jatuh ke embed: banner HARUS ikut sebagai lampiran.
+      const embed = embeds[0] as { data?: { image?: { url?: string } } };
+      const imageUrl = embed.data?.image?.url ?? '';
+      assert.match(
+        imageUrl,
+        /^attachment:\/\//,
+        'embed merujuk banner lewat attachment:// (bukan data URI — Discord menolaknya)',
+      );
+      const bannerTerlampir = files.some(
+        (file) => (file as { name?: string }).name === banner.name,
+      );
+      assert.ok(bannerTerlampir, 'banner benar-benar ikut terlampir saat mundur ke embed');
+    }
+  } finally {
+    await deleteBanner(banner.name).catch(() => undefined);
+  }
+});
+
+await testAsync('banner: mode embed biasa mengirim banner sebagai lampiran', async () => {
+  // Kasus paling umum: admin memilih mode Embed. Banner harus selalu ikut.
+  const { sendGoodbyeTest } = await import('../src/features/test-send.js');
+  const { GOODBYE_DEFAULTS } = await import('../src/db/repo.js');
+  const { saveBanner, deleteBanner } = await import('../src/features/banner.js');
+
+  const png = await buatPngMinimal(300, 100);
+  const banner = await saveBanner(`data:image/png;base64,${png.toString('base64')}`, 'uji-embed-banner');
+
+  const sent: Record<string, unknown>[] = [];
+  const channel = {
+    id: '111111111111111111',
+    name: 'perpisahan',
+    isTextBased: () => true,
+    isDMBased: () => false,
+    permissionsFor: () => ({ has: () => true }),
+    send: async (payload: Record<string, unknown>) => {
+      sent.push(payload);
+      return { id: '1' };
+    },
+  };
+  const guild = {
+    id: '156942477750257766',
+    name: 'Komunitas Zypher',
+    memberCount: 12,
+    channels: { fetch: async () => channel },
+    members: { me: { id: '999999999999999999' } },
+  };
+  const member = {
+    id: '222222222222222222',
+    displayName: 'Sky',
+    guild,
+    displayAvatarURL: () => 'https://x/y.png',
+    user: { username: 'sky', tag: 'sky#0000', displayAvatarURL: () => 'https://x/y.png' },
+  };
+  const client = { guilds: { fetch: async () => guild } } as never;
+
+  try {
+    await sendGoodbyeTest(client, {
+      guildId: guild.id,
+      member: member as never,
+      settings: {
+        ...GOODBYE_DEFAULTS,
+        guildId: guild.id,
+        enabled: true,
+        useAi: false,
+        channelId: channel.id,
+        displayMode: 'embed',
+        bannerPath: banner.name,
+        updatedAt: 0,
+      } as never,
+    });
+
+    const payload = sent.at(-1)!;
+    const files = (payload.files ?? []) as unknown[];
+    const embeds = (payload.embeds ?? []) as Array<{ data?: { image?: { url?: string } } }>;
+
+    assert.equal(files.length, 1, 'satu lampiran: banner');
+    assert.equal((files[0] as { name?: string }).name, banner.name, 'nama lampiran = banner');
+    assert.equal(embeds.length, 1, 'satu embed');
+    assert.match(
+      embeds[0]?.data?.image?.url ?? '',
+      /^attachment:\/\//,
+      'embed menunjuk lampiran, bukan data URI',
+    );
+  } finally {
+    await deleteBanner(banner.name).catch(() => undefined);
+  }
+});
+
+await testAsync('banner: izin Attach Files kurang diberi tahu, bukan gagal senyap', async () => {
+  const { sendGoodbyeTest } = await import('../src/features/test-send.js');
+  const { GOODBYE_DEFAULTS } = await import('../src/db/repo.js');
+
+  const sent: Record<string, unknown>[] = [];
+  const channel = {
+    id: '111111111111111111',
+    name: 'perpisahan',
+    isTextBased: () => true,
+    isDMBased: () => false,
+    // SendMessages & ViewChannel ada; EmbedLinks & AttachFiles tidak.
+    permissionsFor: () => ({ has: (name: string) => name === 'SendMessages' || name === 'ViewChannel' }),
+    send: async (payload: Record<string, unknown>) => {
+      sent.push(payload);
+      return { id: '1' };
+    },
+  };
+  const guild = {
+    id: '156942477750257766',
+    name: 'Komunitas Zypher',
+    memberCount: 12,
+    channels: { fetch: async () => channel },
+    members: { me: { id: '999999999999999999' } },
+  };
+  const member = {
+    id: '222222222222222222',
+    displayName: 'Sky',
+    guild,
+    displayAvatarURL: () => 'https://x/y.png',
+    user: { username: 'sky', tag: 'sky#0000', displayAvatarURL: () => 'https://x/y.png' },
+  };
+  const client = { guilds: { fetch: async () => guild } } as never;
+
+  const result = await sendGoodbyeTest(client, {
+    guildId: guild.id,
+    member: member as never,
+    settings: {
+      ...GOODBYE_DEFAULTS,
+      guildId: guild.id,
+      enabled: true,
+      useAi: false,
+      channelId: channel.id,
+      displayMode: 'embed',
+      updatedAt: 0,
+    } as never,
+  });
+
+  // Tetap terkirim (tidak melempar), tapi admin diberi tahu keterbatasannya.
+  assert.ok(result.ok, 'pesan tetap terkirim');
+  assert.ok(result.note?.includes('Attach Files'), 'menyebut izin Attach Files');
+  assert.ok(result.note?.includes('Embed Links'), 'menyebut izin Embed Links');
+  assert.ok(result.note?.includes('banner'), 'menjelaskan dampaknya ke banner');
+});
+
+await testAsync('banner: mode teks tidak memaksa lampiran', async () => {
+  const source = await readFile('src/features/test-send.ts', 'utf8');
+  // Mode teks murni tidak punya tempat untuk gambar — jangan menambah lampiran
+  // yang membuat pesan terlihat seperti embed gagal.
+  assert.ok(/modeNow === 'embed' \|\| modeNow === 'container'/.test(source), 'banner dibatasi ke mode bergambar');
+  // Keputusan banner TIDAK boleh lagi memakai `wanted`.
+  assert.equal(
+    /wanted === 'card' \|\| wanted === 'text'/.test(source),
+    false,
+    'tidak ada lagi keputusan banner berbasis mode keinginan',
+  );
+});
+
 await testAsync('banner: unggahan menyimpan salinan ke database', async () => {
   const server = await readFile('src/web/server.ts', 'utf8');
   assert.ok(/bannerData\s*=\s*\{\s*mime/.test(server), 'membentuk bannerData saat unggah');
