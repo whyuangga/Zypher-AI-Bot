@@ -21,7 +21,7 @@
     "test:browser": "tsx scripts/ui-test.mts",
     "models": "tsx scripts/list-models.ts",
     "doctor": "tsx scripts/doctor.ts",
-    "dashboard": "tsx src/web/standalone.ts",
+    "dashboard": "node dist/web/standalone.js",
     "bundle": "tsx scripts/bundle.ts",
     "token": "tsx scripts/token.ts",
     "smoke:pg": "tsx scripts/smoke-pg.ts",

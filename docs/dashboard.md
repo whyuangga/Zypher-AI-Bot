@@ -82,10 +82,18 @@ http://localhost:3000
 ### Tanpa bot Discord (khusus kelola data)
 
 ```bash
-npm run dashboard
+npm run dashboard        # = node dist/web/standalone.js
 ```
 
-Mode ini hanya menyalakan dashboard (bot tidak login ke Discord). Berguna untuk:
+Mode ini hanya menyalakan dashboard (bot tidak login ke Discord). Perintahnya
+memakai kode hasil build (`dist/`), bukan `tsx`, karena `tsx` memuat transpiler
+TypeScript ke dalam proses: **276,7 MB / 4 proses** vs **108,1 MB / 1 proses**
+(`node dist`) — diukur di mesin nyata. Di container 589 MB itu sepertiga RAM.
+
+Jalankan `npm run build` dulu kalau `dist/` belum ada. `npm install` sudah
+menjalankannya lewat hook `prepare`, jadi biasanya tidak perlu.
+
+Berguna untuk:
 
 - pratinjau tampilan sebelum deploy;
 - upload dokumen saat bot sedang mati / kena rate limit;
