@@ -2142,6 +2142,51 @@ await testAsync('mode tampilan: welcomeMember mengirim sesuai mode (end-to-end)'
   assert.equal((embedKirim.embeds as unknown[]).length, 1, 'mode embed mengirim 1 embed');
 });
 
+await testAsync('mode tampilan: DM tidak pernah menyertakan mention', async () => {
+  const { welcomeMember } = await import('../src/features/welcome.js');
+  const { saveWelcomeSettings } = await import('../src/db/repo.js');
+
+  const dm: Record<string, unknown>[] = [];
+  const guild = {
+    id: '888888888888888888',
+    name: 'Komunitas Zypher',
+    memberCount: 42,
+    // ChannelId sengaja kosong: jalur DM.
+    channels: { fetch: async () => null },
+    members: { me: { id: '999999999999999999' } },
+  };
+  const member = {
+    id: '9999999999999999999',
+    displayName: 'Sky',
+    guild,
+    displayAvatarURL: () => 'https://x/y.png',
+    send: async (payload: Record<string, unknown>) => {
+      dm.push(payload);
+      return { id: '1' };
+    },
+    user: {
+      bot: false,
+      username: 'sky',
+      tag: 'sky#0000',
+      displayAvatarURL: () => 'https://x/y.png',
+    },
+  };
+
+  await saveWelcomeSettings(guild.id, {
+    enabled: true,
+    useAi: false,
+    channelId: null,
+    template: 'Halo {user}',
+    displayMode: 'text',
+    imageEnabled: false,
+  });
+
+  await welcomeMember(member as never);
+  const kirim = dm.at(-1)!;
+  assert.ok(String(kirim.content).includes('Halo Sky'), 'teks sampai ke DM');
+  assert.ok(!String(kirim.content).includes('<@'), 'DM tidak memuat mention');
+});
+
 await testAsync('mode tampilan: database lama dimigrasi tanpa mengubah tampilan', async () => {
   // Server yang sudah berjalan punya tabel welcome/goodbye TANPA display_mode.
   // Kolomnya ditambahkan lewat ALTER, dan baris lama dibiarkan NULL — dibaca

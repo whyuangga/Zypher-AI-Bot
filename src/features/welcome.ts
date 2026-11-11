@@ -190,7 +190,9 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
     includeAvatar: settings.includeAvatar,
     bannerPath: settings.bannerPath,
     allowed,
-    mentionUser: true,
+    // Mention hanya berguna di channel. Di DM, member sudah tahu dia baru
+    // bergabung — dan menulis <@id> di sana hanya terlihat seperti gangguan.
+    mentionUser: Boolean(channel),
   });
   let embeds = payload.embeds;
   let files = payload.files;
@@ -228,8 +230,7 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
         allowedMentions: { users: [member.id] },
       });
     } else {
-      // DM: mention tidak ada gunanya (member sudah tahu dia baru bergabung).
-      await member.send({ content: plainText.replace(`<@${member.id}> `, '') || undefined, embeds, files });
+      await member.send({ content: plainText || undefined, embeds, files });
     }
     logger.info(`Sambutan untuk ${member.user.tag} terkirim via ${where}${usedAi ? ' (AI)' : ' (template)'}.`);
     return { sent: true, usedAi, where };
