@@ -158,7 +158,9 @@ export function ringkasanPage(data: DashboardData): string {
 
   const roomsCard = card({
     title: 'Sesi DM terbaru',
-    right: `<a class="btn-ghost btn-sm" href="/panel">Kelola panel ${icon('chevron', 13)}</a>`,
+    // Tanpa ikon chevron: ini tautan biasa, bukan dropdown. Panah ke bawah di
+    // tombol membuat orang mengira ada menu yang bisa dibuka.
+    right: `<a class="btn-ghost btn-sm" href="/panel">Kelola panel</a>`,
     body: roomRows
       ? `<div class="table-wrap"><table>
   <thead><tr><th>Pemilik</th><th class="col-count">Pesan</th><th class="col-activity">Aktivitas</th></tr></thead>
@@ -173,7 +175,7 @@ export function ringkasanPage(data: DashboardData): string {
 
   const docsCard = card({
     title: 'Dokumen terbaru',
-    right: `<a class="btn-ghost btn-sm" href="/dokumen">Kelola ${icon('chevron', 13)}</a>`,
+    right: `<a class="btn-ghost btn-sm" href="/dokumen">Kelola</a>`,
     body: data.documents.length
       ? `<div class="list">${data.documents
           .slice(0, 5)
@@ -996,7 +998,7 @@ function displayModePicker(kind: 'welcome' | 'goodbye', current: string): string
     return `<label class="mode-option">
       <input type="radio" name="${kind}Mode" value="${mode.key}"${checked}>
       <span class="mode-body">
-        <span class="mode-label">${esc(mode.label)}${mode.key === 'text' ? ' <span class="mode-tag">bisa ping</span>' : ''}</span>
+        <span class="mode-label">${esc(mode.label)}${mode.canMention ? ' <span class="mode-tag">bisa ping</span>' : ''}</span>
         <span class="mode-note">${esc(mode.note)}</span>
       </span>
     </label>`;

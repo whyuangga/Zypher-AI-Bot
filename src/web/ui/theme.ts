@@ -747,9 +747,11 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
    Radio, bukan dropdown: ketiga pilihan mengubah tampilan yang dilihat member,
    jadi konsekuensinya (kartu butuh Chromium, teks bisa me-ping) ditampilkan
    sekaligus. */
+/* Dua kolom untuk 4 mode: tiga kolom membuat catatan mode paling panjang
+   (Container) terpotong jadi banyak baris pendek. */
 .mode-picker {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 @media (max-width: 640px) {

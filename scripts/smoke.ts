@@ -1904,11 +1904,86 @@ await testAsync('sambutan: settings tersimpan dan bisa dimatikan lagi', async ()
   assert.equal((await getWelcomeSettings(guild)).template, 'Halo {user}');
 });
 
-await testAsync('sambutan: bot lain tidak disambut', async () => {
+await testAsync('sambutan: bot lain IKUT disambut (keputusan pemilik)', async () => {
+  // Perilaku ini sengaja dibalik: dulu bot dilewati diam-diam. Sekarang bot
+  // yang ditambahkan ke server disapa seperti anggota lain, mengikuti TitanBot.
+  // Yang dijaga test ini: kalau ada yang mengembalikan filter bot tanpa sadar,
+  // test akan merah dan keputusannya bisa ditinjau ulang.
   const source = await readFile('src/features/welcome.ts', 'utf8');
-  // Sekarang alasannya ikut dicatat supaya log bisa menjelaskan kenapa diam.
-  assert.ok(/if \(member\.user\.bot\)/.test(source), 'member bot dilewati');
-  assert.ok(source.includes('member yang bergabung adalah bot'), 'alasan dilewati dicatat');
+  const welcome = source.slice(
+    source.indexOf('export async function welcomeMember'),
+    source.indexOf('export async function goodbyeMember'),
+  );
+  // Buang komentar dulu: komentar di berkas ini MENJELASKAN cara
+  // mengembalikan filter bot, jadi teks mentah akan cocok palsu.
+  const tanpaKomentar = (kode: string): string =>
+    kode
+      .split('\n')
+      .filter((baris) => !baris.trim().startsWith('//') && !baris.trim().startsWith('*'))
+      .join('\n');
+
+  assert.ok(
+    !/if \(member\.user\.bot\)/.test(tanpaKomentar(welcome)),
+    'jalur sambutan tidak memfilter bot',
+  );
+
+  const goodbye = source.slice(source.indexOf('export async function goodbyeMember'));
+  assert.ok(
+    !/if \(member\.user\.bot\) return/.test(tanpaKomentar(goodbye)),
+    'jalur perpisahan tidak memfilter bot',
+  );
+});
+
+await testAsync('sambutan: bot lain disapa end-to-end', async () => {
+  // Bukan hanya grep: bot yang bergabung harus benar-benar memicu pengiriman.
+  const { welcomeMember } = await import('../src/features/welcome.js');
+  const { saveWelcomeSettings } = await import('../src/db/repo.js');
+
+  const sent: Record<string, unknown>[] = [];
+  const channel = {
+    id: '121212121212121212',
+    name: 'join-leave',
+    isTextBased: () => true,
+    isDMBased: () => false,
+    permissionsFor: () => ({ has: () => true }),
+    send: async (payload: Record<string, unknown>) => {
+      sent.push(payload);
+      return { id: '1' };
+    },
+  };
+  const guild = {
+    id: '131313131313131313',
+    name: 'Komunitas Zypher',
+    memberCount: 7,
+    channels: { fetch: async () => channel },
+    members: { me: { id: '999999999999999999' } },
+  };
+  const member = {
+    id: '141414141414141414',
+    displayName: 'HelperBot',
+    guild,
+    displayAvatarURL: () => 'https://x/y.png',
+    send: async () => ({ id: '1' }),
+    user: {
+      bot: true, // ⬅ inti test
+      username: 'helperbot',
+      tag: 'helperbot#0000',
+      displayAvatarURL: () => 'https://x/y.png',
+    },
+  };
+
+  await saveWelcomeSettings(guild.id, {
+    enabled: true,
+    useAi: false,
+    channelId: channel.id,
+    template: 'Halo {user}',
+    displayMode: 'text',
+    imageEnabled: false,
+  });
+
+  const hasil = await welcomeMember(member as never);
+  assert.equal(hasil.sent, true, 'bot yang bergabung tetap disapa');
+  assert.ok(String(sent.at(-1)!.content).includes('Halo HelperBot'), 'teks sambutan terkirim');
 });
 
 await testAsync('sambutan: hasil pengiriman membawa alasan gagal', async () => {
@@ -2008,12 +2083,106 @@ await testAsync('mode tampilan: tiap mode mengirim bentuk berbeda (channel palsu
   assert.ok(!(adaFile && adaEmbed), 'tidak mengirim kartu dan embed sekaligus');
 });
 
+await testAsync('dashboard: tombol Kelola tidak memakai panah dropdown', async () => {
+  // Panah ke bawah di tombol membuat orang mengira ada menu yang bisa dibuka;
+  // keduanya sebenarnya tautan biasa ke halaman lain.
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  const panel = pages.slice(pages.indexOf('href="/panel"') - 60, pages.indexOf('href="/panel"') + 90);
+  assert.ok(panel.includes('Kelola panel'), 'tombol panel ada');
+  assert.ok(!panel.includes('chevron'), 'tombol panel tanpa chevron');
+
+  const dok = pages.slice(pages.indexOf('href="/dokumen"') - 60, pages.indexOf('href="/dokumen"') + 80);
+  assert.ok(dok.includes('Kelola'), 'tombol dokumen ada');
+  assert.ok(!dok.includes('chevron'), 'tombol dokumen tanpa chevron');
+
+  // Panah pada <select> asli tetap dipertahankan — di sana memang indikator dropdown.
+  assert.ok(pages.includes("icon('chevron', 15)"), 'select masih memakai chevron');
+});
+
+await testAsync('mode container: komponen V2 dibentuk, tanpa embed', async () => {
+  const { buildContainerCard, containerPayload } = await import('../src/features/container-card.js');
+  const { MessageFlags } = await import('discord.js');
+
+  const card = buildContainerCard({
+    kind: 'welcome',
+    text: 'Selamat datang Sky',
+    guildName: 'Komunitas Zypher',
+    memberCount: 42,
+    extra: ['dibuat dengan AI'],
+  });
+  assert.ok(card, 'kartu terbentuk');
+
+  const json = card!.toJSON() as unknown as Record<string, unknown>;
+  assert.equal(json.type, 17, 'tipe Container');
+  assert.ok(Array.isArray(json.components) && (json.components as unknown[]).length >= 3, 'ada beberapa blok');
+
+  const payload = containerPayload(card!);
+  // Flag ini WAJIB. Tanpa IsComponentsV2, Discord mengabaikan container dan
+  // menganggap pesan tidak punya isi.
+  assert.equal(payload.flags, MessageFlags.IsComponentsV2, 'flag Components V2 dipasang');
+});
+
+await testAsync('mode container: teks kosong tidak menghasilkan kartu kosong', async () => {
+  const { buildContainerCard } = await import('../src/features/container-card.js');
+  assert.equal(buildContainerCard({ kind: 'welcome', text: '   ', guildName: 'Z' }), null);
+});
+
+await testAsync('mode container: dikirim tanpa content/embeds (channel palsu)', async () => {
+  const { welcomeMember } = await import('../src/features/welcome.js');
+  const { saveWelcomeSettings } = await import('../src/db/repo.js');
+
+  const sent: Record<string, unknown>[] = [];
+  const channel = {
+    id: '151515151515151515',
+    name: 'join-leave',
+    isTextBased: () => true,
+    isDMBased: () => false,
+    permissionsFor: () => ({ has: () => true }),
+    send: async (payload: Record<string, unknown>) => {
+      sent.push(payload);
+      return { id: '1' };
+    },
+  };
+  const guild = {
+    id: '161616161616161616',
+    name: 'Komunitas Zypher',
+    memberCount: 42,
+    channels: { fetch: async () => channel },
+    members: { me: { id: '999999999999999999' } },
+  };
+  const member = {
+    id: '171717171717171717',
+    displayName: 'Sky',
+    guild,
+    displayAvatarURL: () => 'https://x/y.png',
+    send: async () => ({ id: '1' }),
+    user: { bot: false, username: 'sky', tag: 'sky#0000', displayAvatarURL: () => 'https://x/y.png' },
+  };
+
+  await saveWelcomeSettings(guild.id, {
+    enabled: true,
+    useAi: false,
+    channelId: channel.id,
+    template: 'Halo {user}, member ke-{memberCount}!',
+    displayMode: 'container',
+    imageEnabled: false,
+  });
+
+  await welcomeMember(member as never);
+  const kirim = sent.at(-1)!;
+  assert.ok(Array.isArray(kirim.components) && (kirim.components as unknown[]).length === 1, 'mengirim komponen');
+  assert.equal(kirim.content, undefined, 'tanpa content (dilarang di V2)');
+  assert.equal(kirim.embeds, undefined, 'tanpa embed (dilarang di V2)');
+  assert.equal(kirim.files, undefined, 'tanpa file (dilarang di V2)');
+  assert.ok(typeof kirim.flags === 'number', 'flag ikut terkirim');
+});
+
 await testAsync('mode tampilan: card, embed, text dikenali', async () => {
   const { DISPLAY_MODES, normalizeDisplayMode, displayModeLabel } = await import(
     '../src/features/display-mode.js'
   );
   const kunci = DISPLAY_MODES.map((m) => m.key);
-  assert.deepEqual(kunci, ['card', 'embed', 'text'], 'tiga mode, urutan untuk dashboard');
+  assert.deepEqual(kunci, ['card', 'container', 'embed', 'text'], 'empat mode, urutan untuk dashboard');
 
   assert.equal(normalizeDisplayMode('card'), 'card');
   assert.equal(normalizeDisplayMode('EMBED'), 'embed', 'tidak peka huruf besar');
@@ -2021,12 +2190,13 @@ await testAsync('mode tampilan: card, embed, text dikenali', async () => {
   assert.equal(displayModeLabel('text'), 'Text');
 });
 
-await testAsync('mode tampilan: hanya text yang bisa me-ping member', async () => {
+await testAsync('mode tampilan: hanya text & container yang bisa me-ping', async () => {
   const { DISPLAY_MODES } = await import('../src/features/display-mode.js');
   const peming = DISPLAY_MODES.filter((m) => m.canMention).map((m) => m.key);
-  // Discord tidak memicu mention di dalam embed. Kalau suatu saat daftar ini
+  // Discord tidak memicu mention di dalam embed. `container` bisa, karena
+  // mention-nya ditulis di Text Display, bukan di embed. Kalau daftar ini
   // berubah, dashboard akan menjanjikan ping yang tidak pernah terjadi.
-  assert.deepEqual(peming, ['text']);
+  assert.deepEqual(peming, ['container', 'text']);
 });
 
 await testAsync('mode tampilan: nilai asing jatuh ke embed, bukan error', async () => {
@@ -2259,8 +2429,10 @@ await testAsync('mode tampilan: mode teks tidak dianggap pesan kosong', async ()
   // akan selalu dianggap kosong.
   const source = await readFile('src/features/welcome.ts', 'utf8');
   assert.ok(
-    /const hasBody = plainText\.length > 0 \|\| embeds\.length > 0 \|\| files\.length > 0/.test(source),
-    'isi diperiksa termasuk content',
+    /plainText\.length > 0 \|\| embeds\.length > 0 \|\| files\.length > 0 \|\| Boolean\(payload\.components/.test(
+      source,
+    ),
+    'isi diperiksa termasuk content DAN komponen',
   );
 });
 

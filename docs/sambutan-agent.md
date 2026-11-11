@@ -314,12 +314,19 @@ Bentuk pesan sambutan & perpisahan bisa dipilih per server di dashboard:
 | Mode | Bentuk pesan | Butuh Chromium? | Bisa me-ping? |
 |---|---|---|---|
 | **Card** | kartu PNG (banner + avatar + nama) sebagai lampiran | ya | tidak |
+| **Container** | kartu Components V2 (blok berwarna aksen, gaya panel baru Discord) | tidak | **ya** |
 | **Embed** | embed berwarna bertema server | tidak | tidak |
 | **Text** | teks polos di `content` | tidak | **ya** |
 
-Kenapa hanya **Text** yang bisa me-ping: di Discord, mention di dalam embed
-tidak memicu notifikasi. Kalau kamu ingin member baru benar-benar mendapat
-notifikasi, pilih Text.
+Kenapa hanya **Text** & **Container** yang bisa me-ping: di Discord, mention di
+dalam embed tidak memicu notifikasi. Kalau kamu ingin member baru benar-benar
+mendapat notifikasi, pilih Text atau Container.
+
+**Container** (Components V2) butuh discord.js ≥ 14.19 — di proyek ini
+14.28.1. Kalau pustakanya lebih lama, bot otomatis mundur ke Embed dan
+mencatat alasannya di log. Pesan ber-flag Components V2 tidak boleh memuat
+`content`/`embeds`/`files` sama sekali; karena itu mention-nya ikut di dalam
+teks komponen.
 
 **Bawaan = Embed.** Server yang sudah berjalan tidak berubah tampilannya
 setelah pembaruan ini: baris database lama yang belum punya kolom
@@ -333,13 +340,21 @@ Card, mati → Embed).
 | Card tapi Chromium tidak ada | Embed |
 | Card tapi bot tidak punya izin Attach Files | Embed |
 | Embed tapi bot tidak punya izin Embed Links | Text |
+| Container tapi pustaka tidak mendukung | Embed |
 | Text | selalu bisa |
 
 Alasan cadangan selalu ditulis ke log, mis.
 `Mode tampilan sambutan "Card" tidak bisa dipakai (kartu tidak bisa dirender) — memakai Embed.`
 
-Salam perpisahan **tidak pernah** me-ping siapa pun, bahkan di mode Text:
-member-nya sudah keluar.
+Salam perpisahan **tidak pernah** me-ping siapa pun, bahkan di mode Text atau
+Container: member-nya sudah keluar.
+
+### Bot lain juga disapa
+
+Bot yang ditambahkan ke server disambut dan diucapkan selamat jalan seperti
+anggota biasa (mengikuti TitanBot). Dulu bot dilewati diam-diam. Kalau kamu
+ingin bot diabaikan lagi, tambahkan satu kondisi `if (member.user.bot)` di
+`welcomeMember()` dan `goodbyeMember()` — ada petunjuknya di komentar kode.
 
 ### Token template
 
@@ -390,7 +405,7 @@ Tiga penyebab yang sudah diperbaiki:
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 258 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 263 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

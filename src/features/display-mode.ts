@@ -3,22 +3,27 @@
  *
  * Tiga mode, mengikuti dua bot pembanding yang sudah ditinjau:
  *
- * | Mode    | Bentuk pesan                                       | Butuh kartu PNG? |
- * |---------|----------------------------------------------------|------------------|
- * | `card`  | kartu PNG sebagai lampiran                         | ya               |
- * | `embed` | embed Discord biasa                                | tidak            |
- * | `text`  | teks polos (satu-satunya yang bisa me-*ping*)      | tidak            |
+ * | Mode        | Bentuk pesan                                   | Butuh kartu PNG? |
+ * |-------------|------------------------------------------------|------------------|
+ * | `card`      | kartu PNG sebagai lampiran                     | ya               |
+ * | `container` | kartu Components V2 (blok berwarna aksen)      | tidak            |
+ * | `embed`     | embed Discord biasa                            | tidak            |
+ * | `text`      | teks polos (satu-satunya yang bisa me-*ping*)  | tidak            |
  *
  * Catatan mention: **mention hanya hidup di luar embed**. Di dalam embed,
  * `<@id>` tampil sebagai teks biasa dan tidak pernah memicu notifikasi. Karena
- * itu mode `text` yang memakai `content`, sedangkan `card` dan `embed` tidak.
- * Ini satu-satunya perbedaan perilaku antar mode yang terasa oleh member.
+ * itu `text` (lewat `content`) dan `container` (mention di dalam Text Display)
+ * bisa me-ping, sedangkan `card` dan `embed` tidak.
+ *
+ * Catatan Components V2: pesan ber-flag `IsComponentsV2` **tidak boleh**
+ * memuat `content`, `embeds`, atau `files` — Discord menolaknya. Karena itu
+ * mode `container` mengirim komponen saja, dan mention-nya ikut di dalam teks.
  *
  * Modul ini murni fungsi: tidak menyentuh database, jaringan, atau Discord.
  * Penyimpanan mode ada di `repo.ts`, penyusunan payload di `welcome.ts`.
  */
 
-export type DisplayMode = 'card' | 'embed' | 'text';
+export type DisplayMode = 'card' | 'container' | 'embed' | 'text';
 
 export interface DisplayModeInfo {
   key: DisplayMode;
@@ -39,6 +44,13 @@ export const DISPLAY_MODES: DisplayModeInfo[] = [
     note: 'Kartu PNG (banner + avatar + nama). Tidak bisa me-ping member.',
     needsCard: true,
     canMention: false,
+  },
+  {
+    key: 'container',
+    label: 'Container',
+    note: 'Kartu Components V2 bertema server (gaya panel baru Discord). Bisa me-ping lewat teksnya.',
+    needsCard: false,
+    canMention: true,
   },
   {
     key: 'embed',
@@ -67,7 +79,7 @@ export const DEFAULT_DISPLAY_MODE: DisplayMode = 'embed';
 
 /** Apakah sebuah nilai adalah mode yang sah. */
 export function isDisplayMode(value: unknown): value is DisplayMode {
-  return value === 'card' || value === 'embed' || value === 'text';
+  return value === 'card' || value === 'container' || value === 'embed' || value === 'text';
 }
 
 /**
@@ -92,6 +104,8 @@ export function normalizeDisplayMode(value: unknown): DisplayMode {
     card: 'card',
     image: 'card',
     png: 'card',
+    v2: 'container',
+    components: 'container',
   };
   return legacy[key] ?? DEFAULT_DISPLAY_MODE;
 }
@@ -132,12 +146,22 @@ export function modeFromLegacySettings(imageEnabled: boolean): DisplayMode {
  */
 export function fallbackMode(
   wanted: unknown,
-  available: { card?: boolean; embed?: boolean } = {},
+  available: { card?: boolean; embed?: boolean; container?: boolean } = {},
 ): { mode: DisplayMode; fellBack: boolean; reason: string | null } {
   const card = available.card !== false;
   const embed = available.embed !== false;
+  const container = available.container !== false;
   const mode = normalizeDisplayMode(wanted);
 
+  // `container` tidak butuh izin khusus (bukan embed, bukan lampiran), tapi
+  // butuh dukungan pustaka. Kalau tidak ada, embed adalah bentuk terdekat.
+  if (mode === 'container' && !container) {
+    return {
+      mode: embed ? 'embed' : 'text',
+      fellBack: true,
+      reason: 'Components V2 tidak didukung',
+    };
+  }
   if (mode === 'card' && !card) {
     return {
       mode: embed ? 'embed' : 'text',

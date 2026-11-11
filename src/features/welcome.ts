@@ -18,6 +18,7 @@
 import {
   AttachmentBuilder,
   EmbedBuilder,
+  type ContainerBuilder,
   type GuildMember,
   type TextChannel,
   type AnyThreadChannel,
@@ -34,6 +35,7 @@ import {
   fallbackMode,
   type DisplayMode,
 } from './display-mode.js';
+import { buildContainerCard, containerPayload } from './container-card.js';
 
 /**
  * Nilai untuk semua token template. Dipakai sambutan, perpisahan, dan pratinjau
@@ -116,10 +118,10 @@ export interface WelcomeOutcome {
  * membuat event handler melempar error.
  */
 export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome> {
-  if (member.user.bot) {
-    return { sent: false, usedAi: false, where: 'none', reason: 'member yang bergabung adalah bot' };
-  }
-
+  // Bot lain ikut disapa, sama seperti TitanBot — kalau kamu menambahkan bot
+  // ke server, channel sambutan mencatatnya seperti anggota lain. Dulu bot
+  // dilewati diam-diam; kalau ingin itu kembali, cukup tambahkan satu kondisi
+  // `if (member.user.bot) return ...` di sini.
   const settings = await getWelcomeSettings(member.guild.id);
   if (!settings.enabled) {
     return { sent: false, usedAi: false, where: 'none', reason: 'sambutan belum dinyalakan di dashboard' };
@@ -199,11 +201,12 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
   const plainText = payload.content;
 
   // Jaring pengaman terakhir: Discord menolak pesan tanpa isi sama sekali
-  // ("Cannot send an empty message"). Mode teks memang tidak punya embed/file,
-  // jadi yang diperiksa adalah ADA-TIDAKNYA isi, bukan bentuknya — dulu
-  // pemeriksaan yang hanya melihat embeds/files membuat mode teks dianggap
-  // kosong.
-  const hasBody = plainText.length > 0 || embeds.length > 0 || files.length > 0;
+  // ("Cannot send an empty message"). Mode teks tidak punya embed/file dan mode
+  // container tidak punya content sama sekali, jadi yang diperiksa adalah
+  // ADA-TIDAKNYA isi dalam bentuk apa pun — dulu pemeriksaan yang hanya melihat
+  // embeds/files membuat kedua mode itu dianggap kosong.
+  const hasBody =
+    plainText.length > 0 || embeds.length > 0 || files.length > 0 || Boolean(payload.components?.length);
   if (!hasBody) {
     logger.warn(`Sambutan untuk ${member.user.tag} tidak punya isi — dikirim sebagai teks polos.`);
     try {
@@ -220,15 +223,26 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
 
   try {
     if (channel) {
-      await channel.send({
-        // `content` sudah berbentuk akhir dari composePayload (mention + teks
-        // untuk mode text, kosong untuk mode lain) — jangan ditambahi lagi,
-        // dulu mention ditulis di sini dan hasilnya dobel.
-        content: plainText || undefined,
-        embeds,
-        files,
-        allowedMentions: { users: [member.id] },
-      });
+      await channel.send(
+        payload.components?.length
+          ? // Components V2: content/embeds/files tidak boleh ikut sama sekali.
+            {
+              components: payload.components,
+              flags: payload.flags,
+              allowedMentions: { users: [member.id] },
+            }
+          : {
+              // `content` sudah berbentuk akhir dari composePayload (mention +
+              // teks untuk mode text, kosong untuk mode lain) — jangan
+              // ditambahi lagi, dulu mention ditulis di sini dan hasilnya dobel.
+              content: plainText || undefined,
+              embeds,
+              files,
+              allowedMentions: { users: [member.id] },
+            },
+      );
+    } else if (payload.components?.length) {
+      await member.send({ components: payload.components, flags: payload.flags });
     } else {
       await member.send({ content: plainText || undefined, embeds, files });
     }
@@ -323,15 +337,38 @@ async function composePayload(options: {
    * memicu notifikasi ke orang yang sudah pergi.
    */
   mentionUser: boolean;
-}): Promise<{ content: string; embeds: EmbedBuilder[]; files: AttachmentBuilder[] }> {
+}): Promise<{
+  content: string;
+  embeds: EmbedBuilder[];
+  files: AttachmentBuilder[];
+  /** Hanya terisi pada mode `container`: komponen V2 + flag wajibnya. */
+  components?: ContainerBuilder[];
+  flags?: number;
+}> {
   const { mode, text, member, kind, attachment, allowed, mentionUser } = options;
   const footer =
     kind === 'welcome' ? `Member baru · ${member.guild.name}` : `Member keluar · ${member.guild.name}`;
   const color = kind === 'welcome' ? 0x6d8cff : 0x716c98;
 
-  // Mode teks: satu-satunya yang benar-benar me-ping member.
+  // Mode teks: satu-satunya yang benar-benar me-ping member di luar komponen.
   if (mode === 'text') {
     return { content: mentionUser ? `<@${member.id}> ${text}` : text, embeds: [], files: [] };
+  }
+
+  // Mode container (Components V2). Pesan ber-flag ini TIDAK BOLEH memuat
+  // content/embeds/files, jadi mention harus ikut di dalam teksnya.
+  if (mode === 'container') {
+    const teks = mentionUser ? `<@${member.id}> ${text}` : text;
+    const card = buildContainerCard({
+      kind,
+      text: teks,
+      guildName: member.guild.name,
+      memberCount: member.guild.memberCount,
+    });
+    if (card) {
+      return { content: '', embeds: [], files: [], ...containerPayload(card) };
+    }
+    // Pustaka tidak mendukung: jatuh ke embed di bawah (tidak pernah pesan kosong).
   }
 
   const embed = new EmbedBuilder()
@@ -413,8 +450,7 @@ async function generateGoodbye(settings: GoodbyeSettings, member: GuildMember): 
  * lebih baik diam daripada mengirim ke channel acak.
  */
 export async function goodbyeMember(member: GuildMember): Promise<boolean> {
-  if (member.user.bot) return false;
-
+  // Bot juga diucapkan selamat jalan (menyelaraskan dengan jalur sambutan).
   const settings = await getGoodbyeSettings(member.guild.id);
   if (!settings.enabled) return false;
 
@@ -486,7 +522,7 @@ export async function goodbyeMember(member: GuildMember): Promise<boolean> {
   const plainText = payload.content;
 
   // Jaring pengaman sama seperti sambutan: jangan pernah mengirim pesan tanpa isi.
-  if (!plainText && embeds.length === 0 && files.length === 0) {
+  if (!plainText && embeds.length === 0 && files.length === 0 && !payload.components?.length) {
     try {
       await channel.send({ content: text, allowedMentions: { parse: [] } });
       logger.info(`Salam perpisahan untuk ${member.user.tag} terkirim (teks polos).`);
@@ -498,14 +534,18 @@ export async function goodbyeMember(member: GuildMember): Promise<boolean> {
   }
 
   try {
-    await channel.send({
-      // `content` hanya berisi sesuatu pada mode text (lihat composePayload).
-      content: plainText || undefined,
-      embeds,
-      files,
-      // Perpisahan tidak pernah me-ping siapa pun.
-      allowedMentions: { parse: [] },
-    });
+    await channel.send(
+      payload.components?.length
+        ? { components: payload.components, flags: payload.flags, allowedMentions: { parse: [] } }
+        : {
+            // `content` hanya berisi sesuatu pada mode text (lihat composePayload).
+            content: plainText || undefined,
+            embeds,
+            files,
+            // Perpisahan tidak pernah me-ping siapa pun.
+            allowedMentions: { parse: [] },
+          },
+    );
     logger.info(`Salam perpisahan untuk ${member.user.tag} terkirim${greeting ? ' (AI)' : ' (template)'}.`);
     return true;
   } catch (error) {

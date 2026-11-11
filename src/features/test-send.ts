@@ -33,6 +33,7 @@ import { truncate } from '../lib/text.js';
 import { previewGoodbye, previewWelcome } from './preview.js';
 import { readBannerDataUri, readBannerAttachment } from './banner.js';
 import { displayModeLabel, normalizeDisplayMode } from './display-mode.js';
+import { buildContainerCard, containerPayload } from './container-card.js';
 import { renderWelcomeCard } from './welcome-card.js';
 
 export class SendTestError extends Error {}
@@ -201,8 +202,26 @@ export async function sendWelcomeTest(
   const modeNow = wanted === 'card' && !card ? 'embed' : wanted;
   note.push(`Mode ${displayModeLabel(wanted)}.`);
 
-  const payload =
-    modeNow === 'text'
+  // Mode container: komponen V2 tidak boleh dicampur content/embeds.
+  const container =
+    modeNow === 'container'
+      ? (() => {
+          const built = buildContainerCard({
+            kind: 'welcome',
+            text: preview.text,
+            guildName: guild.name,
+            memberCount: guild.memberCount,
+          });
+          return built ? containerPayload(built) : null;
+        })()
+      : null;
+  if (modeNow === 'container' && !container) {
+    note.push('Components V2 tidak didukung pustaka ini — dikirim sebagai embed.');
+  }
+
+  const payload = container
+    ? { ...container, allowedMentions: { parse: [] as const } }
+    : modeNow === 'text'
       ? { content: `${TEST_MARK}\n\n${preview.text}`, allowedMentions: { parse: [] as const } }
       : {
           // Petunjuk uji tetap di content supaya pesan tes mudah dikenali.
@@ -314,15 +333,33 @@ export async function sendGoodbyeTest(
   if (!channel) throw new SendTestError(reason ?? 'Channel salam perpisahan tidak bisa dipakai.');
 
   try {
+    const goodbyeContainer =
+      modeNow === 'container'
+        ? (() => {
+            const built = buildContainerCard({
+              kind: 'goodbye',
+              text: preview.text,
+              guildName: guild.name,
+              memberCount: guild.memberCount,
+            });
+            return built ? containerPayload(built) : null;
+          })()
+        : null;
+    if (modeNow === 'container' && !goodbyeContainer) {
+      note.push('Components V2 tidak didukung pustaka ini — dikirim sebagai embed.');
+    }
+
     await channel.send(
-      modeNow === 'text'
-        ? { content: `${TEST_MARK}\n\n${preview.text}`, allowedMentions: { parse: [] as const } }
-        : {
-            content: TEST_MARK,
-            embeds: card ? [] : [embed],
-            files: card ? [card] : bannerFile ? [bannerFile.attachment] : [],
-            allowedMentions: { parse: [] as const },
-          },
+      goodbyeContainer
+        ? { ...goodbyeContainer, allowedMentions: { parse: [] as const } }
+        : modeNow === 'text'
+          ? { content: `${TEST_MARK}\n\n${preview.text}`, allowedMentions: { parse: [] as const } }
+          : {
+              content: TEST_MARK,
+              embeds: card ? [] : [embed],
+              files: card ? [card] : bannerFile ? [bannerFile.attachment] : [],
+              allowedMentions: { parse: [] as const },
+            },
     );
     logger.info(`Kirim tes salam perpisahan ke #${channel.name} berhasil.`);
     return {
