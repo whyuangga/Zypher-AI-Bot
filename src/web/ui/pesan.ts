@@ -181,8 +181,15 @@ export function pesanPage(options: PesanPageOptions): string {
       <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('image')">${icon('eye', 15)} Gambar</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('button')">${icon('external', 15)} Tombol</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('divider')">${icon('menu', 15)} Pemisah</button>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('container')">${icon('sliders', 15)} Container</button>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('section')">${icon('users', 15)} Section</button>
     </div>
-    <p class="hint" id="blockHint">Teks mendukung format Discord; baris diawali <code>-#</code> menjadi teks kecil.</p>
+    <div id="usageBar" class="usage-bar" hidden>
+      <span id="usageText">0/40 komponen</span>
+      <span class="usage-track"><span id="usageFill" class="usage-fill"></span></span>
+      <span id="usageWarn" class="usage-warn"></span>
+    </div>
+    <p class="hint" id="blockHint">Teks mendukung format Discord; baris diawali <code>-#</code> menjadi teks kecil. <b>Container</b> memulai kartu baru (blok sesudahnya masuk ke kartu itu), <b>Section</b> menaruh gambar kecil atau tombol di samping teks.</p>
   </div>
 
   <div class="grid cols-2" style="gap:12px">
@@ -291,7 +298,89 @@ var blocks = [];
 /** ID pesan yang sedang diubah (null = pesan baru). */
 var editingId = null;
 
-var LABEL = { text: 'Teks', image: 'Gambar', button: 'Tombol', divider: 'Pemisah' };
+/**
+ * Batas Discord untuk Components V2. Angka 25 yang sering dikutip di internet
+ * adalah batas pesan lama — memakainya akan menolak pesan yang sebenarnya sah.
+ */
+var BATAS = { total: 40, top: 10, teks: 4000, teksAman: 3500, tombolPerBaris: 5 };
+
+/**
+ * Hitung pemakaian komponen di browser, meniru penyusun payload di server.
+ *
+ * Server tetap menghitung ulang dan berhak menolak; angka di sini hanya untuk
+ * admin, supaya ia melihat batasnya SEBELUM menekan Simpan.
+ */
+function ukurPemakaian() {
+  var total = 0, top = 0, teks = 0;
+  var anak = 0, adaIsi = false, tombol = 0;
+
+  function tutup() {
+    if (!adaIsi) return;
+    top += 1;
+    total += anak + Math.ceil(tombol / BATAS.tombolPerBaris);
+    anak = 0; tombol = 0; adaIsi = false;
+  }
+
+  blocks.forEach(function (b) {
+    if (b.kind === 'container') { tutup(); return; }
+    if (b.kind === 'button') { tombol += 1; return; }
+    if (b.kind === 'divider') { if (adaIsi) anak += 1; return; }
+    if (b.kind === 'text' || b.kind === 'section') {
+      teks += String(b.value || '').length;
+      anak += 1; adaIsi = true;
+      return;
+    }
+    if (b.kind === 'image') { anak += 1; adaIsi = true; }
+  });
+  tutup();
+
+  // Tombol role & menu juga memakan kuota — dashboard menambahkannya sendiri
+  // karena keduanya tersimpan terpisah dari blok.
+  var barisRole = Math.ceil(roleButtons.length / BATAS.tombolPerBaris);
+  total += barisRole;
+  if (barisRole > 0) top = Math.max(top, 1);
+  var barisMenu = 0;
+  roleMenus.forEach(function (m) { if (m.options && m.options.length) barisMenu += 1; });
+  total += barisMenu;
+
+  return { total: total, top: top, teks: teks };
+}
+
+function renderUsage() {
+  var bar = document.getElementById('usageBar');
+  if (!bar) return;
+  var u = ukurPemakaian();
+  bar.hidden = false;
+
+  var persen = Math.min(100, Math.round((u.total / BATAS.total) * 100));
+  var isi = document.getElementById('usageFill');
+  if (isi) {
+    isi.style.width = persen + '%';
+    isi.className = 'usage-fill' + (u.total > BATAS.total ? ' over' : u.total > BATAS.total * 0.8 ? ' warn' : '');
+  }
+  var label = document.getElementById('usageText');
+  if (label) {
+    label.textContent = u.total + '/' + BATAS.total + ' komponen · ' +
+      u.top + '/' + BATAS.top + ' container · ' + u.teks + '/' + BATAS.teksAman + ' karakter';
+  }
+  var warn = document.getElementById('usageWarn');
+  if (warn) {
+    var pesan = [];
+    if (u.total > BATAS.total) pesan.push('komponen melebihi batas Discord');
+    if (u.top > BATAS.top) pesan.push('terlalu banyak container');
+    if (u.teks > BATAS.teksAman) pesan.push('teks terlalu panjang');
+    warn.textContent = pesan.length ? '⚠ ' + pesan.join(', ') : '';
+  }
+}
+
+var LABEL = {
+  text: 'Teks',
+  image: 'Gambar',
+  button: 'Tombol',
+  divider: 'Pemisah',
+  container: 'Container baru',
+  section: 'Section (teks + gambar/tombol)'
+};
 
 function lineCount(value) {
   return String(value || '').split('\\n').length;
@@ -353,6 +442,107 @@ function renderBlocks() {
       var garis = document.createElement('div');
       garis.className = 'block-divider';
       row.appendChild(garis);
+      var jarak = document.createElement('label');
+      jarak.className = 'menu-flags';
+      jarak.style.marginTop = '6px';
+      var cekJarak = document.createElement('input');
+      cekJarak.type = 'checkbox';
+      cekJarak.checked = block.spacing === 'large';
+      cekJarak.onchange = function () {
+        blocks[index].spacing = cekJarak.checked ? 'large' : '';
+        renderPreview();
+      };
+      jarak.appendChild(cekJarak);
+      jarak.appendChild(document.createTextNode(' jarak besar'));
+      row.appendChild(jarak);
+    } else if (block.kind === 'container') {
+      // Container = kartu baru. Warnanya opsional: kosong berarti ikut warna
+      // pesan, jadi admin yang tidak peduli warna tidak perlu mengisinya.
+      var barisWarna = document.createElement('div');
+      barisWarna.className = 'role-style-row';
+
+      var warna = document.createElement('input');
+      warna.type = 'color';
+      warna.value = block.accent || document.getElementById('postAccent').value || '#6d8cff';
+      warna.title = 'Warna aksen container ini';
+      warna.oninput = function () {
+        blocks[index].accent = warna.value;
+        teksWarna.textContent = warna.value;
+        renderPreview();
+      };
+      barisWarna.appendChild(warna);
+
+      var teksWarna = document.createElement('span');
+      teksWarna.className = 'hint';
+      teksWarna.style.margin = '0';
+      teksWarna.textContent = block.accent || 'ikut warna pesan';
+      barisWarna.appendChild(teksWarna);
+
+      var ikut = document.createElement('button');
+      ikut.className = 'btn btn-ghost btn-sm';
+      ikut.type = 'button';
+      ikut.textContent = 'Ikut warna pesan';
+      ikut.onclick = function () {
+        blocks[index].accent = '';
+        renderBlocks();
+        renderPreview();
+      };
+      barisWarna.appendChild(ikut);
+      row.appendChild(barisWarna);
+
+      var ket = document.createElement('p');
+      ket.className = 'hint';
+      ket.style.margin = '4px 0 0';
+      ket.textContent = 'Blok sesudah ini masuk ke dalam container sampai ada container berikutnya.';
+      row.appendChild(ket);
+    } else if (block.kind === 'section') {
+      var taSection = document.createElement('textarea');
+      taSection.rows = Math.min(8, Math.max(2, lineCount(block.value)));
+      taSection.value = block.value || '';
+      taSection.placeholder = 'Teks section…';
+      taSection.oninput = function () { blocks[index].value = taSection.value; renderPreview(); };
+      row.appendChild(taSection);
+
+      var barisAks = document.createElement('div');
+      barisAks.className = 'role-style-row';
+
+      // Aksesori: satu saja. Discord menolak section dengan dua aksesori,
+      // jadi admin memilih salah satu — bukan mengisi keduanya lalu bingung.
+      var thumb = document.createElement('input');
+      thumb.type = 'text';
+      thumb.value = block.thumbnail || '';
+      thumb.placeholder = 'URL gambar kecil (kanan)';
+      thumb.oninput = function () {
+        blocks[index].thumbnail = thumb.value;
+        renderPreview();
+      };
+      barisAks.appendChild(thumb);
+      row.appendChild(barisAks);
+
+      var barisTombol = document.createElement('div');
+      barisTombol.className = 'role-style-row';
+      var labelAks = document.createElement('input');
+      labelAks.type = 'text';
+      labelAks.value = block.accessoryLabel || '';
+      labelAks.placeholder = 'Label tombol (kanan)';
+      labelAks.oninput = function () { blocks[index].accessoryLabel = labelAks.value; renderPreview(); };
+      barisTombol.appendChild(labelAks);
+
+      var urlAks = document.createElement('input');
+      urlAks.type = 'text';
+      urlAks.value = block.url || '';
+      urlAks.placeholder = 'https://…';
+      urlAks.oninput = function () { blocks[index].url = urlAks.value; renderPreview(); };
+      barisTombol.appendChild(urlAks);
+      row.appendChild(barisTombol);
+
+      var ketAks = document.createElement('p');
+      ketAks.className = 'hint';
+      ketAks.style.margin = '4px 0 0';
+      ketAks.textContent = block.accessoryLabel && block.url
+        ? 'Tombol di kanan dipakai; gambar kecil diabaikan saat tombol terisi.'
+        : 'Isi salah satu: gambar kecil ATAU tombol. Discord hanya mengizinkan satu aksesori per section.';
+      row.appendChild(ketAks);
     } else if (block.kind === 'text') {
       var ta = document.createElement('textarea');
       ta.rows = Math.min(10, Math.max(2, lineCount(block.value)));
@@ -410,6 +600,7 @@ function renderBlocks() {
     host.appendChild(row);
   });
   renderPreview();
+  renderUsage();
 }
 
 /** Batas unggahan gambar (sama dengan banner). */
@@ -435,7 +626,10 @@ function unggahGambar(index, input) {
 }
 
 function addBlock(kind) {
-  blocks.push({ kind: kind, value: '', url: '' });
+  var blok = { kind: kind, value: '', url: '' };
+  if (kind === 'container') blok.accent = '';
+  if (kind === 'section') { blok.thumbnail = ''; blok.accessoryLabel = ''; }
+  blocks.push(blok);
   renderBlocks();
 }
 function removeBlock(index) {
@@ -461,6 +655,12 @@ function moveBlock(index, delta) {
 function payloadBlocks() {
   return blocks.filter(function (b) {
     if (b.kind === 'divider') return true;
+    // Container adalah penanda struktur: tanpa ia, blok sesudahnya berpindah
+    // ke kartu sebelumnya dan tampilan pesan berubah tanpa admin sadar.
+    if (b.kind === 'container') return true;
+    if (b.kind === 'section') {
+      return Boolean(String(b.value || '').trim() || String(b.thumbnail || '').trim());
+    }
     if (b.kind === 'image') return Boolean(b.data || String(b.value || '').trim());
     return String(b.value || '').trim().length > 0;
   });
@@ -556,7 +756,18 @@ function loadExisting() {
     // Field data WAJIB ikut. Tanpa ini, membuka pesan lama lalu menyimpan akan
     // membuang gambar unggahannya — pesan yang sudah rapi berubah jadi tanpa
     // gambar tanpa ada peringatan apa pun.
-    return { kind: b.kind, value: b.value || '', url: b.url || '', data: b.data || '' };
+    return {
+      kind: b.kind,
+      value: b.value || '',
+      url: b.url || '',
+      data: b.data || '',
+      // Field struktur ikut dimuat: tanpa ini, membuka pesan lama lalu
+      // menyimpan akan menghapus warna container dan aksesori section.
+      accent: b.accent || '',
+      thumbnail: b.thumbnail || '',
+      accessoryLabel: b.accessoryLabel || '',
+      spacing: b.spacing || '',
+    };
   });
   var send = document.getElementById('postSend');
   if (send) send.textContent = 'Simpan & kirim ulang';
@@ -594,24 +805,46 @@ function renderPreview() {
   if (!host) return;
   host.innerHTML = '';
 
-  var kartu = document.createElement('div');
-  kartu.className = 'preview-container';
-  kartu.style.borderLeftColor = accentNow();
-
+  /*
+   * Pratinjau memakai pemisahan wadah yang SAMA dengan penyusun payload:
+   * blok container membuka kartu baru, blok isi sesudahnya masuk ke situ.
+   * Kalau pratinjau dan hasil kiriman memakai aturan berbeda, admin melihat
+   * satu hal di dashboard dan hal lain di Discord.
+   */
   var isi = blocks.filter(function (b) {
-    if (b.kind === 'divider') return true;
+    if (b.kind === 'divider' || b.kind === 'container') return true;
+    if (b.kind === 'section') return Boolean(String(b.value || '').trim() || String(b.thumbnail || '').trim());
     if (b.kind === 'image') return Boolean(b.data || b.value);
     return String(b.value || '').trim().length > 0;
   });
 
-  if (isi.length === 0 || !isi.some(function (b) { return b.kind === 'text' || b.kind === 'image'; })) {
+  var adaIsi = isi.some(function (b) {
+    return b.kind === 'text' || b.kind === 'image' || b.kind === 'section';
+  });
+  if (!adaIsi) {
     var kosong = document.createElement('div');
-    kosong.className = 'pc-line pc-small';
-    kosong.textContent = 'Belum ada isi — pesan kosong tidak bisa dikirim.';
-    kartu.appendChild(kosong);
-    host.appendChild(kartu);
+    kosong.className = 'preview-container';
+    kosong.style.borderLeftColor = accentNow();
+    var pesanKosong = document.createElement('div');
+    pesanKosong.className = 'pc-line pc-small';
+    pesanKosong.textContent = 'Belum ada isi — pesan kosong tidak bisa dikirim.';
+    kosong.appendChild(pesanKosong);
+    host.appendChild(kosong);
     return;
   }
+
+  // Kartu aktif tempat blok ditulis. Kartu kosong dibuang di akhir.
+  var kartuList = [];
+  var kartu;
+  function bukaKartu(warna) {
+    kartu = document.createElement('div');
+    kartu.className = 'preview-container';
+    kartu.style.borderLeftColor = warna || accentNow();
+    kartu._adaIsi = false;
+    kartuList.push(kartu);
+    host.appendChild(kartu);
+  }
+  bukaKartu(null);
 
   var tertunda = [];
   function flushTombol() {
@@ -621,21 +854,63 @@ function renderPreview() {
       tertunda.slice(i, i + 5).forEach(function (t) {
         var b = document.createElement('span');
         b.className = 'pc-button pc-button-link';
-        b.textContent = t.value;
+        b.textContent = teksTombol(t);
         baris.appendChild(b);
       });
       kartu.appendChild(baris);
+      kartu._adaIsi = true;
     }
     tertunda = [];
   }
 
   isi.forEach(function (blok) {
+    if (blok.kind === 'container') {
+      if (tertunda.length) flushTombol();
+      bukaKartu(blok.accent || null);
+      return;
+    }
     if (blok.kind === 'button') { tertunda.push(blok); return; }
     if (tertunda.length) flushTombol();
 
+    if (blok.kind === 'section') {
+      // Discord: teks di kiri, aksesori (gambar kecil atau tombol) di kanan.
+      var sec = document.createElement('div');
+      sec.className = 'pc-section';
+
+      var kiri = document.createElement('div');
+      kiri.className = 'pc-section-text';
+      var kecilSec = /^\\s*-#/.test(blok.value || '');
+      var teksSec = kecilSec ? String(blok.value).replace(/^\\s*-#\s*/, '') : (blok.value || '');
+      var elSec = document.createElement('div');
+      elSec.className = 'pc-line' + (kecilSec ? ' pc-small' : '');
+      elSec.textContent = teksSec;
+      kiri.appendChild(elSec);
+      sec.appendChild(kiri);
+
+      var kanan = document.createElement('div');
+      kanan.className = 'pc-section-aksesori';
+      if (blok.accessoryLabel && /^https?:\\/\\//i.test(blok.url || '')) {
+        var btn = document.createElement('span');
+        btn.className = 'pc-button pc-button-link';
+        btn.textContent = blok.accessoryLabel;
+        kanan.appendChild(btn);
+      } else if (blok.thumbnail) {
+        var thumb = document.createElement('img');
+        thumb.src = blok.thumbnail;
+        thumb.className = 'pc-thumb';
+        thumb.alt = '';
+        thumb.onerror = function () { thumb.replaceWith(salinanTeks('[ gambar tidak bisa dimuat ]')); };
+        kanan.appendChild(thumb);
+      }
+      sec.appendChild(kanan);
+      kartu.appendChild(sec);
+      kartu._adaIsi = true;
+      return;
+    }
+
     if (blok.kind === 'divider') {
       var sep = document.createElement('div');
-      sep.className = 'pc-sep';
+      sep.className = 'pc-sep' + (blok.spacing === 'large' ? ' pc-sep-large' : '');
       kartu.appendChild(sep);
       return;
     }
@@ -656,17 +931,30 @@ function renderPreview() {
         };
         kartu.appendChild(jauh);
       }
+      kartu._adaIsi = true;
       return;
     }
     // Teks: -# di awal = teks kecil di Discord.
-    var kecil = /^\s*-#/.test(blok.value);
-    var teks = kecil ? blok.value.replace(/^\s*-#\s*/, '') : blok.value;
+    var kecil = /^\\s*-#/.test(blok.value);
+    var teks = kecil ? blok.value.replace(/^\\s*-#\s*/, '') : blok.value;
     var el = document.createElement('div');
     el.className = 'pc-line' + (kecil ? ' pc-small' : '');
     el.textContent = teks;
     kartu.appendChild(el);
+    kartu._adaIsi = true;
   });
   if (tertunda.length) flushTombol();
+
+  // Kartu yang tidak mendapat isi sama sekali dibuang: di Discord kartu itu
+  // tidak akan muncul, jadi menampilkannya di pratinjau justru menyesatkan.
+  for (var k = kartuList.length - 1; k >= 0; k -= 1) {
+    if (!kartuList[k]._adaIsi) kartuList[k].remove();
+  }
+  // Wadah untuk tombol role: kartu terakhir yang masih tampil — sama dengan
+  // penyusun payload yang menaruh tombol di wadah aktif terakhir.
+  for (var m = kartuList.length - 1; m >= 0; m -= 1) {
+    if (kartuList[m]._adaIsi) { kartu = kartuList[m]; break; }
+  }
 
   // Tombol role: baris paling bawah, sama seperti pesan sungguhan.
   for (var i = 0; i < roleButtons.length; i += 5) {
@@ -843,6 +1131,7 @@ function renderRoleButtons() {
     host.appendChild(row);
   });
   renderPreview();
+  renderUsage();
 }
 
 function addRoleButton() {
@@ -1025,6 +1314,7 @@ function renderRoleMenus() {
     host.appendChild(kotak);
   });
   renderPreview();
+  renderUsage();
 }
 
 /** Daftar pilihan di dalam satu menu, masing-masing bisa diatur. */
@@ -1113,6 +1403,7 @@ function addRoleMenu() {
     options: [],
   });
   renderRoleMenus();
+  renderUsage();
 }
 
 /** Muat tombol role saat mengubah pesan yang sudah punya tombol. */

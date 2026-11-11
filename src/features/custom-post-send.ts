@@ -18,10 +18,12 @@ import {
   ContainerBuilder,
   MediaGalleryBuilder,
   MediaGalleryItemBuilder,
+  SectionBuilder,
   SeparatorBuilder,
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
   TextDisplayBuilder,
+  ThumbnailBuilder,
   WebhookClient,
   type Client,
   type Message,
@@ -61,6 +63,10 @@ function buildPayload(
   const built = buildPostPayload(blocks, {
     ContainerBuilder,
     TextDisplayBuilder,
+    // Section/thumbnail dipakai blok `section`. Tanpa keduanya, blok section
+    // dilewati diam-diam — bug yang sama seperti select menu sebelumnya.
+    SectionBuilder,
+    ThumbnailBuilder,
     SeparatorBuilder,
     MediaGalleryBuilder,
     MediaGalleryItemBuilder,

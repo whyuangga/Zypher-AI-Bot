@@ -1127,6 +1127,61 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
 .pc-button-role.style-danger { background: #da373c; }
 
 /* Dropdown role di pratinjau. */
+/* Penghitung batas komponen: angka kecil, bukan kotak besar. */
+.usage-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-track {
+  flex: 1 1 120px;
+  min-width: 90px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.usage-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--brand, #8fb0ff);
+  transition: width .15s ease;
+}
+
+.usage-fill.warn { background: #ffb454; }
+.usage-fill.over { background: #ff6b6b; }
+.usage-warn { color: #ffb454; }
+
+/* Section: teks kiri, aksesori kecil di kanan. */
+.pc-section {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-top: 6px;
+}
+
+.pc-section-text { flex: 1 1 auto; min-width: 0; }
+.pc-section-aksesori { flex: 0 0 auto; display: flex; align-items: center; }
+
+.pc-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 8px;
+  display: block;
+}
+
+/* Pemisah berjarak besar — Discord menyebutnya spacing 2. */
+.pc-sep-large { margin: 16px 0; }
+
 .pc-select {
   display: flex;
   align-items: center;

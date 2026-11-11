@@ -6643,6 +6643,162 @@ await testAsync('pesan: jalur kirim benar-benar menyertakan select menu (bukan d
   assert.equal(select.options[0].value, '222222222222222222', 'nilai opsi = role ID');
 });
 
+await testAsync('pesan: blok container menghasilkan beberapa container berwarna sendiri', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SectionBuilder: d.SectionBuilder,
+    ThumbnailBuilder: d.ThumbnailBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    accent: 0x6d8cff,
+    accentToNumber: (hex: string) => Number.parseInt(hex.slice(1), 16),
+  };
+
+  const { blocks } = sanitizeBlocks([
+    { kind: 'text', value: 'Di luar container' },
+    { kind: 'container', accent: '#58b9ff' },
+    { kind: 'text', value: '### What is this?' },
+    { kind: 'text', value: 'Isi pertama' },
+    { kind: 'container', accent: '#ff8800' },
+    { kind: 'text', value: '### Get started' },
+  ]);
+  const built = buildPostPayload(blocks, deps);
+  assert.ok(built, 'payload terbentuk');
+
+  type C = { accent_color?: number; components: Array<Record<string, any>> };
+  const json = (built!.components as Array<{ toJSON: () => C }>).map((c) => c.toJSON());
+  assert.equal(json.length, 3, 'tiga container: bawaan + dua dari blok');
+  assert.equal(json[0]!.accent_color, 0x6d8cff, 'container pertama ikut warna pesan');
+  assert.equal(json[1]!.accent_color, 0x58b9ff, 'warna container sendiri dipakai');
+  assert.equal(json[2]!.accent_color, 0xff8800);
+  assert.equal(json[1]!.components.length, 2);
+
+  // Pesan TANPA blok container harus tetap satu container — pesan lama tidak
+  // boleh berubah tampilannya gara-gara fitur baru ini.
+  const lama = buildPostPayload(
+    sanitizeBlocks([{ kind: 'text', value: 'Halo' }, { kind: 'button', value: 'Buka', url: 'https://a.test' }]).blocks,
+    deps,
+  );
+  const jsonLama = (lama!.components as Array<{ toJSON: () => C }>).map((c) => c.toJSON());
+  assert.equal(jsonLama.length, 1, 'tetap satu container');
+});
+
+await testAsync('pesan: section memakai SATU aksesori, tombol menang atas gambar', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SectionBuilder: d.SectionBuilder,
+    ThumbnailBuilder: d.ThumbnailBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+  };
+
+  type C = { components: Array<Record<string, any>> };
+  const ambilSection = (input: unknown) => {
+    const built = buildPostPayload(sanitizeBlocks(input).blocks, deps);
+    const json = (built!.components as Array<{ toJSON: () => C }>)[0]!.toJSON();
+    return json.components.find((c) => c.type === 9);
+  };
+
+  const denganGambar = ambilSection([
+    { kind: 'section', value: 'Teks', thumbnail: 'https://a.test/gambar.png' },
+  ]);
+  assert.equal(denganGambar?.accessory.type, 11, 'aksesori thumbnail (tipe 11)');
+  assert.equal(denganGambar?.accessory.media.url, 'https://a.test/gambar.png');
+  assert.equal(denganGambar?.components[0].content, 'Teks');
+
+  // Keduanya diisi: Discord menolak dua aksesori, jadi tombol yang dipakai.
+  const duaDua = ambilSection([
+    {
+      kind: 'section',
+      value: 'Teks',
+      thumbnail: 'https://a.test/gambar.png',
+      accessoryLabel: 'Buka',
+      url: 'https://b.test',
+    },
+  ]);
+  assert.equal(duaDua?.accessory.type, 2, 'aksesori tombol (tipe 2)');
+  assert.equal(duaDua?.accessory.label, 'Buka');
+  assert.equal(duaDua?.accessory.url, 'https://b.test');
+});
+
+await testAsync('pesan: pemisah berjarak besar memakai spacing 2', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+  };
+  const built = buildPostPayload(
+    sanitizeBlocks([{ kind: 'text', value: 'A' }, { kind: 'divider', spacing: 'large' }, { kind: 'text', value: 'B' }]).blocks,
+    deps,
+  );
+  type C = { components: Array<Record<string, any>> };
+  const json = (built!.components as Array<{ toJSON: () => C }>)[0]!.toJSON();
+  const sep = json.components.find((c) => c.type === 14);
+  assert.equal(sep?.spacing, 2, 'jarak besar');
+  assert.equal(sep?.divider, true);
+});
+
+await testAsync('pesan: penghitung batas komponen menghitung seperti Discord', async () => {
+  const { measureBlocks, sanitizeBlocks, LIMITS } = await import('../src/features/custom-post.js');
+  const ukur = (input: unknown) => measureBlocks(sanitizeBlocks(input).blocks);
+
+  assert.equal(ukur([]).total, 0, 'pesan kosong tidak memakai komponen');
+
+  // Teks + 2 tombol = 1 TextDisplay + 1 ActionRow.
+  const duaTombol = ukur([
+    { kind: 'text', value: 'Halo' },
+    { kind: 'button', value: 'A', url: 'https://a.test' },
+    { kind: 'button', value: 'B', url: 'https://b.test' },
+  ]);
+  assert.equal(duaTombol.total, 2);
+  assert.equal(duaTombol.topLevel, 1);
+
+  // 7 tombol = 2 baris.
+  const tujuh = ukur([
+    { kind: 'text', value: 'A' },
+    ...Array.from({ length: 7 }, (_, i) => ({ kind: 'button', value: `T${i}`, url: 'https://x.test' })),
+  ]);
+  assert.equal(tujuh.total, 3, '1 teks + 2 baris tombol');
+
+  // 41 blok teks = melewati batas 40.
+  const banyak = ukur(Array.from({ length: 41 }, (_, i) => ({ kind: 'text', value: `b${i}` })));
+  assert.equal(banyak.total, 41);
+  assert.equal(banyak.over, true);
+  assert.ok(banyak.masalah[0]?.includes(String(LIMITS.totalComponents)), 'menyebut batasnya');
+
+  // Container kosong tidak dihitung sebagai container yang dikirim.
+  const kosong = ukur([{ kind: 'text', value: 'A' }, { kind: 'container' }]);
+  assert.equal(kosong.topLevel, 1, 'container kosong dibuang');
+
+  // 11 container dipotong ke 10 oleh sanitizeBlocks, dengan alasan jelas.
+  const sebelas = sanitizeBlocks(
+    Array.from({ length: 11 }, (_, i) => [{ kind: 'container' }, { kind: 'text', value: `isi ${i}` }]).flat(),
+  );
+  assert.equal(sebelas.blocks.filter((b) => b.kind === 'container').length, 10);
+  assert.ok(sebelas.dropped.some((d) => d.includes('container ke-11')), 'alasan disebutkan');
+});
+
 await testAsync('pesan: isi blok tidak bisa keluar dari tag <script>', async () => {
   const { pesanPage } = await import('../src/web/ui/pesan.js');
 

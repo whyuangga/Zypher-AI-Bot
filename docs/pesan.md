@@ -37,13 +37,49 @@ mengirim pesan baru dan menyimpan ID yang baru.
 
 | Blok | Isi | Catatan |
 |---|---|---|
-| **Teks** | teks biasa | mendukung format Discord (`**tebal**`, `_miring_`, `> kutipan`) |
+| **Teks** | teks biasa | mendukung format Discord (`**tebal**`, `_miring_`, `> kutipan`, `### judul`) |
 | **Gambar** | URL `http(s)://…` **atau unggah dari komputer** | PNG/JPG/WebP, maksimal 4 MB |
-| **Tombol** | label + URL tujuan | hanya **tombol link**; membuka tautan, tidak memberi role |
-| **Pemisah** | garis | pemisah antar bagian |
+| **Tombol** | label + URL tujuan + emoji | hanya **tombol link**; membuka tautan, tidak memberi role |
+| **Pemisah** | garis, jarak rapat atau renggang | pemisah antar bagian |
+| **Container** | warna aksen sendiri | memulai **kartu baru**; blok sesudahnya masuk ke kartu itu |
+| **Section** | teks + gambar kecil **atau** tombol di kanan | Discord hanya mengizinkan satu aksesori |
 
 Teks kecil: baris yang diawali `-#` (mis. `-# dibuat oleh admin`) tampil kecil dan
 redup di Discord. Ini cara membuat catatan kaki.
+
+### Container: beberapa kartu dalam satu pesan
+
+Seperti contoh pesan Discohook, satu pesan bisa berisi **beberapa kartu** dengan
+warna berbeda. Caranya: tambahkan blok **Container**, lalu semua blok sesudah
+blok berikutnya masuk ke kartu itu sampai ada Container lagi.
+
+```
+Teks            "Hey, welcome to …"        → kartu 1 (warna pesan)
+Container       #58b9ff
+Teks            "### What is this?"        → kartu 2
+Teks            "At its core, …"           → kartu 2
+Container       #ff8800
+Teks            "### Get started"          → kartu 3
+```
+
+Aturan yang dipegang:
+
+- **Tanpa blok Container, hasilnya tetap satu kartu** — pesan yang sudah ada
+  tidak berubah tampilannya.
+- Container **kosong dibuang** sebelum dikirim. Admin yang menambah kartu lalu
+  berubah pikiran tidak mendapat kartu kosong.
+- Container **tidak bisa bersarang** di dalam container lain (aturan Discord).
+- Maksimal **10** komponen teratas per pesan.
+
+### Section: teks dengan aksesori
+
+Section menaruh **teks di kiri** dan **satu aksesori di kanan** — gambar kecil
+(64×64, dipotong rapi) atau satu tombol link. Ini yang membuat pesan terasa
+seperti kartu sambutan.
+
+Kalau kamu mengisi **keduanya**, tombol yang dipakai: Discord menolak section
+dengan dua aksesori, jadi bot memilih salah satu alih-alih mengirim payload
+yang pasti gagal.
 
 ### Pratinjau, warna, dan pengirim
 
@@ -65,12 +101,31 @@ Discord punya batas keras. Bot memangkas isi agar kiriman tidak ditolak:
 
 | Batas | Angka |
 |---|---|
+| **Komponen total per pesan** (termasuk bersarang) | **40** |
+| **Komponen teratas per pesan** (container) | **10** |
+| Total teks satu pesan | 3.500 karakter (jaring aman; Discord 4.000) |
+| Teks per Section | 1–3 blok |
 | Panjang satu blok teks | 4.000 karakter |
-| Total teks satu pesan | 3.500 karakter |
-| Jumlah blok | 40 |
+| Jumlah blok di editor | 120 |
 | Tombol per baris | 5 |
 | Baris tombol per pesan | 5 |
 | Gambar galeri | 10 |
+| Pilihan per menu role | 25 |
+
+**Kenapa 40, bukan 25.** Banyak panduan di internet menyebut 25 komponen — itu
+batas pesan **lama**. Components V2 memakai 40 komponen total dan 10 komponen
+teratas. Memakai angka lama berarti menolak pesan yang sebenarnya sah.
+
+**Penghitung di dashboard.** Di bawah daftar blok ada bilah kecil:
+
+```
+23/40 komponen · 2/10 container · 812/3500 karakter
+```
+
+Angkanya berubah saat kamu mengetik, dan berubah warna (kuning → merah) saat
+mendekati batas. Server **menghitung ulang dengan aturan yang sama** saat
+menyimpan dan mengirim: angka di dashboard hanya untuk kenyamanan, keputusan
+boleh-kirim tetap di server.
 
 Kalau ada blok yang tidak mungkin dikirim, dashboard **memberi tahu nama bloknya**
 saat menyimpan — tidak dibuang diam-diam. Contoh: tombol yang URL-nya bukan

@@ -15,8 +15,14 @@
  *   - Kalau bentuk Discord berubah, hanya penerjemah bot yang perlu diubah.
  */
 
-/** Jenis blok yang bisa disusun admin. */
-export type PostBlockKind = 'text' | 'divider' | 'image' | 'button';
+/**
+ * Jenis blok yang bisa disusun admin.
+ *
+ * `container` dan `section` adalah blok STRUKTUR, bukan isi: keduanya mengubah
+ * tempat blok lain berada, bukan menambah teks. Blok isi sesudah `container`
+ * masuk ke dalam container itu sampai ada `container` berikutnya.
+ */
+export type PostBlockKind = 'text' | 'divider' | 'image' | 'button' | 'container' | 'section';
 
 export interface PostBlock {
   kind: PostBlockKind;
@@ -57,6 +63,35 @@ export interface PostBlock {
    * danger (merah).
    */
   style?: 'primary' | 'secondary' | 'success' | 'danger';
+  /**
+   * Warna aksen khusus untuk blok `container`.
+   *
+   * Kosong = pakai warna pesan. Inilah yang membuat satu pesan bisa punya
+   * dua kartu dengan warna berbeda.
+   */
+  accent?: string;
+
+  /**
+   * Gambar kecil di kanan teks untuk blok `section`.
+   *
+   * Boleh URL http(s) atau hasil unggahan (`data` di blok yang sama).
+   */
+  thumbnail?: string;
+
+  /**
+   * Jarak pemisah: `small` (rapat, bawaan) atau `large` (renggang).
+   * Hanya dipakai blok `divider`.
+   */
+  spacing?: 'small' | 'large';
+
+  /**
+   * Teks tombol aksesori untuk blok `section`.
+   *
+   * Kalau terisi, tombol link menempel di kanan teks section. Discord hanya
+   * mengizinkan SATU aksesori per section: thumbnail ATAU tombol, tidak dua.
+   */
+  accessoryLabel?: string;
+
   /**
    * Id blok — dipakai sebagai customId untuk select menu role.
    *
@@ -136,10 +171,33 @@ export const LIMITS = {
   buttonsPerRow: 5,
   /** Maksimum ActionRow per pesan. */
   rowsPerMessage: 5,
-  /** Maksimum blok per pesan — jaring pengaman dashboard. */
-  blocks: 40,
+  /**
+   * Maksimum blok per pesan — jaring pengaman dashboard, BUKAN batas Discord.
+   *
+   * Sengaja lebih longgar dari 40: batas Discord menghitung KOMPONEN, dan
+   * beberapa blok bisa jadi satu komponen (deretan tombol = satu ActionRow).
+   * Kalau angka ini dipakai sebagai batas komponen, pesan sah akan ditolak
+   * lebih awal — itu yang dulu terjadi pada 45 baris teks pendek.
+   * Yang menentukan boleh-kirim adalah `measureBlocks`.
+   */
+  blocks: 120,
   /** Maksimum gambar dalam satu Media Gallery. */
   imagesInGallery: 10,
+  /**
+   * Batas ASLI Discord untuk Components V2: 40 komponen total (termasuk yang
+   * bersarang) dan 10 komponen top-level.
+   *
+   * Angka 25 yang sering dikutip di internet adalah batas pesan LAMA, bukan
+   * V2 — memakainya akan menolak pesan yang sebenarnya sah.
+   */
+  totalComponents: 40,
+  topLevelComponents: 10,
+  /** Maksimum anak dalam satu Container kalau ia satu-satunya komponen atas. */
+  containerChildren: 39,
+  /** Maksimum Text Display di dalam satu Section. */
+  sectionTexts: 3,
+  /** Maksimum container dalam satu pesan — dibatasi top-level juga. */
+  containers: 10,
 } as const;
 
 export interface SanitizeResult {
@@ -184,6 +242,58 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
     const item = raw as Record<string, unknown>;
     const kind = item.kind;
 
+    if (kind === 'container') {
+      const jumlah = out.filter((b) => b.kind === 'container').length;
+      if (jumlah >= LIMITS.containers) {
+        dropped.push(`container ke-${jumlah + 1} (maksimum ${LIMITS.containers}, batas Discord)`);
+        continue;
+      }
+      // Container tanpa isi akan tampil sebagai kartu kosong — tidak berguna.
+      const accentRaw = typeof item.accent === 'string' ? item.accent.trim() : '';
+      out.push({
+        kind: 'container',
+        value: '',
+        // Kosong = ikut warna pesan, jadi tidak perlu disimpan sebagai nilai.
+        ...(accentRaw && /^#?[0-9a-f]{6}$/i.test(accentRaw) ? { accent: normalizeAccent(accentRaw) } : {}),
+      });
+      continue;
+    }
+
+    if (kind === 'section') {
+      const text = typeof item.value === 'string' ? item.value.trim() : '';
+      const thumbnailRaw = typeof item.thumbnail === 'string' ? item.thumbnail.trim() : '';
+      const label = typeof item.accessoryLabel === 'string' ? item.accessoryLabel.trim().slice(0, 80) : '';
+      if (!text && !thumbnailRaw) {
+        dropped.push('section tanpa teks dan tanpa gambar');
+        continue;
+      }
+      // Teks section ikut memakan kuota 4000 karakter, sama seperti blok teks.
+      let isi = '';
+      if (text) {
+        const sisa = LIMITS.totalText - totalText;
+        if (sisa <= 0) {
+          dropped.push('teks section melebihi batas satu pesan');
+          continue;
+        }
+        isi = text.length > sisa ? text.slice(0, sisa) : text;
+        totalText += isi.length;
+      }
+      // Discord: SATU aksesori per section. Tombol menang atas thumbnail
+      // kalau admin mengisi keduanya, karena tombol lebih terlihat.
+      const url = typeof item.url === 'string' ? item.url.trim() : '';
+      const pakaiTombol = Boolean(label) && isHttpUrl(url);
+      out.push({
+        kind: 'section',
+        value: isi,
+        ...(pakaiTombol
+          ? { accessoryLabel: label, url }
+          : isHttpUrl(thumbnailRaw)
+            ? { thumbnail: thumbnailRaw }
+            : {}),
+      });
+      continue;
+    }
+
     if (kind === 'divider') {
       // Dua pemisah berurutan hanya menghasilkan ruang kosong.
       if (out.length > 0 && out[out.length - 1]!.kind !== 'divider') {
@@ -193,6 +303,7 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
           value: '',
           // Block id hanya dipakai kalau bentuknya aman untuk customId.
           ...(/^[a-z0-9]{1,16}$/.test(blockId) ? { blockId } : {}),
+          ...(item.spacing === 'large' ? { spacing: 'large' as const } : {}),
         });
       }
       continue;
@@ -296,6 +407,105 @@ export function countBlocks(blocks: PostBlock[]): {
   };
 }
 
+/** Hasil hitung pemakaian komponen — untuk ditampilkan di dashboard. */
+export interface ComponentUsage {
+  /** Komponen total termasuk yang bersarang. Batas Discord: 40. */
+  total: number;
+  /** Komponen top-level (container). Batas Discord: 10. */
+  topLevel: number;
+  /** Karakter teks yang sudah terpakai. Batas aman kita: 3500. */
+  text: number;
+  /** Container yang berisi sesuatu (yang benar-benar dikirim). */
+  containers: number;
+  /** true kalau salah satu batas sudah terlampaui. */
+  over: boolean;
+  /** Bagian mana yang terlampaui, dalam bahasa manusia. */
+  masalah: string[];
+}
+
+/**
+ * Hitung pemakaian komponen persis seperti yang akan dibentuk penyusun payload.
+ *
+ * Kenapa dihitung di sini, bukan di browser saja: dashboard boleh menampilkan
+ * angkanya, tapi keputusan "boleh dikirim atau tidak" tetap di server. Kalau
+ * hanya dihitung di browser, API bisa dipanggil langsung untuk melewati batas.
+ *
+ * Cara menghitungnya sengaja meniru `buildPostPayload` langkah demi langkah:
+ * satu container = satu komponen top-level, dan setiap TextDisplay, separator,
+ * media gallery, section, serta ActionRow menambah hitungan total.
+ */
+export function measureBlocks(blocks: PostBlock[]): ComponentUsage {
+  const masalah: string[] = [];
+  let total = 0;
+  let topLevel = 0;
+  let text = 0;
+  let containers = 0;
+
+  // Wadah pertama selalu ada (blok isi tanpa blok container tetap dikirim).
+  let anak = 0;
+  let adaIsi = false;
+  let adaTombol = 0;
+
+  const tutup = (): void => {
+    if (!adaIsi) return;
+    topLevel += 1;
+    containers += 1;
+    // ActionRow tombol menumpuk dan baru dihitung saat ditutup, karena baru
+    // di titik itu jumlah barisnya diketahui.
+    total += anak + Math.ceil(adaTombol / LIMITS.buttonsPerRow);
+    anak = 0;
+    adaTombol = 0;
+    adaIsi = false;
+  };
+
+  for (const block of blocks) {
+    if (block.kind === 'container') {
+      tutup();
+      continue;
+    }
+    if (block.kind === 'button') {
+      adaTombol += 1;
+      continue;
+    }
+    if (block.kind === 'divider') {
+      // Pemisah pertama di container kosong tidak ditampilkan sendirian.
+      if (adaIsi) {
+        anak += 1;
+      }
+      continue;
+    }
+    if (block.kind === 'text' || block.kind === 'section' || block.kind === 'image') {
+      text += block.kind === 'text' || block.kind === 'section' ? block.value.length : 0;
+      anak += 1;
+      adaIsi = true;
+    }
+  }
+  tutup();
+
+  if (total > LIMITS.totalComponents) {
+    masalah.push(
+      `${total} komponen melebihi batas Discord (${LIMITS.totalComponents}). Gabungkan beberapa blok teks jadi satu.`,
+    );
+  }
+  if (topLevel > LIMITS.topLevelComponents) {
+    masalah.push(
+      `${topLevel} container melebihi batas Discord (${LIMITS.topLevelComponents} komponen teratas per pesan).`,
+    );
+  }
+  if (text > LIMITS.totalText) {
+    masalah.push(`Teks ${text} karakter melebihi batas ${LIMITS.totalText}.`);
+  }
+
+  return {
+    total,
+    topLevel,
+    text,
+    containers,
+    over: masalah.length > 0,
+    masalah,
+  };
+}
+
 /**
  * Baca blok dari database.
  *
@@ -359,6 +569,9 @@ export function buildPostPayload(
   deps: {
     ContainerBuilder: new () => any;
     TextDisplayBuilder: new () => any;
+    /** Untuk blok `section` — versi lawas discord.js boleh tidak punya ini. */
+    SectionBuilder?: new () => any;
+    ThumbnailBuilder?: new () => any;
     SeparatorBuilder: new () => any;
     MediaGalleryBuilder: new () => any;
     MediaGalleryItemBuilder: new () => any;
@@ -398,13 +611,54 @@ export function buildPostPayload(
     accentHex?: string;
   },
 ): BuiltPost | null {
-  if (!blocks.some((b) => b.kind === 'text' || b.kind === 'image')) return null;
+  /*
+   * Penjaga "pesan kosong". Tombol saja tidak cukup (Discord menolak pesan
+   * yang hanya berisi ActionRow di dalam container tanpa teks), tapi section
+   * yang hanya berisi gambar tetap sah — jadi ia ikut dihitung sebagai isi.
+   */
+  const adaIsi = blocks.some(
+    (b) => b.kind === 'text' || b.kind === 'image' || b.kind === 'section',
+  );
+  if (!adaIsi) return null;
 
-  const container = new deps.ContainerBuilder();
-  const accent = deps.accentHex && deps.accentToNumber
+  /*
+   * Wadah = satu Container Discord. Blok `container` MEMBUKA wadah baru;
+   * blok isi sesudahnya masuk ke wadah yang sedang aktif. Kalau pesan tidak
+   * punya blok `container` sama sekali, hasilnya satu wadah — persis seperti
+   * sebelum fitur ini ada, jadi pesan lama tidak berubah tampilannya.
+   */
+  const accentDefault = deps.accentHex && deps.accentToNumber
     ? deps.accentToNumber(deps.accentHex)
     : deps.accent;
-  if (accent !== undefined) container.setAccentColor(accent);
+
+  interface Wadah {
+    builder: any;
+    /** Jumlah komponen di dalamnya, untuk penjagaan batas 39 anak. */
+    anak: number;
+    /** Apakah sudah ada isi — container kosong dibuang sebelum dikirim. */
+    adaIsi: boolean;
+  }
+
+  const wadah: Wadah[] = [];
+  const buatWadah = (accent?: number): Wadah => {
+    const builder = new deps.ContainerBuilder();
+    const warna = accent ?? accentDefault;
+    if (warna !== undefined) builder.setAccentColor(warna);
+    const baru: Wadah = { builder, anak: 0, adaIsi: false };
+    wadah.push(baru);
+    return baru;
+  };
+  /*
+   * Wadah pertama selalu ada: kalau pesan hanya memakai blok isi biasa, semua
+   * masuk ke sini dan hasilnya sama seperti sebelum fitur container ada.
+   */
+  let aktif = buatWadah();
+
+  /** Pindah ke container berikutnya; dipanggil saat blok `container` dibaca. */
+  const bukaContainer = (block: PostBlock): void => {
+    const accent = block.accent && deps.accentToNumber ? deps.accentToNumber(block.accent) : undefined;
+    aktif = buatWadah(accent);
+  };
 
   // Gambar unggahan dikumpulkan dulu, lalu dikirim sebagai lampiran.
   const files: AttachmentLike[] = [];
@@ -428,11 +682,20 @@ export function buildPostPayload(
         if (emoji) button.setEmoji(emoji);
         row.addComponents(button);
       }
-      container.addActionRowComponents(row);
+      aktif.builder.addActionRowComponents(row);
+      aktif.anak += 1;
+      aktif.adaIsi = true;
     }
   };
 
   for (const block of blocks) {
+    // Blok struktur tidak menghasilkan komponen: ia memindahkan tujuan
+    // penulisan blok berikutnya.
+    if (block.kind === 'container') {
+      if (tombolTertunda.length > 0) flushButtons();
+      bukaContainer(block);
+      continue;
+    }
     if (block.kind === 'button') {
       tombolTertunda.push(block);
       continue;
@@ -441,11 +704,44 @@ export function buildPostPayload(
     if (tombolTertunda.length > 0) flushButtons();
 
     if (block.kind === 'divider') {
-      container.addSeparatorComponents(new deps.SeparatorBuilder().setDivider(true));
+      const sep = new deps.SeparatorBuilder().setDivider(true);
+      // Jarak: 1 = kecil (rapat), 2 = besar (renggang). Discord menamainya
+      // `spacing`, bukan ukuran piksel.
+      if (block.spacing === 'large' && typeof sep.setSpacing === 'function') sep.setSpacing(2);
+      aktif.builder.addSeparatorComponents(sep);
+      aktif.anak += 1;
+      aktif.adaIsi = true;
       continue;
     }
     if (block.kind === 'text') {
-      container.addTextDisplayComponents(new deps.TextDisplayBuilder().setContent(block.value));
+      aktif.builder.addTextDisplayComponents(new deps.TextDisplayBuilder().setContent(block.value));
+      aktif.anak += 1;
+      aktif.adaIsi = true;
+      continue;
+    }
+    if (block.kind === 'section') {
+      // Section = teks + SATU aksesori (thumbnail ATAU tombol link).
+      if (deps.SectionBuilder && deps.ThumbnailBuilder) {
+        const section = new deps.SectionBuilder();
+        section.addTextDisplayComponents(
+          new deps.TextDisplayBuilder().setContent(block.value || '\u200b'),
+        );
+        if (block.accessoryLabel && block.url) {
+          section.setButtonAccessory(
+            new deps.ButtonBuilder()
+              .setStyle(deps.ButtonStyle.Link)
+              .setLabel(block.accessoryLabel)
+              .setURL(block.url),
+          );
+        } else if (block.thumbnail) {
+          const thumb = new deps.ThumbnailBuilder();
+          thumb.setURL(block.thumbnail);
+          section.setThumbnailAccessory(thumb);
+        }
+        aktif.builder.addSectionComponents(section);
+        aktif.anak += 1;
+        aktif.adaIsi = true;
+      }
       continue;
     }
     if (block.kind === 'image') {
@@ -457,11 +753,13 @@ export function buildPostPayload(
         files.push({ dataUri: block.data, name });
         url = `attachment://${name}`;
       }
-      container.addMediaGalleryComponents(
+      aktif.builder.addMediaGalleryComponents(
         new deps.MediaGalleryBuilder().addItems(
           new deps.MediaGalleryItemBuilder().setURL(url),
         ),
       );
+      aktif.anak += 1;
+      aktif.adaIsi = true;
     }
   }
   if (tombolTertunda.length > 0) flushButtons();
@@ -483,7 +781,9 @@ export function buildPostPayload(
         if (emoji) button.setEmoji(emoji);
         row.addComponents(button);
       }
-      container.addActionRowComponents(row);
+      aktif.builder.addActionRowComponents(row);
+      aktif.anak += 1;
+      aktif.adaIsi = true;
     }
   }
 
@@ -507,11 +807,28 @@ export function buildPostPayload(
         if (opsi.description) option.setDescription(opsi.description.slice(0, 100));
         select.addOptions(option);
       }
-      container.addActionRowComponents(new deps.ActionRowBuilder().addComponents(select));
+      aktif.builder.addActionRowComponents(new deps.ActionRowBuilder().addComponents(select));
+      aktif.anak += 1;
+      aktif.adaIsi = true;
     }
   }
 
-  return { components: [container], flags: 1 << 15, files };
+  /*
+   * Buang container kosong.
+   *
+   * Dua alasan: (1) Discord menolak container tanpa komponen, (2) admin yang
+   * menekan "container baru" lalu berubah pikiran tidak boleh mendapat kartu
+   * kosong di pesannya. Kalau SEMUA kosong, pemanggil menganggap pesan kosong
+   * (mengembalikan null) — sama seperti perilaku sebelumnya.
+   */
+  const dipakai = wadah.filter((w) => w.adaIsi);
+  if (dipakai.length === 0) return null;
+
+  // Batas top-level: 10 komponen teratas per pesan (batas Discord, bukan
+  // pilihan kita). Wadah pertama selalu container, jadi ini cukup.
+  const terpakai = dipakai.slice(0, LIMITS.topLevelComponents);
+
+  return { components: terpakai.map((w) => w.builder), flags: 1 << 15, files };
 }
 
 /* ------------------------------------------------------------------ */

@@ -66,7 +66,7 @@ import {
   sendOrUpdatePostViaWebhook,
   webhookIdentityFor,
 } from '../features/custom-post-send.js';
-import { normalizeAccent, sanitizeBlocks } from '../features/custom-post.js';
+import { measureBlocks, normalizeAccent, sanitizeBlocks } from '../features/custom-post.js';
 import { listGuildRoles } from '../features/role-buttons.js';
 import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
 import {
@@ -1726,8 +1726,15 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       accent,
       sender,
     });
-    const { dropped } = sanitizeBlocks(payload.blocks);
-    sendJson(response, 200, { ok: true, post: { ...post } as unknown as Record<string, unknown>, dropped });
+    const { blocks: blokSah, dropped } = sanitizeBlocks(payload.blocks);
+    // `usage` = hitungan versi SERVER. Dashboard boleh menghitung sendiri
+    // untuk pratinjau, tapi angka inilah yang menentukan boleh-kirim.
+    sendJson(response, 200, {
+      ok: true,
+      post: { ...post } as unknown as Record<string, unknown>,
+      dropped,
+      usage: measureBlocks(blokSah),
+    });
     return;
   }
 
@@ -1742,13 +1749,32 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     const isRoles = postMatch[2] === '/roles';
 
     if (isSend && method === 'POST') {
-      if (!botClient?.isReady()) {
-        sendJson(response, 400, { error: 'Bot sedang offline di proses ini, jadi pesan tidak bisa dikirim.' });
-        return;
-      }
       const post = await getCustomPost(guildId, id);
       if (!post) {
         sendJson(response, 404, { error: 'Pesan tidak ditemukan.' });
+        return;
+      }
+
+      /*
+       * Batas komponen diperiksa SEBELUM cek bot dan sebelum menyentuh
+       * Discord. Dua alasan:
+       *   1. admin mendapat jawaban yang berguna walau bot sedang offline
+       *      (kalau urutannya dibalik, ia hanya melihat "bot offline" dan
+       *      tidak tahu pesannya juga terlalu besar)
+       *   2. API bisa dipanggil langsung, jadi aturan ini tidak boleh hanya
+       *      hidup di dashboard
+       */
+      const ukuran = measureBlocks(post.blocks);
+      if (ukuran.over) {
+        sendJson(response, 400, {
+          error: `Pesan melewati batas Discord: ${ukuran.masalah.join(' ')}`,
+          usage: ukuran,
+        });
+        return;
+      }
+
+      if (!botClient?.isReady()) {
+        sendJson(response, 400, { error: 'Bot sedang offline di proses ini, jadi pesan tidak bisa dikirim.' });
         return;
       }
       if (!post.channelId) {
@@ -1859,8 +1885,14 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         sendJson(response, 404, { error: 'Pesan tidak ditemukan.' });
         return;
       }
-      const { dropped } = payload.blocks === undefined ? { dropped: [] } : sanitizeBlocks(payload.blocks);
-      sendJson(response, 200, { ok: true, post: { ...post } as unknown as Record<string, unknown>, dropped });
+      const { blocks: blokSah, dropped } =
+        payload.blocks === undefined ? { blocks: post.blocks, dropped: [] as string[] } : sanitizeBlocks(payload.blocks);
+      sendJson(response, 200, {
+        ok: true,
+        post: { ...post } as unknown as Record<string, unknown>,
+        dropped,
+        usage: measureBlocks(blokSah),
+      });
       return;
     }
 
