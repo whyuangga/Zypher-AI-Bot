@@ -1506,7 +1506,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       // Banner unggahan ikut dirender supaya admin melihat hasil akhirnya.
       bannerDataUri: await readBannerDataUri(settings.bannerPath),
       kicker: 'SELAMAT DATANG',
-      // Renderer disuntikkan supaya modul pratinjau tidak bergantung Chromium.
+      // Renderer disuntikkan supaya modul pratinjau tidak bergantung paket gambar.
       renderCard: withCard
         ? (input) =>
             renderWelcomeCard({

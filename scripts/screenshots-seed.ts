@@ -198,9 +198,9 @@ await run(
 /**
  * Banner contoh untuk screenshot.
  *
- * Dibuat dari SVG sederhana lalu disimpan sebagai PNG memakai Chromium bila
- * tersedia. Kalau tidak ada, banner dilewati (screenshot tetap jadi, hanya
- * tanpa gambar) — skrip ini tidak boleh gagal hanya karena Chromium.
+ * Digambar langsung dengan canvas (tanpa browser), jadi selalu tersedia selama
+ * paket gambarnya bisa dimuat. Kalau pun gagal, banner dilewati dan screenshot
+ * tetap jadi — skrip ini tidak boleh gagal hanya karena satu gambar.
  */
 const BANNER_FILE = 'banner-demo-screenshot.png';
 try {

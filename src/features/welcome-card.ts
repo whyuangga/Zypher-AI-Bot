@@ -1,70 +1,84 @@
 /**
  * Kartu sambutan member baru (PNG).
  *
- * Kartu dirender dari SVG lalu dikonversi lewat Chromium bila tersedia
- * (`CHROMIUM_PATH` atau Chromium di lokasi standar). Alasan memakai Chromium:
- * Discord hanya mau menerima PNG/JPG; konversi SVG→PNG butuh renderer, dan
- * menambah library gambar baru dilarang (lihat aturan proyek: tanpa dependency
- * UI tambahan). Kalau Chromium tidak ada, pemanggil jatuh ke embed teks biasa —
- * sambutan tetap terkirim, hanya tanpa kartu.
+ * Kartu digambar langsung ke bitmap lewat `@napi-rs/canvas` (Skia), bukan lewat
+ * browser. Alasannya konkret: versi sebelumnya merender SVG memakai Chromium,
+ * dan Chromium **tidak tersedia di panel hosting** (Pterodactyl/Wispbyte tidak
+ * memasangnya). Akibatnya mode "Card" tidak pernah menghasilkan kartu di server
+ * sungguhan — yang terkirim selalu embed teks. Bot referensi bisa membuat kartu
+ * di hosting yang sama karena menggambar dengan Pillow, bukan browser.
+ *
+ * `@napi-rs/canvas` adalah binding Skia yang membawa semua yang dibutuhkan di
+ * dalam paketnya (nol library sistem, tidak perlu `apt install`), sehingga
+ * kartu tetap jadi di hosting mana pun.
+ *
+ * Susunan kartu mengikuti gaya yang diminta: banner jadi **latar penuh**,
+ * avatar bulat di tengah, "SELAMAT DATANG" besar, lalu nama member di bawahnya.
  */
-import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createCanvas, GlobalFonts, type Image, loadImage } from '@napi-rs/canvas';
 import { errorMessage, logger } from '../lib/logger.js';
 
-const CARD_WIDTH = 900;
-const CARD_HEIGHT = 320;
-
-/**
- * Tinggi strip banner di bagian atas kartu.
- *
- * Kalau banner dipakai, kartu jadi lebih tinggi supaya teks tetap punya ruang
- * dan tidak menimpa gambar. 110px cukup untuk menampilkan potongan gambar yang
- * masih bisa dikenali pada lebar 900px.
- */
-const BANNER_HEIGHT = 110;
+const CARD_WIDTH = 1024;
+const CARD_HEIGHT = 460;
 
 /** Lokasi font yang dipakai kartu (self-host, tidak boleh ambil dari internet). */
 const FONT_DIR = join(process.cwd(), 'assets', 'fonts');
+const FONT_FAMILY = 'General Sans';
 
-let cachedBrowserPath: string | null | undefined;
+let fontsRegistered = false;
 
-/** Cari Chromium sekali saja, lalu ingat hasilnya (termasuk "tidak ada"). */
-function findChromium(): string | null {
-  if (cachedBrowserPath !== undefined) return cachedBrowserPath;
-
-  const explicit = process.env.CHROMIUM_PATH?.trim();
-  const candidates = [
-    explicit,
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/google-chrome',
-    '/usr/bin/google-chrome-stable',
-    '/tmp/chromium',
-  ].filter((value): value is string => Boolean(value));
-
-  cachedBrowserPath = candidates.find((candidate) => existsSync(candidate)) ?? null;
-  if (!cachedBrowserPath) {
-    logger.info('Kartu sambutan PNG dilewati: Chromium tidak ditemukan (pakai embed teks).');
+/**
+ * Daftarkan font kartu sekali saja.
+ *
+ * Font disimpan di repo supaya hasil kartu sama di semua server, tidak
+ * bergantung pada font yang kebetulan terpasang di hosting.
+ */
+function registerFonts(): void {
+  if (fontsRegistered) return;
+  fontsRegistered = true;
+  for (const [file, weight] of [
+    ['GeneralSans-Regular.woff2', 400],
+    ['GeneralSans-Medium.woff2', 500],
+  ] as const) {
+    try {
+      GlobalFonts.registerFromPath(join(FONT_DIR, file), FONT_FAMILY);
+      void weight;
+    } catch (error) {
+      // Tanpa font kartu, Skia memakai font bawaan — kartu tetap jadi, hanya
+      // bentuk hurufnya berbeda. Lebih baik begitu daripada tidak ada kartu.
+      logger.warn(`Font kartu ${file} gagal dimuat`, errorMessage(error));
+    }
   }
-  return cachedBrowserPath;
 }
 
 /**
- * Apakah Chromium tersedia untuk merender kartu.
+ * Apakah renderer kartu siap dipakai.
  *
- * Dipakai dashboard untuk memberi peringatan lebih awal: tanpa Chromium, kartu
- * PNG tidak pernah terkirim dan admin perlu tahu itu **sebelum** mengira fiturnya
- * rusak. Fungsi ini tidak memuat Chromium, hanya memeriksa keberadaan file.
+ * Sejak kartu digambar sendiri (bukan lewat browser), jawabannya praktis selalu
+ * `true`. Fungsi ini tetap ada supaya dashboard dan test tidak perlu diubah
+ * sekaligus, dan supaya kegagalan memuat modul native terdeteksi lebih awal
+ * sebagai "tidak tersedia" alih-alih error saat member pertama bergabung.
  */
 export function cardRendererAvailable(): boolean {
-  return findChromium() !== null;
+  try {
+    registerFonts();
+    return true;
+  } catch (error) {
+    logger.warn('Renderer kartu tidak bisa dipakai', errorMessage(error));
+    return false;
+  }
 }
 
-/** Path Chromium yang dipakai (null = tidak ditemukan). Untuk diagnosa. */
+/**
+ * Keterangan renderer untuk dashboard.
+ *
+ * Dulu isinya path Chromium. Sekarang tidak ada binary luar yang dicari, jadi
+ * yang dilaporkan adalah mesin gambarnya — dipakai halaman Sambutan untuk
+ * memastikan kartu memang bisa dibuat di server ini.
+ */
 export function chromiumPath(): string | null {
-  return findChromium();
+  return cardRendererAvailable() ? '@napi-rs/canvas (Skia)' : null;
 }
 
 function escapeXml(value: string): string {
@@ -116,154 +130,224 @@ export interface CardInput {
   userName: string;
   guildName: string;
   message: string;
-  /** PNG/JPG yang sudah diunduh, dalam bentuk data URI. */
+  /** PNG/JPG/WebP yang sudah diunduh, dalam bentuk data URI. */
   avatarDataUri: string | null;
-  /** Banner unggahan admin (data URI) — dipakai sebagai latar kartu. */
+  /** Banner unggahan admin (data URI) — dipakai sebagai latar penuh kartu. */
   bannerDataUri?: string | null;
   /**
-   * Judul kecil di atas nama server. Sambutan: "SELAMAT DATANG",
-   * perpisahan: "SAMPAI JUMPA".
+   * Judul utama di kartu. Sambutan: "SELAMAT DATANG", perpisahan: "SAMPAI JUMPA".
    */
   kicker?: string;
+  /** Baris kecil di bawah nama, mis. "member ke-1.284". */
+  detail?: string;
 }
 
-/** Tinggi kartu untuk input tertentu (banner membuat kartu lebih tinggi). */
-export function cardHeight(input: { bannerDataUri?: string | null }): number {
-  return CARD_HEIGHT + (input.bannerDataUri ? BANNER_HEIGHT : 0);
+/**
+ * Tinggi kartu.
+ *
+ * Kartu sekarang selalu sama tinggi: banner dipakai sebagai latar penuh (bukan
+ * strip tambahan di atas), jadi kehadiran banner tidak lagi mengubah ukuran.
+ * Dibiarkan sebagai fungsi supaya pemanggil dan test lama tetap jalan.
+ */
+export function cardHeight(_input?: { bannerDataUri?: string | null }): number {
+  return CARD_HEIGHT;
 }
 
-function buildSvg(input: CardInput): string {
-  // Kalau ada banner, semua teks digeser ke bawah selebar strip banner.
-  const offset = input.bannerDataUri ? BANNER_HEIGHT : 0;
-  const height = CARD_HEIGHT + offset;
-  const name = input.userName.slice(0, 28);
-  const lines = wrap(input.message, 52, 3);
-  const hasAvatar = Boolean(input.avatarDataUri);
-  const avatar = hasAvatar
-    ? `<circle cx="126" cy="${172 + offset}" r="70" fill="none" stroke="#716c98" stroke-width="2" opacity="0.5"/>
-  <image href="${input.avatarDataUri}" x="60" y="${106 + offset}" width="132" height="132" clip-path="url(#avatarClip)" preserveAspectRatio="xMidYMid slice"/>`
-    : '';
-  // Tanpa avatar, teks dirapatkan ke kiri supaya tidak ada ruang kosong besar.
-  const textX = hasAvatar ? 232 : 60;
-  const textLines = lines
-    .map(
-      (line, index) =>
-        `<text x="${textX}" y="${202 + offset + index * 38}" font-family="General Sans, sans-serif" font-size="26" fill="#e2d1cc" opacity="0.94">${escapeXml(
-          line,
-        )}</text>`,
-    )
-    .join('\n  ');
-
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${CARD_WIDTH}" height="${height}" viewBox="0 0 ${CARD_WIDTH} ${height}">
-  <defs>
-    <clipPath id="avatarClip"><circle cx="126" cy="${172 + offset}" r="66"/></clipPath>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#17141d"/>
-      <stop offset="100%" stop-color="#0d0d0f"/>
-    </linearGradient>
-    <linearGradient id="fadeDown" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#141119" stop-opacity="0"/>
-      <stop offset="100%" stop-color="#141119" stop-opacity="1"/>
-    </linearGradient>
-    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#716c98"/>
-      <stop offset="100%" stop-color="#d0b2b7"/>
-    </linearGradient>
-  </defs>
-
-  <rect width="${CARD_WIDTH}" height="${height}" fill="url(#bg)"/>
-  ${
-    // Banner dipasang sebagai STRIP di bagian atas, bukan latar penuh.
-    // Alasannya: dengan latar penuh, teks milik banner (judul, logo) akan
-    // bertabrakan dengan nama member dan sapaan — tidak ada penempatan yang
-    // aman untuk semua gambar. Strip membuat batas jelas: gambar di atas,
-    // teks di area gelap di bawahnya.
-    input.bannerDataUri
-      ? `<image href="${input.bannerDataUri}" x="0" y="0" width="${CARD_WIDTH}" height="${BANNER_HEIGHT}" preserveAspectRatio="xMidYMid slice"/>
-  <rect x="0" y="${BANNER_HEIGHT - 44}" width="${CARD_WIDTH}" height="44" fill="url(#fadeDown)"/>`
-      : ''
-  }
-  <rect x="0" y="0" width="${CARD_WIDTH}" height="4" fill="url(#accent)"/>
-
-  <text x="60" y="${62 + offset}" font-family="General Sans, sans-serif" font-size="15" letter-spacing="4" fill="#d0b2b7">${escapeXml(
-    (input.kicker ?? 'SELAMAT DATANG').toUpperCase().slice(0, 24),
-  )}</text>
-  <text x="60" y="${94 + offset}" font-family="General Sans, sans-serif" font-size="34" font-weight="500" fill="#e2d1cc">${escapeXml(
-    input.guildName.slice(0, 40),
-  )}</text>
-
-  ${avatar}
-  <text x="${textX}" y="${160 + offset}" font-family="General Sans, sans-serif" font-size="40" font-weight="500" fill="#ffffff">${escapeXml(
-    name,
-  )}</text>
-  ${textLines}
-</svg>`;
-}
-
-/** Ubah SVG jadi PNG. `null` berarti Chromium tidak tersedia / gagal render. */
-export async function renderWelcomeCard(input: CardInput): Promise<Buffer | null> {
-  const executablePath = findChromium();
-  if (!executablePath) return null;
-
+/** Ubah data URI jadi gambar Skia. `null` bila kosong atau rusak. */
+async function decode(uri: string | null | undefined): Promise<Image | null> {
+  if (!uri) return null;
   try {
-    // Nama modul lewat variabel: paket ini opsional (tidak ada di package.json),
-    // jadi typecheck tidak boleh bergantung pada deklarasinya.
-    const puppeteerModule = 'puppeteer-core';
-    const puppeteer = (await import(puppeteerModule)) as unknown as {
-      launch(options: Record<string, unknown>): Promise<{
-        newPage(): Promise<{
-          setViewport(options: Record<string, unknown>): Promise<void>;
-          setContent(html: string, options?: Record<string, unknown>): Promise<void>;
-          evaluate(expression: string): Promise<unknown>;
-          screenshot(options: Record<string, unknown>): Promise<Uint8Array>;
-        }>;
-        close(): Promise<void>;
-      }>;
-    };
-    const svg = buildSvg(input);
-    const height = cardHeight(input);
+    return await loadImage(uri);
+  } catch (error) {
+    // Banner/avatar rusak tidak boleh menggagalkan sambutan: kartu tetap
+    // dibuat dengan latar gradasi dan tanpa foto profil.
+    logger.warn('Gambar kartu tidak bisa dibaca — dilewati', errorMessage(error));
+    return null;
+  }
+}
 
-    // Font di-embed sebagai data URI supaya kartu tidak bergantung pada
-    // font yang terpasang di server.
-    let svgWithFonts = svg;
-    try {
-      const [regular, medium] = await Promise.all([
-        readFile(join(FONT_DIR, 'GeneralSans-Regular.woff2')),
-        readFile(join(FONT_DIR, 'GeneralSans-Medium.woff2')),
-      ]);
-      const toUri = (buffer: Buffer) => `data:font/woff2;base64,${buffer.toString('base64')}`;
-      svgWithFonts = svg.replace(
-        '<defs>',
-        `<defs><style>
-          @font-face { font-family: "General Sans"; font-weight: 400; src: url("${toUri(regular)}") format("woff2"); }
-          @font-face { font-family: "General Sans"; font-weight: 500 700; src: url("${toUri(medium)}") format("woff2"); }
-        </style>`,
-      );
-    } catch {
-      // Font tidak ada — Chromium tetap bisa render dengan font sistem.
-    }
+/** Gambar `image` menutupi seluruh kotak (`object-fit: cover`), terpotong di tengah. */
+function drawCover(
+  ctx: ReturnType<ReturnType<typeof createCanvas>['getContext']>,
+  image: Image,
+  width: number,
+  height: number,
+): void {
+  const scale = Math.max(width / image.width, height / image.height);
+  const drawWidth = image.width * scale;
+  const drawHeight = image.height * scale;
+  ctx.drawImage(image, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+}
 
-    const browser = await puppeteer.launch({
-      executablePath,
-      args: ['--no-sandbox', '--disable-dev-shm-usage', '--font-render-hinting=none'],
-      env: process.env as Record<string, string>,
-    });
+function roundRect(
+  ctx: ReturnType<ReturnType<typeof createCanvas>['getContext']>,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+): void {
+  const r = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + width, y, x + width, y + height, r);
+  ctx.arcTo(x + width, y + height, x, y + height, r);
+  ctx.arcTo(x, y + height, x, y, r);
+  ctx.arcTo(x, y, x + width, y, r);
+  ctx.closePath();
+}
 
-    try {
-      const page = await browser.newPage();
-      await page.setViewport({ width: CARD_WIDTH, height, deviceScaleFactor: 2 });
-      await page.setContent(
-        `<html><body style="margin:0">${svgWithFonts}</body></html>`,
-        { waitUntil: 'load' },
-      );
-      await page.evaluate('document.fonts.ready');
-      const png = await page.screenshot({ type: 'png', clip: { x: 0, y: 0, width: CARD_WIDTH, height } });
-      return Buffer.from(png);
-    } finally {
-      await browser.close();
-    }
+/** Avatar bulat dengan cincin terang, digambar di tengah `centerY`. */
+function drawAvatar(
+  ctx: ReturnType<ReturnType<typeof createCanvas>['getContext']>,
+  avatar: Image | null,
+  centerX: number,
+  centerY: number,
+  radius: number,
+): void {
+  // Cincin luar: gelap dulu supaya avatar terpisah dari banner yang terang.
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, radius + 7, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(10, 8, 18, 0.55)';
+  ctx.fill();
+  ctx.restore();
+
+  if (avatar) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+    // `drawCover` menggambar mulai dari (0,0); geser origin ke pojok kotak
+    // lingkaran supaya hasil potongannya tepat di tengah avatar.
+    ctx.translate(centerX - radius, centerY - radius);
+    drawCover(ctx, avatar, radius * 2, radius * 2);
+    ctx.restore();
+  } else {
+    // Tanpa foto profil: isi dengan gradasi tema + inisial nama.
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+    ctx.clip();
+    const gradient = ctx.createLinearGradient(
+      centerX - radius,
+      centerY - radius,
+      centerX + radius,
+      centerY + radius,
+    );
+    gradient.addColorStop(0, '#6d4f8f');
+    gradient.addColorStop(1, '#c98b7a');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(centerX - radius, centerY - radius, radius * 2, radius * 2);
+    ctx.restore();
+  }
+
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(240, 233, 230, 0.92)';
+  ctx.lineWidth = 6;
+  ctx.stroke();
+}
+
+/** Gambar kartu ke canvas baru. */
+async function drawCard(input: CardInput): Promise<Buffer> {
+  registerFonts();
+
+  const [banner, avatar] = await Promise.all([
+    decode(input.bannerDataUri),
+    decode(input.avatarDataUri),
+  ]);
+
+  const canvas = createCanvas(CARD_WIDTH, CARD_HEIGHT);
+  const ctx = canvas.getContext('2d');
+
+  // --- Latar -------------------------------------------------------------
+  // Banner menutupi SELURUH kartu. Tanpa banner, gradasi tema dipakai supaya
+  // bentuk kartunya tetap sama (bukan kartu kosong).
+  if (banner) {
+    drawCover(ctx, banner, CARD_WIDTH, CARD_HEIGHT);
+  } else {
+    const base = ctx.createLinearGradient(0, 0, CARD_WIDTH, CARD_HEIGHT);
+    base.addColorStop(0, '#1d1830');
+    base.addColorStop(0.55, '#3a2b52');
+    base.addColorStop(1, '#6d4a4a');
+    ctx.fillStyle = base;
+    ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
+  }
+
+  // Overlay gelap dua lapis. Lapis pertama merata supaya teks putih selalu
+  // terbaca di atas banner seterang apa pun; lapis kedua lebih pekat di tengah
+  // ke bawah, tempat avatar dan judul berada.
+  ctx.fillStyle = 'rgba(9, 8, 16, 0.34)';
+  ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
+  const shade = ctx.createLinearGradient(0, 0, 0, CARD_HEIGHT);
+  shade.addColorStop(0, 'rgba(9, 8, 16, 0.15)');
+  shade.addColorStop(0.45, 'rgba(9, 8, 16, 0.55)');
+  shade.addColorStop(1, 'rgba(6, 5, 11, 0.88)');
+  ctx.fillStyle = shade;
+  ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
+
+  // --- Avatar ------------------------------------------------------------
+  const avatarRadius = 86;
+  const avatarY = 152;
+  drawAvatar(ctx, avatar, CARD_WIDTH / 2, avatarY, avatarRadius);
+
+  // --- Teks --------------------------------------------------------------
+  ctx.textAlign = 'center';
+
+  // Judul besar ("SELAMAT DATANG"). Dikecilkan otomatis kalau kepanjangan.
+  const kicker = (input.kicker ?? 'SELAMAT DATANG').toUpperCase().slice(0, 26);
+  let kickerSize = 62;
+  ctx.font = `500 ${kickerSize}px "${FONT_FAMILY}"`;
+  while (kickerSize > 34 && ctx.measureText(kicker).width > CARD_WIDTH - 120) {
+    kickerSize -= 2;
+    ctx.font = `500 ${kickerSize}px "${FONT_FAMILY}"`;
+  }
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(kicker, CARD_WIDTH / 2, avatarY + avatarRadius + 82);
+
+  // Nama member.
+  const name = input.userName.slice(0, 28);
+  let nameSize = 40;
+  ctx.font = `500 ${nameSize}px "${FONT_FAMILY}"`;
+  while (nameSize > 24 && ctx.measureText(name).width > CARD_WIDTH - 140) {
+    nameSize -= 2;
+    ctx.font = `500 ${nameSize}px "${FONT_FAMILY}"`;
+  }
+  ctx.fillStyle = '#f0e9e6';
+  ctx.fillText(name, CARD_WIDTH / 2, avatarY + avatarRadius + 136);
+
+  // Baris detail: nama server + jumlah member. Diberi kapsul gelap supaya tetap
+  // terbaca kalau bagian bawah banner berwarna terang.
+  const detail = (input.detail ?? `di ${input.guildName}`).slice(0, 64);
+  ctx.font = `400 24px "${FONT_FAMILY}"`;
+  const detailWidth = Math.min(ctx.measureText(detail).width + 52, CARD_WIDTH - 120);
+  const detailY = avatarY + avatarRadius + 190;
+  ctx.fillStyle = 'rgba(8, 6, 14, 0.55)';
+  roundRect(ctx, CARD_WIDTH / 2 - detailWidth / 2, detailY - 30, detailWidth, 48, 24);
+  ctx.fill();
+  ctx.fillStyle = '#e6dad7';
+  ctx.fillText(detail, CARD_WIDTH / 2, detailY + 2);
+
+  return canvas.toBuffer('image/png');
+}
+
+/**
+ * Render kartu jadi PNG.
+ *
+ * `null` hanya dikembalikan kalau penggambaran benar-benar gagal (mis. modul
+ * native tidak bisa dimuat). Pemanggil memperlakukannya sebagai "jatuh ke
+ * embed", tapi di hosting mana pun jalur itu seharusnya tidak terpakai lagi.
+ */
+export async function renderWelcomeCard(input: CardInput): Promise<Buffer | null> {
+  try {
+    return await drawCard(input);
   } catch (error) {
     logger.warn('Gagal merender kartu sambutan — pakai embed teks', errorMessage(error));
     return null;
   }
 }
+
+/** Dipakai skrip dokumentasi: SVG kecil yang tidak lagi butuh browser. */
+export { escapeXml };

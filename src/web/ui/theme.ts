@@ -788,7 +788,7 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
 
 /* Pemilih mode tampilan (Card / Embed / Text).
    Radio, bukan dropdown: ketiga pilihan mengubah tampilan yang dilihat member,
-   jadi konsekuensinya (kartu butuh Chromium, teks bisa me-ping) ditampilkan
+   jadi konsekuensinya (kartu butuh mesin gambar, teks bisa me-ping) ditampilkan
    sekaligus. */
 /* Dua kolom untuk 4 mode: tiga kolom membuat catatan mode paling panjang
    (Container) terpotong jadi banyak baris pendek. */

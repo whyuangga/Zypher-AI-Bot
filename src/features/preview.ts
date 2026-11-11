@@ -192,7 +192,7 @@ export interface WelcomePreviewOptions {
   templateOnly?: boolean;
   /** Render kartu PNG juga — memakan waktu, jadi opsional. */
   withCard?: boolean;
-  /** Pemanggil menyediakan renderer supaya modul ini tidak bergantung Chromium. */
+  /** Pemanggil menyediakan renderer supaya modul ini tidak bergantung paket gambar. */
   renderCard?: (input: {
     name: string;
     text: string;
@@ -248,7 +248,7 @@ export async function previewWelcome(options: WelcomePreviewOptions): Promise<Pr
       result.cardBytes = buffer?.byteLength ?? 0;
       result.cardDataUri = buffer ? `data:image/png;base64,${buffer.toString('base64')}` : undefined;
       if (!buffer) {
-        result.note = mergeNote(result.note, 'Kartu PNG tidak dirender (Chromium tidak tersedia) — embed teks dipakai.');
+        result.note = mergeNote(result.note, 'Kartu PNG tidak bisa dirender — embed teks dipakai.');
       }
     } catch (error) {
       logger.warn('Gagal merender kartu pada pratinjau', errorMessage(error));

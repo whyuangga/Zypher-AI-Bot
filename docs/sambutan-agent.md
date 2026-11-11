@@ -39,14 +39,18 @@ terkirim** memakai template. Member baru tidak pernah melihat error.
 
 ### Kartu sambutan (PNG)
 
-Kartu dibuat dari SVG lalu dirender jadi PNG supaya terlihat rapi di semua klien
-Discord. Karena Discord hanya menerima PNG/JPG, konversi ini butuh Chromium:
+Kartu digambar langsung ke bitmap memakai `@napi-rs/canvas` (Skia) — **tanpa
+browser**. Paketnya membawa semua yang dibutuhkan, jadi tidak ada `apt install`
+dan tidak ada yang perlu diatur di `.env`.
 
-- Set `CHROMIUM_PATH` ke binary Chromium/Chrome, **atau**
-- biarkan bot mencari sendiri di lokasi umum (`/usr/bin/chromium`, dll).
+Dulu kartu dirender dari SVG lewat Chromium. Karena panel hosting seperti
+Pterodactyl/Wispbyte tidak memasang Chromium, kartu **tidak pernah** jadi di
+server sungguhan dan sambutan selalu jatuh ke embed teks. Sekarang kartu jadi di
+hosting mana pun.
 
-Kalau Chromium tidak ada, kartu dilewati dan sambutan dikirim sebagai embed teks
-biasa — tidak ada error, hanya tanpa gambar.
+Susunan kartu: banner menutupi seluruh kartu sebagai latar, avatar bulat di
+tengah, judul besar (`SELAMAT DATANG` / `SAMPAI JUMPA`), nama member, lalu baris
+`nama server • member ke-N`. Tanpa banner, latar memakai gradasi tema.
 
 **Banner di dashboard.** Halaman Sambutan tidak lagi menyisipkan banner sebagai data
 URI ke HTML (dua banner 8 MB = HTML belasan MB, praktis mati di HP). Gambarnya diambil
@@ -92,12 +96,13 @@ Sambutan punya dua tingkat pengujian:
 Pesan uji diawali penanda *"🧪 Pesan uji dari dashboard"* dan tidak memicu
 mention, jadi aman dites di channel yang sudah dipakai member.
 
-**Banner ikut terkirim di pesan uji.** Kalau mode **Card** dipilih tapi Chromium
-tidak tersedia (selalu begitu di panel hosting seperti Pterodactyl), pesan jatuh
-ke **embed** — dan banner tetap dikirim sebagai lampiran yang dirujuk
-`attachment://`, bukan dibuang. Sebelumnya keputusan banner memakai mode yang
-**diinginkan** (`card`), bukan yang **benar-benar dipakai** (`embed`), sehingga
-sambutan uji terkirim tanpa banner tanpa satu pun error di log. Test
+**Banner ikut terkirim di pesan uji.** Mode **Card** mengirim PNG kartu (banner
+sudah menjadi latarnya) dan dibungkus embed supaya tampil besar — sama seperti
+sambutan sungguhan. Kalau PNG benar-benar gagal dibuat, pesan jatuh ke **embed**
+dan banner tetap dikirim sebagai lampiran `attachment://`, bukan dibuang.
+Sebelumnya keputusan banner memakai mode yang **diinginkan** (`card`), bukan yang
+**benar-benar dipakai**, sehingga sambutan uji terkirim tanpa gambar tanpa satu
+pun error di log. Test
 `banner: tetap terkirim saat mode card jatuh ke embed` mengunci perilaku ini.
 
 > Kalau banner tetap tidak terlihat, periksa **izin `Attach Files`** bot di
@@ -234,7 +239,7 @@ diulang kalau hasilnya kurang pas. Karena itu kedua halaman punya panel tes.
 
 Hasilnya menampilkan **sumber teksnya**: `ditulis AI`, `dari template`, atau
 `gagal` beserta alasannya. Kalau opsi kartu dicentang, kartu PNG ikut dirender
-dan ditampilkan — sekaligus membuktikan Chromium di server benar-benar jalan.
+dan ditampilkan — sekaligus membuktikan mesin gambar di server benar-benar jalan.
 
 Panel ini memakai **isi form saat itu**, bukan pengaturan tersimpan. Jadi kamu
 bisa mencoba gaya lain, melihat hasilnya, baru menekan Simpan.
@@ -349,16 +354,16 @@ Artinya:
 | **Tidak ada** baris `Event member masuk` | Event tidak sampai → intent belum aktif / bot belum di-restart setelah toggle |
 | `dilewati: member yang bergabung adalah bot` | Normal — bot lain memang tidak disambut |
 | `dilewati (bot tidak punya izin …)` | Beri bot izin **View Channel** + **Send Messages** + **Embed Links** di channel tujuan |
-| `Kartu sambutan tidak bisa dirender` | Chromium tidak ada di hosting; sambutan tetap terkirim sebagai embed teks |
+| `Gagal merender kartu sambutan` | Modul gambar gagal dimuat; sambutan tetap terkirim sebagai embed teks |
 | `terkirim via dm` padahal channel diatur | Channel tujuan tidak lolos pemeriksaan izin, jadi jatuh ke DM |
 
 ### Mode tampilan
 
 Bentuk pesan sambutan & perpisahan bisa dipilih per server di dashboard:
 
-| Mode | Bentuk pesan | Butuh Chromium? | Bisa me-ping? |
+| Mode | Bentuk pesan | Butuh browser? | Bisa me-ping? |
 |---|---|---|---|
-| **Card** | kartu PNG (banner + avatar + nama) sebagai lampiran | ya | tidak |
+| **Card** | kartu PNG (banner jadi latar + avatar + nama) sebagai lampiran | **tidak** | tidak |
 | **Container** | kartu Components V2 (blok berwarna aksen, gaya panel baru Discord) | tidak | **ya** |
 | **Embed** | embed berwarna bertema server | tidak | tidak |
 | **Text** | teks polos di `content` | tidak | **ya** |
@@ -382,7 +387,7 @@ Card, mati → Embed).
 
 | Keadaan | Yang dikirim |
 |---|---|
-| Card tapi Chromium tidak ada | Embed |
+| Card tapi kartu gagal digambar | Embed |
 | Card tapi bot tidak punya izin Attach Files | Embed |
 | Embed tapi bot tidak punya izin Embed Links | Text |
 | Container tapi pustaka tidak mendukung | Embed |
@@ -471,9 +476,8 @@ Tiga penyebab yang sudah diperbaiki:
    mengembalikan `null` tanpa alasan, lalu pemanggil langsung beralih ke DM.
    Kalau DM member tertutup, sambutan hilang total dari channel yang sudah diatur.
 2. **Kartu gagal dirender → pesan kosong.** Kalau "Kirim kartu sambutan"
-   dicentang tapi Chromium tidak ada (umum di hosting panel), bot mengirim
-   `embeds: []` + tanpa file. Discord menolak pesan kosong; sekarang otomatis
-   mundur ke embed teks.
+   dicentang tapi gambar gagal dibuat, bot mengirim `embeds: []` + tanpa file.
+   Discord menolak pesan kosong; sekarang otomatis mundur ke embed teks.
 3. **Tidak ada log sama sekali.** Sekarang setiap event dan setiap alasan
    dilewati tercatat.
 
@@ -482,7 +486,7 @@ Tiga penyebab yang sudah diperbaiki:
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 293 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 296 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

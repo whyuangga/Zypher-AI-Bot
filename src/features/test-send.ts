@@ -13,7 +13,7 @@
  *   - Mention tidak pernah dipicu (`allowedMentions: { parse: [] }`), jadi tidak
  *     ada yang ter-tag karena tes.
  *   - Kalau pengiriman gagal, alasannya dikembalikan apa adanya (izin kurang,
- *     channel tidak ada, DM ditutup, Chromium tidak ada) — bukan "gagal" polos.
+ *     channel tidak ada, DM ditutup, kartu gagal dibuat) — bukan "gagal" polos.
  *
  * Tidak dijalankan saat bot offline: mengirim butuh koneksi Discord, dan pesan
  * yang gagal di tengah jalan lebih membingungkan daripada penolakan yang jelas.
@@ -135,7 +135,7 @@ async function resolveChannel(
   };
 }
 
-/** Render kartu seperti bot sungguhan; `null` = Chromium tidak ada / gagal. */
+/** Render kartu seperti bot sungguhan; `null` = penggambaran gagal. */
 async function buildCard(options: {
   name: string;
   guildName: string;
@@ -145,6 +145,8 @@ async function buildCard(options: {
   avatarUrl: string | null;
   kicker: string;
   filePrefix: string;
+  /** Jumlah member untuk baris "member ke-N" di kartu. */
+  memberCount?: number;
 }): Promise<AttachmentBuilder | null> {
   const banner = await readBannerDataUri(options.bannerPath);
   let avatar: string | null = null;
@@ -167,6 +169,9 @@ async function buildCard(options: {
     avatarDataUri: avatar,
     bannerDataUri: banner,
     kicker: options.kicker,
+    detail: options.memberCount
+      ? `${options.guildName} • member ke-${options.memberCount.toLocaleString('id-ID')}`
+      : options.guildName,
   });
   if (!png) return null;
   return new AttachmentBuilder(png, { name: `${options.filePrefix}-test.png` });
@@ -210,6 +215,7 @@ export async function sendWelcomeTest(
           avatarUrl: member.displayAvatarURL({ extension: 'png', size: 256 }),
           kicker: 'SELAMAT DATANG',
           filePrefix: 'selamat-datang',
+          memberCount: guild.memberCount,
         })
       : null;
 
@@ -219,13 +225,13 @@ export async function sendWelcomeTest(
   // Mode yang BENAR-BENAR dipakai, bukan yang diinginkan.
   //
   // Dulu semua keputusan banner memakai `wanted`. Akibatnya, saat mode `card`
-  // dipilih tapi Chromium tidak ada (selalu begitu di panel hosting), pesan
-  // jatuh ke embed sementara `wanted` masih 'card' — dan banner dibuang karena
-  // kode menganggap mode kartu tidak butuh banner terpisah. Hasilnya: sambutan
-  // uji terkirim tanpa banner, tanpa error apa pun.
+  // dipilih tapi kartu gagal dibuat, pesan jatuh ke embed sementara `wanted`
+  // masih 'card' — dan banner dibuang karena kode menganggap mode kartu tidak
+  // butuh banner terpisah. Hasilnya: sambutan uji terkirim tanpa gambar sama
+  // sekali, tanpa error apa pun.
   const modeNow = wanted === 'card' && !card ? 'embed' : wanted;
   if (wanted === 'card' && !card) {
-    note.push('Kartu PNG tidak dibuat (Chromium tidak tersedia) — dikirim sebagai embed.');
+    note.push('Kartu PNG tidak bisa dibuat — dikirim sebagai embed.');
   }
   note.push(`Mode ${displayModeLabel(modeNow)}.`);
 
@@ -277,8 +283,11 @@ export async function sendWelcomeTest(
       : {
           // Petunjuk uji tetap di content supaya pesan tes mudah dikenali.
           content: TEST_MARK,
-          // Kartu PNG hanya dipakai kalau benar-benar berhasil dirender.
-          embeds: card ? [] : [embed],
+          // Kartu PNG dibungkus embed: tanpa wadah ini Discord menampilkan PNG
+          // sebagai lampiran kecil di bawah pesan, bukan kartu besar. Ini juga
+          // yang membuat pesan uji berbeda dari sambutan sungguhan (di sana
+          // composePayload sudah memasang wadahnya).
+          embeds: [card ? embed.setImage(`attachment://${card.name}`) : embed],
           files: card ? [card] : bannerFile ? [bannerFile.attachment] : [],
           allowedMentions: { parse: [] as const },
         };
@@ -365,6 +374,7 @@ export async function sendGoodbyeTest(
           avatarUrl: member.displayAvatarURL({ extension: 'png', size: 256 }),
           kicker: 'SAMPAI JUMPA',
           filePrefix: 'sampai-jumpa',
+          memberCount: guild.memberCount,
         })
       : null;
 
@@ -376,7 +386,7 @@ export async function sendGoodbyeTest(
   // sehingga salam perpisahan uji terkirim sebagai embed TANPA banner.
   const modeNow = wanted === 'card' && !card ? 'embed' : wanted;
   if (wanted === 'card' && !card) {
-    note.push('Kartu PNG tidak dibuat (Chromium tidak tersedia) — dikirim sebagai embed.');
+    note.push('Kartu PNG tidak bisa dibuat — dikirim sebagai embed.');
   }
   note.push(`Mode ${displayModeLabel(modeNow)}.`);
 
@@ -425,7 +435,9 @@ export async function sendGoodbyeTest(
           ? { content: `${TEST_MARK}\n\n${preview.text}`, allowedMentions: { parse: [] as const } }
           : {
               content: TEST_MARK,
-              embeds: card ? [] : [embed],
+              // Sama seperti jalur sambutan: kartu dibungkus embed supaya tampil
+              // besar, bukan sebagai lampiran kecil.
+              embeds: [card ? embed.setImage(`attachment://${card.name}`) : embed],
               files: card ? [card] : bannerFile ? [bannerFile.attachment] : [],
               allowedMentions: { parse: [] as const },
             },
