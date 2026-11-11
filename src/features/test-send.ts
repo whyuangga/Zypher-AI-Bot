@@ -97,7 +97,12 @@ const QUIET_TEST_MARK =
 async function resolveChannel(
   guild: Guild,
   channelId: string,
-): Promise<{ channel: TextChannel | AnyThreadChannel | null; reason: string | null }> {
+): Promise<{
+  channel: TextChannel | AnyThreadChannel | null;
+  reason: string | null;
+  /** Izin gambar/lampiran kurang — pesan tetap dikirim, bentuknya dikurangi. */
+  warnings?: string[];
+}> {
   const channel = await guild.channels.fetch(channelId).catch(() => null);
   if (!channel) return { channel: null, reason: `Channel ${channelId} tidak ditemukan di server ini.` };
   if (!channel.isTextBased() || channel.isDMBased()) {
@@ -112,7 +117,22 @@ async function resolveChannel(
   if (permissions && !permissions.has('ViewChannel')) {
     return { channel: null, reason: `Bot tidak bisa melihat #${channel.name}.` };
   }
-  return { channel: channel as TextChannel | AnyThreadChannel, reason: null };
+  // Izin gambar/lampiran TIDAK dicampur dengan penolakan channel: tanpa
+  // `AttachFiles`, banner tidak bisa dikirim dan Discord menolak pesannya
+  // dengan error mentah yang sulit ditafsirkan admin. Dikembalikan sebagai
+  // peringatan (`warning`) supaya teks polos tetap bisa dikirim.
+  const warnings: string[] = [];
+  if (permissions && !permissions.has('EmbedLinks')) {
+    warnings.push(`Bot tidak punya izin "Embed Links" di #${channel.name} — pesan uji dikirim sebagai teks polos.`);
+  }
+  if (permissions && !permissions.has('AttachFiles')) {
+    warnings.push(`Bot tidak punya izin "Attach Files" di #${channel.name} — banner & kartu tidak bisa dikirim.`);
+  }
+  return {
+    channel: channel as TextChannel | AnyThreadChannel,
+    reason: null,
+    warnings,
+  };
 }
 
 /** Render kartu seperti bot sungguhan; `null` = Chromium tidak ada / gagal. */
@@ -193,6 +213,30 @@ export async function sendWelcomeTest(
         })
       : null;
 
+  const note: string[] = [];
+  if (preview.source !== 'ai') note.push(preview.note ?? 'AI tidak dipakai.');
+
+  // Mode yang BENAR-BENAR dipakai, bukan yang diinginkan.
+  //
+  // Dulu semua keputusan banner memakai `wanted`. Akibatnya, saat mode `card`
+  // dipilih tapi Chromium tidak ada (selalu begitu di panel hosting), pesan
+  // jatuh ke embed sementara `wanted` masih 'card' — dan banner dibuang karena
+  // kode menganggap mode kartu tidak butuh banner terpisah. Hasilnya: sambutan
+  // uji terkirim tanpa banner, tanpa error apa pun.
+  const modeNow = wanted === 'card' && !card ? 'embed' : wanted;
+  if (wanted === 'card' && !card) {
+    note.push('Kartu PNG tidak dibuat (Chromium tidak tersedia) — dikirim sebagai embed.');
+  }
+  note.push(`Mode ${displayModeLabel(modeNow)}.`);
+
+  // Banner hanya untuk mode yang memang menampilkannya: embed (gambar di dalam
+  // embed) dan container (Media Gallery). Mode kartu sudah memuat banner di
+  // dalam PNG; mode teks tidak punya tempat untuk gambar.
+  const bannerFile =
+    modeNow === 'embed' || modeNow === 'container'
+      ? await readBannerAttachment(settings.bannerPath)
+      : null;
+
   const embed = new EmbedBuilder()
     .setColor(0x6d8cff)
     .setDescription(preview.text)
@@ -200,20 +244,11 @@ export async function sendWelcomeTest(
   // Discord menolak setImage() berisi data URI ("Received one or more
   // errors"), jadi banner dikirim sebagai lampiran dan dirujuk attachment://.
   // Ternyata ini juga alasan sambutan sungguhan gagal terkirim.
-  const bannerFile = wanted === 'card' || wanted === 'text'
-    ? null
-    : await readBannerAttachment(settings.bannerPath);
-  if (bannerFile) embed.setImage(`attachment://${bannerFile.name}`);
-
-  const note: string[] = [];
-  if (preview.source !== 'ai') note.push(preview.note ?? 'AI tidak dipakai.');
-  if (wanted === 'card' && !card) note.push('Kartu PNG tidak dibuat (Chromium tidak tersedia) — dikirim sebagai embed.');
-  const modeNow = wanted === 'card' && !card ? 'embed' : wanted;
-  note.push(`Mode ${displayModeLabel(wanted)}.`);
+  if (bannerFile && modeNow === 'embed') embed.setImage(`attachment://${bannerFile.name}`);
 
   // Mode container: komponen V2 tidak boleh dicampur content/embeds.
-  const containerBanner =
-    modeNow === 'container' ? await readBannerAttachment(settings.bannerPath) : null;
+  // `bannerFile` di atas sudah dibaca untuk mode ini — jangan baca ulang.
+  const containerBanner = modeNow === 'container' ? bannerFile : null;
   const container =
     modeNow === 'container'
       ? (() => {
@@ -242,6 +277,7 @@ export async function sendWelcomeTest(
       : {
           // Petunjuk uji tetap di content supaya pesan tes mudah dikenali.
           content: TEST_MARK,
+          // Kartu PNG hanya dipakai kalau benar-benar berhasil dirender.
           embeds: card ? [] : [embed],
           files: card ? [card] : bannerFile ? [bannerFile.attachment] : [],
           allowedMentions: { parse: [] as const },
@@ -269,8 +305,9 @@ export async function sendWelcomeTest(
     }
   }
 
-  const { channel, reason } = await resolveChannel(guild, settings.channelId);
+  const { channel, reason, warnings = [] } = await resolveChannel(guild, settings.channelId);
   if (!channel) throw new SendTestError(reason ?? 'Channel sambutan tidak bisa dipakai.');
+  note.push(...warnings);
 
   try {
     await channel.send(payload);
@@ -331,26 +368,35 @@ export async function sendGoodbyeTest(
         })
       : null;
 
+  const note: string[] = [];
+  if (preview.source !== 'ai') note.push(preview.note ?? 'AI tidak dipakai.');
+
+  // Sama seperti jalur sambutan: keputusan banner memakai mode yang benar-benar
+  // dipakai. Sebelumnya `wanted` masih 'card' walau kartu gagal dirender,
+  // sehingga salam perpisahan uji terkirim sebagai embed TANPA banner.
+  const modeNow = wanted === 'card' && !card ? 'embed' : wanted;
+  if (wanted === 'card' && !card) {
+    note.push('Kartu PNG tidak dibuat (Chromium tidak tersedia) — dikirim sebagai embed.');
+  }
+  note.push(`Mode ${displayModeLabel(modeNow)}.`);
+
+  const bannerFile =
+    modeNow === 'embed' || modeNow === 'container'
+      ? await readBannerAttachment(settings.bannerPath)
+      : null;
+
   const embed = new EmbedBuilder()
     .setColor(0x716c98)
     .setDescription(preview.text)
     .setFooter({ text: `Pesan uji · ${guild.name}` });
-  const bannerFile =
-    wanted === 'card' || wanted === 'text' ? null : await readBannerAttachment(settings.bannerPath);
-  if (bannerFile) embed.setImage(`attachment://${bannerFile.name}`);
+  if (bannerFile && modeNow === 'embed') embed.setImage(`attachment://${bannerFile.name}`);
 
-  const note: string[] = [];
-  if (preview.source !== 'ai') note.push(preview.note ?? 'AI tidak dipakai.');
-  if (wanted === 'card' && !card) note.push('Kartu PNG tidak dibuat (Chromium tidak tersedia) — dikirim sebagai embed.');
-  const modeNow = wanted === 'card' && !card ? 'embed' : wanted;
-  note.push(`Mode ${displayModeLabel(wanted)}.`);
-
-  const { channel, reason } = await resolveChannel(guild, settings.channelId);
+  const { channel, reason, warnings = [] } = await resolveChannel(guild, settings.channelId);
   if (!channel) throw new SendTestError(reason ?? 'Channel salam perpisahan tidak bisa dipakai.');
+  note.push(...warnings);
 
   try {
-    const goodbyeBanner =
-      modeNow === 'container' ? await readBannerAttachment(settings.bannerPath) : null;
+    const goodbyeBanner = modeNow === 'container' ? bannerFile : null;
     const goodbyeContainer =
       modeNow === 'container'
         ? (() => {
