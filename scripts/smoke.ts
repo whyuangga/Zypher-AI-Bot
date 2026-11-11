@@ -1937,6 +1937,45 @@ await testAsync('sambutan: tidak pernah mengirim pesan kosong', async () => {
   assert.ok(source.includes('dikirim sebagai teks polos'), 'jatuh ke teks polos, bukan gagal diam');
 });
 
+await testAsync('sambutan: token template {user.mention} & {memberCount} jalan', async () => {
+  const { fillText } = await import('../src/features/greeting-text.js');
+  const hasil = fillText('Hai {user.mention} ({user.tag}), kamu member ke-{memberCount} di {server}!', {
+    user: 'Sky',
+    server: 'Zypher',
+    mention: '<@123>',
+    tag: 'sky#0001',
+    memberCount: 42,
+  });
+  assert.equal(hasil, 'Hai <@123> (sky#0001), kamu member ke-42 di Zypher!');
+});
+
+await testAsync('sambutan: {user} tetap nama biasa, bukan mention', async () => {
+  // Template lama yang tersimpan di admin memakai {user} dan mengharapkan
+  // nama. Mengubahnya jadi mention akan diam-diam mengubah pesan mereka.
+  const { fillText } = await import('../src/features/greeting-text.js');
+  assert.equal(fillText('Halo {user}', { user: 'Sky', server: 'Z', mention: '<@1>' }), 'Halo Sky');
+});
+
+await testAsync('sambutan: token tanpa nilai tidak menyisakan <@undefined>', async () => {
+  const { fillText } = await import('../src/features/greeting-text.js');
+  const hasil = fillText('Hai {user.mention} di {server}', { user: 'Sky', server: 'Z' });
+  assert.equal(hasil, 'Hai Sky di Z');
+  assert.ok(!hasil.includes('undefined'), 'tidak ada undefined bocor ke pesan');
+});
+
+await testAsync('sambutan: izin Embed Links kurang tetap mengirim teks', async () => {
+  // Pola TitanBot: tanpa EmbedLinks jangan gagal, kirim content biasa.
+  const source = await readFile('src/features/welcome.ts', 'utf8');
+  assert.ok(source.includes('EmbedLinks'), 'memeriksa izin EmbedLinks');
+  assert.ok(source.includes('dikirim sebagai teks biasa'), 'mundur ke teks biasa');
+});
+
+await testAsync('sambutan: izin Attach Files kurang melewati lampiran saja', async () => {
+  const source = await readFile('src/features/welcome.ts', 'utf8');
+  assert.ok(source.includes('AttachFiles'), 'memeriksa izin AttachFiles');
+  assert.ok(source.includes('lampiran (kartu/banner) dilewati'), 'hanya lampiran yang dilewati');
+});
+
 await testAsync('sambutan: channel bermasalah melaporkan alasan spesifik', async () => {
   const source = await readFile('src/features/welcome.ts', 'utf8');
   // Dulu `fetchChannel` mengembalikan null tanpa penjelasan, lalu jatuh ke DM

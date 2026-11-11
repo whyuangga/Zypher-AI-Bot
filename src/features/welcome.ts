@@ -30,12 +30,23 @@ import { previewGoodbye, previewWelcome } from './preview.js';
 import { readBannerDataUri, readBannerAttachment } from './banner.js';
 import { DEFAULT_GOODBYE_TEMPLATE, DEFAULT_WELCOME_TEMPLATE, fillText } from './greeting-text.js';
 
-/** Isi placeholder template tanpa AI. */
-export function fillTemplate(template: string, member: GuildMember): string {
-  return fillText(template, {
+/**
+ * Nilai untuk semua token template. Dipakai sambutan, perpisahan, dan pratinjau
+ * di dashboard supaya hasilnya selalu identik.
+ */
+function templateValues(member: GuildMember): Parameters<typeof fillText>[1] {
+  return {
     user: memberName(member),
     server: member.guild.name,
-  });
+    mention: `<@${member.id}>`,
+    tag: member.user.tag,
+    memberCount: member.guild.memberCount,
+  };
+}
+
+/** Isi placeholder template tanpa AI. */
+export function fillTemplate(template: string, member: GuildMember): string {
+  return fillText(template, templateValues(member));
 }
 
 /** Nama panggilan member — nickname di server lebih dulu, lalu username. */
@@ -167,8 +178,32 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
     embed.setImage(`attachment://${bannerFile.name}`);
   }
 
-  const embeds = attachment ? [] : [embed];
-  const files = attachment ? [attachment] : bannerFile ? [bannerFile.attachment] : [];
+  // Izin channel menentukan bentuk pesan (pola TitanBot). Kalau bot tidak boleh
+  // menempel embed/lampiran, jangan menyerah — kirim teks biasa.
+  const allowed = channel ? channelPermissions(channel, member) : { embed: true, attach: true };
+  let embeds = attachment ? [] : [embed];
+  let files = attachment ? [attachment] : bannerFile ? [bannerFile.attachment] : [];
+  let plainText = '';
+
+  if (!allowed.embed && embeds.length > 0) {
+    logger.info(
+      `Bot tidak punya izin "Embed Links" di #${channel?.name ?? '?'} — sambutan dikirim sebagai teks biasa.`,
+    );
+    plainText = text;
+    embeds = [];
+  }
+  if (!allowed.attach && files.length > 0) {
+    logger.info(
+      `Bot tidak punya izin "Attach Files" di #${channel?.name ?? '?'} — lampiran (kartu/banner) dilewati.`,
+    );
+    files = [];
+    if (embeds.length === 0) {
+      // Kartu dilewati karena izin. Kalau embed masih boleh, pakai embed saja —
+      // jangan tulis teksnya dua kali (content + embed).
+      if (allowed.embed) embeds = [embed];
+      else plainText = text;
+    }
+  }
 
   // Jaring pengaman terakhir: Discord menolak pesan tanpa isi sama sekali
   // ("Cannot send an empty message"). Kalau itu terjadi, lebih baik kirim teks
@@ -177,7 +212,7 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
   if (embeds.length === 0 && files.length === 0) {
     logger.warn(`Sambutan untuk ${member.user.tag} tidak punya isi — dikirim sebagai teks polos.`);
     try {
-      const fallbackText = `${channel ? `<@${member.id}> ` : ''}${text}`;
+      const fallbackText = `${channel ? `<@${member.id}> ` : ''}${plainText || text}`;
       if (channel) await channel.send({ content: fallbackText });
       else await member.send({ content: text });
       logger.info(`Sambutan untuk ${member.user.tag} terkirim via ${where} (teks polos).`);
@@ -191,13 +226,13 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
   try {
     if (channel) {
       await channel.send({
-        content: `<@${member.id}>`,
+        content: `<@${member.id}>${plainText && embeds.length === 0 ? ` ${plainText}` : ''}`,
         embeds,
         files,
         allowedMentions: { users: [member.id] },
       });
     } else {
-      await member.send({ embeds, files });
+      await member.send({ content: plainText || undefined, embeds, files });
     }
     logger.info(`Sambutan untuk ${member.user.tag} terkirim via ${where}${usedAi ? ' (AI)' : ' (template)'}.`);
     return { sent: true, usedAi, where };
@@ -243,6 +278,26 @@ async function resolveWelcomeChannel(
   return { channel: channel as TextChannel | AnyThreadChannel, reason: null };
 }
 
+/**
+ * Izin yang tersedia di channel — dipakai untuk memilih bentuk pesan.
+ *
+ * TitanBot memakai pola ini: kalau bot tidak punya `EmbedLinks`, kirim teks
+ * biasa saja, bukan gagal. Tanpa ini, embed yang tidak diizinkan membuat
+ * pengiriman gagal walau `SendMessages` sudah ada.
+ */
+function channelPermissions(
+  channel: TextChannel | AnyThreadChannel,
+  member: GuildMember,
+): { embed: boolean; attach: boolean } {
+  const me = member.guild.members.me;
+  const permissions = me ? channel.permissionsFor(me) : null;
+  if (!permissions) return { embed: true, attach: true }; // tidak diketahui: coba saja
+  return {
+    embed: permissions.has('EmbedLinks'),
+    attach: permissions.has('AttachFiles'),
+  };
+}
+
 async function buildCard(
   options: {
     member: GuildMember;
@@ -282,7 +337,7 @@ async function buildCard(
 
 /** Isi placeholder untuk salam perpisahan. */
 export function fillGoodbyeTemplate(template: string, member: GuildMember): string {
-  return fillText(template, { user: memberName(member), server: member.guild.name });
+  return fillText(template, templateValues(member));
 }
 
 async function generateGoodbye(settings: GoodbyeSettings, member: GuildMember): Promise<string | null> {
@@ -349,10 +404,39 @@ export async function goodbyeMember(member: GuildMember): Promise<boolean> {
   const bannerFile = attachment ? null : await readBannerAttachment(settings.bannerPath);
   if (bannerFile) embed.setImage(`attachment://${bannerFile.name}`);
 
+  // Sama seperti sambutan: izin channel menentukan bentuk pesan, dan pesan
+  // kosong tidak boleh dikirim (Discord menolaknya, dulu errornya tertelan).
+  const allowed = channelPermissions(channel, member);
+  let embeds = attachment ? [] : [embed];
+  let files = attachment ? [attachment] : bannerFile ? [bannerFile.attachment] : [];
+  let plainText = '';
+
+  if (!allowed.embed && embeds.length > 0) {
+    logger.info(
+      `Bot tidak punya izin "Embed Links" di #${channel.name} — salam perpisahan dikirim sebagai teks biasa.`,
+    );
+    plainText = text;
+    embeds = [];
+  }
+  if (!allowed.attach && files.length > 0) {
+    logger.info(
+      `Bot tidak punya izin "Attach Files" di #${channel.name} — lampiran salam perpisahan dilewati.`,
+    );
+    files = [];
+    if (embeds.length === 0) {
+      if (allowed.embed) embeds = [embed];
+      else plainText = text;
+    }
+  }
+  if (embeds.length === 0 && files.length === 0 && !plainText) {
+    plainText = text;
+  }
+
   try {
     await channel.send({
-      embeds: attachment ? [] : [embed],
-      files: attachment ? [attachment] : bannerFile ? [bannerFile.attachment] : [],
+      content: plainText && embeds.length === 0 ? plainText : undefined,
+      embeds,
+      files,
       allowedMentions: { parse: [] },
     });
     logger.info(`Salam perpisahan untuk ${member.user.tag} terkirim${greeting ? ' (AI)' : ' (template)'}.`);

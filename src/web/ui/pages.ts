@@ -1051,7 +1051,7 @@ export function welcomePage(options: WelcomePageOptions): string {
     <textarea id="welcomeTemplate" rows="3" placeholder="Halo {user}, selamat datang di **{server}**!">${esc(
       options.welcome.template ?? '',
     )}</textarea>
-    <p class="hint"><code>{user}</code> diganti nama panggilan, <code>{server}</code> diganti nama server.</p>
+    <p class="hint"><code>{user}</code> nama panggilan, <code>{server}</code> nama server, <code>{user.mention}</code> tag member, <code>{user.tag}</code> username, <code>{memberCount}</code> jumlah member.</p>
   </div>
 
   <div class="grid cols-2-even" style="gap:14px">
@@ -1113,7 +1113,7 @@ export function welcomePage(options: WelcomePageOptions): string {
     <textarea id="goodbyeTemplate" rows="2" placeholder="{user} sudah keluar dari **{server}**. Semoga lancar!">${esc(
       options.goodbye.template ?? '',
     )}</textarea>
-    <p class="hint">Nada AI-nya sopan dan tidak menanyakan alasan keluar.</p>
+    <p class="hint">Token sama seperti sambutan: <code>{user}</code>, <code>{server}</code>, <code>{user.mention}</code>, <code>{memberCount}</code>.</p>
   </div>
 
   <div class="grid cols-2-even" style="gap:14px">

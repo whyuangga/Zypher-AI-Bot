@@ -21,7 +21,7 @@ Bot mengirim satu pesan setiap ada member baru bergabung.
 | **Sapa setiap member baru** | sakelar utama |
 | **Kirim ke** | `DM member` (disarankan) atau satu channel |
 | **Tulis sapaan dengan AI** | kalau mati, teks template dipakai apa adanya |
-| **Template** | `{user}` → nama panggilan, `{server}` → nama server |
+| **Template** | `{user}` → nama panggilan, `{server}` → nama server, `{user.mention}` → tag member, `{user.tag}` → username, `{memberCount}` → jumlah member |
 | **Gaya sapaan** | mis. `hangat, santai, sedikit bercanda` |
 | **Contoh nada** | satu kalimat contoh; AI meniru nadanya, bukan isinya |
 | **Kirim kartu sambutan** | gambar PNG berisi nama + sapaan (lihat di bawah) |
@@ -76,7 +76,7 @@ dengan sambutan, jadi pengaturannya ada di halaman yang sama.
 | **Kirim salam saat ada member keluar** | sakelar utama |
 | **Kirim ke** | channel — **wajib dipilih** |
 | **Tulis salam dengan AI** | kalau mati, template dipakai |
-| **Template** | `{user}` → nama panggilan, `{server}` → nama server |
+| **Template** | `{user}` → nama panggilan, `{server}` → nama server, `{user.mention}` → tag member, `{user.tag}` → username, `{memberCount}` → jumlah member |
 | **Gaya / contoh nada** | mis. `sopan, hangat, singkat` |
 
 ### Mencoba tanpa menunggu member
@@ -307,6 +307,36 @@ Artinya:
 | `Kartu sambutan tidak bisa dirender` | Chromium tidak ada di hosting; sambutan tetap terkirim sebagai embed teks |
 | `terkirim via dm` padahal channel diatur | Channel tujuan tidak lolos pemeriksaan izin, jadi jatuh ke DM |
 
+### Token template
+
+Template teks (dipakai saat AI mati atau gagal) mengenal token berikut:
+
+| Token | Diganti menjadi | Catatan |
+|---|---|---|
+| `{user}` | nama panggilan member | perilaku lama, **bukan** mention |
+| `{user.mention}` | tag member (`@nama`) | hanya berpengaruh di teks biasa — mention di dalam embed tidak menjadi tag |
+| `{user.tag}` | username lengkap | mis. `sky#0001` |
+| `{server}` | nama server | |
+| `{memberCount}` | jumlah member saat ini | ikut berubah tiap ada yang masuk/keluar |
+
+Kalau sebuah token tidak punya nilai (mis. pratinjau lama), token itu diganti
+nama biasa — tidak pernah muncul `<@undefined>` di pesan.
+
+### Kalau bot kurang izin
+
+Bot tidak berhenti bekerja hanya karena izin channel kurang; bentuk pesannya
+yang menyesuaikan:
+
+| Izin yang kurang | Akibatnya | Yang dikirim |
+|---|---|---|
+| **View Channel** | channel dilewati | tidak ada, alasannya masuk log |
+| **Send Messages** | channel dilewati | tidak ada, alasannya masuk log |
+| **Embed Links** | embed tidak bisa dipakai | teks biasa berisi sambutan |
+| **Attach Files** | kartu/banner tidak bisa ditempel | embed teks, tanpa gambar |
+
+Cukup beri **View Channel + Send Messages**, sambutan tetap sampai; dua izin
+lain hanya memengaruhi tampilan.
+
 ### Kenapa dulu bisa hilang tanpa jejak
 
 Tiga penyebab yang sudah diperbaiki:
@@ -326,7 +356,7 @@ Tiga penyebab yang sudah diperbaiki:
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 239 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 244 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),
