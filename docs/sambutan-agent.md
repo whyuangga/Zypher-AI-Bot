@@ -307,6 +307,40 @@ Artinya:
 | `Kartu sambutan tidak bisa dirender` | Chromium tidak ada di hosting; sambutan tetap terkirim sebagai embed teks |
 | `terkirim via dm` padahal channel diatur | Channel tujuan tidak lolos pemeriksaan izin, jadi jatuh ke DM |
 
+### Mode tampilan
+
+Bentuk pesan sambutan & perpisahan bisa dipilih per server di dashboard:
+
+| Mode | Bentuk pesan | Butuh Chromium? | Bisa me-ping? |
+|---|---|---|---|
+| **Card** | kartu PNG (banner + avatar + nama) sebagai lampiran | ya | tidak |
+| **Embed** | embed berwarna bertema server | tidak | tidak |
+| **Text** | teks polos di `content` | tidak | **ya** |
+
+Kenapa hanya **Text** yang bisa me-ping: di Discord, mention di dalam embed
+tidak memicu notifikasi. Kalau kamu ingin member baru benar-benar mendapat
+notifikasi, pilih Text.
+
+**Bawaan = Embed.** Server yang sudah berjalan tidak berubah tampilannya
+setelah pembaruan ini: baris database lama yang belum punya kolom
+`display_mode` diterjemahkan dari pengaturan lama (`imageEnabled` menyala →
+Card, mati → Embed).
+
+**Cadangan otomatis** kalau mode yang dipilih tidak bisa dipakai:
+
+| Keadaan | Yang dikirim |
+|---|---|
+| Card tapi Chromium tidak ada | Embed |
+| Card tapi bot tidak punya izin Attach Files | Embed |
+| Embed tapi bot tidak punya izin Embed Links | Text |
+| Text | selalu bisa |
+
+Alasan cadangan selalu ditulis ke log, mis.
+`Mode tampilan sambutan "Card" tidak bisa dipakai (kartu tidak bisa dirender) — memakai Embed.`
+
+Salam perpisahan **tidak pernah** me-ping siapa pun, bahkan di mode Text:
+member-nya sudah keluar.
+
 ### Token template
 
 Template teks (dipakai saat AI mati atau gagal) mengenal token berikut:
@@ -356,7 +390,7 @@ Tiga penyebab yang sudah diperbaiki:
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 244 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 257 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

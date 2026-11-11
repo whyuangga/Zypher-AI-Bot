@@ -29,6 +29,11 @@ import { renderWelcomeCard } from './welcome-card.js';
 import { previewGoodbye, previewWelcome } from './preview.js';
 import { readBannerDataUri, readBannerAttachment } from './banner.js';
 import { DEFAULT_GOODBYE_TEMPLATE, DEFAULT_WELCOME_TEMPLATE, fillText } from './greeting-text.js';
+import {
+  displayModeLabel,
+  fallbackMode,
+  type DisplayMode,
+} from './display-mode.js';
 
 /**
  * Nilai untuk semua token template. Dipakai sambutan, perpisahan, dan pratinjau
@@ -136,83 +141,71 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
   }
   const where: WelcomeOutcome['where'] = channel ? 'channel' : 'dm';
 
-  // Kartu hanya dibuat kalau memang akan dipakai — proses render memakan
-  // waktu (~1 detik) dan tidak perlu kalau admin mematikannya.
-  const attachment = settings.imageEnabled
-    ? await buildCard(
-        {
-          member,
-          text,
-          includeAvatar: settings.includeAvatar,
-          bannerPath: settings.bannerPath,
-          kicker: 'SELAMAT DATANG',
-          filePrefix: 'selamat-datang',
-        },
-        usedAi,
-      )
-    : null;
+  const allowed = channel ? channelPermissions(channel, member) : { embed: true, attach: true };
+
+  // Kartu hanya dirender kalau memang akan dipakai: proses render memakan
+  // waktu (~1 detik) dan tidak perlu kalau bentuk pesannya embed/teks.
+  const wanted = fallbackMode(settings.displayMode, {
+    card: allowed.attach,
+    embed: allowed.embed,
+  });
+  if (wanted.fellBack) {
+    logger.info(
+      `Mode tampilan sambutan "${displayModeLabel(settings.displayMode)}" tidak bisa dipakai (${wanted.reason}) — memakai ${displayModeLabel(wanted.mode)}.`,
+    );
+  }
+
+  const attachment =
+    wanted.mode === 'card'
+      ? await buildCard(
+          {
+            member,
+            text,
+            includeAvatar: settings.includeAvatar,
+            bannerPath: settings.bannerPath,
+            kicker: 'SELAMAT DATANG',
+            filePrefix: 'selamat-datang',
+          },
+          usedAi,
+        )
+      : null;
 
   // Kartu diminta tapi gagal dirender (Chromium tidak ada / render error):
   // dulu hasilnya `embeds: []` + tanpa file, sehingga Discord menolak pesan
   // kosong dan sambutan hilang tanpa penjelasan. Sekarang jatuh ke embed biasa,
   // mengikuti pola bot referensi: sambutan tidak boleh gagal hanya karena kartu.
-  const cardFailed = settings.imageEnabled && !attachment;
-  if (cardFailed) {
+  const mode: DisplayMode =
+    wanted.mode === 'card' && !attachment ? (allowed.embed ? 'embed' : 'text') : wanted.mode;
+  if (wanted.mode === 'card' && !attachment) {
     logger.info('Kartu sambutan tidak bisa dirender — dikirim sebagai embed teks.');
   }
 
-  const embed = new EmbedBuilder()
-    .setColor(0x6d8cff)
-    .setDescription(text)
-    .setFooter({ text: `Member baru · ${member.guild.name}` });
-
-  // Tanpa kartu, banner tetap dipakai sebagai gambar embed — supaya unggahan
-  // admin tidak sia-sia saat kartu PNG dimatikan.
-  //
-  // Discord MENOLAK `setImage()` berisi data URI ("Received one or more
-  // errors"). Banner harus dikirim sebagai lampiran lalu dirujuk lewat
-  // attachment://. Dulu di sini data URI dipakai langsung, sehingga setiap
-  // sambutan yang banner-nya aktif gagal terkirim tanpa penjelasan.
-  const bannerFile = attachment ? null : await readBannerAttachment(settings.bannerPath);
-  if (bannerFile) {
-    embed.setImage(`attachment://${bannerFile.name}`);
-  }
-
-  // Izin channel menentukan bentuk pesan (pola TitanBot). Kalau bot tidak boleh
-  // menempel embed/lampiran, jangan menyerah — kirim teks biasa.
-  const allowed = channel ? channelPermissions(channel, member) : { embed: true, attach: true };
-  let embeds = attachment ? [] : [embed];
-  let files = attachment ? [attachment] : bannerFile ? [bannerFile.attachment] : [];
-  let plainText = '';
-
-  if (!allowed.embed && embeds.length > 0) {
-    logger.info(
-      `Bot tidak punya izin "Embed Links" di #${channel?.name ?? '?'} — sambutan dikirim sebagai teks biasa.`,
-    );
-    plainText = text;
-    embeds = [];
-  }
-  if (!allowed.attach && files.length > 0) {
-    logger.info(
-      `Bot tidak punya izin "Attach Files" di #${channel?.name ?? '?'} — lampiran (kartu/banner) dilewati.`,
-    );
-    files = [];
-    if (embeds.length === 0) {
-      // Kartu dilewati karena izin. Kalau embed masih boleh, pakai embed saja —
-      // jangan tulis teksnya dua kali (content + embed).
-      if (allowed.embed) embeds = [embed];
-      else plainText = text;
-    }
-  }
+  const payload = await composePayload({
+    mode,
+    text,
+    member,
+    kind: 'welcome',
+    channelName: channel?.name ?? null,
+    attachment,
+    includeAvatar: settings.includeAvatar,
+    bannerPath: settings.bannerPath,
+    allowed,
+    mentionUser: true,
+  });
+  let embeds = payload.embeds;
+  let files = payload.files;
+  const plainText = payload.content;
 
   // Jaring pengaman terakhir: Discord menolak pesan tanpa isi sama sekali
-  // ("Cannot send an empty message"). Kalau itu terjadi, lebih baik kirim teks
-  // polos daripada tidak ada apa-apa — inilah yang dulu membuat sambutan
-  // hilang tanpa satu pun error yang terlihat.
-  if (embeds.length === 0 && files.length === 0) {
+  // ("Cannot send an empty message"). Mode teks memang tidak punya embed/file,
+  // jadi yang diperiksa adalah ADA-TIDAKNYA isi, bukan bentuknya — dulu
+  // pemeriksaan yang hanya melihat embeds/files membuat mode teks dianggap
+  // kosong.
+  const hasBody = plainText.length > 0 || embeds.length > 0 || files.length > 0;
+  if (!hasBody) {
     logger.warn(`Sambutan untuk ${member.user.tag} tidak punya isi — dikirim sebagai teks polos.`);
     try {
-      const fallbackText = `${channel ? `<@${member.id}> ` : ''}${plainText || text}`;
+      const fallbackText = `${channel ? `<@${member.id}> ` : ''}${text}`;
       if (channel) await channel.send({ content: fallbackText });
       else await member.send({ content: text });
       logger.info(`Sambutan untuk ${member.user.tag} terkirim via ${where} (teks polos).`);
@@ -226,13 +219,17 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
   try {
     if (channel) {
       await channel.send({
-        content: `<@${member.id}>${plainText && embeds.length === 0 ? ` ${plainText}` : ''}`,
+        // `content` sudah berbentuk akhir dari composePayload (mention + teks
+        // untuk mode text, kosong untuk mode lain) — jangan ditambahi lagi,
+        // dulu mention ditulis di sini dan hasilnya dobel.
+        content: plainText || undefined,
         embeds,
         files,
         allowedMentions: { users: [member.id] },
       });
     } else {
-      await member.send({ content: plainText || undefined, embeds, files });
+      // DM: mention tidak ada gunanya (member sudah tahu dia baru bergabung).
+      await member.send({ content: plainText.replace(`<@${member.id}> `, '') || undefined, embeds, files });
     }
     logger.info(`Sambutan untuk ${member.user.tag} terkirim via ${where}${usedAi ? ' (AI)' : ' (template)'}.`);
     return { sent: true, usedAi, where };
@@ -296,6 +293,68 @@ function channelPermissions(
     embed: permissions.has('EmbedLinks'),
     attach: permissions.has('AttachFiles'),
   };
+}
+
+/**
+ * Susun isi pesan sesuai mode tampilan.
+ *
+ * Dipisah dari `welcomeMember`/`goodbyeMember` supaya aturan yang paling mudah
+ * salah bisa diuji tanpa Discord: **mention hanya hidup di `content`**, tidak
+ * pernah di dalam embed. Di dalam embed `<@id>` hanya teks biasa dan tidak
+ * memicu notifikasi, jadi mode `embed`/`card` tidak boleh menjanjikan ping.
+ *
+ * `content` sengaja hanya diisi pada mode `text`; mode lain mengembalikan
+ * string kosong supaya pemanggil tidak mengirim teks dua kali.
+ */
+async function composePayload(options: {
+  mode: DisplayMode;
+  text: string;
+  member: GuildMember;
+  kind: 'welcome' | 'goodbye';
+  channelName: string | null;
+  attachment: AttachmentBuilder | null;
+  includeAvatar: boolean;
+  bannerPath: string | null;
+  allowed: { embed: boolean; attach: boolean };
+  /**
+   * Boleh menulis `<@id>` di `content`? Sambutan: ya. Perpisahan: tidak —
+   * member sudah keluar, mention tidak akan menyapa siapa pun dan hanya
+   * memicu notifikasi ke orang yang sudah pergi.
+   */
+  mentionUser: boolean;
+}): Promise<{ content: string; embeds: EmbedBuilder[]; files: AttachmentBuilder[] }> {
+  const { mode, text, member, kind, attachment, allowed, mentionUser } = options;
+  const footer =
+    kind === 'welcome' ? `Member baru · ${member.guild.name}` : `Member keluar · ${member.guild.name}`;
+  const color = kind === 'welcome' ? 0x6d8cff : 0x716c98;
+
+  // Mode teks: satu-satunya yang benar-benar me-ping member.
+  if (mode === 'text') {
+    return { content: mentionUser ? `<@${member.id}> ${text}` : text, embeds: [], files: [] };
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(color)
+    .setDescription(text)
+    .setFooter({ text: footer });
+
+  // Mode kartu: PNG jadi lampiran, dan embed hanya dipakai sebagai wadah
+  // supaya kartu tampil besar tanpa merusak tata letak.
+  if (mode === 'card' && attachment) {
+    embed.setImage(`attachment://${attachment.name}`);
+    return { content: '', embeds: [embed], files: [attachment] };
+  }
+
+  // Mode embed: banner opsional sebagai gambar embed. Discord MENOLAK data URI
+  // di setImage() ("Received one or more errors"), jadi banner harus dikirim
+  // sebagai lampiran dan dirujuk lewat attachment://.
+  const bannerFile = allowed.attach ? await readBannerAttachment(options.bannerPath) : null;
+  if (bannerFile) {
+    embed.setImage(`attachment://${bannerFile.name}`);
+    return { content: '', embeds: [embed], files: [bannerFile.attachment] };
+  }
+
+  return { content: '', embeds: [embed], files: [] };
 }
 
 async function buildCard(
@@ -375,68 +434,75 @@ export async function goodbyeMember(member: GuildMember): Promise<boolean> {
   const greeting = settings.useAi ? await generateGoodbye(settings, member) : null;
   const text = greeting ?? fillGoodbyeTemplate(settings.template?.trim() || DEFAULT_GOODBYE_TEMPLATE, member);
 
-  // Kartu perpisahan opsional, memakai renderer yang sama dengan sambutan.
-  const attachment = settings.imageEnabled
-    ? await buildCard(
-        {
-          member,
-          text,
-          includeAvatar: settings.includeAvatar,
-          bannerPath: settings.bannerPath,
-          kicker: 'SAMPAI JUMPA',
-          filePrefix: 'sampai-jumpa',
-        },
-        Boolean(greeting),
-      )
-    : null;
+  const allowed = channelPermissions(channel, member);
+  const wanted = fallbackMode(settings.displayMode, {
+    card: allowed.attach,
+    embed: allowed.embed,
+  });
+  if (wanted.fellBack) {
+    logger.info(
+      `Mode tampilan salam perpisahan "${displayModeLabel(settings.displayMode)}" tidak bisa dipakai (${wanted.reason}) — memakai ${displayModeLabel(wanted.mode)}.`,
+    );
+  }
 
-  if (settings.imageEnabled && !attachment) {
+  // Kartu perpisahan opsional, memakai renderer yang sama dengan sambutan.
+  const attachment =
+    wanted.mode === 'card'
+      ? await buildCard(
+          {
+            member,
+            text,
+            includeAvatar: settings.includeAvatar,
+            bannerPath: settings.bannerPath,
+            kicker: 'SAMPAI JUMPA',
+            filePrefix: 'sampai-jumpa',
+          },
+          Boolean(greeting),
+        )
+      : null;
+
+  const mode: DisplayMode =
+    wanted.mode === 'card' && !attachment ? (allowed.embed ? 'embed' : 'text') : wanted.mode;
+  if (wanted.mode === 'card' && !attachment) {
     logger.info('Kartu perpisahan tidak bisa dirender — dikirim sebagai embed teks.');
   }
 
-  const embed = new EmbedBuilder()
-    .setColor(0x716c98)
-    .setDescription(text)
-    .setFooter({ text: `Member keluar · ${member.guild.name}` });
+  const payload = await composePayload({
+    mode,
+    text,
+    member,
+    kind: 'goodbye',
+    channelName: channel.name,
+    attachment,
+    includeAvatar: settings.includeAvatar,
+    bannerPath: settings.bannerPath,
+    allowed,
+    // Member sudah keluar: jangan pernah mention.
+    mentionUser: false,
+  });
+  const embeds = payload.embeds;
+  const files = payload.files;
+  const plainText = payload.content;
 
-  // Lihat catatan di welcomeMember(): data URI ditolak Discord, banner harus
-  // jadi lampiran dan dirujuk dengan attachment://.
-  const bannerFile = attachment ? null : await readBannerAttachment(settings.bannerPath);
-  if (bannerFile) embed.setImage(`attachment://${bannerFile.name}`);
-
-  // Sama seperti sambutan: izin channel menentukan bentuk pesan, dan pesan
-  // kosong tidak boleh dikirim (Discord menolaknya, dulu errornya tertelan).
-  const allowed = channelPermissions(channel, member);
-  let embeds = attachment ? [] : [embed];
-  let files = attachment ? [attachment] : bannerFile ? [bannerFile.attachment] : [];
-  let plainText = '';
-
-  if (!allowed.embed && embeds.length > 0) {
-    logger.info(
-      `Bot tidak punya izin "Embed Links" di #${channel.name} — salam perpisahan dikirim sebagai teks biasa.`,
-    );
-    plainText = text;
-    embeds = [];
-  }
-  if (!allowed.attach && files.length > 0) {
-    logger.info(
-      `Bot tidak punya izin "Attach Files" di #${channel.name} — lampiran salam perpisahan dilewati.`,
-    );
-    files = [];
-    if (embeds.length === 0) {
-      if (allowed.embed) embeds = [embed];
-      else plainText = text;
+  // Jaring pengaman sama seperti sambutan: jangan pernah mengirim pesan tanpa isi.
+  if (!plainText && embeds.length === 0 && files.length === 0) {
+    try {
+      await channel.send({ content: text, allowedMentions: { parse: [] } });
+      logger.info(`Salam perpisahan untuk ${member.user.tag} terkirim (teks polos).`);
+      return true;
+    } catch (error) {
+      logger.warn(`Gagal mengirim salam perpisahan untuk ${member.user.tag}`, errorMessage(error));
+      return false;
     }
-  }
-  if (embeds.length === 0 && files.length === 0 && !plainText) {
-    plainText = text;
   }
 
   try {
     await channel.send({
-      content: plainText && embeds.length === 0 ? plainText : undefined,
+      // `content` hanya berisi sesuatu pada mode text (lihat composePayload).
+      content: plainText || undefined,
       embeds,
       files,
+      // Perpisahan tidak pernah me-ping siapa pun.
       allowedMentions: { parse: [] },
     });
     logger.info(`Salam perpisahan untuk ${member.user.tag} terkirim${greeting ? ' (AI)' : ' (template)'}.`);

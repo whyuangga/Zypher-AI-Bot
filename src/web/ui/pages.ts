@@ -3,6 +3,7 @@
  * (upload, hapus, simpan) yang memanggil API JSON di server.ts.
  */
 import { icon } from './icons.js';
+import { DISPLAY_MODES, normalizeDisplayMode } from '../../features/display-mode.js';
 import {
   activityChart,
   badge,
@@ -917,6 +918,8 @@ export interface WelcomePageOptions extends PageContext {
     useAi: boolean;
     channelId: string | null;
     template: string | null;
+    /** Bentuk pesan: `card`, `embed`, atau `text`. */
+    displayMode: string;
     imageEnabled: boolean;
     includeAvatar: boolean;
     style: string | null;
@@ -931,6 +934,7 @@ export interface WelcomePageOptions extends PageContext {
     useAi: boolean;
     channelId: string | null;
     template: string | null;
+    displayMode: string;
     style: string | null;
     example: string | null;
     bannerPath: string | null;
@@ -977,6 +981,33 @@ const CHECK_ROW = 'style="display:flex;align-items:center;gap:10px;font-size:13.
  * File dibaca di browser lalu dikirim sebagai data URI: tidak perlu parser
  * multipart di server, dan pratinjaunya bisa langsung tampil tanpa menunggu.
  */
+/**
+ * Pemilih bentuk pesan (mode tampilan).
+ *
+ * Memakai radio, bukan dropdown: tiga pilihan ini mengubah tampilan yang
+ * dilihat member, jadi semuanya sebaiknya terlihat sekaligus beserta
+ * konsekuensinya (kartu butuh Chromium, teks bisa me-ping). Disembunyikan di
+ * balik dropdown membuat admin tidak tahu mode mana yang sedang aktif.
+ */
+function displayModePicker(kind: 'welcome' | 'goodbye', current: string): string {
+  const active = normalizeDisplayMode(current);
+  const cards = DISPLAY_MODES.map((mode) => {
+    const checked = mode.key === active ? ' checked' : '';
+    return `<label class="mode-option">
+      <input type="radio" name="${kind}Mode" value="${mode.key}"${checked}>
+      <span class="mode-body">
+        <span class="mode-label">${esc(mode.label)}${mode.key === 'text' ? ' <span class="mode-tag">bisa ping</span>' : ''}</span>
+        <span class="mode-note">${esc(mode.note)}</span>
+      </span>
+    </label>`;
+  }).join('');
+
+  return `<div>
+    <label class="field">Bentuk pesan</label>
+    <div class="mode-picker" id="${kind}ModePicker">${cards}</div>
+  </div>`;
+}
+
 function bannerBlock(
   kind: 'welcome' | 'goodbye',
   currentPath: string | null,
@@ -1016,7 +1047,11 @@ export function welcomePage(options: WelcomePageOptions): string {
   const welcomeStatus = options.welcome.enabled ? badge('Aktif', 'ok') : badge('Nonaktif', 'warn');
   const goodbyeStatus = options.goodbye.enabled ? badge('Aktif', 'ok') : badge('Nonaktif', 'warn');
 
-  const rendererWarning = options.welcome.imageEnabled && !options.cardRenderer.available
+  // Peringatan hanya relevan kalau mode yang dipilih memang butuh kartu.
+  const cardModeActive =
+    normalizeDisplayMode(options.welcome.displayMode) === 'card' ||
+    normalizeDisplayMode(options.goodbye.displayMode) === 'card';
+  const rendererWarning = cardModeActive && !options.cardRenderer.available
     ? `<div class="notice" style="margin-top:12px">${icon('alert', 16)}<span><b>Kartu PNG tidak akan terkirim.</b> Chromium tidak ditemukan di server ini, jadi sambutan & perpisahan jatuh ke embed teks. Set <code>CHROMIUM_PATH</code> ke binary Chromium di hosting-mu untuk mengaktifkan kartu.</span></div>`
     : '';
 
@@ -1065,10 +1100,7 @@ export function welcomePage(options: WelcomePageOptions): string {
     </div>
   </div>
 
-  <label class="check-row" ${CHECK_ROW}>
-    <input type="checkbox" id="welcomeImage" ${options.welcome.imageEnabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
-    <span>Kirim kartu sambutan (gambar PNG berisi nama &amp; sapaan)</span>
-  </label>
+  ${displayModePicker('welcome', options.welcome.displayMode)}
   <label class="check-row" ${CHECK_ROW}>
     <input type="checkbox" id="welcomeAvatar" ${options.welcome.includeAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
     <span>Tampilkan avatar member di kartu</span>
@@ -1127,10 +1159,7 @@ export function welcomePage(options: WelcomePageOptions): string {
     </div>
   </div>
 
-  <label class="check-row" ${CHECK_ROW}>
-    <input type="checkbox" id="goodbyeImage" ${options.goodbye.imageEnabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
-    <span>Kirim kartu perpisahan (gambar PNG)</span>
-  </label>
+  ${displayModePicker('goodbye', options.goodbye.displayMode)}
   <label class="check-row" ${CHECK_ROW}>
     <input type="checkbox" id="goodbyeAvatar" ${options.goodbye.includeAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
     <span>Tampilkan avatar member di kartu</span>
@@ -1206,6 +1235,12 @@ export function welcomePage(options: WelcomePageOptions): string {
 <div class="mt">${previewCard}</div>
 
 <script>
+/** Nilai radio mode tampilan yang sedang dipilih. */
+function modeOf(kind) {
+  var picked = document.querySelector('input[name="' + kind + 'Mode"]:checked');
+  return picked ? picked.value : 'embed';
+}
+
 async function saveWelcome() {
   await postJson('/api/welcome', {
     enabled: document.getElementById('welcomeEnabled').checked,
@@ -1214,7 +1249,8 @@ async function saveWelcome() {
     template: document.getElementById('welcomeTemplate').value.trim() || null,
     style: document.getElementById('welcomeStyle').value.trim() || null,
     example: document.getElementById('welcomeExample').value.trim() || null,
-    imageEnabled: document.getElementById('welcomeImage').checked,
+    displayMode: modeOf('welcome'),
+    imageEnabled: modeOf('welcome') === 'card',
     includeAvatar: document.getElementById('welcomeAvatar').checked,
   }, 'Sambutan disimpan.');
 }
@@ -1302,7 +1338,8 @@ async function sendTest(kind) {
         template: document.getElementById('welcomeTemplate').value.trim(),
         style: document.getElementById('welcomeStyle').value.trim(),
         example: document.getElementById('welcomeExample').value.trim(),
-        imageEnabled: document.getElementById('welcomeImage').checked,
+        displayMode: modeOf('welcome'),
+        imageEnabled: modeOf('welcome') === 'card',
         includeAvatar: document.getElementById('welcomeAvatar').checked,
       }
     : {
@@ -1310,7 +1347,8 @@ async function sendTest(kind) {
         template: document.getElementById('goodbyeTemplate').value.trim(),
         style: document.getElementById('goodbyeStyle').value.trim(),
         example: document.getElementById('goodbyeExample').value.trim(),
-        imageEnabled: document.getElementById('goodbyeImage').checked,
+        displayMode: modeOf('goodbye'),
+        imageEnabled: modeOf('goodbye') === 'card',
         includeAvatar: document.getElementById('goodbyeAvatar').checked,
       };
 
@@ -1358,7 +1396,8 @@ async function saveGoodbye() {
     template: document.getElementById('goodbyeTemplate').value.trim() || null,
     style: document.getElementById('goodbyeStyle').value.trim() || null,
     example: document.getElementById('goodbyeExample').value.trim() || null,
-    imageEnabled: document.getElementById('goodbyeImage').checked,
+    displayMode: modeOf('goodbye'),
+    imageEnabled: modeOf('goodbye') === 'card',
     includeAvatar: document.getElementById('goodbyeAvatar').checked,
   }, 'Salam perpisahan disimpan.');
 }
@@ -1383,7 +1422,7 @@ async function runTest(kind, templateOnly) {
         template: document.getElementById('welcomeTemplate').value.trim(),
         style: document.getElementById('welcomeStyle').value.trim(),
         example: document.getElementById('welcomeExample').value.trim(),
-        withCard: document.getElementById('welcomeImage').checked,
+        withCard: modeOf('welcome') === 'card',
         templateOnly: !!templateOnly,
       }
     : {
@@ -1392,7 +1431,7 @@ async function runTest(kind, templateOnly) {
         template: document.getElementById('goodbyeTemplate').value.trim(),
         style: document.getElementById('goodbyeStyle').value.trim(),
         example: document.getElementById('goodbyeExample').value.trim(),
-        withCard: document.getElementById('goodbyeImage').checked,
+        withCard: modeOf('goodbye') === 'card',
         templateOnly: !!templateOnly,
       };
 
