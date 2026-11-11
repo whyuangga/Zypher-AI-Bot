@@ -230,10 +230,204 @@ export function ringkasanPage(data: DashboardData): string {
 ${stats}
 <div class="grid cols-2 mt">${chartCard}${resourcesCard}</div>
 <div class="grid cols-2 mt">${statusCard}${docsCard}</div>
-<div class="mt">${roomsCard}</div>`;
+<div class="mt">${roomsCard}</div>
+${resourcesCard ? LIVE_RESOURCES_JS : ''}`;
 
   return appShell({ title: 'Ringkasan', guildId: data.guildId, guildName: data.guildName, active: 'ringkasan', body, counts: data.counts, status: data.status });
 }
+
+/* ------------------------------------------------------------------ */
+/*  Panel sumber daya: pembaruan langsung (polling)                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Memperbarui panel "Pemakaian server" tanpa memuat ulang halaman.
+ *
+ * Kenapa polling, bukan SSE/WebSocket: dashboard ini dilayani lewat proxy panel
+ * hosting (Pterodactyl/Wispbyte), dan proxy seperti itu sering menahan
+ * respons `text/event-stream` sehingga angkanya justru membeku — persis
+ * masalah yang ingin dihilangkan. `fetch` biasa paling tahan terhadap proxy.
+ *
+ * Aturan yang dijaga:
+ *   - Berhenti saat tab disembunyikan (`document.hidden`): tidak ada gunanya
+ *     membebani server untuk halaman yang tidak dilihat.
+ *   - Kembali memperbarui begitu tab terlihat lagi.
+ *   - Kegagalan jaringan tidak menghapus angka terakhir; hanya titik status
+ *     yang berubah jadi abu-abu, supaya panel tidak pernah tampak kosong.
+ */
+const LIVE_RESOURCES_JS = `<script>
+(function () {
+  var INTERVAL_MS = 3000;
+  var seedEl = document.getElementById('resSeed');
+  var liveLabel = document.getElementById('resLive');
+  var dot = document.getElementById('resDot');
+  if (!seedEl) return;
+
+  var known = false;
+  try { known = !!JSON.parse(seedEl.textContent || '{}'); } catch (e) { known = false; }
+  if (!known) return;
+
+  var ROWS = null; // diisi saat pertama kali, untuk menulis ulang angka
+
+  function bytes(value) {
+    if (value === null || value === undefined || !isFinite(value)) return '—';
+    if (value < 1024) return Math.round(value) + ' B';
+    var units = ['KB', 'MB', 'GB', 'TB'];
+    var v = value / 1024;
+    var u = 0;
+    while (v >= 1024 && u < units.length - 1) { v /= 1024; u += 1; }
+    var rounded = v >= 100 ? Math.round(v) : Math.round(v * 10) / 10;
+    return rounded.toLocaleString('id-ID') + ' ' + units[u];
+  }
+
+  function rate(value) {
+    if (value === null || value === undefined || !isFinite(value)) return '—';
+    if (value < 1024) return Math.round(value).toLocaleString('id-ID') + ' B/s';
+    var kb = value / 1024;
+    if (kb < 1024) return (kb >= 10 ? Math.round(kb) : Math.round(kb * 10) / 10).toLocaleString('id-ID') + ' KB/s';
+    var mb = kb / 1024;
+    return (mb >= 10 ? Math.round(mb) : Math.round(mb * 10) / 10).toLocaleString('id-ID') + ' MB/s';
+  }
+
+  function pct(value) {
+    if (value === null || value === undefined) return null;
+    var rounded = value >= 100 ? Math.round(value) : Math.round(value * 10) / 10;
+    return rounded.toLocaleString('id-ID');
+  }
+
+  function humanUptime(seconds) {
+    seconds = Math.max(0, Math.round(seconds || 0));
+    if (seconds < 60) return Math.max(1, seconds) + ' detik';
+    var minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return minutes + ' menit';
+    var hours = Math.floor(minutes / 60);
+    var rest = minutes % 60;
+    if (hours < 24) return rest > 0 ? hours + ' jam ' + rest + ' menit' : hours + ' jam';
+    var days = Math.floor(hours / 24);
+    var restHours = hours % 24;
+    return restHours > 0 ? days + ' hari ' + restHours + ' jam' : days + ' hari';
+  }
+
+  function rows() {
+    if (ROWS) return ROWS;
+    var list = document.querySelectorAll('.res-row');
+    ROWS = Array.prototype.slice.call(list);
+    return ROWS;
+  }
+
+  function paint(index, value, sub, percent) {
+    var row = rows()[index];
+    if (!row) return;
+    var valueEl = row.querySelector('.res-value');
+    var subEl = row.querySelector('.res-sub');
+    var barEl = row.querySelector('.res-bar');
+    if (valueEl && value !== null) valueEl.textContent = value;
+    if (subEl && sub !== null) subEl.innerHTML = sub;
+    if (!barEl) return;
+    var fill = barEl.firstElementChild;
+    if (!fill) return;
+    if (percent === null || percent === undefined) {
+      // Kuota tidak diketahui: kosongkan bar, jangan gambar 0% (itu klaim lain).
+      fill.style.width = '0%';
+      barEl.classList.remove('warn', 'danger');
+      barEl.classList.add('unknown');
+      return;
+    }
+    var width = Math.max(0, Math.min(100, percent));
+    fill.style.width = (width > 0 ? Math.max(1.5, width) : 0) + '%';
+    barEl.classList.remove('unknown', 'warn', 'danger');
+    if (width >= 85) barEl.classList.add('danger');
+    else if (width >= 65) barEl.classList.add('warn');
+  }
+
+  function render(data) {
+    var memPercent = data.memoryTotal ? (data.memoryUsed / data.memoryTotal) * 100 : null;
+    var memSub = data.memoryTotal
+      ? pct(memPercent) + '% dari ' + bytes(data.memoryTotal) + (data.memoryFromCgroup ? ' (batas container)' : '')
+      : 'batas tidak terbaca';
+    paint(0,
+      data.cpuPercent === null ? '—' : pct(data.cpuPercent) + '%',
+      data.cpuPercent === null
+        ? 'menunggu sampel berikutnya'
+        : 'sampel ' + (data.inContainer ? 'dari jatah container' : 'dari seluruh inti mesin'),
+      data.cpuPercent);
+
+    paint(1, bytes(data.memoryUsed), memSub, memPercent);
+
+    var netSub = (data.networkInRate === null && data.networkOutRate === null && data.networkIn === null)
+      ? 'statistik jaringan tidak tersedia di sistem ini'
+      : '\u2193 ' + rate(data.networkInRate) + ' \u00b7 \u2191 ' + rate(data.networkOutRate) + ' sekarang \u2014 total '
+        + bytes(data.networkIn) + ' masuk / ' + bytes(data.networkOut) + ' keluar';
+    paint(2, rate(data.networkInRate) + ' masuk', netSub, null);
+
+    var diskPercent = (data.diskTotal && data.diskUsed !== null)
+      ? (data.diskUsed / data.diskTotal) * 100
+      : null;
+    var diskSub = !data.diskTotal
+      ? 'kuota container belum diatur \u00b7 ' + bytes(data.diskUsed) + ' terpakai'
+        + (data.partitionTotal ? ' (partisi mesin ' + bytes(data.partitionTotal) + ')' : '')
+      : pct(diskPercent) + '% dari ' + bytes(data.diskTotal)
+        + (data.diskTotalSource === 'env' ? ' (dari .env)' : data.diskTotalSource === 'setting' ? ' (dari Pengaturan)' : '');
+    if (data.diskReadRate !== null || data.diskWriteRate !== null) {
+      diskSub += ' \u00b7 baca ' + rate(data.diskReadRate) + ' / tulis ' + rate(data.diskWriteRate);
+    }
+    paint(3, bytes(data.diskUsed), diskSub, diskPercent);
+
+    var updated = document.getElementById('resUpdated');
+    if (updated) {
+      updated.innerHTML = 'Proses hidup ' + humanUptime(data.uptimeSeconds)
+        + ' \u00b7 angka di sini milik <b>proses bot ini</b>, bukan seluruh mesin.';
+    }
+  }
+
+  function mark(ok) {
+    if (dot) dot.className = 'res-dot' + (ok ? '' : ' off');
+    if (liveLabel) liveLabel.textContent = ok ? 'langsung' : 'terputus';
+  }
+
+  var timer = null;
+  var failures = 0;
+
+  async function tick() {
+    if (document.hidden) return;
+    try {
+      var response = await fetch('/api/resources', { headers: { accept: 'application/json' } });
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      render(await response.json());
+      failures = 0;
+      mark(true);
+    } catch (error) {
+      failures += 1;
+      // Kegagalan sesaat (proxy restart) bukan alasan menghapus angka terakhir.
+      // Setelah 3 kali berturut-turut baru ditandai terputus.
+      if (failures >= 3) mark(false);
+    }
+  }
+
+  function start() {
+    if (timer) return;
+    tick();
+    timer = setInterval(tick, INTERVAL_MS);
+    if (liveLabel) liveLabel.textContent = 'langsung';
+  }
+
+  function stop() {
+    if (timer) { clearInterval(timer); timer = null; }
+  }
+
+  // Hentikan polling saat tab tidak terlihat; lanjutkan saat kembali.
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) stop();
+    else start();
+  });
+  window.addEventListener('pagehide', stop);
+
+  // Angka pertama sudah dirender server; ambil sampel kedua lebih cepat
+  // (800 ms) supaya CPU & kecepatan jaringan langsung terisi, lalu lanjut
+  // dengan interval normal.
+  setTimeout(function () { tick().then(start); }, 800);
+})();
+</script>`;
 
 /* ------------------------------------------------------------------ */
 /*  Panel chat DM                                                      */
@@ -256,8 +450,8 @@ export function panelPage(options: PanelOptions): string {
   const hasPanel = Boolean(options.messageId);
 
   const channelField = options.channels.length
-    ? `<span class="select-shell" style="display:flex;width:100%">
-    <select id="panelChannel" style="width:100%;max-width:none">
+    ? `<span class="select-shell full">
+    <select id="panelChannel">
       <option value="">— pilih channel —</option>
       ${options.channels
         .map(
@@ -772,6 +966,10 @@ export function pengaturanPage(
     autoMemoryDefault: boolean;
     adminOnlyRoomsSetting: boolean | null;
     adminOnlyRoomsDefault: boolean;
+    /** Kuota disk container (MB) yang diisi admin. null = tidak diatur. */
+    diskQuotaMb: number | null;
+    /** Kuota dari .env (MB). null = tidak diatur. Menang atas isian di sini. */
+    diskQuotaEnvMb: number | null;
     stats: { messages: number; rooms: number; documents: number };
   },
 ): string {
@@ -798,8 +996,8 @@ export function pengaturanPage(
     body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:12px">
   <div>
     <label class="field" for="timeZone">Zona waktu</label>
-    <span class="select-shell" style="width:100%">
-      <select id="timeZone" style="width:100%">
+    <span class="select-shell full">
+      <select id="timeZone">
         ${TIME_ZONES.map(
           (zone) =>
             `<option value="${esc(zone.id)}" ${normalizeTimeZone(options.effectiveTimeZone) === zone.id ? 'selected' : ''}>${esc(zone.label)} — ${esc(zone.longName)} (UTC+${esc(zone.offset)})</option>`,
@@ -813,6 +1011,46 @@ export function pengaturanPage(
     <button class="btn-primary" type="button" id="saveTimeZone" onclick="saveTimeZone()">${icon('check', 16)} Simpan zona waktu</button>
     <span class="hint" style="margin:0">Berlaku untuk pesan berikutnya.</span>
   </div>
+</div>`,
+  });
+
+  /**
+   * Kuota disk container.
+   *
+   * Dilaporkan sebagai masalah nyata: panel "Pemakaian server" menulis
+   * "353 GB dari 441 GB" padahal jatah container di panel hosting cuma 1 GB.
+   * Penyebabnya `statfs()` membaca partisi mesin induk, dan cgroup TIDAK
+   * menyediakan kuota kapasitas disk — jadi angka ini tidak bisa ditebak sama
+   * sekali dan harus dinyatakan.
+   */
+  const diskCard = card({
+    title: 'Kuota disk container',
+    hint: options.diskQuotaEnvMb
+      ? `dari .env: ${formatNumber(options.diskQuotaEnvMb)} MB`
+      : options.diskQuotaMb
+        ? `diset: ${formatNumber(options.diskQuotaMb)} MB`
+        : 'belum diatur',
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:12px">
+  <div>
+    <label class="field" for="diskQuotaMb">Jatah disk dari panel hosting (MB)</label>
+    <input type="number" id="diskQuotaMb" min="0" step="1" inputmode="numeric"
+      value="${esc(options.diskQuotaMb ?? '')}" placeholder="1024"
+      ${options.diskQuotaEnvMb ? 'disabled' : ''}>
+    <p class="hint">
+      Isi angka yang tertulis di panel hosting (mis. <b>1024</b> untuk 1 GB).
+      Dashboard memakainya sebagai penyebut bar Disk, sehingga yang tampil
+      &quot;berapa persen jatah saya terpakai&quot; — bukan kapasitas mesin induk.
+      Kosongkan kalau tidak ingin bar persentase ditampilkan.
+    </p>
+    ${
+      options.diskQuotaEnvMb
+        ? `<p class="hint" style="margin:0">Nilai ini dikunci oleh <code>DISK_LIMIT_MB</code> di <code>.env</code>. Hapus variabel itu kalau ingin mengaturnya dari sini.</p>`
+        : ''
+    }
+  </div>
+  <button class="btn-primary" type="button" id="saveDiskQuota" onclick="saveDiskQuota()" ${options.diskQuotaEnvMb ? 'disabled' : ''}>
+    ${icon('check', 16)} Simpan kuota disk
+  </button>
 </div>`,
   });
 
@@ -900,7 +1138,7 @@ export function pengaturanPage(
     subtitle: 'Perilaku AI dan informasi server. Perubahan langsung berlaku untuk pesan berikutnya.',
   })}
 <div class="grid cols-2-even">${modelCard}${timeZoneCard}</div>
-<div class="mt">${voiceCard}</div>
+<div class="grid cols-2-even mt">${diskCard}${voiceCard}</div>
 <div class="mt">${featureCard}</div>
 <div class="mt">${infoCard}</div>
 <script>
@@ -919,6 +1157,31 @@ async function saveTimeZone() {
       guild: ${JSON.stringify(options.guildId)},
       timezone: document.getElementById('timeZone').value,
     }, 'Zona waktu disimpan.');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+/**
+ * Simpan kuota disk container (MB).
+ *
+ * Kosong / 0 = "tidak diatur": dashboard berhenti menampilkan bar persentase
+ * disk alih-alih memakai kapasitas partisi mesin induk.
+ */
+async function saveDiskQuota() {
+  var input = document.getElementById('diskQuotaMb');
+  var raw = String(input.value || '').trim();
+  var value = raw === '' ? null : Number(raw);
+  if (value !== null && (!isFinite(value) || value < 0)) {
+    toast('Kuota disk harus angka 0 atau lebih.', true);
+    return;
+  }
+  var button = document.getElementById('saveDiskQuota');
+  button.disabled = true;
+  try {
+    await postJson('/api/disk-quota', {
+      megabytes: value === 0 ? null : value,
+    }, 'Kuota disk disimpan.');
   } finally {
     button.disabled = false;
   }
@@ -1150,11 +1413,13 @@ function welcomePane(options: {
       <h2>${esc(label)}</h2>
       <p class="hint">${esc(note)}</p>
     </div>
-    <div class="right">${options.status}</div>
   </div>
   <div class="pane-grid">
     <section class="card">
-      <div class="card-head"><h2>Pengaturan</h2><span class="hint">${esc(options.hint)}</span></div>
+      <!-- Badge AKTIF menempel pada judul kartunya sendiri ("Pengaturan").
+           Sebelumnya ia digantung di baris judul tab, sehingga di HP turun ke
+           baris sendiri dan jauh dari teks yang diterangkannya. -->
+      <div class="card-head"><h2>Pengaturan</h2><span class="hint">${esc(options.hint)}</span><span class="right">${options.status}</span></div>
       ${options.form}
     </section>
     ${options.preview}
@@ -1180,7 +1445,7 @@ function welcomeTabs(welcomeEnabled: boolean, goodbyeEnabled: boolean): string {
     `<button type="button" role="tab" class="tab${active ? ' is-active' : ''}"
        id="tab-${kind}" data-tab="${kind}"
        aria-controls="pane-${kind}" aria-selected="${active ? 'true' : 'false'}"
-       onclick="showTab('${kind}')">${esc(label)}<span class="tab-dot" id="tabDot-${kind}"${on ? '' : ' hidden'}></span></button>`;
+       onclick="showTab('${kind}')">${esc(label)}<span class="tab-flag" id="tabFlag-${kind}"${on ? '' : ' hidden'}>aktif</span></button>`;
 
   return `<div class="tabs" role="tablist" aria-label="Sambutan atau perpisahan" style="margin-top:14px">
     ${tab('welcome', 'Sambutan', true, welcomeEnabled)}
@@ -1209,8 +1474,8 @@ export function welcomePage(options: WelcomePageOptions): string {
 
   <div>
     <label class="field" for="welcomeChannel">Kirim ke</label>
-    <span class="select-shell" style="width:100%">
-      <select id="welcomeChannel" style="width:100%">
+    <span class="select-shell full">
+      <select id="welcomeChannel">
         ${channelOptions(options.channels, options.welcome.channelId, 'DM member (disarankan)')}
       </select>
       ${icon('chevron', 15)}
@@ -1279,8 +1544,8 @@ export function welcomePage(options: WelcomePageOptions): string {
 
   <div>
     <label class="field" for="goodbyeChannel">Kirim ke</label>
-    <span class="select-shell" style="width:100%">
-      <select id="goodbyeChannel" style="width:100%">
+    <span class="select-shell full">
+      <select id="goodbyeChannel">
         ${channelOptions(options.channels, options.goodbye.channelId, 'Belum dipilih — salam tidak dikirim')}
       </select>
       ${icon('chevron', 15)}
@@ -1436,18 +1701,18 @@ function showTab(kind) {
     var active = name === kind;
     var pane = document.getElementById('pane-' + name);
     var tab = document.getElementById('tab-' + name);
-    var dot = document.getElementById('tabDot-' + name);
+    var flag = document.getElementById('tabFlag-' + name);
     if (pane) pane.hidden = !active;
     if (tab) {
       tab.classList.toggle('is-active', active);
       tab.setAttribute('aria-selected', active ? 'true' : 'false');
     }
-    // Titik kecil di tab = pesan jenis itu sedang aktif. Dibaca dari checkbox
-    // saat ini, bukan dari nilai saat halaman dirender: admin bisa mematikan
-    // sambutan lalu belum menyimpan, dan titiknya harus ikut berubah.
-    if (dot) {
+    // Penanda di tab = pesan jenis itu sedang aktif. Dibaca dari checkbox saat
+    // ini, bukan dari nilai saat halaman dirender: admin bisa mematikan
+    // sambutan lalu belum menyimpan, dan penandanya harus ikut berubah.
+    if (flag) {
       var toggle = document.getElementById(name + 'Enabled');
-      dot.hidden = !(toggle && toggle.checked);
+      flag.hidden = !(toggle && toggle.checked);
     }
   }
   // Tab yang dibuka disimpan supaya tidak balik ke Sambutan setelah simpan.
@@ -1458,19 +1723,19 @@ function showTab(kind) {
 }
 
 /**
- * Samakan titik indikator tab dengan checkbox "aktif" milik tab itu.
+ * Samakan penanda "aktif" di tab dengan checkbox milik tab itu.
  *
  * Dipanggil saat halaman dimuat dan setiap kali salah satu checkbox berubah,
- * supaya titik tidak berbohong saat admin menyalakan/mematikan sambutan tanpa
- * menyimpan.
+ * supaya penanda tidak berbohong saat admin menyalakan/mematikan sambutan
+ * tanpa menyimpan.
  */
-function syncTabDots() {
+function syncTabFlags() {
   var kinds = ['welcome', 'goodbye'];
   for (var i = 0; i < kinds.length; i++) {
     var name = kinds[i];
-    var dot = document.getElementById('tabDot-' + name);
+    var flag = document.getElementById('tabFlag-' + name);
     var toggle = document.getElementById(name + 'Enabled');
-    if (dot) dot.hidden = !(toggle && toggle.checked);
+    if (flag) flag.hidden = !(toggle && toggle.checked);
   }
 }
 
@@ -1479,10 +1744,10 @@ function syncTabDots() {
   for (var i = 0; i < kinds.length; i++) {
     var toggle = document.getElementById(kinds[i] + 'Enabled');
     if (toggle && toggle.addEventListener) {
-      toggle.addEventListener('change', syncTabDots);
+      toggle.addEventListener('change', syncTabFlags);
     }
   }
-  syncTabDots();
+  syncTabFlags();
 })();
 
 // Buka tab terakhir yang dipakai. Ini juga yang membuat halaman terasa ringkas:
@@ -1813,8 +2078,8 @@ export function agentPage(options: AgentPageOptions): string {
 
   <div>
     <label class="field" for="agentChannel">Channel ngobrol</label>
-    <span class="select-shell" style="width:100%">
-      <select id="agentChannel" style="width:100%">
+    <span class="select-shell full">
+      <select id="agentChannel">
         ${channelOptions(options.channels, options.agent.channelId, 'Mati — AI tidak ikut ngobrol')}
       </select>
       ${icon('chevron', 15)}
@@ -1824,8 +2089,8 @@ export function agentPage(options: AgentPageOptions): string {
 
   <div>
     <label class="field" for="agentGallery">Channel galeri</label>
-    <span class="select-shell" style="width:100%">
-      <select id="agentGallery" style="width:100%">
+    <span class="select-shell full">
+      <select id="agentGallery">
         ${channelOptions(options.channels, options.agent.galleryChannelId, 'Mati — AI tidak mengomentari foto')}
       </select>
       ${icon('chevron', 15)}
@@ -1893,8 +2158,8 @@ export function agentPage(options: AgentPageOptions): string {
 
   <div>
     <label class="field" for="testRole">Uji sebagai</label>
-    <span class="select-shell" style="width:100%">
-      <select id="testRole" style="width:100%">
+    <span class="select-shell full">
+      <select id="testRole">
         <option value="chat">Pesan di channel ngobrol</option>
         <option value="gallery">Komentar di channel galeri</option>
       </select>
@@ -2203,8 +2468,8 @@ export function moderasiPage(options: ModerasiOptions): string {
   <div class="grid cols-2-even" style="gap:14px">
     <div>
       <label class="field" for="modAction">Tindakan</label>
-      <span class="select-shell" style="width:100%">
-        <select id="modAction" style="width:100%">
+      <span class="select-shell full">
+        <select id="modAction">
           <option value="delete" ${options.action === 'delete' ? 'selected' : ''}>Hapus pesan</option>
           <option value="warn" ${options.action === 'warn' ? 'selected' : ''}>Hapus + peringatan</option>
           <option value="timeout" ${options.action === 'timeout' ? 'selected' : ''}>Hapus + timeout member</option>

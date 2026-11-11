@@ -78,6 +78,9 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
     // Zona waktu per server (WIB/WITA/WIT). NULL = WIB, jadi database lama
     // tidak berubah perilaku sampai admin memilih zona lain.
     'ALTER TABLE guilds ADD COLUMN timezone TEXT',
+    // Kuota disk container (MB). NULL = tidak diatur, dan dashboard tidak
+    // menebaknya dari partisi mesin induk.
+    'ALTER TABLE guilds ADD COLUMN disk_quota_mb INTEGER',
   ];
 
   for (const statement of statements) {

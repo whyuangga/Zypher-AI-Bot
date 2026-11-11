@@ -156,10 +156,22 @@ code {
 }
 /* Badge server di topbar. Bukan kontrol: bot ini untuk satu server,
    jadi yang perlu diketahui admin hanya server mana yang sedang dibuka. */
-/* Shell mengikuti lebar <select>, bukan sebaliknya.
-   Dulu shell bisa width:100% sementara select dibatasi max-width:260px,
-   jadi chevron (position:absolute; right:10px) menempel ke tepi shell —
-   jauh di kanan garis bawah select. Sekarang shell menyusut selebar select. */
+/* Select dengan chevron sendiri: appearance:none membuang panah bawaan
+   browser, jadi panahnya digambar sebagai <svg> di dalam shell.
+
+   Dua varian lebar, dan bedanya penting:
+
+   - bawaan (tanpa modifier): untuk select sempit di topbar. Shell menyusut
+     mengikuti isi, select dibatasi 260px.
+   - .full: untuk select di dalam form yang harus selebar kolomnya.
+
+   Sebelum ada .full, form memakai inline style width:100% pada shell — dan di
+   situlah bug-nya: shell jadi selebar kolom (mis. 400px), tetapi select tetap
+   dibatasi 260px. Chevron diposisikan right:10px terhadap SHELL, jadi ia jatuh
+   140px di kanan teks dan di luar garis bawah select.
+   Yang terlihat: garis putus sebelum ujung baris, lalu panah melayang sendiri.
+   Kuncinya: select dan chevron harus berbagi kotak yang sama, jadi lebarnya
+   diatur di SHELL dan select selalu 100% dari shell. */
 .select-shell { position: relative; display: inline-flex; align-items: center; max-width: 100%; }
 .select-shell svg { position: absolute; right: 10px; pointer-events: none; color: var(--text-3); }
 .select-shell select {
@@ -168,6 +180,14 @@ code {
   color: var(--text); font-family: var(--font-mono); font-size: 12.5px; letter-spacing: .02em;
 }
 .select-shell select:hover { border-bottom-color: var(--text); }
+
+/* Varian selebar kolom form. Select ikut 100% supaya garis bawah dan chevron
+   berakhir di titik yang sama. min-width:0 mencegah select mendorong lebar
+   shell melebihi kolom saat nama channel panjang. padding-right 34px = lebar
+   chevron (15px) + jarak 10px + ruang aman, supaya nama channel panjang
+   terpotong SEBELUM menabrak panah. */
+.select-shell.full { display: flex; width: 100%; }
+.select-shell.full select { min-width: 0; max-width: none; padding-right: 34px; }
 
 .guild-static {
   display: inline-flex; align-items: center; gap: 9px; min-width: 0;
@@ -346,6 +366,21 @@ code {
 .res-foot {
   padding: 14px 24px 18px; font-size: 12px; color: var(--text-3);
   border-top: 1px solid var(--line);
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+/* Penanda "langsung": titik berdenyut halus selama polling jalan.
+   Saat gagal, titik jadi abu-abu dan teksnya "terputus" — angka terakhir
+   tetap tampil, karena menghapusnya justru lebih membingungkan. */
+.res-live { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.res-dot {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--ok);
+  box-shadow: 0 0 0 3px var(--ok-soft); animation: resPulse 2.4s ease-in-out infinite;
+  flex: 0 0 auto;
+}
+.res-dot.off { background: var(--text-3); box-shadow: none; animation: none; }
+@keyframes resPulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) {
+  .res-dot { animation: none; }
 }
 @media (max-width: 560px) {
   .res-value { font-size: 17px; }
@@ -493,8 +528,11 @@ textarea.mono { font-family: var(--font-mono); font-size: 12.5px; }
 }
 .tab {
   /* Tombol global: padding 12px 18px + huruf kapital ber-spasi. Tab butuh
-     bentuk lain, jadi semuanya ditimpa di sini. */
-  display: inline-flex; align-items: center; gap: 8px;
+     bentuk lain, jadi semuanya ditimpa di sini.
+     justify-content: flex-start WAJIB: aturan button global memakai center,
+     dan di HP tiap tab selebar layar sehingga teks+penanda sebagai satu grup
+     tergeser ke tengah — penandanya jadi tampak melayang jauh dari teksnya. */
+  display: inline-flex; align-items: center; justify-content: flex-start; gap: 8px;
   padding: 11px 18px; margin-bottom: -1px;
   background: transparent; border: 1px solid transparent; border-bottom: 2px solid transparent;
   border-radius: var(--r-sm) var(--r-sm) 0 0;
@@ -505,11 +543,15 @@ textarea.mono { font-family: var(--font-mono); font-size: 12.5px; }
 .tab:hover { color: var(--text); background: rgba(226, 209, 204, .04); }
 .tab:active { transform: none; }
 .tab.is-active { color: var(--text); border-bottom-color: var(--text); }
-/* Titik = jenis pesan ini sedang aktif mengirim. Tetap terlihat walau tab-nya
-   tidak dibuka, karena gunanya justru memberi tahu tanpa harus membuka tab. */
-.tab-dot {
-  width: 5px; height: 5px; border-radius: 50%; background: var(--ok);
-  flex: 0 0 auto; box-shadow: 0 0 0 3px var(--ok-soft);
+/* Penanda "jenis pesan ini sedang aktif". Dulu berupa titik kecil, dan
+   maksudnya tidak terbaca: di layar sempit ia tampak seperti bullet nyasar di
+   samping teks tab, dan orang mengira itu penanda tab yang sedang dibuka.
+   Sekarang teks "AKTIF" — tidak mungkin disalahartikan. */
+.tab-flag {
+  font-size: 8px; font-weight: 500; letter-spacing: .1em;
+  padding: 2px 5px; border-radius: var(--r-sm);
+  color: #c3dcc7; background: var(--ok-soft); border: 1px solid rgba(169, 195, 173, .35);
+  flex: 0 0 auto; line-height: 1.3; white-space: nowrap;
 }
 
 .tab-pane { margin-top: 18px; }

@@ -38,6 +38,15 @@ export interface GuildSettings {
    * `null` = memakai `TIMEZONE` dari .env; kalau itu juga kosong, WIB.
    */
   timezone: string | null;
+  /**
+   * Kuota disk container dalam MB, diisi admin. `null` = tidak diatur.
+   *
+   * cgroup tidak menyediakan kuota kapasitas disk, dan panel hosting tidak
+   * mengekspornya ke dalam container — jadi angka ini harus dinyatakan, bukan
+   * ditebak dari partisi mesin induk (dulu terbaca "353 GB dari 441 GB"
+   * padahal jatah container 1 GB).
+   */
+  diskQuotaMb: number | null;
   createdAt: number;
 }
 
@@ -122,6 +131,7 @@ interface GuildRow {
   rag_enabled: number | boolean | null;
   auto_memory: number | boolean | null;
   admin_only_rooms: number | boolean | null;
+  disk_quota_mb: number | null;
   created_at: number;
 }
 interface MemoryRow {
@@ -168,6 +178,7 @@ interface MessageRow {
 
 const toGuild = (row: GuildRow): GuildSettings => ({
   guildId: row.guild_id,
+  diskQuotaMb: row.disk_quota_mb ?? null,
   name: row.name ?? null,
   persona: row.persona,
   model: row.model,
@@ -268,6 +279,22 @@ export async function setGuildTimeZone(guildId: string, timeZone: string | null)
   await ensureGuild(guildId);
   const clean = timeZone === null ? null : normalizeTimeZone(timeZone);
   await run('UPDATE guilds SET timezone = ? WHERE guild_id = ?', [clean, guildId]);
+}
+
+/**
+ * Simpan kuota disk container (MB). `null` = tidak diatur.
+ *
+ * Divalidasi di sini juga, bukan hanya di UI: endpoint JSON bisa dipanggil
+ * langsung, dan angka ngawur (negatif / terlalu besar) akan membuat bar disk
+ * menampilkan persentase yang tidak masuk akal.
+ */
+export async function setGuildDiskQuota(guildId: string, megabytes: number | null): Promise<void> {
+  await ensureGuild(guildId);
+  const clean =
+    megabytes === null || !Number.isFinite(megabytes) || megabytes <= 0
+      ? null
+      : Math.min(Math.round(megabytes), 10_485_760);
+  await run('UPDATE guilds SET disk_quota_mb = ? WHERE guild_id = ?', [clean, guildId]);
 }
 
 /**
