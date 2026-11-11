@@ -1091,6 +1091,108 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   background: var(--line-strong);
   margin: 2px 0;
 }
+.sep {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 18px 0 14px;
+}
+
+.subhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-1);
+  margin-bottom: 10px;
+}
+
+/* Baris kecil berisi emoji + pilihan gaya di tiap tombol role. */
+.role-style-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.role-emoji {
+  width: 76px;
+  flex: 0 0 auto;
+  text-align: center;
+}
+
+/* Warna tombol role di pratinjau — sama dengan palet Discord. */
+.pc-button-role.style-secondary { background: #4e5058; }
+.pc-button-role.style-success { background: #248046; }
+.pc-button-role.style-danger { background: #da373c; }
+
+/* Dropdown role di pratinjau. */
+.pc-select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: #1e1f22;
+  border: 1px solid #2b2d31;
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: #b5bac1;
+  font-size: 13.5px;
+  margin-top: 6px;
+}
+
+.pc-select svg { flex: 0 0 auto; opacity: .8; }
+
+.pc-select-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  font-size: 13px;
+  color: #dbdee1;
+  border-top: 1px solid #2b2d31;
+}
+
+.pc-select-opt .pc-opt-desc {
+  color: #949ba4;
+  font-size: 11.5px;
+  margin-left: 4px;
+}
+
+/* Satu pilihan menu di editor: baris role + emoji + keterangan. */
+.menu-opt {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--bg-2);
+}
+
+.menu-opt-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.menu-opt-head .role-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.menu-flags {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
 .block-add {
   display: flex;
   gap: 8px;

@@ -353,8 +353,11 @@ halaman [`/pesan`](docs/pesan.md) — susun blok teks/gambar/tombol, kirim sekal
 lalu perbarui tanpa kirim ulang. Ada **pratinjau hidup**, **warna aksen** bebas,
 **unggah gambar**, dan pilihan pengirim: lewat bot, atau **atas nama server**
 (webhook — tokennya dienkripsi, butuh izin *Manage Webhooks*). Tombol **ambil
-role** memberi role hanya dengan klik; bot butuh izin **Manage Roles** dan
-posisinya harus di atas role yang dibagikan.
+role** memberi role hanya dengan klik, lengkap dengan **emoji** dan **warna**
+tombol (biru/abu/hijau/merah); untuk role yang banyak tersedia **menu dropdown**
+sampai 25 pilihan, dengan opsi **hanya satu pilihan** yang otomatis mencabut
+role lain di menu yang sama — cocok untuk menu warna nama atau platform. Bot
+butuh izin **Manage Roles** dan posisinya harus di atas role yang dibagikan.
 
 ### `/reset` atau `/akhiri`?
 
@@ -476,8 +479,8 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke # 370 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
-npm run smoke:pg       # 20 test jalur Postgres (pg-mem, tanpa server database)
+npm run smoke # 375 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
+npm run smoke:pg       # 21 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # 15 pemeriksaan rantai fallback provider (server tiruan)
 npm run test:ui        # 75 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
 npm run test:browser   # uji klik sungguhan di Chromium (butuh dashboard hidup)

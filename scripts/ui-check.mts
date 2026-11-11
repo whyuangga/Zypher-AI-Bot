@@ -452,6 +452,7 @@ const pages: Array<{ name: string; render: () => string }> = [
         ],
         hasManageRoles: true,
         roleButtons: {},
+        roleMenus: {},
       } as never),
   },
   {
@@ -480,7 +481,24 @@ const pages: Array<{ name: string; render: () => string }> = [
         botReady: true,
         roles: [{ id: '9001', name: 'Gamer', color: '#6d8cff', position: 3, blockedBy: null }],
         hasManageRoles: true,
-        roleButtons: { 1: [{ id: 5, roleId: '9001', label: 'Ambil role Gamer', mode: 'toggle' }] },
+        roleButtons: {
+          1: [{ id: 5, roleId: '9001', label: 'Ambil role Gamer', mode: 'toggle', emoji: '🎮', style: 'success' }],
+        },
+        roleMenus: {
+          1: [
+            {
+              id: 2,
+              placeholder: 'Pilih warna',
+              minValues: 1,
+              maxValues: 1,
+              exclusive: true,
+              options: [
+                { roleId: '9001', label: 'Gamer', emoji: '🎮', description: 'Suka main' },
+                { roleId: '9002', label: 'Admin', emoji: null, description: null },
+              ],
+            },
+          ],
+        },
       } as never),
   },
   { name: '/dokumen', render: () => dokumenPage({ ...base, documents: [], embedModel: null } as never) },

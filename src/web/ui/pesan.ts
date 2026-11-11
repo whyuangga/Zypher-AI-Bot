@@ -49,7 +49,22 @@ export interface PesanPageOptions extends PageContext {
   /** Bot punya izin Manage Roles — tanpa ini tombol role tidak akan bekerja. */
   hasManageRoles: boolean;
   /** Tombol role per pesan (pesanId -> tombol). */
-  roleButtons: Record<number, Array<{ id: number; roleId: string; label: string; mode: string }>>;
+  roleButtons: Record<
+    number,
+    Array<{ id: number; roleId: string; label: string; mode: string; emoji: string | null; style: string }>
+  >;
+  /** Dropdown role per pesan (pesanId -> menu). */
+  roleMenus: Record<
+    number,
+    Array<{
+      id: number;
+      placeholder: string;
+      minValues: number;
+      maxValues: number;
+      exclusive: boolean;
+      options: Array<{ roleId: string; label: string; emoji: string | null; description: string | null }>;
+    }>
+  >;
 }
 
 /**
@@ -68,7 +83,14 @@ export interface PesanPageOptions extends PageContext {
  * biasa — hanya tidak bisa keluar dari konteks <script>.
  */
 function jsonForScript(value: unknown): string {
-  return JSON.stringify(value)
+  /*
+   * `JSON.stringify(undefined)` mengembalikan `undefined` (bukan string), dan
+   * `.replace` di atasnya akan melempar — halaman ikut gagal dirender hanya
+   * karena satu opsi tidak diisi. Dulu itu nyata terjadi saat `roleMenus`
+   * ditambahkan tapi pemanggil lama belum mengirimnya.
+   */
+  const json = JSON.stringify(value === undefined ? null : value) ?? 'null';
+  return json
     .replace(/</g, '\\u003c')
     .replace(/>/g, '\\u003e')
     .replace(/&/g, '\\u0026');
@@ -201,7 +223,7 @@ export function pesanPage(options: PesanPageOptions): string {
   });
 
   const roleCard = card({
-    title: 'Tombol ambil role',
+    title: 'Tombol & menu ambil role',
     hint: `${options.hasManageRoles ? 'izin Manage Roles: ada' : 'izin Manage Roles: BELUM ADA'}`,
     body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:12px">
   ${
@@ -233,6 +255,13 @@ export function pesanPage(options: PesanPageOptions): string {
     <button class="btn btn-ghost btn-sm" type="button" onclick="addRoleButton()">${icon('users', 15)} Tambah tombol</button>
   </div>
   <p class="hint">Tombol role tampil <b>di baris paling bawah</b> pesan. Klik member = beri role; klik lagi = lepas (kecuali mode "hanya beri").</p>
+  <hr class="sep" />
+  <div class="subhead">${icon('menu', 15)} Menu dropdown role</div>
+  <div id="menuList" class="block-list"></div>
+  <div class="block-add">
+    <button class="btn btn-ghost btn-sm" type="button" onclick="addRoleMenu()">${icon('plus', 15)} Tambah menu</button>
+  </div>
+  <p class="hint">Dropdown dipakai kalau role-nya banyak: satu menu bisa memuat sampai 25 pilihan. Aktifkan <b>hanya satu pilihan</b> untuk membuatnya eksklusif — memilih role baru otomatis mencabut role lain di menu yang sama.</p>
 </div>`,
   });
 
@@ -251,8 +280,11 @@ const GUILD = ${jsonForScript(options.guildId)};
 var ROLES = ${jsonForScript(options.roles)};
 /** Tombol role per pesan: { pesanId: [...] }. */
 var ROLE_BUTTONS = ${jsonForScript(options.roleButtons)};
+var ROLE_MENUS = ${jsonForScript(options.roleMenus ?? {})};
 /** Tombol role yang sedang disusun (belum disimpan). */
 var roleButtons = [];
+/** Menu dropdown role yang sedang disusun (biasanya hanya satu). */
+var roleMenus = [];
 var roleEditingId = null;
 /** Blok yang sedang disusun. Disimpan sebagai data, bukan HTML. */
 var blocks = [];
@@ -642,14 +674,60 @@ function renderPreview() {
     barisRole.className = 'pc-row';
     roleButtons.slice(i, i + 5).forEach(function (r) {
       var b = document.createElement('span');
-      b.className = 'pc-button pc-button-role';
-      b.textContent = r.label || '(tanpa label)';
+      b.className = 'pc-button pc-button-role' + (r.style && r.style !== 'primary' ? ' style-' + r.style : '');
+      b.textContent = teksTombol(r);
       barisRole.appendChild(b);
     });
     kartu.appendChild(barisRole);
   }
 
+  // Menu dropdown role, di bawah tombol.
+  roleMenus.forEach(function (menu) {
+    if (!menu.options || menu.options.length === 0) return;
+    var kotak = document.createElement('div');
+    kotak.className = 'pc-select';
+    var judul = document.createElement('span');
+    judul.textContent = menu.placeholder || 'Pilih role';
+    kotak.appendChild(judul);
+    kotak.insertAdjacentHTML('beforeend', '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>');
+    kartu.appendChild(kotak);
+
+    // Discord menampilkan pilihan hanya saat dropdown dibuka; di pratinjau
+    // sengaja ditampilkan semua supaya admin bisa memeriksa labelnya.
+    menu.options.forEach(function (opsi) {
+      var el = document.createElement('div');
+      el.className = 'pc-select-opt';
+      if (opsi.emoji) {
+        var em = document.createElement('span');
+        em.textContent = opsi.emoji;
+        el.appendChild(em);
+      }
+      el.appendChild(document.createTextNode(opsi.label || '(tanpa label)'));
+      if (opsi.description) {
+        var ket = document.createElement('span');
+        ket.className = 'pc-opt-desc';
+        ket.textContent = opsi.description;
+        el.appendChild(ket);
+      }
+      kartu.appendChild(el);
+    });
+  });
+
   host.appendChild(kartu);
+}
+
+/**
+ * Emoji + label tombol untuk pratinjau.
+ *
+ * Emoji kustom berbentuk <:nama:id> tidak bisa digambar tanpa CDN, jadi yang
+ * tampil hanya :nama: — cukup untuk memastikan admin memilih emoji yang benar.
+ */
+function teksTombol(tombol) {
+  var label = tombol.label || '(tanpa label)';
+  var emoji = tombol.emoji || '';
+  if (!emoji) return label;
+  var kustom = /^<a?:([a-zA-Z0-9_]{2,32}):\\d{15,25}>$/.exec(emoji);
+  return (kustom ? ':' + kustom[1] + ':' : emoji) + ' ' + label;
 }
 
 function salinanTeks(isi) {
@@ -724,6 +802,37 @@ function renderRoleButtons() {
     input.oninput = function () { roleButtons[index].label = input.value; renderPreview(); };
     row.appendChild(input);
 
+    // Emoji + warna: dua hal yang membuat tombol mudah dibedakan sekilas.
+    var gayaRow = document.createElement('div');
+    gayaRow.className = 'role-style-row';
+
+    var emoji = document.createElement('input');
+    emoji.type = 'text';
+    emoji.className = 'role-emoji';
+    emoji.value = tombol.emoji || '';
+    emoji.placeholder = '🎮';
+    emoji.title = 'Emoji tombol — boleh emoji biasa atau <:nama:id>';
+    emoji.oninput = function () {
+      // Server tetap memvalidasi; di sini hanya dibatasi panjangnya supaya
+      // kotak input tidak dipakai untuk menempel paragraf.
+      roleButtons[index].emoji = emoji.value.slice(0, 80);
+      renderPreview();
+    };
+    gayaRow.appendChild(emoji);
+
+    var style = document.createElement('select');
+    style.className = 'role-mode';
+    [['primary', 'Biru'], ['secondary', 'Abu'], ['success', 'Hijau'], ['danger', 'Merah']].forEach(function (opt) {
+      var o = document.createElement('option');
+      o.value = opt[0];
+      o.textContent = opt[1];
+      if ((tombol.style || 'primary') === opt[0]) o.selected = true;
+      style.appendChild(o);
+    });
+    style.onchange = function () { roleButtons[index].style = style.value; renderPreview(); };
+    gayaRow.appendChild(style);
+    row.appendChild(gayaRow);
+
     if (role && role.blockedBy) {
       var warn = document.createElement('p');
       warn.className = 'hint';
@@ -747,6 +856,8 @@ function addRoleButton() {
     roleId: pick.value,
     label: 'Ambil role ' + (role ? role.name : ''),
     mode: 'toggle',
+    emoji: '',
+    style: 'primary',
   });
   pick.value = '';
   renderRoleButtons();
@@ -762,7 +873,7 @@ async function saveRoleButtons(postId) {
   var result = await api('/api/posts/' + postId + '/roles', {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ buttons: roleButtons }),
+    body: JSON.stringify({ buttons: roleButtons, menus: roleMenus }),
   });
   if (result.dropped && result.dropped.length) {
     toast('Sebagian tombol role dibuang: ' + result.dropped[0], true);
@@ -770,11 +881,265 @@ async function saveRoleButtons(postId) {
   return result;
 }
 
+/* ---------------- Menu dropdown role ---------------- */
+
+/**
+ * Gambar ulang editor dropdown.
+ *
+ * Satu pesan biasanya cukup punya SATU menu; tetap disimpan sebagai array
+ * supaya server dan penyusun payload tidak perlu dua bentuk data.
+ */
+function renderRoleMenus() {
+  var host = document.getElementById('menuList');
+  if (!host) return;
+  host.innerHTML = '';
+
+  if (roleMenus.length === 0) {
+    var kosong = document.createElement('p');
+    kosong.className = 'hint';
+    kosong.textContent = 'Belum ada menu. Menu cocok kalau role-nya banyak (sampai 25 pilihan).';
+    host.appendChild(kosong);
+    renderPreview();
+    return;
+  }
+
+  roleMenus.forEach(function (menu, index) {
+    var kotak = document.createElement('div');
+    kotak.className = 'block-row';
+
+    var head = document.createElement('div');
+    head.className = 'block-head';
+    var jenis = document.createElement('span');
+    jenis.className = 'block-kind';
+    jenis.textContent = 'menu ' + (index + 1) + ' · ' + (menu.options.length) + ' pilihan';
+    head.appendChild(jenis);
+
+    var hapus = document.createElement('button');
+    hapus.className = 'btn-danger btn-sm btn-icon';
+    hapus.type = 'button';
+    hapus.title = 'Hapus menu';
+    hapus.textContent = '×';
+    hapus.onclick = function () { roleMenus.splice(index, 1); renderRoleMenus(); renderPreview(); };
+    head.appendChild(hapus);
+    kotak.appendChild(head);
+
+    var placeholder = document.createElement('input');
+    placeholder.type = 'text';
+    placeholder.value = menu.placeholder || '';
+    placeholder.placeholder = 'Teks ajakan, mis. Pilih warna namamu';
+    placeholder.oninput = function () {
+      roleMenus[index].placeholder = placeholder.value;
+      renderPreview();
+    };
+    kotak.appendChild(placeholder);
+
+    // Pengaturan: eksklusif + batas pilihan.
+    var flags = document.createElement('div');
+    flags.className = 'menu-flags';
+
+    var eksklusif = document.createElement('label');
+    eksklusif.className = 'menu-flags';
+    var cek = document.createElement('input');
+    cek.type = 'checkbox';
+    cek.checked = !!menu.exclusive;
+    cek.onchange = function () {
+      roleMenus[index].exclusive = cek.checked;
+      // Eksklusif berarti tepat satu pilihan — batasnya ikut disetel supaya
+      // admin tidak menyimpan kombinasi yang saling bertentangan.
+      if (cek.checked) {
+        roleMenus[index].minValues = 1;
+        roleMenus[index].maxValues = 1;
+        renderRoleMenus();
+      }
+      renderPreview();
+    };
+    eksklusif.appendChild(cek);
+    eksklusif.appendChild(document.createTextNode(' hanya satu pilihan (eksklusif)'));
+    flags.appendChild(eksklusif);
+    kotak.appendChild(flags);
+
+    if (!menu.exclusive) {
+      var batas = document.createElement('div');
+      batas.className = 'role-style-row';
+      [['minValues', 'min'], ['maxValues', 'maks']].forEach(function (pasangan) {
+        var label = document.createElement('span');
+        label.className = 'hint';
+        label.textContent = pasangan[1];
+        var num = document.createElement('input');
+        num.type = 'number';
+        num.min = '1';
+        num.max = String(Math.max(1, menu.options.length));
+        num.value = String(menu[pasangan[0]] || 1);
+        num.style.width = '64px';
+        num.onchange = function () {
+          var n = parseInt(num.value, 10);
+          if (!isFinite(n) || n < 1) n = 1;
+          if (n > menu.options.length) n = Math.max(1, menu.options.length);
+          roleMenus[index][pasangan[0]] = n;
+          // min tidak boleh melebihi maks.
+          if (roleMenus[index].minValues > roleMenus[index].maxValues) {
+            roleMenus[index].maxValues = roleMenus[index].minValues;
+          }
+          renderRoleMenus();
+          renderPreview();
+        };
+        batas.appendChild(label);
+        batas.appendChild(num);
+      });
+      kotak.appendChild(batas);
+    }
+    kotak.appendChild(pilihanMenu(menu, index));
+
+    var tambahOpsi = document.createElement('div');
+    tambahOpsi.className = 'block-add';
+    var pick = document.createElement('select');
+    pick.innerHTML = '<option value="">Pilih role untuk ditambahkan…</option>' + ROLES.filter(function (r) {
+      return !menu.options.some(function (o) { return o.roleId === r.id; });
+    }).map(function (r) {
+      return '<option value="' + r.id + '"' + (r.blockedBy ? ' disabled' : '') + '>' +
+        (r.name || '') + (r.blockedBy ? ' — ' + r.blockedBy : '') + '</option>';
+    }).join('');
+    pick.style.maxWidth = '320px';
+    pick.className = 'role-mode';
+    var tombol = document.createElement('button');
+    tombol.className = 'btn btn-ghost btn-sm';
+    tombol.type = 'button';
+    tombol.textContent = 'Tambah pilihan';
+    tombol.onclick = function () {
+      if (!pick.value) return toast('Pilih role dulu', true);
+      if (menu.options.length >= 25) return toast('Satu menu maksimal 25 pilihan', true);
+      var role = roleById(pick.value);
+      menu.options.push({
+        roleId: pick.value,
+        label: role ? role.name : pick.value,
+        emoji: '',
+        description: '',
+      });
+      renderRoleMenus();
+      renderPreview();
+    };
+    tambahOpsi.appendChild(pick);
+    tambahOpsi.appendChild(tombol);
+    kotak.appendChild(tambahOpsi);
+
+    host.appendChild(kotak);
+  });
+  renderPreview();
+}
+
+/** Daftar pilihan di dalam satu menu, masing-masing bisa diatur. */
+function pilihanMenu(menu, menuIndex) {
+  var bungkus = document.createElement('div');
+  bungkus.className = 'block-list';
+
+  menu.options.forEach(function (opsi, ops) {
+    var kotak = document.createElement('div');
+    kotak.className = 'menu-opt';
+
+    var head = document.createElement('div');
+    head.className = 'menu-opt-head';
+    var role = roleById(opsi.roleId);
+    var dot = document.createElement('span');
+    dot.className = 'role-dot';
+    dot.style.background = role && role.color ? role.color : 'var(--text-3)';
+    head.appendChild(dot);
+    head.appendChild(document.createTextNode(role ? '@' + role.name : 'role terhapus'));
+    var hapus = document.createElement('button');
+    hapus.className = 'btn-danger btn-sm btn-icon';
+    hapus.type = 'button';
+    hapus.title = 'Hapus pilihan';
+    hapus.textContent = '×';
+    hapus.style.marginLeft = 'auto';
+    hapus.onclick = function () {
+      menu.options.splice(ops, 1);
+      renderRoleMenus();
+      renderPreview();
+    };
+    head.appendChild(hapus);
+    kotak.appendChild(head);
+
+    var label = document.createElement('input');
+    label.type = 'text';
+    label.value = opsi.label || '';
+    label.placeholder = 'Label pilihan';
+    label.oninput = function () { menu.options[ops].label = label.value; renderPreview(); };
+    kotak.appendChild(label);
+
+    var baris = document.createElement('div');
+    baris.className = 'role-style-row';
+    var emoji = document.createElement('input');
+    emoji.type = 'text';
+    emoji.className = 'role-emoji';
+    emoji.value = opsi.emoji || '';
+    emoji.placeholder = '🎨';
+    emoji.oninput = function () { menu.options[ops].emoji = emoji.value.slice(0, 80); renderPreview(); };
+    baris.appendChild(emoji);
+
+    var ket = document.createElement('input');
+    ket.type = 'text';
+    ket.value = opsi.description || '';
+    ket.placeholder = 'Keterangan kecil (opsional)';
+    ket.oninput = function () { menu.options[ops].description = ket.value.slice(0, 100); renderPreview(); };
+    baris.appendChild(ket);
+    kotak.appendChild(baris);
+
+    if (role && role.blockedBy) {
+      var warn = document.createElement('p');
+      warn.className = 'hint';
+      warn.style.color = 'var(--warn, #ffb454)';
+      warn.textContent = 'Akan gagal: ' + role.blockedBy;
+      kotak.appendChild(warn);
+    }
+    bungkus.appendChild(kotak);
+  });
+
+  if (menu.options.length === 0) {
+    var kosong = document.createElement('p');
+    kosong.className = 'hint';
+    kosong.textContent = 'Menu tanpa pilihan tidak akan dikirim — tambahkan minimal satu role.';
+    bungkus.appendChild(kosong);
+  }
+  return bungkus;
+}
+
+/** Tambah satu menu kosong (maksimal 5 per pesan, sama seperti server). */
+function addRoleMenu() {
+  if (roleMenus.length >= 5) return toast('Maksimal 5 menu per pesan', true);
+  roleMenus.push({
+    placeholder: 'Pilih role',
+    minValues: 1,
+    maxValues: 1,
+    exclusive: false,
+    options: [],
+  });
+  renderRoleMenus();
+}
+
 /** Muat tombol role saat mengubah pesan yang sudah punya tombol. */
 function loadRoleButtonsFor(postId) {
   roleButtons = (ROLE_BUTTONS[postId] || []).map(function (b) {
-    return { roleId: b.roleId, label: b.label, mode: b.mode || 'toggle' };
+    return {
+      roleId: b.roleId,
+      label: b.label,
+      mode: b.mode || 'toggle',
+      emoji: b.emoji || '',
+      style: b.style || 'primary',
+    };
   });
+  // Dicopy dalam, bukan referensi ke ROLE_MENUS: editor mengubah objek ini
+  // saat admin menyusun, dan objek sumber harus tetap utuh sampai disimpan.
+  roleMenus = (ROLE_MENUS[postId] || []).map(function (m) {
+    return {
+      placeholder: m.placeholder,
+      minValues: m.minValues,
+      maxValues: m.maxValues,
+      exclusive: !!m.exclusive,
+      options: (m.options || []).map(function (o) {
+        return { roleId: o.roleId, label: o.label, emoji: o.emoji || '', description: o.description || '' };
+      }),
+    };
+  });
+  renderRoleMenus();
 }
 
 // Pemantau perubahan warna aksen — pratinjau ikut berubah saat digeser.

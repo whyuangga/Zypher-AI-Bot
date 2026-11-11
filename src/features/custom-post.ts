@@ -45,6 +45,63 @@ export interface PostBlock {
    * Tidak ikut dikirim ke Discord apa adanya.
    */
   data?: string;
+  /**
+   * Emoji untuk button atau opsi menu role.
+   *
+   * Disimpan sebagai teks utuh (mis. "🎮" atau "<:nama:123>") dan baru
+   * diterjemahkan ke bentuk Discord saat mengirim.
+   */
+  emoji?: string;
+  /**
+   * Gaya tombol role: primary (biru), secondary (abu), success (hijau),
+   * danger (merah).
+   */
+  style?: 'primary' | 'secondary' | 'success' | 'danger';
+  /**
+   * Id blok — dipakai sebagai customId untuk select menu role.
+   *
+   * Sengaja stabil dan kecil (bukan snowflake) supaya bisa ditanam di
+   * customId tanpa melewati batas 100 karakter Discord.
+   */
+  blockId?: string;
+}
+
+/**
+ * Gaya tombol yang boleh dipakai.
+ *
+ * Discord punya 5 gaya, tapi 'link' tidak masuk di sini: tombol role selalu
+ * interaktif (membawa customId), dan tombol link diurus blok 'button'.
+ */
+export const BUTTON_STYLES = ['primary', 'secondary', 'success', 'danger'] as const;
+export type ButtonStyleName = (typeof BUTTON_STYLES)[number];
+
+/** Normalisasi gaya tombol; nilai aneh jatuh ke primary. */
+export function normalizeButtonStyle(value: unknown): ButtonStyleName {
+  return BUTTON_STYLES.includes(value as ButtonStyleName)
+    ? (value as ButtonStyleName)
+    : 'primary';
+}
+
+/**
+ * Emoji aman untuk label tombol.
+ *
+ * Dua bentuk yang diterima Discord:
+ *   - emoji unicode: satu karakter (bisa berlapis, mis. 👍🏽)
+ *   - emoji server: <:nama:id> atau <a:nama:id>
+ *
+ * Teks lain ditolak — kalau tidak, tombol bisa berisi potongan kalimat yang
+ * membuat Discord menolak seluruh pesan.
+ */
+export function normalizeEmoji(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  const raw = value.trim();
+  if (!raw) return '';
+  const kustom = /^<(a?):([a-zA-Z0-9_]{2,32}):(\d{15,25})>$/.exec(raw);
+  if (kustom) return raw;
+  // Unicode: batasi panjangnya supaya bukan kalimat. 8 satuan cukup untuk
+  // emoji berlapis (bendera, warna kulit, ZWJ).
+  if (raw.length <= 8 && /\p{Extended_Pictographic}/u.test(raw)) return raw;
+  return '';
 }
 
 /** Warna aksen bawaan — sama dengan brand sambutan. */
@@ -130,7 +187,13 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
     if (kind === 'divider') {
       // Dua pemisah berurutan hanya menghasilkan ruang kosong.
       if (out.length > 0 && out[out.length - 1]!.kind !== 'divider') {
-        out.push({ kind: 'divider', value: '' });
+        const blockId = typeof item.blockId === 'string' ? item.blockId.trim() : '';
+        out.push({
+          kind: 'divider',
+          value: '',
+          // Block id hanya dipakai kalau bentuknya aman untuk customId.
+          ...(/^[a-z0-9]{1,16}$/.test(blockId) ? { blockId } : {}),
+        });
       }
       continue;
     }
@@ -201,7 +264,14 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
         continue;
       }
       buttons += 1;
-      out.push({ kind: 'button', value: label, url });
+      const emoji = normalizeEmoji(item.emoji);
+      out.push({
+        kind: 'button',
+        value: label,
+        url,
+        ...(emoji ? { emoji } : {}),
+        style: normalizeButtonStyle(item.style),
+      });
       continue;
     }
 
@@ -294,16 +364,34 @@ export function buildPostPayload(
     MediaGalleryItemBuilder: new () => any;
     ActionRowBuilder: new () => any;
     ButtonBuilder: new () => any;
-    ButtonStyle: { Link: number; Primary?: number; Secondary?: number };
+    ButtonStyle: {
+      Link: number;
+      Primary?: number;
+      Secondary?: number;
+      Success?: number;
+      Danger?: number;
+    };
+    /** Untuk select menu role. */
+    StringSelectMenuBuilder?: new () => any;
+    StringSelectMenuOptionBuilder?: new () => any;
     accent?: number;
     /**
      * Tombol ambil role milik pesan ini (dari tabel post_role_buttons).
      * customId diambil dari `roleButtonId()` supaya router bot bisa
      * mengenalinya lewat prefix.
      */
-    roleButtons?: Array<{ id: number; label: string }>;
+    roleButtons?: Array<{ id: number; label: string; emoji?: string; style?: string }>;
     /** Pembuat customId — disuntik supaya modul ini tetap murni. */
     roleButtonId?: (id: number) => string;
+    /** Menu role (select menu) milik pesan ini. */
+    roleMenus?: Array<{
+      id: number;
+      placeholder: string;
+      minValues?: number;
+      maxValues?: number;
+      options: Array<{ label: string; value: string; emoji?: string; description?: string }>;
+    }>;
+    roleMenuId?: (id: number) => string;
     /** Pembuat warna aksen (angka) dari hex — disuntik supaya tetap murni. */
     accentToNumber?: (hex: string) => number;
     /** Warna aksen pilihan admin; kalau kosong, `deps.accent`. */
@@ -329,12 +417,16 @@ export function buildPostPayload(
       const baris = tombolTertunda.splice(0, 5);
       const row = new deps.ActionRowBuilder();
       for (const tombol of baris) {
-        row.addComponents(
-          new deps.ButtonBuilder()
-            .setStyle(deps.ButtonStyle.Link)
-            .setLabel(tombol.value)
-            .setURL(tombol.url ?? ''),
-        );
+        const button = new deps.ButtonBuilder()
+          .setStyle(deps.ButtonStyle.Link)
+          .setLabel(tombol.value)
+          .setURL(tombol.url ?? '');
+        // Tombol link selalu bergaya Link (Discord menolak gaya lain untuk
+        // URL), jadi `style` di sini hanya mengatur emoji. Gaya warna hanya
+        // berlaku untuk tombol role.
+        const emoji = parseEmoji(tombol.emoji);
+        if (emoji) button.setEmoji(emoji);
+        row.addComponents(button);
       }
       container.addActionRowComponents(row);
     }
@@ -383,16 +475,79 @@ export function buildPostPayload(
       const baris = roleButtons.slice(i, i + LIMITS.buttonsPerRow);
       const row = new deps.ActionRowBuilder();
       for (const tombol of baris) {
-        row.addComponents(
-          new deps.ButtonBuilder()
-            .setStyle(deps.ButtonStyle.Primary)
-            .setCustomId(deps.roleButtonId(tombol.id))
-            .setLabel(tombol.label.slice(0, 80)),
-        );
+        const button = new deps.ButtonBuilder()
+          .setStyle(styleNumber(tombol.style, deps.ButtonStyle))
+          .setCustomId(deps.roleButtonId(tombol.id))
+          .setLabel(tombol.label.slice(0, 80));
+        const emoji = parseEmoji(tombol.emoji);
+        if (emoji) button.setEmoji(emoji);
+        row.addComponents(button);
       }
       container.addActionRowComponents(row);
     }
   }
 
+  // Select menu role: SATU menu untuk banyak role, karena satu menu bisa
+  // memuat 25 opsi sedangkan baris tombol hanya 5. Ditempatkan sesudah
+  // tombol role supaya urutannya bisa ditebak.
+  const menus = deps.roleMenus ?? [];
+  if (menus.length > 0 && deps.StringSelectMenuBuilder && deps.StringSelectMenuOptionBuilder) {
+    for (const menu of menus) {
+      const select = new deps.StringSelectMenuBuilder()
+        .setCustomId(deps.roleMenuId ? deps.roleMenuId(menu.id) : `post-menu:${menu.id}`)
+        .setPlaceholder(menu.placeholder.slice(0, 150))
+        .setMinValues(menu.minValues ?? 1)
+        .setMaxValues(Math.min(Math.max(1, menu.maxValues ?? 1), menu.options.length));
+      for (const opsi of menu.options.slice(0, 25)) {
+        const option = new deps.StringSelectMenuOptionBuilder()
+          .setLabel(opsi.label.slice(0, 100))
+          .setValue(opsi.value);
+        const emoji = parseEmoji(opsi.emoji);
+        if (emoji) option.setEmoji(emoji);
+        if (opsi.description) option.setDescription(opsi.description.slice(0, 100));
+        select.addOptions(option);
+      }
+      container.addActionRowComponents(new deps.ActionRowBuilder().addComponents(select));
+    }
+  }
+
   return { components: [container], flags: 1 << 15, files };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Terjemahan kecil: emoji & gaya tombol                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Ubah teks emoji menjadi bentuk yang diterima discord.js.
+ *
+ * Emoji server (`<:nama:id>`) harus jadi objek { id, name, animated },
+ * sedangkan emoji unicode dibiarkan teks. Kalau salah bentuk, `setEmoji`
+ * melempar dan SELURUH pesan gagal dikirim — jadi kegagalan di sini harus
+ * diam-diam dilewati, bukan fatal.
+ */
+export function parseEmoji(raw: string | undefined): unknown {
+  if (!raw) return undefined;
+  const kustom = /^<(a?):([a-zA-Z0-9_]{2,32}):(\d{15,25})>$/.exec(raw.trim());
+  if (kustom) {
+    return { id: kustom[3], name: kustom[2], animated: kustom[1] === 'a' };
+  }
+  return raw;
+}
+
+/** Nama gaya -> angka ButtonStyle discord.js. */
+function styleNumber(
+  gaya: string | undefined,
+  styles: { Primary?: number; Secondary?: number; Success?: number; Danger?: number },
+): number {
+  switch (gaya) {
+    case 'secondary':
+      return styles.Secondary ?? 2;
+    case 'success':
+      return styles.Success ?? 3;
+    case 'danger':
+      return styles.Danger ?? 4;
+    default:
+      return styles.Primary ?? 1;
+  }
 }

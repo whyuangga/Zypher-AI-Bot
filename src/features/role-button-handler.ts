@@ -19,9 +19,22 @@
  * Semua jawaban memakai `ephemeral`: kegagalan izin sebaiknya tidak
  * dipamerkan ke seluruh channel.
  */
-import { MessageFlags, PermissionFlagsBits, type ButtonInteraction, type GuildMember } from 'discord.js';
-import { findRoleButton, type RoleButton } from '../db/repo.js';
-import { BLOCKER_TEXT, memberCanToggle, parseRoleButtonId, type RoleBlocker } from './role-buttons.js';
+import {
+  MessageFlags,
+  PermissionFlagsBits,
+  type ButtonInteraction,
+  type GuildMember,
+  type Role,
+  type StringSelectMenuInteraction,
+} from 'discord.js';
+import { findRoleButton, findRoleMenu, type RoleButton } from '../db/repo.js';
+import {
+  BLOCKER_TEXT,
+  memberCanToggle,
+  parseRoleButtonId,
+  parseRoleMenuId,
+  type RoleBlocker,
+} from './role-buttons.js';
 import { errorMessage, logger } from '../lib/logger.js';
 
 /** Jawaban yang aman ditampilkan ke member. */
@@ -187,5 +200,214 @@ export async function handleRoleButton(interaction: ButtonInteraction): Promise<
   logger.info(
     `Role ${role.name} (${role.id}) ${plan.action === 'give' ? 'diberikan ke' : 'dilepas dari'} ${siapa}`,
   );
+  return true;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Select menu role                                                   */
+/* ------------------------------------------------------------------ */
+
+/** Rencana perubahan role dari satu dropdown. Semua isinya role ID. */
+export interface MenuPlan {
+  give: string[];
+  remove: string[];
+  /** Role yang tidak bisa disentuh, beserta alasannya. */
+  blocked: Array<{ roleId: string; blocker: RoleBlocker }>;
+}
+
+/**
+ * Hitung perubahan role dari pilihan dropdown — tanpa menyentuh Discord.
+ *
+ * Cara Discord mengirim nilai sangat penting di sini: `interaction.values`
+ * berisi SELURUH pilihan yang aktif setelah perubahan, bukan hanya yang baru
+ * dicentang. Jadi "role yang harus dilepas" tidak dikirim Discord sama sekali
+ * untuk dropdown biasa, dan untuk mode eksklusif harus disimpulkan sendiri:
+ * semua role di menu yang sedang dipegang member tapi TIDAK ada di values.
+ *
+ * `allow` mengembalikan alasan kalau role tidak boleh diubah (izin bot, posisi
+ * hierarki, role terlarang). Dipanggil terpisah untuk memberi dan melepas
+ * karena keduanya butuh posisi bot yang sama, tapi hanya pemberian yang perlu
+ * dibatasi hierarki member.
+ */
+export function planMenuSelection(options: {
+  /**
+   * Hanya butuh `exclusive` + daftar role. Sengaja tidak memakai tipe baris
+   * database penuh supaya fungsi ini bisa diuji tanpa database dan tidak
+   * ikut berubah saat kolom tabel bertambah.
+   */
+  menu: { exclusive: boolean; options: Array<{ roleId: string }> };
+  /** Role ID dari `interaction.values`. */
+  selectedRoleIds: string[];
+  /** Role ID yang sedang dipegang member. */
+  heldRoleIds: string[];
+  /** Alasan role tidak boleh diberi ke member, atau null. */
+  allow: (roleIsHeld: boolean, roleId: string) => RoleBlocker | null;
+}): MenuPlan {
+  const selected = new Set(options.selectedRoleIds);
+  const held = new Set(options.heldRoleIds);
+  const plan: MenuPlan = { give: [], remove: [], blocked: [] };
+
+  const byRoleId = new Map<string, { roleId: string }>();
+  for (const option of options.menu.options) byRoleId.set(option.roleId, option);
+
+  for (const roleId of selected) {
+    // Nilai yang tidak ada di menu berarti menu sudah disusun ulang. Diamkan:
+    // memberi role dari nilai asing justru lubang keamanan.
+    if (!byRoleId.has(roleId)) continue;
+    const sudahPunya = held.has(roleId);
+    const blocker = options.allow(sudahPunya, roleId);
+    if (blocker) {
+      plan.blocked.push({ roleId, blocker });
+      continue;
+    }
+    if (!sudahPunya) plan.give.push(roleId);
+  }
+
+  if (options.menu.exclusive) {
+    // Mode eksklusif: role lain DI MENU YANG SAMA dicabut. Role di luar menu
+    // tidak pernah disentuh — kalau tidak, satu dropdown warna bisa menghapus
+    // role staf seseorang.
+    for (const option of options.menu.options) {
+      if (selected.has(option.roleId)) continue;
+      if (!held.has(option.roleId)) continue;
+      const blocker = options.allow(true, option.roleId);
+      if (blocker) {
+        // Tidak perlu dilaporkan: tujuannya melepas, dan kalau gagal role-nya
+        // hanya tetap terpasang. Melaporkannya akan membingungkan karena
+        // member tidak meminta role itu dilepas.
+        continue;
+      }
+      plan.remove.push(option.roleId);
+    }
+  }
+
+  return plan;
+}
+
+/** Nama role untuk pesan balasan; fallback ke ID kalau sudah terhapus. */
+function roleNameFor(cache: Map<string, string>, roleId: string): string {
+  return cache.get(roleId) ?? `<@&${roleId}>`;
+}
+
+/**
+ * Tangani pilihan dropdown role.
+ *
+ * Mengembalikan `true` kalau customId memang milik dropdown role.
+ */
+export async function handleRoleMenu(interaction: StringSelectMenuInteraction): Promise<boolean> {
+  if (!interaction.isStringSelectMenu()) return false;
+  const menuId = parseRoleMenuId(interaction.customId);
+  if (menuId === null) return false;
+
+  const reply = async (content: string): Promise<void> => {
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply({ content }).catch(() => undefined);
+    } else {
+      await interaction.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => undefined);
+    }
+  };
+
+  if (!interaction.guildId || !interaction.guild) {
+    await reply('❌ Menu ini hanya bekerja di dalam server.');
+    return true;
+  }
+
+  const menu = await findRoleMenu(interaction.guildId, menuId);
+  if (!menu) {
+    await reply('❌ Menu ini sudah tidak berlaku. Minta admin mengirim ulang pesannya.');
+    return true;
+  }
+
+  const member =
+    interaction.member && 'roles' in interaction.member
+      ? (interaction.member as GuildMember)
+      : await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
+  if (!member) {
+    await reply('❌ Keanggotaanmu di server ini tidak terbaca. Coba lagi sebentar lagi.');
+    return true;
+  }
+
+  const me = interaction.guild.members.me ?? (await interaction.guild.members.fetchMe().catch(() => null));
+  if (!me) {
+    await reply('❌ Bot tidak bisa membaca keanggotaannya sendiri di server ini.');
+    return true;
+  }
+
+  const hasManageRoles = me.permissions.has(PermissionFlagsBits.ManageRoles);
+  const botHighest = highestPosition(me);
+  const memberHighest = highestPosition(member);
+
+  // Nama role diambil sekali untuk semua opsi menu, supaya pesan balasan tidak
+  // perlu fetch per role.
+  const names = new Map<string, string>();
+
+  const allow = (roleIsHeld: boolean, roleId: string): RoleBlocker | null => {
+    const role: Role | undefined = interaction.guild!.roles.cache.get(roleId);
+    if (!role) return 'role-terlarang';
+    names.set(roleId, role.name);
+    const blocker = memberCanToggle({
+      role: {
+        id: role.id,
+        name: role.name,
+        position: role.position,
+        managed: role.managed,
+        isEveryone: role.id === interaction.guild!.id,
+      },
+      botHighestPosition: botHighest,
+      memberHighestPosition: memberHighest,
+      hasManageRoles,
+    });
+    // Untuk melepas role, hierarki member tidak relevan: kalau role-nya sudah
+    // dipegang, member memang boleh melepasnya sendiri.
+    if (blocker === 'member-posisi' && roleIsHeld) return null;
+    return blocker;
+  };
+
+  const heldRoleIds = [...(member.roles?.cache?.keys?.() ?? [])];
+  const plan = planMenuSelection({
+    menu,
+    selectedRoleIds: interaction.values,
+    heldRoleIds,
+    allow,
+  });
+
+  if (plan.blocked.length > 0) {
+    // Satu pesan ringkas: menyebut semua role yang gagal akan panjang dan
+    // yang pertama biasanya sudah cukup untuk menjelaskan sebabnya.
+    const first = plan.blocked[0];
+    await reply(blockerMessage(first.blocker));
+    return true;
+  }
+
+  if (plan.give.length === 0 && plan.remove.length === 0) {
+    await reply('✅ Pilihanmu sudah sesuai — tidak ada role yang berubah.');
+    return true;
+  }
+
+  const alasan = `Menu role di pesan dashboard (${menu.placeholder})`;
+  try {
+    if (plan.give.length > 0) await member.roles.add(plan.give, alasan);
+    // Dilepas SETELAH memberi: kalau memberi gagal, role lama belum sempat
+    // hilang dan member tidak terjebak tanpa role sama sekali.
+    if (plan.remove.length > 0) await member.roles.remove(plan.remove, alasan);
+  } catch (error) {
+    logger.warn(`Gagal mengubah role lewat menu ${menuId}: ${errorMessage(error)}`);
+    await reply(
+      '❌ Discord menolak perubahan role. Kemungkinan posisi role bot sekarang di bawah role yang dipilih — admin perlu menggeser role bot ke atas.',
+    );
+    return true;
+  }
+
+  const bagian: string[] = [];
+  if (plan.give.length > 0) {
+    bagian.push(`ditambahkan: ${plan.give.map((id) => `**${roleNameFor(names, id)}**`).join(', ')}`);
+  }
+  if (plan.remove.length > 0) {
+    bagian.push(`dilepas: ${plan.remove.map((id) => `**${roleNameFor(names, id)}**`).join(', ')}`);
+  }
+  await reply(`✅ Role ${bagian.join(' • ')}.`);
+
+  const siapa = member.user?.tag ?? interaction.user.tag;
+  logger.info(`Menu ${menuId}: ${siapa} → +${plan.give.length} / -${plan.remove.length} role`);
   return true;
 }

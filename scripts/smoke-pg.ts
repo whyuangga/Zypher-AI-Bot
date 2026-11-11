@@ -433,6 +433,44 @@ await test('posting: tombol role tersimpan, terurut, dan bisa dicari', async () 
   assert.equal(await repo.findRoleButton('g-lain-pg', baru.buttons[0]!.id), null, 'terisolasi per server');
 });
 
+await test('posting: menu role + opsi tersimpan utuh di Postgres', async () => {
+  const guild = 'g-menu-pg';
+  const post = await repo.createCustomPost(guild, {
+    name: 'Menu role',
+    channelId: '1400000000000000002',
+    blocks: [{ kind: 'text', value: 'Pilih warna' }],
+  });
+
+  const hasil = await repo.replaceRoleMenus(guild, post.id, [
+    {
+      placeholder: 'Pilih warna',
+      minValues: 1,
+      maxValues: 1,
+      exclusive: true,
+      options: [
+        { label: 'Merah', roleId: '111111111111111111', emoji: '🔴', description: 'Merah' },
+        { label: 'Biru', roleId: '222222222222222222', emoji: '🔵' },
+      ],
+    },
+  ]);
+
+  assert.equal(hasil.menus.length, 1);
+  assert.equal(hasil.menus[0]!.exclusive, true, 'flag eksklusif tersimpan');
+  assert.equal(hasil.menus[0]!.options.length, 2);
+  assert.equal(hasil.menus[0]!.options[0]!.emoji, '🔴');
+  assert.equal(hasil.menus[0]!.options[1]!.description, null, 'keterangan kosong = null');
+
+  // Jalur klik: cari menu dari customId, lalu pastikan server lain ditolak.
+  const dariKlik = await repo.findRoleMenu(guild, hasil.menus[0]!.id);
+  assert.equal(dariKlik!.placeholder, 'Pilih warna');
+  assert.equal(await repo.findRoleMenu('g-lain-pg', hasil.menus[0]!.id), null, 'terisolasi per server');
+
+  // Ganti seluruh daftar: menu lama (beserta opsinya) harus hilang.
+  const baru = await repo.replaceRoleMenus(guild, post.id, []);
+  assert.equal(baru.menus.length, 0, 'menu lama dihapus');
+  assert.equal(await repo.listRoleMenus(guild, post.id).then((m) => m.length), 0);
+});
+
 await test('posting: webhook tersimpan terenkripsi per channel', async () => {
   const guild = 'g-hook-pg';
   const channel = '1400000000000000009';

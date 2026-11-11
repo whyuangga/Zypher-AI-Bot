@@ -208,6 +208,7 @@ CREATE TABLE IF NOT EXISTS custom_posts (
   message_id TEXT,
   accent     TEXT,
   sender     TEXT,
+  layout     TEXT,
   updated_at INTEGER NOT NULL
 );
 
@@ -222,12 +223,40 @@ CREATE TABLE IF NOT EXISTS post_role_buttons (
   role_id  TEXT NOT NULL,
   label    TEXT NOT NULL,
   mode     TEXT NOT NULL DEFAULT 'toggle',
+  emoji    TEXT,
+  style    TEXT,
   position INTEGER NOT NULL DEFAULT 0
 );
 
 -- ---------- webhook per channel (pesan atas nama server) ----------
 -- Token menyimpan bagian RAHASIA dari URL webhook, dalam bentuk terenkripsi
 -- (lihat src/features/webhook-secret.ts). Tidak pernah dikirim ke browser.
+-- ---------- menu role (select menu) ----------
+-- Satu baris = satu menu. Opsinya disimpan di post_role_options supaya
+-- jumlah role per menu tidak terbatas kolom.
+CREATE TABLE IF NOT EXISTS post_role_menus (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id    TEXT NOT NULL,
+  post_id     INTEGER NOT NULL,
+  placeholder TEXT NOT NULL,
+  min_values  INTEGER NOT NULL DEFAULT 1,
+  max_values  INTEGER NOT NULL DEFAULT 1,
+  exclusive   INTEGER NOT NULL DEFAULT 1,
+  position    INTEGER NOT NULL DEFAULT 0
+);
+
+-- Satu baris = satu pilihan di dalam menu. role_id WAJIB: pilihan tanpa role
+-- hanya akan menampilkan error saat diklik.
+CREATE TABLE IF NOT EXISTS post_role_options (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  menu_id INTEGER NOT NULL,
+  role_id TEXT NOT NULL,
+  label   TEXT NOT NULL,
+  emoji   TEXT,
+  description TEXT,
+  position    INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS post_webhooks (
   channel_id TEXT PRIMARY KEY,
   guild_id   TEXT NOT NULL,
@@ -429,6 +458,7 @@ CREATE TABLE IF NOT EXISTS custom_posts (
   message_id TEXT,
   accent     TEXT,
   sender     TEXT,
+  layout     TEXT,
   updated_at BIGINT NOT NULL
 );
 
@@ -439,7 +469,30 @@ CREATE TABLE IF NOT EXISTS post_role_buttons (
   role_id  TEXT NOT NULL,
   label    TEXT NOT NULL,
   mode     TEXT NOT NULL DEFAULT 'toggle',
+  emoji    TEXT,
+  style    TEXT,
   position INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS post_role_menus (
+  id          SERIAL PRIMARY KEY,
+  guild_id    TEXT NOT NULL,
+  post_id     INTEGER NOT NULL,
+  placeholder TEXT NOT NULL,
+  min_values  INTEGER NOT NULL DEFAULT 1,
+  max_values  INTEGER NOT NULL DEFAULT 1,
+  exclusive   INTEGER NOT NULL DEFAULT 1,
+  position    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS post_role_options (
+  id          SERIAL PRIMARY KEY,
+  menu_id     INTEGER NOT NULL,
+  role_id     TEXT NOT NULL,
+  label       TEXT NOT NULL,
+  emoji       TEXT,
+  description TEXT,
+  position    INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS post_webhooks (

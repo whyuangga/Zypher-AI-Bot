@@ -96,17 +96,47 @@ Sebagian blok dibuang: tombol "Rusak" (URL tujuan harus http/https)
 
 ---
 
-## 4. Tombol ambil role
+## 4. Tombol & menu ambil role
 
-Kartu **Tombol ambil role** memberi member role hanya dengan mengklik tombol —
-tanpa admin turun tangan.
+Kartu **Tombol & menu ambil role** memberi member role hanya dengan mengklik
+tombol atau memilih dari dropdown — tanpa admin turun tangan.
 
 | Langkah | Keterangan |
 |---|---|
 | Pilih role → **Tambah tombol** | label bisa diubah bebas |
 | **Mode** | `klik = pasang/lepas` (toggle) atau `hanya beri` (klik kedua tidak melepas) |
-| **Simpan** | tombol role tersimpan bersama pesannya, satu tombol untuk semuanya |
-| **Kirim ke Discord** | tombol role muncul di **baris paling bawah** pesan |
+| **Emoji** | satu emoji di depan label, mis. `🎮` atau `<:kucing:1234567890123456789>` |
+| **Warna** | Biru / Abu / Hijau / Merah (lihat catatan di bawah) |
+| **Simpan** | tombol & menu tersimpan bersama pesannya, satu tombol untuk semuanya |
+| **Kirim ke Discord** | tombol role muncul di **baris paling bawah** pesan, menu tepat di bawahnya |
+
+### Menu dropdown (select menu)
+
+Dipakai kalau role-nya **banyak** — satu dropdown memuat sampai 25 pilihan,
+sehingga tidak berdesakan di baris tombol.
+
+| Pengaturan | Arti |
+|---|---|
+| **Teks ajakan** (placeholder) | kalimat di dropdown sebelum member memilih, mis. "Pilih warna namamu" (maks 150 karakter) |
+| **min / maks** | berapa pilihan yang boleh diambil sekaligus |
+| **Hanya satu pilihan (eksklusif)** | memilih role baru **mencabut** role lain di menu yang sama |
+| **Keterangan** per pilihan | teks kecil di bawah label (maks 100 karakter) |
+
+**Mode eksklusif itu inti fiturnya.** Contoh pemakaiannya: menu warna nama,
+menu platform (PC/PlayStation/Xbox), atau menu tingkat pengalaman. Tanpa
+eksklusif, member bisa mengambil dua warna sekaligus dan pesannya jadi tidak
+konsisten.
+
+Satu hal yang penting dan sering disalahpahami: yang dicabut **hanya role di
+menu itu**. Role staf, role booster, atau role lain di luar menu tidak pernah
+disentuh — kalau tidak, satu dropdown warna bisa menghapus jabatan seseorang.
+
+### Kenapa warna tombol tidak selalu sama dengan yang dipilih
+
+Discord hanya mengizinkan **empat** gaya untuk tombol interaktif: Primary
+(biru), Secondary (abu), Success (hijau), Danger (merah). Tombol **link**
+(label + URL) selalu tampil abu-abu — itu aturan Discord, bukan pilihan bot.
+Jadi pilihan warna hanya berlaku untuk tombol ambil role.
 
 Role yang tidak bisa dibagikan sudah ditandai **sebelum** pesan dikirim, lengkap
 dengan alasannya — bukan baru ketahuan saat member mengklik.
@@ -158,12 +188,12 @@ menyamarkan dirinya sebagai server.
 | Token di browser | tidak pernah dikirim, bahkan tersamar |
 | Webhook baru | dibuat sekali per channel, lalu dipakai ulang |
 | Webhook dihapus orang | bot mendeteksi dan membuat yang baru, tidak gagal terus |
-| Tombol ambil role | **tidak bisa** dipakai di pesan webhook — ditolak dengan penjelasan |
+| Tombol & menu ambil role | **tidak bisa** dipakai di pesan webhook — ditolak dengan penjelasan |
 
-**Kenapa tombol role tidak bisa:** Discord mengirim klik tombol ke aplikasi
-*pengirim* komponen. Kalau pesan dikirim webhook, tidak ada aplikasi kita di
-sana, sehingga tombolnya akan diam saat diklik. Karena itu bot menolaknya lebih
-awal, bukan mengirim tombol yang tidak berfungsi.
+**Kenapa tombol/menu role tidak bisa:** Discord mengirim interaksi komponen ke
+aplikasi *pengirim* komponen. Kalau pesan dikirim webhook, tidak ada aplikasi
+kita di sana, sehingga tombol dan dropdown-nya akan diam saat dipakai. Karena
+itu bot menolaknya lebih awal, bukan mengirim komponen yang tidak berfungsi.
 
 **Batas keamanan enkripsi, jujur:** enkripsi ini melindungi dari pembacaan file
 atau cadangan database. Kalau `DASHBOARD_TOKEN` diganti, token webhook lama
@@ -190,8 +220,39 @@ tidak bisa dibuka lagi — bot akan membuat webhook baru otomatis.
 | `POST` | `/api/posts/:id/send` | kirim, atau perbarui pesan Discord yang sudah ada |
 | `DELETE` | `/api/posts/:id` | hapus dari dashboard |
 | `DELETE` | `/api/posts/:id?withMessage=1` | hapus dari dashboard **dan** dari Discord |
-| `PUT` | `/api/posts/:id/roles` | ganti seluruh tombol ambil role pesan |
+| `PUT` | `/api/posts/:id/roles` | ganti seluruh tombol **dan** menu ambil role pesan (`{ buttons, menus }`) |
 | `GET` | `/api/roles` | daftar role server + alasan tidak bisa dibagi |
 
 Kalau bot sedang offline, tombol kirim dinonaktifkan dan permintaan kirim
 dijawab `400` dengan pesan yang jelas — bukan `500`.
+
+`PUT /api/posts/:id/roles` menerima dua kunci:
+
+```json
+{
+  "buttons": [{ "label": "Gamer", "roleId": "123...", "mode": "toggle", "emoji": "🎮", "style": "success" }],
+  "menus": [{
+    "placeholder": "Pilih warna",
+    "minValues": 1,
+    "maxValues": 1,
+    "exclusive": true,
+    "options": [{ "label": "Merah", "roleId": "456...", "emoji": "🔴", "description": "Hangat" }]
+  }]
+}
+```
+
+Kalau `menus` **tidak dikirim**, menu yang sudah ada dibiarkan apa adanya —
+supaya klien lama yang hanya mengirim `buttons` tidak menghapus dropdown tanpa
+sengaja. Untuk menghapus semua menu, kirim `"menus": []`.
+
+### Tabel database
+
+| Tabel | Isi |
+|---|---|
+| `post_role_buttons` | satu baris per tombol role (`emoji`, `style` ikut disimpan) |
+| `post_role_menus` | satu baris per dropdown (`placeholder`, `min_values`, `max_values`, `exclusive`) |
+| `post_role_options` | satu baris per pilihan dropdown |
+
+Opsi disimpan di tabel sendiri, bukan sebagai JSON di dalam menu: jumlahnya
+sampai 25 per menu dan tiap opsi punya label, emoji, serta keterangan yang
+masing-masing bisa diubah.

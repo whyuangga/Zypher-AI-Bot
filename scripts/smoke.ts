@@ -5975,8 +5975,34 @@ await testAsync('webhook: tombol role ditolak SEBELUM menyentuh Discord', async 
         identity: { username: 'Server', avatarURL: null },
       }),
     (error: unknown) =>
-      error instanceof PostSendError && /tombol ambil role/i.test((error as Error).message),
+      error instanceof PostSendError && /tombol atau menu ambil role/i.test((error as Error).message),
     'pesan webhook + tombol role ditolak dengan penjelasan',
+  );
+
+  // Menu dropdown juga komponen interaktif: nasibnya sama dengan tombol,
+  // karena yang mengirim komponen adalah webhook, bukan aplikasi bot.
+  await assert.rejects(
+    () =>
+      sendOrUpdatePostViaWebhook({
+        client: {} as never,
+        guildId: '1',
+        channelId: '2',
+        messageId: null,
+        blocks: [{ kind: 'text', value: 'isi' }],
+        roleMenus: [
+          {
+            id: 1,
+            placeholder: 'Pilih',
+            minValues: 1,
+            maxValues: 1,
+            options: [{ roleId: '333333333333333333', label: 'A' }],
+          },
+        ],
+        identity: { username: 'Server', avatarURL: null },
+      }),
+    (error: unknown) =>
+      error instanceof PostSendError && /tombol atau menu ambil role/i.test((error as Error).message),
+    'pesan webhook + menu role juga ditolak',
   );
 });
 
@@ -6087,18 +6113,18 @@ await testAsync('pesan: tombol role - keputusan beri vs lepas', async () => {
 
   // Mode toggle: belum punya -> beri, sudah punya -> lepas.
   assert.equal(
-    planToggle({ ...dasar, button: { id: 1, postId: 1, roleId: '111', label: 'Gamer', mode: 'toggle', position: 0 }, memberHasRole: false }).action,
+    planToggle({ ...dasar, button: { id: 1, postId: 1, roleId: '111', label: 'Gamer', emoji: null, style: 'primary', mode: 'toggle', position: 0 }, memberHasRole: false }).action,
     'give',
   );
   assert.equal(
-    planToggle({ ...dasar, button: { id: 1, postId: 1, roleId: '111', label: 'Gamer', mode: 'toggle', position: 0 }, memberHasRole: true }).action,
+    planToggle({ ...dasar, button: { id: 1, postId: 1, roleId: '111', label: 'Gamer', emoji: null, style: 'primary', mode: 'toggle', position: 0 }, memberHasRole: true }).action,
     'remove',
   );
 
   // Mode "hanya beri": klik kedua tidak melepas role.
   const hanyaBeri = planToggle({
     ...dasar,
-    button: { id: 1, postId: 1, roleId: '111', label: 'Gamer', mode: 'give', position: 0 },
+    button: { id: 1, postId: 1, roleId: '111', label: 'Gamer', emoji: null, style: 'primary', mode: 'give', position: 0 },
     memberHasRole: true,
   });
   assert.equal(hanyaBeri.action, null, 'tidak melepas role');
@@ -6108,7 +6134,7 @@ await testAsync('pesan: tombol role - keputusan beri vs lepas', async () => {
   const ditolak = planToggle({
     ...dasar,
     memberHighestPosition: 1,
-    button: { id: 1, postId: 1, roleId: '111', label: 'Gamer', mode: 'toggle', position: 0 },
+    button: { id: 1, postId: 1, roleId: '111', label: 'Gamer', emoji: null, style: 'primary', mode: 'toggle', position: 0 },
     memberHasRole: false,
   });
   assert.equal(ditolak.action, null);
@@ -6377,6 +6403,246 @@ await testAsync('pesan: tombol role tampil di baris bawah sebagai tombol interak
   assert.ok(roleButtonId(Number.MAX_SAFE_INTEGER).length < 100, 'customId pendek');
 });
 
+await testAsync('pesan: emoji & warna tombol role tersimpan dan sampai ke payload', async () => {
+  const { sanitizeRoleButtons } = await import('../src/features/role-buttons.js');
+
+  const { buttons, dropped } = sanitizeRoleButtons([
+    { label: 'Gamer', roleId: '111111111111111111', mode: 'toggle', emoji: '🎮', style: 'success' },
+    { label: 'Musik', roleId: '222222222222222222', mode: 'give', style: 'aneh' },
+    // Emoji berbentuk teks biasa bukan emoji — harus dibuang, bukan menggagalkan
+    // seluruh penyimpanan.
+    { label: 'Film', roleId: '333333333333333333', emoji: 'halo', style: 'danger' },
+    // Role dobel tetap ditolak.
+    { label: 'Gamer lagi', roleId: '111111111111111111', emoji: '🎮', style: 'primary' },
+  ]);
+
+  assert.equal(buttons.length, 3, 'tiga tombol sah');
+  assert.equal(buttons[0].emoji, '🎮');
+  assert.equal(buttons[0].style, 'success');
+  assert.equal(buttons[1].emoji, undefined, 'tanpa emoji = tidak ada properti');
+  assert.equal(buttons[1].style, 'primary', 'gaya asing kembali ke primary');
+  assert.equal(buttons[2].emoji, undefined, 'teks biasa bukan emoji');
+  assert.equal(buttons[2].style, 'danger');
+  assert.equal(dropped.length, 1, 'satu tombol dobel dibuang');
+});
+
+await testAsync('pesan: select menu role dibatasi & divalidasi sebelum disimpan', async () => {
+  const { sanitizeRoleMenu, MENU_LIMITS } = await import('../src/features/role-buttons.js');
+  const opsi = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ label: `Role ${i}`, roleId: String(400000000000000000n + BigInt(i)) }));
+
+  // Batas atas: 25 pilihan, sisanya dipotong.
+  const penuh = sanitizeRoleMenu({ placeholder: 'Pilih', options: opsi(30) });
+  assert.equal(penuh?.options.length, MENU_LIMITS.options, 'dipotong ke 25');
+
+  // Role dobel dalam satu menu hanya dihitung sekali.
+  const dobel = sanitizeRoleMenu({
+    placeholder: 'Pilih',
+    options: [
+      { label: 'A', roleId: '444444444444444444' },
+      { label: 'B', roleId: '444444444444444444' },
+    ],
+  });
+  assert.equal(dobel?.options.length, 1, 'role dobel dibuang');
+
+  // Tanpa pilihan sah = tidak ada menu sama sekali (bukan menu kosong).
+  assert.equal(sanitizeRoleMenu({ placeholder: 'Kosong', options: [] }), null);
+  assert.equal(sanitizeRoleMenu({ placeholder: 'Salah', options: [{ label: 'X', roleId: 'bukan-angka' }] }), null);
+
+  // Placeholder kosong diganti teks bawaan, dan terlalu panjang dipotong.
+  assert.equal(sanitizeRoleMenu({ options: opsi(1) })?.placeholder, 'Pilih role');
+  const panjang = sanitizeRoleMenu({ placeholder: 'x'.repeat(400), options: opsi(1) });
+  assert.equal(panjang?.placeholder.length, MENU_LIMITS.placeholder);
+
+  // min/max: string dari form diterima, urutan dibetulkan, batas dijaga.
+  assert.equal(sanitizeRoleMenu({ minValues: '1', maxValues: '3', options: opsi(4) })?.maxValues, 3);
+  const terbalik = sanitizeRoleMenu({ minValues: 3, maxValues: 1, options: opsi(4) });
+  assert.equal(terbalik?.minValues, 3);
+  assert.equal(terbalik?.maxValues, 3, 'maks dinaikkan ke min');
+  assert.equal(sanitizeRoleMenu({ maxValues: 99, options: opsi(2) })?.maxValues, 2, 'dibatasi jumlah pilihan');
+
+  // Eksklusif harus boolean sungguhan: string "true" bukan true.
+  assert.equal(sanitizeRoleMenu({ options: opsi(1) })?.exclusive, false, 'bawaan tidak eksklusif');
+  assert.equal(sanitizeRoleMenu({ exclusive: 'true', options: opsi(1) })?.exclusive, false);
+  assert.equal(sanitizeRoleMenu({ exclusive: true, options: opsi(1) })?.exclusive, true);
+});
+
+await testAsync('pesan: menu eksklusif mencabut role lain HANYA di menu yang sama', async () => {
+  const { planMenuSelection } = await import('../src/features/role-button-handler.js');
+  const menu = (exclusive: boolean, ids: string[]) => ({
+    exclusive,
+    options: ids.map((id) => ({ roleId: id, label: id, emoji: null, description: null })),
+  });
+  const tanpa = () => null;
+
+  // Kasus inti: sedang pegang A, memilih B -> A dilepas, B diberikan.
+  const ganti = planMenuSelection({
+    menu: menu(true, ['r1', 'r2', 'r3']),
+    selectedRoleIds: ['r2'],
+    heldRoleIds: ['r1'],
+    allow: tanpa,
+  });
+  assert.deepEqual(ganti.give, ['r2']);
+  assert.deepEqual(ganti.remove, ['r1']);
+
+  // Role di luar menu TIDAK boleh ikut dicabut.
+  const luar = planMenuSelection({
+    menu: menu(true, ['r1', 'r2']),
+    selectedRoleIds: ['r2'],
+    heldRoleIds: ['r1', 'staf'],
+    allow: tanpa,
+  });
+  assert.deepEqual(luar.remove, ['r1'], 'role staf tetap terpasang');
+
+  // Non-eksklusif: role lama dipertahankan.
+  const tambah = planMenuSelection({
+    menu: menu(false, ['r1', 'r2']),
+    selectedRoleIds: ['r2'],
+    heldRoleIds: ['r1'],
+    allow: tanpa,
+  });
+  assert.deepEqual(tambah.give, ['r2']);
+  assert.deepEqual(tambah.remove, []);
+
+  // Nilai yang tidak ada di menu diabaikan (menu sudah disusun ulang).
+  const asing = planMenuSelection({
+    menu: menu(false, ['r1']),
+    selectedRoleIds: ['r9'],
+    heldRoleIds: [],
+    allow: tanpa,
+  });
+  assert.deepEqual(asing.give, [], 'tidak memberi role asing');
+
+  // Sudah punya role yang dipilih: tidak ada perubahan apa pun.
+  const sama = planMenuSelection({
+    menu: menu(false, ['r1']),
+    selectedRoleIds: ['r1'],
+    heldRoleIds: ['r1'],
+    allow: tanpa,
+  });
+  assert.deepEqual(sama.give, []);
+  assert.deepEqual(sama.remove, []);
+
+  // Blocker dilaporkan, bukan diam-diam memberi role.
+  const ditolak = planMenuSelection({
+    menu: menu(false, ['r1']),
+    selectedRoleIds: ['r1'],
+    heldRoleIds: [],
+    allow: () => 'member-posisi' as const,
+  });
+  assert.deepEqual(ditolak.give, []);
+  assert.equal(ditolak.blocked[0]?.blocker, 'member-posisi');
+});
+
+await testAsync('pesan: select menu benar-benar dibentuk di payload', async () => {
+  const { buildPostPayload } = await import('../src/features/custom-post.js');
+  const { roleMenuId, roleButtonId } = await import('../src/features/role-buttons.js');
+  const d = await import('discord.js');
+
+  const built = buildPostPayload([{ kind: 'text', value: 'Halo' }], {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    StringSelectMenuBuilder: d.StringSelectMenuBuilder,
+    StringSelectMenuOptionBuilder: d.StringSelectMenuOptionBuilder,
+    roleButtonId,
+    roleMenuId,
+    roleButtons: [{ id: 1, label: 'Gamer', emoji: '🎮', style: 'success' }],
+    roleMenus: [
+      {
+        id: 7,
+        placeholder: 'Pilih warna',
+        minValues: 1,
+        maxValues: 1,
+        options: [
+          { label: 'Merah', value: '555555555555555555', emoji: '🔴' },
+          { label: 'Biru', value: '666666666666666666', description: 'Tenang' },
+        ],
+      },
+    ],
+  });
+  assert.ok(built, 'payload terbentuk');
+  type BarisJson = { type: number; components: Array<Record<string, any>> };
+  const rows = (built!.components[0] as { toJSON: () => { components: BarisJson[] } })
+    .toJSON()
+    .components.filter((c) => c.type === 1);
+  assert.equal(rows.length, 2, 'satu baris tombol + satu baris menu');
+
+  const tombol = rows[0].components[0];
+  assert.equal(tombol.style, 3, 'tombol hijau (Success)');
+  assert.equal(tombol.emoji.name, '🎮');
+
+  const menu = rows[1].components[0];
+  assert.equal(menu.type, 3, 'tipe StringSelect');
+  assert.equal(menu.custom_id, roleMenuId(7));
+  assert.equal(menu.placeholder, 'Pilih warna');
+  assert.equal(menu.min_values, 1);
+  assert.equal(menu.max_values, 1, 'maks tidak melebihi jumlah opsi');
+  assert.equal(menu.options.length, 2);
+  assert.equal(menu.options[1].description, 'Tenang');
+});
+
+await testAsync('pesan: jalur kirim benar-benar menyertakan select menu (bukan dilewati)', async () => {
+  // Penjaga regresi: penyusun payload MELEWATI menu tanpa error kalau
+  // `StringSelectMenuBuilder` tidak disuntikkan. Akibatnya admin melihat menu
+  // di dashboard dan di database, tapi pesan di Discord tidak pernah punya
+  // dropdown — tanpa satu pun pesan error. Test ini memakai client palsu dan
+  // memeriksa payload yang benar-benar dikirim.
+  const { sendOrUpdatePost } = await import('../src/features/custom-post-send.js');
+
+  const terkirim: Array<Record<string, any>> = [];
+  const channel = {
+    isTextBased: () => true,
+    isDMBased: () => false,
+    messages: { fetch: async () => null },
+    send: async (body: Record<string, any>) => {
+      terkirim.push(body);
+      return { id: 'pesan-baru' };
+    },
+  };
+
+  const hasil = await sendOrUpdatePost({
+    client: { channels: { fetch: async () => channel } } as never,
+    channelId: '123456789012345678',
+    messageId: null,
+    blocks: [{ kind: 'text', value: 'Pilih role' }],
+    roleButtons: [{ id: 1, label: 'Gamer', emoji: '🎮', style: 'success' }],
+    roleMenus: [
+      {
+        id: 4,
+        placeholder: 'Pilih warna',
+        minValues: 1,
+        maxValues: 1,
+        options: [
+          { roleId: '222222222222222222', label: 'Merah', emoji: '🔴' },
+          { roleId: '333333333333333333', label: 'Biru' },
+        ],
+      },
+    ],
+  });
+  assert.equal(hasil.messageId, 'pesan-baru');
+  assert.equal(terkirim.length, 1, 'satu payload dikirim');
+
+  type Baris = { type: number; components: Array<Record<string, any>> };
+  const rows = (
+    terkirim[0]!.components![0] as { toJSON: () => { components: Baris[] } }
+  )
+    .toJSON()
+    .components.filter((c) => c.type === 1);
+
+  assert.equal(rows.length, 2, 'baris tombol DAN baris menu hadir');
+  const select = rows[1]!.components[0]!;
+  assert.equal(select.type, 3, 'komponennya StringSelect');
+  assert.match(String(select.custom_id), /^post-menu:\d+$/);
+  assert.equal(select.options.length, 2, 'dua opsi ikut terkirim');
+  assert.equal(select.options[0].value, '222222222222222222', 'nilai opsi = role ID');
+});
+
 await testAsync('pesan: isi blok tidak bisa keluar dari tag <script>', async () => {
   const { pesanPage } = await import('../src/web/ui/pesan.js');
 
@@ -6404,6 +6670,7 @@ await testAsync('pesan: isi blok tidak bisa keluar dari tag <script>', async () 
     roles: [],
     hasManageRoles: false,
     roleButtons: {},
+    roleMenus: {},
   });
 
   // Yang diperiksa: TIDAK ADA penutup script yang diikuti tag HTML.

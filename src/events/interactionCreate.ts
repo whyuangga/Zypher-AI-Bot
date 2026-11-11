@@ -1,6 +1,8 @@
 import { MessageFlags, type Interaction } from 'discord.js';
 import { commandMap } from '../commands/index.js';
 import { handleButton } from '../features/buttons.js';
+import { handleRoleMenu } from '../features/role-button-handler.js';
+import { parseRoleMenuId } from '../features/role-buttons.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { ownsGuild } from '../lib/shard.js';
 
@@ -37,6 +39,18 @@ export async function onInteractionCreate(interaction: Interaction): Promise<voi
 
     if (interaction.isButton()) {
       await handleButton(interaction);
+      return;
+    }
+
+    /*
+     * Dropdown role. Diperiksa lewat prefix customId, bukan lewat
+     * `interaction.isStringSelectMenu()` saja: bot tidak punya dropdown lain,
+     * jadi apa pun yang masuk ke sini dan bukan milik fitur ini cukup
+     * diabaikan tanpa jawaban (Discord akan menampilkan "interaksi gagal"
+     * kalau didiamkan, tapi itu lebih baik daripada menjawab salah).
+     */
+    if (interaction.isStringSelectMenu() && parseRoleMenuId(interaction.customId) !== null) {
+      await handleRoleMenu(interaction);
     }
   } catch (error) {
     logger.error(`Error saat menangani interaksi (${interaction.type})`, errorMessage(error));

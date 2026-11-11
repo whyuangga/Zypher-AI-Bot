@@ -5,8 +5,10 @@ import { parseBlocks, sanitizeBlocks, type PostBlock } from '../features/custom-
 import { decryptSecret, encryptSecret } from '../features/webhook-secret.js';
 import {
   sanitizeRoleButtons,
+  sanitizeRoleMenu,
   type RoleButtonInput,
   type RoleButtonMode,
+  type RoleMenuInput,
 } from '../features/role-buttons.js';
 import {
   modeFromLegacySettings,
@@ -1569,6 +1571,10 @@ export interface RoleButton {
   roleId: string;
   label: string;
   mode: RoleButtonMode;
+  /** Emoji tombol (unicode atau `<:nama:id>`), atau null. */
+  emoji: string | null;
+  /** primary/secondary/success/danger. */
+  style: string;
   position: number;
 }
 
@@ -1579,6 +1585,8 @@ interface RoleButtonRow {
   role_id: string;
   label: string;
   mode: string;
+  emoji: string | null;
+  style: string | null;
   position: number | string;
 }
 
@@ -1589,6 +1597,10 @@ function toRoleButton(row: RoleButtonRow): RoleButton {
     roleId: row.role_id,
     label: row.label,
     mode: row.mode === 'give' ? 'give' : 'toggle',
+    // Baris lama (sebelum kolom ini ada) bernilai NULL. Tombolnya tetap
+    // berfungsi, hanya tanpa emoji dan dengan warna bawaan.
+    emoji: row.emoji ?? null,
+    style: row.style ?? 'primary',
     position: Number(row.position),
   };
 }
@@ -1624,9 +1636,18 @@ export async function replaceRoleButtons(
   let position = 0;
   for (const button of buttons) {
     await insert(
-      `INSERT INTO post_role_buttons (guild_id, post_id, role_id, label, mode, position)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [guildId, postId, button.roleId, button.label, button.mode, position],
+      `INSERT INTO post_role_buttons (guild_id, post_id, role_id, label, mode, emoji, style, position)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        guildId,
+        postId,
+        button.roleId,
+        button.label,
+        button.mode,
+        button.emoji ?? null,
+        button.style ?? 'primary',
+        position,
+      ],
     );
     position += 1;
   }
@@ -1646,7 +1667,168 @@ export async function findRoleButton(
   return row ? toRoleButton(row) : null;
 }
 
-export type { RoleButtonInput };
+/* ------------------------------------------------------------------ */
+/*  Select menu role (halaman /pesan)                                  */
+/* ------------------------------------------------------------------ */
+
+export interface RoleMenu {
+  id: number;
+  postId: number;
+  placeholder: string;
+  minValues: number;
+  maxValues: number;
+  exclusive: boolean;
+  options: RoleMenuOption[];
+}
+
+export interface RoleMenuOption {
+  id: number;
+  roleId: string;
+  label: string;
+  emoji: string | null;
+  description: string | null;
+}
+
+interface RoleMenuRow {
+  id: number | string;
+  post_id: number | string;
+  placeholder: string;
+  min_values: number | string;
+  max_values: number | string;
+  exclusive: number | string;
+}
+
+interface RoleOptionRow {
+  id: number | string;
+  menu_id: number | string;
+  role_id: string;
+  label: string;
+  emoji: string | null;
+  description: string | null;
+}
+
+/** Semua dropdown role milik satu pesan, lengkap dengan pilihannya. */
+export async function listRoleMenus(guildId: string, postId: number): Promise<RoleMenu[]> {
+  const menus = await all<RoleMenuRow>(
+    'SELECT * FROM post_role_menus WHERE guild_id = ? AND post_id = ? ORDER BY position ASC, id ASC',
+    [guildId, postId],
+  );
+  if (menus.length === 0) return [];
+
+  /*
+   * Kenapa satu query untuk semua pilihan, bukan satu query per menu: jumlah
+   * menu paling banyak beberapa, tapi halaman /pesan memuat SEMUA pesan.
+   * Pola N+1 di sini akan terasa saat daftar pesan panjang.
+   */
+  const options = await all<RoleOptionRow>(
+    `SELECT * FROM post_role_options
+      WHERE menu_id IN (${menus.map(() => '?').join(', ')})
+      ORDER BY position ASC, id ASC`,
+    menus.map((menu) => Number(menu.id)),
+  );
+
+  const byMenu = new Map<number, RoleMenuOption[]>();
+  for (const row of options) {
+    const menuId = Number(row.menu_id);
+    const list = byMenu.get(menuId) ?? [];
+    list.push({
+      id: Number(row.id),
+      roleId: row.role_id,
+      label: row.label,
+      emoji: row.emoji,
+      description: row.description,
+    });
+    byMenu.set(menuId, list);
+  }
+
+  return menus.map((row) => ({
+    id: Number(row.id),
+    postId: Number(row.post_id),
+    placeholder: row.placeholder,
+    minValues: Number(row.min_values),
+    maxValues: Number(row.max_values),
+    exclusive: Number(row.exclusive) === 1,
+    options: byMenu.get(Number(row.id)) ?? [],
+  }));
+}
+
+/**
+ * Ganti dropdown role satu pesan.
+ *
+ * Sama seperti `replaceRoleButtons`: hapus lalu tulis ulang. Kalau input tidak
+ * menghasilkan menu yang sah, semua menu pesan itu ikut terhapus — itu memang
+ * yang diinginkan, karena admin barusan menghapus menunya di dashboard.
+ */
+export async function replaceRoleMenus(
+  guildId: string,
+  postId: number,
+  input: unknown,
+): Promise<{ menus: RoleMenu[]; dropped: string[] }> {
+  const dropped: string[] = [];
+  const source = Array.isArray(input) ? input : input == null ? [] : [input];
+  const menus: RoleMenuInput[] = [];
+
+  for (const raw of source) {
+    const menu = sanitizeRoleMenu(raw);
+    if (menu) {
+      menus.push(menu);
+    } else if (raw && typeof raw === 'object') {
+      dropped.push('menu role tanpa pilihan yang sah');
+    }
+  }
+  if (menus.length > 5) {
+    dropped.push(`${menus.length - 5} menu role dilewati (maksimal 5 per pesan)`);
+    menus.length = 5;
+  }
+
+  await run('DELETE FROM post_role_options WHERE menu_id IN (SELECT id FROM post_role_menus WHERE guild_id = ? AND post_id = ?)', [
+    guildId,
+    postId,
+  ]);
+  await run('DELETE FROM post_role_menus WHERE guild_id = ? AND post_id = ?', [guildId, postId]);
+
+  let position = 0;
+  for (const menu of menus) {
+    const menuId = await insert(
+      `INSERT INTO post_role_menus (guild_id, post_id, placeholder, min_values, max_values, exclusive, position)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        guildId,
+        postId,
+        menu.placeholder,
+        menu.minValues,
+        menu.maxValues,
+        menu.exclusive ? 1 : 0,
+        position,
+      ],
+    );
+    let optionPosition = 0;
+    for (const option of menu.options) {
+      await insert(
+        `INSERT INTO post_role_options (menu_id, role_id, label, emoji, description, position)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [menuId, option.roleId, option.label, option.emoji ?? null, option.description ?? null, optionPosition],
+      );
+      optionPosition += 1;
+    }
+    position += 1;
+  }
+
+  return { menus: await listRoleMenus(guildId, postId), dropped };
+}
+
+/** Cari dropdown dari customId — dipakai bot saat member memilih opsi. */
+export async function findRoleMenu(guildId: string, menuId: number): Promise<RoleMenu | null> {
+  const row = await get<RoleMenuRow>(
+    'SELECT * FROM post_role_menus WHERE guild_id = ? AND id = ?',
+    [guildId, menuId],
+  );
+  if (!row) return null;
+  const menus = await listRoleMenus(guildId, Number(row.post_id));
+  return menus.find((menu) => menu.id === menuId) ?? null;
+}
+
+export type { RoleButtonInput, RoleMenuInput };
 
 /* ------------------------------------------------------------------ */
 /*  Webhook per channel (pesan atas nama server)                       */

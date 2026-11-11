@@ -53,7 +53,9 @@ import {
   deleteCustomPost,
   setCustomPostMessage,
   listRoleButtons,
+  listRoleMenus,
   replaceRoleButtons,
+  replaceRoleMenus,
 } from '../db/repo.js';
 import { invalidateModerationCache } from '../features/moderation.js';
 import { listPanelChannels, PanelError, publishPanel, removePanel } from '../features/panel.js';
@@ -646,7 +648,18 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
 
     // Tombol role per pesan, dikumpulkan sekalian supaya halaman tidak
     // menembak satu permintaan per pesan saat dibuka.
-    const roleButtons: Record<number, Array<{ id: number; roleId: string; label: string; mode: string }>> = {};
+    const roleButtons: Record<number, Array<{ id: number; roleId: string; label: string; mode: string; emoji: string | null; style: string }>> = {};
+    const roleMenus: Record<
+      number,
+      Array<{
+        id: number;
+        placeholder: string;
+        minValues: number;
+        maxValues: number;
+        exclusive: boolean;
+        options: Array<{ roleId: string; label: string; emoji: string | null; description: string | null }>;
+      }>
+    > = {};
     for (const post of posts) {
       const buttons = await listRoleButtons(guildId, post.id);
       if (buttons.length > 0) {
@@ -655,6 +668,24 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
           roleId: b.roleId,
           label: b.label,
           mode: b.mode,
+          emoji: b.emoji ?? null,
+          style: b.style,
+        }));
+      }
+      const menus = await listRoleMenus(guildId, post.id);
+      if (menus.length > 0) {
+        roleMenus[post.id] = menus.map((menu) => ({
+          id: menu.id,
+          placeholder: menu.placeholder,
+          minValues: menu.minValues,
+          maxValues: menu.maxValues,
+          exclusive: menu.exclusive,
+          options: menu.options.map((option) => ({
+            roleId: option.roleId,
+            label: option.label,
+            emoji: option.emoji,
+            description: option.description,
+          })),
         }));
       }
     }
@@ -689,6 +720,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         roles: roleInfo.options,
         hasManageRoles: roleInfo.hasManageRoles,
         roleButtons,
+        roleMenus,
         status: dashboardStatus(),
         counts: await navCounts(guildId),
       }),
@@ -1725,6 +1757,21 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       }
       try {
         const roleButtons = await listRoleButtons(guildId, id);
+        const roleMenus = await listRoleMenus(guildId, id);
+        // Menu dipetakan ke bentuk yang dipahami penyusun payload: `value`
+        // berisi role ID supaya interaksi bisa langsung dipakai handler.
+        const menuPayload = roleMenus.map((menu) => ({
+          id: menu.id,
+          placeholder: menu.placeholder,
+          minValues: menu.minValues,
+          maxValues: menu.maxValues,
+          options: menu.options.map((option) => ({
+            roleId: option.roleId,
+            label: option.label,
+            emoji: option.emoji,
+            description: option.description,
+          })),
+        }));
         // Dua jalur pengiriman, pilihan admin:
         //   bot     -> pengirim bot (bisa tombol role)
         //   webhook -> atas nama server (tidak bisa tombol role)
@@ -1745,7 +1792,13 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
                 messageId: post.messageId,
                 blocks: post.blocks,
                 accent: post.accent ?? undefined,
-                roleButtons: roleButtons.map((b) => ({ id: b.id, label: b.label })),
+                roleButtons: roleButtons.map((b) => ({
+                  id: b.id,
+                  label: b.label,
+                  emoji: b.emoji ?? null,
+                  style: b.style ?? null,
+                })),
+                roleMenus: menuPayload,
               });
         await setCustomPostMessage(guildId, id, result.messageId);
         sendJson(response, 200, { ok: true, messageId: result.messageId, edited: result.edited });
@@ -1772,7 +1825,18 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         return;
       }
       const result = await replaceRoleButtons(guildId, id, payload.buttons);
-      sendJson(response, 200, { ok: true, buttons: result.buttons, dropped: result.dropped });
+      // Menu disimpan di endpoint yang sama supaya dashboard cukup satu kali
+      // simpan. `menus` tidak dikirim = jangan sentuh menu yang sudah ada.
+      const menuResult =
+        payload.menus === undefined
+          ? { menus: await listRoleMenus(guildId, id), dropped: [] as string[] }
+          : await replaceRoleMenus(guildId, id, payload.menus);
+      sendJson(response, 200, {
+        ok: true,
+        buttons: result.buttons,
+        menus: menuResult.menus,
+        dropped: [...result.dropped, ...menuResult.dropped],
+      });
       return;
     }
 

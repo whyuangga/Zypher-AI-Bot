@@ -19,6 +19,8 @@ import {
   MediaGalleryBuilder,
   MediaGalleryItemBuilder,
   SeparatorBuilder,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
   TextDisplayBuilder,
   WebhookClient,
   type Client,
@@ -26,17 +28,35 @@ import {
   type TextChannel,
 } from 'discord.js';
 import { accentToNumber, buildPostPayload, type PostBlock } from './custom-post.js';
-import { roleButtonId } from './role-buttons.js';
+import { roleButtonId, roleMenuId } from './role-buttons.js';
 import { deleteChannelWebhook, getChannelWebhook, saveChannelWebhook } from '../db/repo.js';
 import { errorMessage, logger } from '../lib/logger.js';
 
 /** Error yang pesannya aman ditampilkan ke admin. */
 export class PostSendError extends Error {}
 
+/** Tombol role seperti yang dibutuhkan penyusun payload. */
+export interface SendRoleButton {
+  id: number;
+  label: string;
+  emoji?: string | null;
+  style?: string | null;
+}
+
+/** Dropdown role seperti yang dibutuhkan penyusun payload. */
+export interface SendRoleMenu {
+  id: number;
+  placeholder: string;
+  minValues: number;
+  maxValues: number;
+  options: Array<{ roleId: string; label: string; emoji?: string | null; description?: string | null }>;
+}
+
 function buildPayload(
   blocks: PostBlock[],
-  roleButtons: Array<{ id: number; label: string }> = [],
+  roleButtons: SendRoleButton[] = [],
   accentHex?: string,
+  roleMenus: SendRoleMenu[] = [],
 ): { components: ContainerBuilder[]; flags: number; files: AttachmentBuilder[] } | null {
   const built = buildPostPayload(blocks, {
     ContainerBuilder,
@@ -52,8 +72,34 @@ function buildPayload(
     accent: 0x6d8cff,
     accentHex,
     accentToNumber,
-    roleButtons,
+    // `emoji`/`style` dibiarkan apa adanya: penyusun payload yang memvalidasi,
+    // dan kolom lama (sebelum fitur emoji) bernilai kosong.
+    roleButtons: roleButtons.map((button) => ({
+      id: button.id,
+      label: button.label,
+      ...(button.emoji ? { emoji: button.emoji } : {}),
+      ...(button.style ? { style: button.style } : {}),
+    })),
     roleButtonId,
+    // Tanpa dua builder ini, blok menu dilewati diam-diam oleh penyusun
+    // payload (fitur tampak tersimpan tapi tidak pernah sampai ke Discord).
+    StringSelectMenuBuilder,
+    StringSelectMenuOptionBuilder,
+    roleMenus: roleMenus.map((menu) => ({
+      id: menu.id,
+      placeholder: menu.placeholder,
+      minValues: menu.minValues,
+      maxValues: menu.maxValues,
+      // `value` = role ID: nilai itulah yang dikirim Discord saat dipilih,
+      // dan handler memakainya langsung tanpa perlu tabel terjemahan.
+      options: menu.options.map((option) => ({
+        label: option.label,
+        value: option.roleId,
+        ...(option.emoji ? { emoji: option.emoji } : {}),
+        ...(option.description ? { description: option.description } : {}),
+      })),
+    })),
+    roleMenuId,
   });
   if (!built) return null;
 
@@ -91,14 +137,16 @@ export interface SendResult {
 export async function sendOrUpdatePost(options: {
   client: Client;
   /** Tombol ambil role milik pesan ini (opsional). */
-  roleButtons?: Array<{ id: number; label: string }>;
+  roleButtons?: SendRoleButton[];
+  /** Dropdown role milik pesan ini (opsional). */
+  roleMenus?: SendRoleMenu[];
   /** Warna aksen `#rrggbb` pilihan admin. */
   accent?: string;
   channelId: string;
   messageId: string | null;
   blocks: PostBlock[];
 }): Promise<SendResult> {
-  const built = buildPayload(options.blocks, options.roleButtons, options.accent);
+  const built = buildPayload(options.blocks, options.roleButtons, options.accent, options.roleMenus);
   const payload = built;
   if (!payload) {
     throw new PostSendError('Pesan masih kosong — isi minimal satu teks atau gambar.');
@@ -253,17 +301,21 @@ export async function sendOrUpdatePostViaWebhook(options: {
   channelId: string;
   messageId: string | null;
   blocks: PostBlock[];
-  roleButtons?: Array<{ id: number; label: string }>;
+  roleButtons?: SendRoleButton[];
+  roleMenus?: SendRoleMenu[];
   accent?: string;
   identity: WebhookIdentity;
 }): Promise<SendResult> {
-  if ((options.roleButtons ?? []).length > 0) {
+  // Komponen interaktif dikirim oleh WEBHOOK, bukan oleh bot kita. Discord
+  // hanya meneruskan klik ke aplikasi pemilik komponen — jadi tombol/menu di
+  // pesan webhook akan diam saja. Lebih jujur menolak di sini.
+  if ((options.roleButtons ?? []).length > 0 || (options.roleMenus ?? []).length > 0) {
     throw new PostSendError(
-      'Pesan lewat webhook tidak bisa memakai tombol ambil role — Discord hanya mengirim interaksi tombol ke aplikasi pengirim. Matikan mode webhook untuk pesan ini, atau hapus tombol role-nya.',
+      'Pesan lewat webhook tidak bisa memakai tombol atau menu ambil role — Discord hanya mengirim interaksi komponen ke aplikasi pengirim. Matikan mode webhook untuk pesan ini, atau hapus komponen role-nya.',
     );
   }
 
-  const built = buildPayload(options.blocks, [], options.accent);
+  const built = buildPayload(options.blocks, [], options.accent, []);
   if (!built) {
     throw new PostSendError('Pesan masih kosong — isi minimal satu teks atau gambar.');
   }
