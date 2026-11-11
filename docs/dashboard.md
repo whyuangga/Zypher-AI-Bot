@@ -13,7 +13,7 @@ Yang bisa dilakukan:
 | `/dokumen` | Upload dokumen RAG (file atau tempel teks), daftar dokumen, hapus dokumen, **uji pencarian** |
 | `/keyword` | Tambah & hapus template jawaban owner (FAQ, harga, aturan) |
 | `/moderasi` | Filter kata terlarang per server, tindakan (hapus/tegur/timeout), log pelanggaran |
-| `/pengaturan` | Persona AI & model per server, **toggle fitur AI** (RAG, Auto Memory, tombol chat DM khusus admin, Suara balasan AI), info server + salin Server ID |
+| `/pengaturan` | Model AI per server, **toggle fitur AI** (RAG, Auto Memory, tombol chat DM khusus admin, Suara balasan AI), info server + salin Server ID |
 | `/healthz` | JSON status untuk monitoring (tanpa login) — termasuk engine database |
 
 Tampilan memakai gaya **editorial gelap** (hangat, bukan hitam-putih murni) dengan palet pemilik proyek:
@@ -295,6 +295,10 @@ Dua kartu berdampingan, satu tema "kehadiran":
 Halaman sendiri, sengaja terpisah dari sambutan karena yang diatur bukan
 "kehadiran" melainkan cara bot ikut mengobrol:
 
+- **Persona AI** — gaya bicara bot untuk server ini. Menentukan nada agent
+  **dan** balasan chat/DM. Dulu kartunya ada di halaman Pengaturan, tapi orang
+  mengira itu pengaturan akun, jadi dipindah ke sini. Maksimal 1500 karakter;
+  kosong = persona bawaan.
 - **Channel ngobrol** — bot nimbrung seperti anggota: balas mention/reply,
   tanggapi emoji/sticker, menyapa saat sepi.
 - **Channel galeri** — bot **hanya** mengomentari gambar & video; teks biasa
@@ -347,6 +351,7 @@ Endpoint halaman Sambutan & AI Agent (pratinjau tidak mengirim apa pun;
 | `POST /api/send-test/welcome` `{target:'dm'\|'channel', ...form}` | Kirim **satu pesan uji** sambutan ke DM admin atau channel sambutan |
 | `POST /api/send-test/goodbye` `{...form}` | Kirim satu pesan uji salam perpisahan ke channel tersimpan |
 | `POST /api/send-test/agent` `{message, role, channelId}` | Kirim satu pesan uji berisi kutipan + balasan bot |
+| `POST /api/persona` `{guild, persona}` | Simpan persona server (string atau `null`). Dipangkas, maks 1500 karakter; balas `{ok, persona}` |
 
 Semua `send-test` menolak dengan **400** kalau bot tidak jalan di proses
 dashboard (tidak ada koneksi Discord untuk mengirim), dan alasan kegagalan

@@ -548,6 +548,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       agentPage({
         guildId,
         guildName,
+        persona: guildId ? ((await getGuildSettings(guildId))?.persona ?? null) : null,
         agent: {
           channelId: agent.channelId,
           galleryChannelId: agent.galleryChannelId,
@@ -677,7 +678,6 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       pengaturanPage({
         guildId,
         guildName: await getGuildName(guildId),
-        persona: settings?.persona ?? null,
         model: settings?.model ?? null,
         defaultModel: config.ai.model,
         embedModel: embeddingModelName(),
@@ -831,6 +831,40 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     }
 
     sendJson(response, 200, { ok: true, id: result.id });
+    return;
+  }
+
+  /**
+   * Persona AI — endpoint sendiri.
+   *
+   * Dulu persona hanya bisa disimpan lewat /api/pengaturan, karena kartunya
+   * ada di halaman Pengaturan. Setelah kartunya pindah ke halaman AI Agent,
+   * endpoint terpisah membuat kedua halaman tidak saling bergantung.
+   */
+  if (path === '/api/persona' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const raw = await readBody(request, 8 * 1024);
+    let payload: { persona?: unknown };
+    try {
+      payload = JSON.parse(raw) as { persona?: unknown };
+    } catch {
+      sendJson(response, 400, { error: 'Format JSON tidak valid.' });
+      return;
+    }
+    if (typeof payload.persona !== 'string' && payload.persona !== null) {
+      sendJson(response, 400, { error: 'persona harus teks.' });
+      return;
+    }
+    const persona = typeof payload.persona === 'string' ? payload.persona.trim() : '';
+    if (persona.length > 1500) {
+      sendJson(response, 400, { error: 'Persona terlalu panjang (maks 1500 karakter).' });
+      return;
+    }
+    await setPersona(guildId, persona || null);
+    sendJson(response, 200, { ok: true, persona: persona || null });
     return;
   }
 

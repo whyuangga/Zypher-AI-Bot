@@ -730,7 +730,8 @@ async function removeKeyword(id, trigger) {
 
 export function pengaturanPage(
   options: PageContext & {
-    persona: string | null;
+    // Persona TIDAK lagi di sini — pindah ke halaman AI Agent (`agentPage`),
+    // karena di Pengaturan orang mengira itu pengaturan akun.
     model: string | null;
     defaultModel: string;
     embedModel: string | null;
@@ -748,18 +749,6 @@ export function pengaturanPage(
     stats: { messages: number; rooms: number; documents: number };
   },
 ): string {
-  const personaCard = card({
-    title: 'Persona AI',
-    hint: 'gaya bicara bot di server ini',
-    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:12px">
-  <textarea id="persona" placeholder="Contoh: Kamu asisten komunitas yang ramah, menjawab singkat, dan memakai bahasa Indonesia santai.">${esc(options.persona ?? '')}</textarea>
-  <p class="hint">Kosongkan untuk memakai persona bawaan. Persona berlaku untuk semua percakapan di server ini.</p>
-  <button class="btn-primary" type="button" id="savePersona" onclick="saveSettings({ persona: document.getElementById('persona').value })">
-    ${icon('check', 16)} Simpan persona
-  </button>
-</div>`,
-  });
-
   const modelCard = card({
     title: 'Model AI',
     hint: `bawaan: ${options.defaultModel}`,
@@ -858,7 +847,7 @@ export function pengaturanPage(
     title: 'Pengaturan',
     subtitle: 'Perilaku AI dan informasi server. Perubahan langsung berlaku untuk pesan berikutnya.',
   })}
-<div class="grid cols-2-even">${personaCard}${modelCard}</div>
+<div class="grid cols-2-even">${modelCard}</div>
 <div class="mt">${voiceCard}</div>
 <div class="mt">${featureCard}</div>
 <div class="mt">${infoCard}</div>
@@ -1485,6 +1474,12 @@ async function runTest(kind, templateOnly) {
 /* ------------------------------------------------------------------ */
 
 export interface AgentPageOptions extends PageContext {
+  /**
+   * Persona = gaya bicara bot. Dipindah ke sini dari halaman Pengaturan:
+   * di sana orang mengira itu pengaturan akun, padahal ini yang menentukan
+   * nada bicara agent di obrolan.
+   */
+  persona: string | null;
   agent: {
     channelId: string | null;
     galleryChannelId: string | null;
@@ -1504,6 +1499,16 @@ export interface AgentPageOptions extends PageContext {
 export function agentPage(options: AgentPageOptions): string {
   const active = Boolean(options.agent.channelId || options.agent.galleryChannelId);
   const agentStatus = active ? badge('Aktif', 'ok') : badge('Nonaktif', 'warn');
+
+  const personaCard = card({
+    title: 'Persona AI',
+    hint: 'gaya bicara bot di server ini',
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:12px">
+  <textarea id="persona" rows="4" placeholder="Contoh: Kamu asisten komunitas yang ramah, menjawab singkat, dan memakai bahasa Indonesia santai.">${esc(options.persona ?? '')}</textarea>
+  <p class="hint">Menentukan nada bicara agent <b>dan</b> balasan chat/DM di server ini. Kosongkan untuk memakai persona bawaan. Maksimal 1500 karakter.</p>
+  <div><button class="btn-primary" type="button" id="savePersona" onclick="savePersona()">${icon('check', 16)} Simpan persona</button></div>
+</div>`,
+  });
 
   const channelsCard = card({
     title: 'Channel AI',
@@ -1637,10 +1642,31 @@ export function agentPage(options: AgentPageOptions): string {
     title: 'AI Agent',
     subtitle: 'Bot ikut menghidupkan channel ngobrol, dan mengomentari foto di channel galeri.',
   })}
+<div class="mb">${personaCard}</div>
 <div class="grid cols-2 mt">${channelsCard}${behaviourCard}</div>
 <div class="mt">${testCard}</div>
 
 <script>
+/**
+ * Simpan persona lewat endpoint sendiri.
+ *
+ * Dulu persona disimpan lewat /api/pengaturan milik halaman Pengaturan — kalau
+ * kartunya pindah tanpa endpoint baru, tombolnya akan memanggil fungsi yang
+ * tidak ada di halaman ini.
+ */
+async function savePersona() {
+  const button = document.getElementById('savePersona');
+  button.disabled = true;
+  try {
+    await postJson('/api/persona', {
+      guild: ${JSON.stringify(options.guildId)},
+      persona: document.getElementById('persona').value,
+    }, 'Persona disimpan.');
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function saveAgent() {
   await postJson('/api/agent', {
     channelId: document.getElementById('agentChannel').value || null,

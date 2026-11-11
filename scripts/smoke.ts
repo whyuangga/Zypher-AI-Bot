@@ -27,7 +27,7 @@ const { setPersona, getGuildSettings } = await import('../src/db/repo.js');
 const { getGuildName, countGuildRows, countGuildMessages, messagesPerDay } = await import('../src/db/repo.js');
 const { setGuildName, getPanel, setPanelMessage, setPanelEnabled } = await import('../src/db/repo.js');
 const { ringkasanPage, keywordPage, moderasiPage, panelPage } = await import('../src/web/ui/pages.js');
-const { pengaturanPage } = await import('../src/web/ui/pages.js');
+const { pengaturanPage, agentPage } = await import('../src/web/ui/pages.js');
 const {
   setModerationSettings,
   getModerationSettings,
@@ -1185,7 +1185,6 @@ test('pengaturanPage menampilkan toggle fitur', () => {
   const page = pengaturanPage({
     guildId: '123',
     guildName: 'Server Uji',
-    persona: null,
     model: null,
     defaultModel: 'test',
     embedModel: null,
@@ -1214,6 +1213,83 @@ test('pengaturanPage menampilkan toggle fitur', () => {
   assert.ok(page.includes('Tombol chat DM khusus admin'), 'label baru spesifik');
   assert.ok(page.includes('Manage Server'), 'menyebut izin yang dicek');
   assert.ok(page.includes('AI Agent di channel tidak terpengaruh'), 'menjelaskan batasnya');
+
+  // Persona pindah ke halaman AI Agent: kalau muncul lagi di sini, orang akan
+  // mengira itu pengaturan akun (keluhan aslinya).
+  assert.equal(page.includes('id="persona"'), false, 'textarea persona tidak di pengaturan');
+  assert.equal(page.includes('savePersona'), false, 'tombol simpan persona tidak di pengaturan');
+  assert.equal(page.includes('Persona AI'), false, 'kartu Persona AI tidak di pengaturan');
+});
+
+console.log('\nPersona di halaman AI Agent');
+
+await testAsync('halaman agent memuat kartu persona beserta nilainya', async () => {
+  const page = agentPage({
+    guildId: '123',
+    guildName: 'Server Uji',
+    guildIconUrl: null,
+    persona: 'Kamu asisten yang ramah dan santai.',
+    channels: [],
+    agent: {
+      channelId: null,
+      galleryChannelId: null,
+      quietMinutes: 0,
+      maxPerHour: 6,
+      reactEmoji: true,
+      reactImages: true,
+      busyMute: true,
+      cooldownSeconds: 0,
+    },
+    status: { online: false, mode: 'standalone', uptimeSeconds: 0 },
+    counts: {},
+  } as never);
+
+  assert.ok(page.includes('id="persona"'), 'textarea persona ada di halaman agent');
+  assert.ok(page.includes('rows="4"'), 'textarea cukup tinggi');
+  assert.ok(page.includes('Persona AI'), 'judul kartu ada');
+  assert.ok(page.includes('Kamu asisten yang ramah dan santai.'), 'nilai persona terisi');
+  assert.ok(page.includes('id="savePersona"'), 'tombol simpan ada');
+  assert.ok(page.includes('async function savePersona()'), 'fungsi simpan ada');
+  assert.ok(page.includes("postJson('/api/persona'"), 'memanggil endpoint persona');
+});
+
+await testAsync('persona kosong dirender sebagai textarea kosong, bukan "null"', async () => {
+  const page = agentPage({
+    guildId: '123',
+    guildName: 'Server Uji',
+    guildIconUrl: null,
+    persona: null,
+    channels: [],
+    agent: {
+      channelId: null,
+      galleryChannelId: null,
+      quietMinutes: 0,
+      maxPerHour: 6,
+      reactEmoji: true,
+      reactImages: true,
+      busyMute: true,
+      cooldownSeconds: 0,
+    },
+    status: { online: false, mode: 'standalone', uptimeSeconds: 0 },
+    counts: {},
+  } as never);
+
+  assert.equal(page.includes('>null<'), false, 'tidak menulis null ke layar');
+  assert.ok(page.includes('id="persona"'), 'textarea tetap ada');
+});
+
+await testAsync('endpoint /api/persona menjaga batas dan tipe', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(server.includes("path === '/api/persona'"), 'endpoint terdaftar');
+  assert.ok(server.includes('maks 1500 karakter'), 'menolak persona kepanjangan');
+  assert.ok(server.includes("persona harus teks"), 'menolak tipe selain teks');
+  assert.ok(server.includes('setPersona(guildId'), 'menyimpan lewat repo');
+  // Persona tidak boleh lagi dikirim ke halaman pengaturan.
+  assert.equal(
+    /pengaturanPage\(\{[^}]*persona/.test(server),
+    false,
+    'persona tidak dikirim ke halaman pengaturan',
+  );
 });
 
 console.log('\nSlash command di DM');
