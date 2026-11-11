@@ -275,12 +275,58 @@ Privileged Gateway Intents):
 Tanpa Server Members Intent, bot tetap jalan tapi tidak pernah menerima event
 member baru, sehingga sambutan tidak terkirim.
 
+### Cara memastikan: baca log, jangan menebak
+
+Sejak versi ini, bot **melaporkan statusnya sendiri** karena kehilangan intent
+tidak pernah menghasilkan error — dulu sambutan diam total tanpa satu pun pesan.
+
+Saat start, cari salah satu baris ini:
+
+```
+✓ Intent Server Members aktif — sambutan & perpisahan bisa menerima event.
+✗ Intent Server Members NONAKTIF — event member join/leave TIDAK akan pernah diterima…
+```
+
+Saat ada member bergabung atau keluar, bot selalu mencatat **sebelum** penyaringan:
+
+```
+Event member masuk: bagas (bot) di Zypher Server
+  ↳ sambutan tidak terkirim: member yang bergabung adalah bot
+Event member masuk: rina di Zypher Server
+  ↳ sambutan tidak terkirim: bot tidak punya izin "Send Message" di #join-leave
+Sambutan untuk rina terkirim via channel (AI).
+```
+
+Artinya:
+
+| Yang terlihat di log | Artinya |
+|---|---|
+| **Tidak ada** baris `Event member masuk` | Event tidak sampai → intent belum aktif / bot belum di-restart setelah toggle |
+| `dilewati: member yang bergabung adalah bot` | Normal — bot lain memang tidak disambut |
+| `dilewati (bot tidak punya izin …)` | Beri bot izin **View Channel** + **Send Messages** + **Embed Links** di channel tujuan |
+| `Kartu sambutan tidak bisa dirender` | Chromium tidak ada di hosting; sambutan tetap terkirim sebagai embed teks |
+| `terkirim via dm` padahal channel diatur | Channel tujuan tidak lolos pemeriksaan izin, jadi jatuh ke DM |
+
+### Kenapa dulu bisa hilang tanpa jejak
+
+Tiga penyebab yang sudah diperbaiki:
+
+1. **Channel bermasalah → jatuh ke DM dalam senyap.** `fetchChannel()` dulu
+   mengembalikan `null` tanpa alasan, lalu pemanggil langsung beralih ke DM.
+   Kalau DM member tertutup, sambutan hilang total dari channel yang sudah diatur.
+2. **Kartu gagal dirender → pesan kosong.** Kalau "Kirim kartu sambutan"
+   dicentang tapi Chromium tidak ada (umum di hosting panel), bot mengirim
+   `embeds: []` + tanpa file. Discord menolak pesan kosong; sekarang otomatis
+   mundur ke embed teks.
+3. **Tidak ada log sama sekali.** Sekarang setiap event dan setiap alasan
+   dilewati tercatat.
+
 ---
 
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 233 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 239 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

@@ -464,7 +464,7 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke          # 233 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
+npm run smoke          # 239 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
 npm run smoke:pg       # 14 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # 15 pemeriksaan rantai fallback provider (server tiruan)
 npm run test:ui        # 75 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
@@ -522,6 +522,8 @@ atau rantai fallback yang rusak ketahuan sebelum di-merge, bukan setelah bot dia
 | `ExperimentalWarning: SQLite is an experimental feature` | Normal di Node 22. Bisa diabaikan, atau jalankan dengan `NODE_OPTIONS=--disable-warning=ExperimentalWarning` (sudah di-set di Dockerfile). |
 | Slash command tidak muncul | Command didaftarkan global (bisa sampai 1 jam) saat pertama start. Pastikan undangan memakai scope `applications.commands`, dan bot berada di server `GUILD_ID`. |
 | Bot diam saja di room | **Message Content Intent** belum aktif di Developer Portal → Bot. |
+| Sambutan tidak muncul padahal sudah diatur | **Server Members Intent** belum aktif (atau bot belum di-restart setelah toggle). Cek log saat start: ada `✓ Intent Server Members aktif` atau `✗ … NONAKTIF`? Kalau event benar-benar sampai, log mencatat `Event member masuk: …` beserta alasan bila dilewati. Lihat [docs/sambutan-agent.md](docs/sambutan-agent.md). |
+| Kartu sambutan tidak muncul, hanya teks | Chromium tidak ada di hosting (umum di panel gratis). Sambutan **tetap terkirim** sebagai embed teks — log mencatat `Kartu sambutan tidak bisa dirender`. |
 | Tombol **Chat via DM** bilang DM tertutup | Member perlu mengaktifkan **Privasi & Keamanan → Izinkan pesan langsung dari server** untuk server itu. |
 | Transkrip tidak masuk DM | User menutup DM. Bot **tidak** mengarsipkan transkrip di mana pun — file dilampirkan di room, lalu channel dihapus **60 detik** kemudian agar member sempat mengunduh. |
 | `AI_API_KEY wajib diisi` padahal sudah diisi | Key Groq tertaruh di `GROQ_API_KEY`. Saat Groq utama, taruh di `AI_API_KEY` — lihat [docs/setup.md](docs/setup.md). |

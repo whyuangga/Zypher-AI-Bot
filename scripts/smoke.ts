@@ -1906,7 +1906,64 @@ await testAsync('sambutan: settings tersimpan dan bisa dimatikan lagi', async ()
 
 await testAsync('sambutan: bot lain tidak disambut', async () => {
   const source = await readFile('src/features/welcome.ts', 'utf8');
-  assert.ok(source.includes('if (member.user.bot) return'), 'member bot dilewati');
+  // Sekarang alasannya ikut dicatat supaya log bisa menjelaskan kenapa diam.
+  assert.ok(/if \(member\.user\.bot\)/.test(source), 'member bot dilewati');
+  assert.ok(source.includes('member yang bergabung adalah bot'), 'alasan dilewati dicatat');
+});
+
+await testAsync('sambutan: hasil pengiriman membawa alasan gagal', async () => {
+  const source = await readFile('src/features/welcome.ts', 'utf8');
+  // Dulu `sent: false` tanpa alasan: log hanya bisa bilang "tidak terkirim",
+  // tidak bisa bilang kenapa. Itu yang membuat kebuntuan sulit didiagnosis.
+  assert.ok(/reason\?: string/.test(source), 'WelcomeOutcome punya reason');
+  assert.ok(source.includes('reason: errorMessage(error)'), 'error pengiriman disimpan sebagai alasan');
+});
+
+await testAsync('sambutan: kartu gagal dirender tetap mengirim embed', async () => {
+  // Log nyata: "Kartu sambutan PNG dilewati: Chromium tidak ditemukan".
+  // Dulu hasilnya payload tanpa embed & tanpa file -> Discord menolak pesan
+  // kosong, sambutan hilang tanpa error yang terlihat.
+  const source = await readFile('src/features/welcome.ts', 'utf8');
+  assert.ok(/const cardFailed = settings\.imageEnabled && !attachment/.test(source), 'kegagalan kartu dideteksi');
+  assert.ok(source.includes('dikirim sebagai embed teks'), 'mundur ke embed, bukan pesan kosong');
+});
+
+await testAsync('sambutan: tidak pernah mengirim pesan kosong', async () => {
+  const source = await readFile('src/features/welcome.ts', 'utf8');
+  assert.ok(
+    /embeds\.length === 0 && files\.length === 0/.test(source),
+    'ada jaring pengaman pesan kosong',
+  );
+  assert.ok(source.includes('dikirim sebagai teks polos'), 'jatuh ke teks polos, bukan gagal diam');
+});
+
+await testAsync('sambutan: channel bermasalah melaporkan alasan spesifik', async () => {
+  const source = await readFile('src/features/welcome.ts', 'utf8');
+  // Dulu `fetchChannel` mengembalikan null tanpa penjelasan, lalu jatuh ke DM
+  // diam-diam — sambutan bisa hilang total dari channel yang sudah diatur.
+  assert.ok(/resolveWelcomeChannel\(/.test(source), 'memakai resolver yang menjelaskan alasan');
+  assert.ok(source.includes('bot tidak punya izin'), 'alasan izin disebut');
+  assert.ok(source.includes('dilewati ('), 'alasan masuk log');
+});
+
+await testAsync('sambutan: event dicatat sebelum disaring', async () => {
+  // Tanpa log ini, "intent mati" dan "event sengaja dilewati" terlihat sama
+  // persis dari log: tidak ada apa pun.
+  const source = await readFile('src/events/guildMemberAdd.ts', 'utf8');
+  assert.ok(source.includes('Event member masuk:'), 'event join dicatat');
+  assert.ok(source.includes('Event member keluar:'), 'event leave dicatat');
+  const joinLog = source.indexOf('Event member masuk:');
+  const joinFilter = source.indexOf('homeGuildId');
+  assert.ok(joinLog < joinFilter, 'log ditulis SEBELUM penyaringan GUILD_ID');
+});
+
+await testAsync('bot: status intent Server Members dilaporkan saat start', async () => {
+  // Tanpa intent ini Discord tidak pernah mengirim event member, dan tidak ada
+  // error sama sekali — harus dilaporkan aktif/nonaktif secara eksplisit.
+  const source = await readFile('src/bot.ts', 'utf8');
+  assert.ok(source.includes('GatewayIntentBits.GuildMembers'), 'intent diminta');
+  assert.ok(/hasMembersIntent/.test(source), 'status intent diperiksa');
+  assert.ok(source.includes('Intent Server Members NONAKTIF'), 'peringatan jelas kalau mati');
 });
 
 await testAsync('sambutan: hanya untuk server rumah', async () => {

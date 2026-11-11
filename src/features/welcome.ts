@@ -86,6 +86,11 @@ export interface WelcomeOutcome {
   usedAi: boolean;
   /** Ke mana pesannya dikirim. */
   where: 'dm' | 'channel' | 'none';
+  /**
+   * Kenapa tidak terkirim. Dipakai log event supaya "tidak terjadi apa-apa"
+   * bisa dibedakan: fitur mati, member bot, atau channel bermasalah.
+   */
+  reason?: string;
 }
 
 /**
@@ -95,19 +100,29 @@ export interface WelcomeOutcome {
  * membuat event handler melempar error.
  */
 export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome> {
-  if (member.user.bot) return { sent: false, usedAi: false, where: 'none' };
+  if (member.user.bot) {
+    return { sent: false, usedAi: false, where: 'none', reason: 'member yang bergabung adalah bot' };
+  }
 
   const settings = await getWelcomeSettings(member.guild.id);
-  if (!settings.enabled) return { sent: false, usedAi: false, where: 'none' };
+  if (!settings.enabled) {
+    return { sent: false, usedAi: false, where: 'none', reason: 'sambutan belum dinyalakan di dashboard' };
+  }
 
   const greeting = settings.useAi ? await generateGreeting(settings, member) : null;
   const usedAi = Boolean(greeting);
   const text = greeting ?? fillTemplate(settings.template?.trim() || DEFAULT_WELCOME_TEMPLATE, member);
 
-  const channel =
+  const resolved =
     settings.channelId && settings.channelId !== member.guild.id
-      ? await fetchChannel(member, settings.channelId)
-      : null;
+      ? await resolveWelcomeChannel(member, settings.channelId)
+      : { channel: null, reason: 'channel sambutan belum dipilih di dashboard' };
+  const channel = resolved.channel;
+  if (!channel && resolved.reason) {
+    // Dicatat sebagai INFO, bukan disembunyikan: inilah satu-satunya cara admin
+    // tahu kenapa sambutan tidak muncul di channel yang sudah diatur.
+    logger.info(`Sambutan ke channel dilewati (${resolved.reason}) — memakai DM sebagai gantinya.`);
+  }
   const where: WelcomeOutcome['where'] = channel ? 'channel' : 'dm';
 
   // Kartu hanya dibuat kalau memang akan dipakai — proses render memakan
@@ -126,6 +141,15 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
       )
     : null;
 
+  // Kartu diminta tapi gagal dirender (Chromium tidak ada / render error):
+  // dulu hasilnya `embeds: []` + tanpa file, sehingga Discord menolak pesan
+  // kosong dan sambutan hilang tanpa penjelasan. Sekarang jatuh ke embed biasa,
+  // mengikuti pola bot referensi: sambutan tidak boleh gagal hanya karena kartu.
+  const cardFailed = settings.imageEnabled && !attachment;
+  if (cardFailed) {
+    logger.info('Kartu sambutan tidak bisa dirender — dikirim sebagai embed teks.');
+  }
+
   const embed = new EmbedBuilder()
     .setColor(0x6d8cff)
     .setDescription(text)
@@ -143,40 +167,80 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
     embed.setImage(`attachment://${bannerFile.name}`);
   }
 
+  const embeds = attachment ? [] : [embed];
+  const files = attachment ? [attachment] : bannerFile ? [bannerFile.attachment] : [];
+
+  // Jaring pengaman terakhir: Discord menolak pesan tanpa isi sama sekali
+  // ("Cannot send an empty message"). Kalau itu terjadi, lebih baik kirim teks
+  // polos daripada tidak ada apa-apa — inilah yang dulu membuat sambutan
+  // hilang tanpa satu pun error yang terlihat.
+  if (embeds.length === 0 && files.length === 0) {
+    logger.warn(`Sambutan untuk ${member.user.tag} tidak punya isi — dikirim sebagai teks polos.`);
+    try {
+      const fallbackText = `${channel ? `<@${member.id}> ` : ''}${text}`;
+      if (channel) await channel.send({ content: fallbackText });
+      else await member.send({ content: text });
+      logger.info(`Sambutan untuk ${member.user.tag} terkirim via ${where} (teks polos).`);
+      return { sent: true, usedAi, where };
+    } catch (error) {
+      logger.warn(`Gagal mengirim sambutan ke ${member.user.tag}`, errorMessage(error));
+      return { sent: false, usedAi, where: 'none', reason: errorMessage(error) };
+    }
+  }
+
   try {
     if (channel) {
       await channel.send({
         content: `<@${member.id}>`,
-        embeds: attachment ? [] : [embed],
-        files: attachment ? [attachment] : bannerFile ? [bannerFile.attachment] : [],
+        embeds,
+        files,
         allowedMentions: { users: [member.id] },
       });
     } else {
-      await member.send({
-        embeds: attachment ? [] : [embed],
-        files: attachment ? [attachment] : bannerFile ? [bannerFile.attachment] : [],
-      });
+      await member.send({ embeds, files });
     }
     logger.info(`Sambutan untuk ${member.user.tag} terkirim via ${where}${usedAi ? ' (AI)' : ' (template)'}.`);
     return { sent: true, usedAi, where };
   } catch (error) {
-    logger.warn(`Gagal mengirim sambutan ke ${member.user.tag}`, errorMessage(error));
-    return { sent: false, usedAi, where: 'none' };
+    const message = errorMessage(error);
+    logger.warn(`Gagal mengirim sambutan ke ${member.user.tag}`, message);
+
+    // DM ditolak (member menutup DM) bukan alasan menyerah: kalau ada channel,
+    // kirim ke sana supaya sambutan tetap terlihat.
+    if (!channel) {
+      return { sent: false, usedAi, where: 'none', reason: `DM ditolak: ${message}` };
+    }
+    return { sent: false, usedAi, where: 'none', reason: message };
   }
 }
 
-async function fetchChannel(
+/**
+ * Channel tujuan yang benar-benar bisa dipakai bot.
+ *
+ * Mengembalikan alasan saat gagal, bukan `null` tanpa penjelasan. Dulu fungsi
+ * ini diam-diam mengembalikan `null` — dan pemanggilnya langsung beralih ke DM.
+ * Akibatnya, kalau bot tidak punya izin di channel sambutan, sambutan dikirim
+ * ke DM member yang mungkin tertutup, lalu hilang tanpa jejak di log.
+ */
+async function resolveWelcomeChannel(
   member: GuildMember,
   channelId: string,
-): Promise<TextChannel | AnyThreadChannel | null> {
+): Promise<{ channel: TextChannel | AnyThreadChannel | null; reason: string | null }> {
   const channel = await member.guild.channels.fetch(channelId).catch(() => null);
-  if (!channel) return null;
-  if (!channel.isTextBased() || channel.isDMBased()) return null;
+  if (!channel) return { channel: null, reason: `channel ${channelId} tidak ditemukan di server ini` };
+  if (!channel.isTextBased() || channel.isDMBased()) {
+    return { channel: null, reason: 'channel tujuan bukan channel teks' };
+  }
 
-  // Jangan kirim ke channel yang bot-nya tidak bisa menulis — lebih baik DM.
   const me = member.guild.members.me;
-  if (me && !channel.permissionsFor(me)?.has('SendMessages')) return null;
-  return channel as TextChannel | AnyThreadChannel;
+  const permissions = me ? channel.permissionsFor(me) : null;
+  if (permissions && !permissions.has('ViewChannel')) {
+    return { channel: null, reason: `bot tidak bisa melihat #${channel.name}` };
+  }
+  if (permissions && !permissions.has('SendMessages')) {
+    return { channel: null, reason: `bot tidak punya izin "Send Message" di #${channel.name}` };
+  }
+  return { channel: channel as TextChannel | AnyThreadChannel, reason: null };
 }
 
 async function buildCard(
@@ -239,9 +303,17 @@ export async function goodbyeMember(member: GuildMember): Promise<boolean> {
   const settings = await getGoodbyeSettings(member.guild.id);
   if (!settings.enabled) return false;
 
-  const channel = settings.channelId ? await fetchChannel(member, settings.channelId) : null;
-  if (!channel) {
+  if (!settings.channelId) {
     logger.info(`Salam perpisahan untuk ${member.user.tag} dilewati: channel belum diatur.`);
+    return false;
+  }
+
+  const resolved = await resolveWelcomeChannel(member, settings.channelId);
+  const channel = resolved.channel;
+  if (!channel) {
+    // Alasan spesifik, bukan "channel belum diatur" — dulu izin yang kurang
+    // dilaporkan seolah-olah channel-nya belum dipilih, menyesatkan.
+    logger.info(`Salam perpisahan untuk ${member.user.tag} dilewati: ${resolved.reason}.`);
     return false;
   }
 
@@ -263,12 +335,16 @@ export async function goodbyeMember(member: GuildMember): Promise<boolean> {
       )
     : null;
 
+  if (settings.imageEnabled && !attachment) {
+    logger.info('Kartu perpisahan tidak bisa dirender — dikirim sebagai embed teks.');
+  }
+
   const embed = new EmbedBuilder()
     .setColor(0x716c98)
     .setDescription(text)
     .setFooter({ text: `Member keluar · ${member.guild.name}` });
 
-  // Lihat catatan di kirimWelcome(): data URI ditolak Discord, banner harus
+  // Lihat catatan di welcomeMember(): data URI ditolak Discord, banner harus
   // jadi lampiran dan dirujuk dengan attachment://.
   const bannerFile = attachment ? null : await readBannerAttachment(settings.bannerPath);
   if (bannerFile) embed.setImage(`attachment://${bannerFile.name}`);
