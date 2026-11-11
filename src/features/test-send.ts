@@ -279,17 +279,22 @@ export async function sendWelcomeTest(
       }
     : modeNow === 'text'
       ? { content: `${TEST_MARK}\n\n${preview.text}`, allowedMentions: { parse: [] as const } }
-      : {
-          // Petunjuk uji tetap di content supaya pesan tes mudah dikenali.
-          content: TEST_MARK,
-          // Kartu PNG dibungkus embed: tanpa wadah ini Discord menampilkan PNG
-          // sebagai lampiran kecil di bawah pesan, bukan kartu besar. Ini juga
-          // yang membuat pesan uji berbeda dari sambutan sungguhan (di sana
-          // composePayload sudah memasang wadahnya).
-          embeds: [card ? embed.setImage(`attachment://${card.name}`) : embed],
-          files: card ? [card] : bannerFile ? [bannerFile.attachment] : [],
-          allowedMentions: { parse: [] as const },
-        };
+      : card
+        ? {
+            // Sama seperti sambutan sungguhan: teks sapaan + mention + kartu,
+            // TANPA embed. Pesan uji harus memperlihatkan bentuk akhirnya,
+            // bukan bentuk lain yang kebetulan mirip.
+            content: `${TEST_MARK}\n\n<@${member.id}> ${preview.text}`,
+            embeds: [],
+            files: [card],
+            allowedMentions: { users: [member.id] },
+          }
+        : {
+            content: TEST_MARK,
+            embeds: [embed],
+            files: bannerFile ? [bannerFile.attachment] : [],
+            allowedMentions: { parse: [] as const },
+          };
 
   // Target DM: menguji jalur paling rawan (member menutup DM).
   if (options.target === 'dm' || !settings.channelId) {
@@ -433,14 +438,21 @@ export async function sendGoodbyeTest(
           }
         : modeNow === 'text'
           ? { content: `${TEST_MARK}\n\n${preview.text}`, allowedMentions: { parse: [] as const } }
-          : {
-              content: TEST_MARK,
-              // Sama seperti jalur sambutan: kartu dibungkus embed supaya tampil
-              // besar, bukan sebagai lampiran kecil.
-              embeds: [card ? embed.setImage(`attachment://${card.name}`) : embed],
-              files: card ? [card] : bannerFile ? [bannerFile.attachment] : [],
-              allowedMentions: { parse: [] as const },
-            },
+          : card
+            ? {
+                // Sama seperti sambutan sungguhan: teks + mention + kartu,
+                // tanpa embed.
+                content: `${TEST_MARK}\n\n<@${member.id}> ${preview.text}`,
+                embeds: [],
+                files: [card],
+                allowedMentions: { users: [member.id] },
+              }
+            : {
+                content: TEST_MARK,
+                embeds: [embed],
+                files: bannerFile ? [bannerFile.attachment] : [],
+                allowedMentions: { parse: [] as const },
+              },
     );
     logger.info(`Kirim tes salam perpisahan ke #${channel.name} berhasil.`);
     return {
