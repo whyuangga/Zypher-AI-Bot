@@ -36,7 +36,14 @@ export type PostBlockKind =
    * Tanpa ini, semua blok selalu berada di dalam suatu kartu, sehingga pesan
    * bergaya "pembuka + dua kartu + tombol penutup" tidak bisa disusun.
    */
-  | 'close';
+  | 'close'
+  /**
+   * Lampiran berkas (PDF, zip, gambar besar, ...).
+   *
+   * Berbeda dari `image` yang tampil sebagai galeri di dalam kartu, blok ini
+   * muncul sebagai kartu unduhan di dasar pesan — sama seperti lampiran biasa.
+   */
+  | 'file';
 
 export interface PostBlock {
   kind: PostBlockKind;
@@ -105,6 +112,29 @@ export interface PostBlock {
    * mengizinkan SATU aksesori per section: thumbnail ATAU tombol, tidak dua.
    */
   accessoryLabel?: string;
+
+  /**
+   * Aksesori untuk blok `text` dan `image`.
+   *
+   * Discohook membungkus teks/gambar dalam Section saat kamu menambahkan
+   * aksesori, karena hanya Section yang punya slot aksesori di Discord. Di
+   * sini hal yang sama terjadi: blok teks bergambar-kecil/bertombol otomatis
+   * dikirim sebagai Section. Tanpa aksesori, blok tetap TextDisplay biasa.
+   */
+  accessoryUrl?: string;
+
+  /**
+   * Tandai komponen sebagai spoiler (tersembunyi sampai diklik).
+   *
+   * Berlaku untuk blok `image` (satu gambar) dan `file` (lampiran).
+   */
+  spoiler?: boolean;
+
+  /**
+   * Nama berkas untuk blok `file` — dipakai sebagai nama unduhan di Discord.
+   * Untuk unggahan, nama ini juga menentukan ekstensi lampiran.
+   */
+  name?: string;
 
   /**
    * Id blok — dipakai sebagai customId untuk select menu role.
@@ -212,6 +242,13 @@ export const LIMITS = {
   sectionTexts: 3,
   /** Maksimum container dalam satu pesan — dibatasi top-level juga. */
   containers: 10,
+  /**
+   * Lampiran berkas per pesan.
+   *
+   * Discord mengizinkan 10 lampiran; 5 dipakai supaya pesan yang juga membawa
+   * gambar unggahan tidak melewati batas itu.
+   */
+  filesPerMessage: 5,
 } as const;
 
 export interface SanitizeResult {
@@ -245,6 +282,7 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
   const out: PostBlock[] = [];
   let totalText = 0;
   let images = 0;
+  let files = 0;
   let buttons = 0;
 
   for (const raw of source) {
@@ -325,6 +363,23 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
 
     const value = typeof item.value === 'string' ? item.value : '';
 
+    /**
+     * Aksesori opsional untuk blok teks/gambar.
+     *
+     * Di Discord hanya Section yang punya slot aksesori. Jadi kalau admin
+     * memasang tombol link atau thumbnail pada teks, blok itu dikirim sebagai
+     * Section — persis yang dilakukan Discohook saat kamu menekan
+     * "Add Accessory" pada komponen teks.
+     */
+    const aksesori = (): { accessoryLabel?: string; accessoryUrl?: string; thumbnail?: string } => {
+      const label = typeof item.accessoryLabel === 'string' ? item.accessoryLabel.trim().slice(0, 80) : '';
+      const url = typeof item.url === 'string' ? item.url.trim() : '';
+      const thumb = typeof item.thumbnail === 'string' ? item.thumbnail.trim() : '';
+      if (label && isHttpUrl(url)) return { accessoryLabel: label, accessoryUrl: url };
+      if (isHttpUrl(thumb)) return { thumbnail: thumb };
+      return {};
+    };
+
     if (kind === 'text') {
       const text = value.trim();
       if (!text) continue;
@@ -336,7 +391,7 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
       const sisa = LIMITS.totalText - totalText;
       const isi = text.length > sisa ? text.slice(0, sisa) : text;
       totalText += isi.length;
-      out.push({ kind: 'text', value: isi });
+      out.push({ kind: 'text', value: isi, ...aksesori() });
       continue;
     }
 
@@ -355,7 +410,7 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
           continue;
         }
         images += 1;
-        out.push({ kind: 'image', value: '', data });
+        out.push({ kind: 'image', value: '', data, ...(item.spoiler === true ? { spoiler: true } : {}), ...aksesori() });
         continue;
       }
 
@@ -369,7 +424,40 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
         continue;
       }
       images += 1;
-      out.push({ kind: 'image', value: url });
+      out.push({ kind: 'image', value: url, ...(item.spoiler === true ? { spoiler: true } : {}), ...aksesori() });
+      continue;
+    }
+
+    if (kind === 'file') {
+      // Lampiran berkas: URL http(s) atau unggahan (data URI) dari dashboard.
+      const data = typeof item.data === 'string' ? item.data.trim() : '';
+      const url = value.trim();
+      // UI mengirim `name`; `caption` diterima juga supaya data lama tetap sah.
+      const namaSumber = typeof item.name === 'string' ? item.name : item.caption;
+      const nama = typeof namaSumber === 'string' && namaSumber.trim()
+        ? namaSumber.trim().slice(0, 100)
+        : '';
+      if (data) {
+        if (!/^data:[a-z0-9.+\-]+\/[a-z0-9.+\-]+;base64,[A-Za-z0-9+/=]+$/i.test(data)) {
+          dropped.push('berkas unggahan (format data tidak dikenal)');
+          continue;
+        }
+      } else if (!isHttpUrl(url)) {
+        dropped.push(`berkas "${(url || '(kosong)').slice(0, 40)}" (URL harus http/https)`);
+        continue;
+      }
+      if (files >= LIMITS.filesPerMessage) {
+        dropped.push(`berkas melebihi batas (${LIMITS.filesPerMessage})`);
+        continue;
+      }
+      files += 1;
+      out.push({
+        kind: 'file',
+        value: data ? '' : url,
+        ...(data ? { data } : {}),
+        ...(nama ? { name: nama } : {}),
+        ...(item.spoiler === true ? { spoiler: true } : {}),
+      });
       continue;
     }
 
@@ -440,6 +528,8 @@ export interface ComponentUsage {
   text: number;
   /** Container yang berisi sesuatu (yang benar-benar dikirim). */
   containers: number;
+  /** Jumlah lampiran berkas yang ikut terkirim (batas `filesPerMessage`). */
+  files: number;
   /** true kalau salah satu batas sudah terlampaui. */
   over: boolean;
   /** Bagian mana yang terlampaui, dalam bahasa manusia. */
@@ -476,6 +566,8 @@ export function measureBlocks(blocks: PostBlock[]): ComponentUsage {
   let adaTombol = 0;
   /** true = sedang menulis di luar kartu (komponen top-level). */
   let luar = adaContainerEksplisit;
+  /** Jumlah lampiran berkas (batas Discord 10, kita pakai 5). */
+  let totalFiles = 0;
   /** Komponen top-level di luar container (teks/tombol pembuka & penutup). */
   let luarCount = 0;
 
@@ -538,6 +630,13 @@ export function measureBlocks(blocks: PostBlock[]): ComponentUsage {
       }
       continue;
     }
+    if (block.kind === 'file') {
+      // Berkas adalah komponen top-level sendiri (File), bukan isi kartu.
+      total += 1;
+      totalFiles += 1;
+      if (luar) luarCount += 1;
+      continue;
+    }
     if (block.kind === 'text' || block.kind === 'section' || block.kind === 'image') {
       text += block.kind === 'text' || block.kind === 'section' ? block.value.length : 0;
       if (luar) {
@@ -569,11 +668,16 @@ export function measureBlocks(blocks: PostBlock[]): ComponentUsage {
     masalah.push(`Teks ${text} karakter melebihi batas ${LIMITS.totalText}.`);
   }
 
+  if (totalFiles > LIMITS.filesPerMessage) {
+    masalah.push(`Berkas ${totalFiles} melebihi batas ${LIMITS.filesPerMessage} per pesan.`);
+  }
+
   return {
     total,
     topLevel,
     text,
     containers,
+    files: totalFiles,
     over: masalah.length > 0,
     masalah,
   };
@@ -628,11 +732,22 @@ export interface BuiltPost {
    * dikirim sebagai lampiran dan dirujuk lewat attachment://<nama>.
    */
   files: AttachmentLike[];
+  /**
+   * Berkas dari URL yang harus diunduh saat pengiriman.
+   *
+   * `FileBuilder` di Discord HANYA menerima `attachment://<nama>`, bukan URL
+   * http. Jadi berkas jarak-jauh tidak bisa dirujuk langsung: ia diunduh lebih
+   * dulu, dikirim sebagai lampiran, lalu komponennya menunjuk nama lampiran
+   * itu. Pengunduhan dilakukan di lapisan pengirim (butuh jaringan).
+   */
+  remoteFiles: Array<{ url: string; name: string; spoiler?: boolean; indeks: number }>;
 }
 
 /** Bentuk minimal lampiran — pemanggil yang membuat AttachmentBuilder asli. */
 export interface AttachmentLike {
   dataUri: string;
+  /** Kalau terisi, lampiran ini berasal dari URL dan harus diunduh saat kirim. */
+  remoteUrl?: string;
   /** Nama file yang dipakai di attachment:// — harus sama persis. */
   name: string;
 }
@@ -657,6 +772,8 @@ export function buildPostPayload(
       Success?: number;
       Danger?: number;
     };
+    /** Untuk blok `file` — versi lawas discord.js boleh tidak punya ini. */
+    FileBuilder?: new () => any;
     /** Untuk select menu role. */
     StringSelectMenuBuilder?: new () => any;
     StringSelectMenuOptionBuilder?: new () => any;
@@ -690,7 +807,7 @@ export function buildPostPayload(
    * yang hanya berisi gambar tetap sah — jadi ia ikut dihitung sebagai isi.
    */
   const adaIsi = blocks.some(
-    (b) => b.kind === 'text' || b.kind === 'image' || b.kind === 'section',
+    (b) => b.kind === 'text' || b.kind === 'image' || b.kind === 'section' || b.kind === 'file',
   );
   if (!adaIsi) return null;
 
@@ -806,8 +923,31 @@ export function buildPostPayload(
     luar = false;
   };
 
-  // Gambar unggahan dikumpulkan dulu, lalu dikirim sebagai lampiran.
+  // Lampiran (gambar unggahan + berkas) dikumpulkan dulu, lalu dikirim.
   const files: AttachmentLike[] = [];
+  const remoteFiles: Array<{ url: string; name: string; spoiler?: boolean; indeks: number }> = [];
+  const dropped: string[] = [];
+
+  /**
+   * Pasang aksesori pada Section: tombol link lebih dulu, lalu thumbnail.
+   *
+   * Discord hanya menerima SATU aksesori per Section. Tombol dipilih kalau
+   * keduanya terisi karena lebih terlihat dan bisa diklik.
+   */
+  const tambahAksesori = (section: any, block: PostBlock): void => {
+    if (block.accessoryLabel && block.accessoryUrl) {
+      section.setButtonAccessory(
+        new deps.ButtonBuilder()
+          .setStyle(deps.ButtonStyle.Link)
+          .setLabel(block.accessoryLabel)
+          .setURL(block.accessoryUrl),
+      );
+    } else if (block.thumbnail && deps.ThumbnailBuilder) {
+      const thumb = new deps.ThumbnailBuilder();
+      thumb.setURL(block.thumbnail);
+      section.setThumbnailAccessory(thumb);
+    }
+  };
 
   let tombolTertunda: PostBlock[] = [];
 
@@ -868,6 +1008,28 @@ export function buildPostPayload(
       continue;
     }
     if (block.kind === 'text') {
+      /*
+       * Teks yang diberi aksesori (tombol link / thumbnail) harus dikirim
+       * sebagai Section, bukan TextDisplay: hanya Section yang punya slot
+       * aksesori di Discord. Ini yang dilakukan Discohook saat kamu menekan
+       * "Add Accessory" pada komponen teks.
+       *
+       * Tanpa aksesori, blok tetap TextDisplay biasa — pesan lama tidak
+       * berubah bentuknya.
+       */
+      const adaAksesori = Boolean(
+        (block.accessoryLabel && block.accessoryUrl) || block.thumbnail,
+      );
+      if (adaAksesori && deps.SectionBuilder) {
+        const section = new deps.SectionBuilder();
+        section.addTextDisplayComponents(new deps.TextDisplayBuilder().setContent(block.value));
+        tambahAksesori(section, block);
+        tulis(section);
+        continue;
+      }
+      if (adaAksesori && !deps.SectionBuilder) {
+        dropped.push('aksesori teks dilewati (versi discord.js tidak mendukung Section)');
+      }
       tulis(new deps.TextDisplayBuilder().setContent(block.value));
       continue;
     }
@@ -878,18 +1040,11 @@ export function buildPostPayload(
         section.addTextDisplayComponents(
           new deps.TextDisplayBuilder().setContent(block.value || '\u200b'),
         );
-        if (block.accessoryLabel && block.url) {
-          section.setButtonAccessory(
-            new deps.ButtonBuilder()
-              .setStyle(deps.ButtonStyle.Link)
-              .setLabel(block.accessoryLabel)
-              .setURL(block.url),
-          );
-        } else if (block.thumbnail) {
-          const thumb = new deps.ThumbnailBuilder();
-          thumb.setURL(block.thumbnail);
-          section.setThumbnailAccessory(thumb);
-        }
+        tambahAksesori(section, {
+          ...block,
+          accessoryLabel: block.accessoryLabel,
+          accessoryUrl: block.url,
+        });
         tulis(section);
       }
       continue;
@@ -903,11 +1058,84 @@ export function buildPostPayload(
         files.push({ dataUri: block.data, name });
         url = `attachment://${name}`;
       }
-      tulis(
-        new deps.MediaGalleryBuilder().addItems(
-          new deps.MediaGalleryItemBuilder().setURL(url),
-        ),
-      );
+      const item = new deps.MediaGalleryItemBuilder().setURL(url);
+      // Spoiler: gambar disamarkan sampai diklik. `setSpoiler` ada di
+      // discord.js 14.19+; versi lawas dilewati tanpa menggagalkan pesan.
+      if (block.spoiler && typeof item.setSpoiler === 'function') item.setSpoiler(true);
+      const galeri = new deps.MediaGalleryBuilder().addItems(item);
+
+      // Aksesori pada gambar membungkus galeri dalam Section, karena hanya
+      // Section yang punya slot aksesori.
+      if ((block.accessoryLabel && block.accessoryUrl) || block.thumbnail) {
+        if (deps.SectionBuilder) {
+          const section = new deps.SectionBuilder();
+          section.addMediaGalleryComponents(galeri);
+          tambahAksesori(section, block);
+          tulis(section);
+          continue;
+        }
+        dropped.push('aksesori gambar dilewati (versi discord.js tidak mendukung Section)');
+      }
+      tulis(galeri);
+      continue;
+    }
+
+    if (block.kind === 'file') {
+      /*
+       * Lampiran berkas.
+       *
+       * Dua sumber: URL http(s) (Discord mengunduh sendiri) atau unggahan
+       * dashboard (data URI) yang harus dikirim sebagai lampiran lalu
+       * dirujuk lewat attachment://<nama>.
+       *
+       * `FileBuilder` ada di discord.js 14.19+; kalau tidak ada, blok ini
+       * dilewati dengan alasan yang jelas alih-alih mengirim payload rusak.
+       */
+      if (!deps.FileBuilder) {
+        dropped.push(`berkas "${(block.name || block.value).slice(0, 40)}" dilewati (versi discord.js tidak mendukung File)`);
+        continue;
+      }
+      let urlBerkas = block.value;
+      const file = new deps.FileBuilder();
+      if (block.value) {
+        /*
+         * Berkas jarak-jauh: nama ditentukan sekarang supaya komponen dan
+         * lampiran memakai nama yang sama, tetapi isinya belum diunduh.
+         * `FileBuilder` menolak URL http, jadi ia menunggu nama lampiran.
+         */
+        const namaAsli = (block.name || block.value.split('/').pop() || 'berkas')
+          .replace(/[^A-Za-z0-9._-]/g, '-')
+          .slice(0, 60) || 'berkas';
+        const name = /\.[A-Za-z0-9]{1,8}$/.test(namaAsli) ? namaAsli : `${namaAsli}.bin`;
+        remoteFiles.push({
+          url: block.value,
+          name,
+          ...(block.spoiler ? { spoiler: true } : {}),
+          indeks: files.length,
+        });
+        files.push({ dataUri: '', name, remoteUrl: block.value });
+        urlBerkas = `attachment://${name}`;
+      } else if (block.data) {
+        // Nama file wajib aman: hanya huruf/angka/titik/strip.
+        const dasar = (block.name || `berkas-${files.length + 1}`)
+          .replace(/[^A-Za-z0-9._-]/g, '-')
+          .slice(0, 60) || `berkas-${files.length + 1}`;
+        const name = /\.[A-Za-z0-9]{1,8}$/.test(dasar) ? dasar : `${dasar}.bin`;
+        files.push({ dataUri: block.data, name });
+        urlBerkas = `attachment://${name}`;
+      }
+      file.setURL(urlBerkas);
+      if (block.spoiler && typeof file.setSpoiler === 'function') file.setSpoiler(true);
+      /*
+       * Berkas SELALU komponen top-level, tidak pernah di dalam kartu.
+       *
+       * Dua alasan: (1) Discord menampilkan lampiran di dasar pesan, terpisah
+       * dari kartu, jadi menaruhnya di dalam container akan tampak sebagai
+       * kartu di dalam kartu; (2) Discohook pun memperlakukan File sebagai
+       * komponen sejajar Container, bukan isi container.
+       */
+      urutan.push({ jenis: 'lain', komponen: file });
+      continue;
     }
   }
   if (tombolTertunda.length > 0) flushButtons();
@@ -990,6 +1218,7 @@ export function buildPostPayload(
     components: komponen.slice(0, LIMITS.topLevelComponents),
     flags: 1 << 15,
     files,
+    remoteFiles,
   };
 }
 

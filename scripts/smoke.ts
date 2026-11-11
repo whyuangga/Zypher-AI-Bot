@@ -6850,6 +6850,110 @@ await testAsync('pesan: dua blok tutup-kartu berurutan tidak menggandakan kompon
   assert.equal(blocks.filter((b) => b.kind === 'close').length, 1, 'penutup ganda diringkas jadi satu');
 });
 
+await testAsync('pesan: teks beraksesori dikirim sebagai Section', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SectionBuilder: d.SectionBuilder,
+    ThumbnailBuilder: d.ThumbnailBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+  };
+  type C = { type: number; components: Array<Record<string, any>> };
+  const dalam = (input: unknown): Record<string, any> => {
+    const built = buildPostPayload(sanitizeBlocks(input).blocks, deps);
+    const json = (built!.components as Array<{ toJSON: () => C }>).map((c) => c.toJSON());
+    return json[0]!.components[0]!;
+  };
+
+  // Tombol link → Section, aksesori berupa tombol (tipe 2, gaya 5).
+  const tombol = dalam([{ kind: 'text', value: 'Halo', accessoryLabel: 'Buka', url: 'https://a.test' }]);
+  assert.equal(tombol.type, 9, 'teks bertombol jadi Section');
+  assert.equal(tombol.accessory.style, 5, 'tombol link');
+  assert.equal(tombol.accessory.label, 'Buka');
+
+  // Thumbnail → Section dengan aksesori thumbnail.
+  const thumb = dalam([{ kind: 'text', value: 'Halo', thumbnail: 'https://img.test/a.png' }]);
+  assert.equal(thumb.type, 9, 'teks bergambar jadi Section');
+  assert.equal(thumb.accessory.media.url, 'https://img.test/a.png');
+
+  // Tanpa aksesori → tetap TextDisplay, jadi pesan lama tidak berubah.
+  const polos = dalam([{ kind: 'text', value: 'Halo' }]);
+  assert.equal(polos.type, 10, 'teks polos tetap TextDisplay');
+});
+
+await testAsync('pesan: blok file jadi komponen File di luar kartu', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    FileBuilder: d.FileBuilder,
+  };
+  type C = { type: number; components?: Array<Record<string, any>>; file?: { url: string } };
+
+  const built = buildPostPayload(
+    sanitizeBlocks([
+      { kind: 'text', value: 'Unduh panduan:' },
+      { kind: 'file', value: 'https://a.test/panduan.pdf', name: 'panduan.pdf' },
+    ]).blocks,
+    deps,
+  );
+  assert.ok(built, 'payload terbentuk');
+  const json = (built!.components as Array<{ toJSON: () => C }>).map((c) => c.toJSON());
+  assert.deepEqual(
+    json.map((c) => c.type),
+    [17, 13],
+    'container untuk teks, File berdiri sendiri di luar kartu',
+  );
+  // Berkas diunduh saat kirim lalu dirujuk lewat attachment://.
+  assert.equal(json[1]!.file?.url, 'attachment://panduan.pdf');
+  assert.equal(built!.remoteFiles.length, 1, 'URL dicatat untuk diunduh saat kirim');
+  assert.equal(built!.remoteFiles[0]!.url, 'https://a.test/panduan.pdf');
+
+  // Berkas sendirian tetap dianggap pesan berisi (bukan kosong).
+  const sendiri = buildPostPayload(
+    sanitizeBlocks([{ kind: 'file', value: 'https://a.test/a.zip' }]).blocks,
+    deps,
+  );
+  assert.ok(sendiri, 'berkas sendirian tidak dianggap pesan kosong');
+});
+
+await testAsync('pesan: batas berkas dan spoiler dihormati', async () => {
+  const { sanitizeBlocks, measureBlocks, LIMITS } = await import('../src/features/custom-post.js');
+
+  // Lebih dari batas → dipotong dengan alasan, bukan error.
+  const banyak = sanitizeBlocks(
+    Array.from({ length: LIMITS.filesPerMessage + 2 }, (_, i) => ({ kind: 'file', value: `https://a.test/f${i}.pdf` })),
+  );
+  assert.equal(banyak.blocks.filter((b) => b.kind === 'file').length, LIMITS.filesPerMessage);
+  assert.ok(banyak.dropped.some((d) => d.includes('berkas melebihi batas')), 'alasan disebutkan');
+
+  // Spoiler dipertahankan pada gambar dan berkas.
+  const spoiler = sanitizeBlocks([
+    { kind: 'image', value: 'https://img.test/a.png', spoiler: true },
+    { kind: 'file', value: 'https://a.test/b.pdf', spoiler: true },
+  ]);
+  assert.equal(spoiler.blocks[0]!.spoiler, true);
+  assert.equal(spoiler.blocks[1]!.spoiler, true);
+
+  // Penghitung membawa jumlah berkas.
+  const ukur = measureBlocks(sanitizeBlocks([{ kind: 'file', value: 'https://a.test/c.pdf' }]).blocks);
+  assert.equal(ukur.files, 1);
+});
+
 await testAsync('pesan: penghitung batas komponen menghitung seperti Discord', async () => {
   const { measureBlocks, sanitizeBlocks, LIMITS } = await import('../src/features/custom-post.js');
   const ukur = (input: unknown) => measureBlocks(sanitizeBlocks(input).blocks);

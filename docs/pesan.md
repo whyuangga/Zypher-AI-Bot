@@ -107,6 +107,49 @@ Yang perlu diketahui:
 Di pratinjau, area luar kartu diberi label kecil **di luar kartu** supaya batas
 kartu terlihat jelas. Label itu hanya ada di dashboard — tidak ikut terkirim.
 
+### Aksesori di komponen mana pun
+
+Seperti Discohook, **teks dan gambar** juga bisa diberi aksesori — bukan hanya
+blok Section. Tombol **Aksesori** di bawah editor teks/gambar punya dua isian:
+
+| Aksesori | Hasil di Discord |
+|---|---|
+| **Teks tombol + URL** | tombol link di kanan teks/gambar |
+| **Thumbnail** | gambar kecil 64×64 di kanan teks |
+
+Keduanya **saling meniadakan**: Discord hanya menerima satu aksesori per
+Section. Jadi begitu kamu mengisi teks tombol, kolom thumbnail otomatis mati —
+lebih jelas daripada mengisi dua-duanya lalu diam-diam hanya satu yang dipakai.
+
+Di balik layar, teks/gambar beraksesori dikirim sebagai **Section**. Itu satu-
+satunya komponen Discord yang punya slot aksesori. Teks tanpa aksesori tetap
+dikirim sebagai TextDisplay biasa, jadi pesan lama tidak berubah bentuknya.
+
+### File: lampiran berkas
+
+Blok **File** mengirim lampiran: PDF, zip, atau berkas lain. Dua sumber:
+
+| Sumber | Perilaku |
+|---|---|
+| **URL** (`https://…/panduan.pdf`) | diunduh bot saat kirim (maks 8 MB), lalu dilampirkan |
+| **Unggah dari perangkat** | dikirim apa adanya sebagai lampiran (maks 8 MB) |
+
+Yang perlu diketahui:
+
+- Berkas **selalu tampil di dasar pesan**, di luar kartu — sama seperti lampiran
+  Discord biasa. Ia tidak pernah masuk ke dalam container.
+- Maksimal **5 berkas** per pesan (Discord mengizinkan 10; 5 menyisakan ruang
+  untuk gambar unggahan).
+- **Spoiler** menyamarkan nama berkas dan gambarnya sampai diklik.
+- Kalau unduhan gagal (URL mati, berkas terlalu besar), pesan **tetap terkirim**
+  tanpa berkas itu, dan dashboard memberi tahu berkas mana yang gagal.
+
+### Naik, turun, salin, hapus
+
+Setiap blok punya empat tombol di kanan atas: **↑** naik, **↓** turun,
+**⧉** duplikat, **×** hapus. Duplikat menyalin blok tepat di bawah aslinya —
+berguna untuk menyusun beberapa kartu serupa tanpa mengetik ulang.
+
 ### Section: teks dengan aksesori
 
 Section menaruh **teks di kiri** dan **satu aksesori di kanan** — gambar kecil

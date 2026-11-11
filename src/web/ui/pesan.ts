@@ -183,6 +183,8 @@ export function pesanPage(options: PesanPageOptions): string {
       <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('divider')">${icon('menu', 15)} Pemisah</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('container')">${icon('sliders', 15)} Container</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('section')">${icon('users', 15)} Section</button>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('image')">${icon('image', 15)} Gambar</button>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('file')">${icon('download', 15)} File</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('close')">${icon('logout', 15)} Tutup kartu</button>
     </div>
     <div id="usageBar" class="usage-bar" hidden>
@@ -381,11 +383,160 @@ var LABEL = {
   divider: 'Pemisah',
   container: 'Container baru',
   section: 'Section (teks + gambar/tombol)',
-  close: 'Tutup kartu (di luar kartu)'
+  close: 'Tutup kartu (di luar kartu)',
+  file: 'File (lampiran)'
 };
 
 function lineCount(value) {
   return String(value || '').split('\\n').length;
+}
+
+
+/**
+ * Sakelar centang sederhana untuk satu properti blok.
+ *
+ * Dipakai untuk "spoiler" pada gambar dan berkas. Ditulis sekali supaya
+ * perilakunya sama di kedua tempat.
+ */
+function buatSakelar(index, properti, label) {
+  var baris = document.createElement('label');
+  baris.className = 'menu-flags';
+  var kotak = document.createElement('input');
+  kotak.type = 'checkbox';
+  kotak.checked = Boolean(blocks[index][properti]);
+  kotak.onchange = function () {
+    blocks[index][properti] = kotak.checked;
+    renderPreview();
+  };
+  baris.appendChild(kotak);
+  baris.appendChild(document.createTextNode(' ' + label));
+  return baris;
+}
+
+/**
+ * Editor aksesori untuk blok teks/gambar.
+ *
+ * Discord hanya punya SATU slot aksesori (tombol link ATAU thumbnail), jadi
+ * kolom thumbnail otomatis dinonaktifkan saat tombol diisi — lebih jelas
+ * daripada membiarkan admin mengisi keduanya lalu diam-diam hanya satu dipakai.
+ */
+function buatAksesori(index) {
+  var bungkus = document.createElement('div');
+  bungkus.className = 'block-aksesori';
+
+  var judul = document.createElement('span');
+  judul.className = 'block-aksesori-judul';
+  judul.textContent = 'Aksesori (opsional)';
+  bungkus.appendChild(judul);
+
+  var label = document.createElement('input');
+  label.type = 'text';
+  label.value = blocks[index].accessoryLabel || '';
+  label.placeholder = 'Teks tombol link';
+  bungkus.appendChild(label);
+
+  var url = document.createElement('input');
+  url.type = 'text';
+  url.value = blocks[index].url || '';
+  url.placeholder = 'https://… (tujuan tombol)';
+  bungkus.appendChild(url);
+
+  var thumb = document.createElement('input');
+  thumb.type = 'text';
+  thumb.value = blocks[index].thumbnail || '';
+  thumb.placeholder = 'https://…/gambar-kecil.png (thumbnail)';
+  bungkus.appendChild(thumb);
+
+  function segarkan() {
+    // Tombol dan thumbnail saling meniadakan: hanya satu yang dipakai Discord.
+    var adaTombol = Boolean(String(label.value).trim());
+    thumb.disabled = adaTombol;
+    thumb.title = adaTombol ? 'Kosongkan teks tombol dulu — Discord hanya menerima satu aksesori' : '';
+  }
+  label.oninput = function () {
+    blocks[index].accessoryLabel = label.value;
+    segarkan();
+    renderPreview();
+  };
+  url.oninput = function () { blocks[index].url = url.value; renderPreview(); };
+  thumb.oninput = function () { blocks[index].thumbnail = thumb.value; renderPreview(); };
+  segarkan();
+
+  return bungkus;
+}
+
+/**
+ * Editor blok File: sumber berkas, nama, dan spoiler.
+ *
+ * Dua sumber: URL (bot mengunduh saat kirim) atau unggah dari perangkat
+ * (dikirim sebagai lampiran). Unggahan dibatasi 8 MB — sama dengan batas
+ * unduhan di sisi pengirim, supaya yang terlihat di dashboard dan yang
+ * benar-benar terkirim tidak berbeda.
+ */
+function buatEditorFile(index) {
+  var bungkus = document.createElement('div');
+  bungkus.className = 'block-file';
+
+  if (blocks[index].data) {
+    var ket = document.createElement('p');
+    ket.className = 'hint';
+    ket.style.margin = '0';
+    ket.textContent = 'Berkas dari perangkat: ' + (blocks[index].name || 'tanpa nama') + ' — diunggah sebagai lampiran.';
+    bungkus.appendChild(ket);
+    var hapus = document.createElement('button');
+    hapus.className = 'btn-ghost btn-sm';
+    hapus.type = 'button';
+    hapus.textContent = 'Ganti dengan URL';
+    hapus.onclick = function () {
+      blocks[index].data = '';
+      renderBlocks();
+      renderPreview();
+    };
+    bungkus.appendChild(hapus);
+    bungkus.appendChild(buatSakelar(index, 'spoiler', 'Sembunyikan sebagai spoiler'));
+    return bungkus;
+  }
+
+  var url = document.createElement('input');
+  url.type = 'text';
+  url.value = blocks[index].value || '';
+  url.placeholder = 'https://…/dokumen.pdf';
+  url.oninput = function () { blocks[index].value = url.value; renderPreview(); };
+  bungkus.appendChild(url);
+
+  var nama = document.createElement('input');
+  nama.type = 'text';
+  nama.value = blocks[index].name || '';
+  nama.placeholder = 'Nama berkas (opsional, mis. panduan.pdf)';
+  nama.oninput = function () { blocks[index].name = nama.value; renderPreview(); };
+  bungkus.appendChild(nama);
+
+  var unggah = document.createElement('input');
+  unggah.type = 'file';
+  unggah.className = 'block-file-unggah';
+  unggah.onchange = function () {
+    var berkas = unggah.files && unggah.files[0];
+    if (!berkas) return;
+    // 8 MB: batas yang sama dengan pengunduh di sisi bot.
+    if (berkas.size > 8 * 1024 * 1024) {
+      alert('Berkas lebih dari 8 MB. Pakai URL, atau perkecil dulu.');
+      unggah.value = '';
+      return;
+    }
+    var pembaca = new FileReader();
+    pembaca.onload = function () {
+      blocks[index].data = String(pembaca.result || '');
+      blocks[index].value = '';
+      blocks[index].name = berkas.name;
+      renderBlocks();
+      renderPreview();
+    };
+    pembaca.readAsDataURL(berkas);
+  };
+  bungkus.appendChild(unggah);
+
+  bungkus.appendChild(buatSakelar(index, 'spoiler', 'Sembunyikan sebagai spoiler'));
+  return bungkus;
 }
 
 function renderBlocks() {
@@ -430,6 +581,13 @@ function renderBlocks() {
       down.onclick = function () { moveBlock(index, 1); };
       tools.appendChild(down);
     }
+    var dup = document.createElement('button');
+    dup.className = 'btn-ghost btn-sm btn-icon';
+    dup.type = 'button';
+    dup.title = 'Duplikat blok';
+    dup.textContent = '⧉';
+    dup.onclick = function () { duplicateBlock(index); };
+    tools.appendChild(dup);
     var del = document.createElement('button');
     del.className = 'btn-danger btn-sm btn-icon';
     del.type = 'button';
@@ -558,6 +716,10 @@ function renderBlocks() {
       ta.placeholder = 'Tulis isi pesan…';
       ta.oninput = function () { blocks[index].value = ta.value; renderPreview(); };
       row.appendChild(ta);
+      // Aksesori teks — sama seperti "Add Accessory" di Discohook.
+      row.appendChild(buatAksesori(index));
+    } else if (block.kind === 'file') {
+      row.appendChild(buatEditorFile(index));
     } else {
       var input = document.createElement('input');
       input.type = 'text';
@@ -565,6 +727,10 @@ function renderBlocks() {
       input.placeholder = block.kind === 'image' ? 'https://…/gambar.png' : 'Label tombol';
       input.oninput = function () { blocks[index].value = input.value; renderPreview(); };
       row.appendChild(input);
+      if (block.kind === 'image') {
+        row.appendChild(buatAksesori(index));
+        row.appendChild(buatSakelar(index, 'spoiler', 'Sembunyikan sebagai spoiler'));
+      }
       if (block.kind === 'button') {
         var url = document.createElement('input');
         url.type = 'text';
@@ -640,6 +806,24 @@ function addBlock(kind) {
   blocks.push(blok);
   renderBlocks();
 }
+/** Salin blok ke posisi tepat di bawahnya — sama seperti tombol salin Discohook. */
+function duplicateBlock(index) {
+  var asli = blocks[index];
+  if (!asli) return;
+  /*
+   * Salinan dalam (deep copy) perlu: blok container punya properti warna, blok
+   * gambar punya data unggahan, dan blok file punya nama. Kalau hanya di-shallow
+   * copy, dua blok akan berbagi objek yang sama sehingga mengubah satu ikut
+   * mengubah yang lain.
+   */
+  var salinan = JSON.parse(JSON.stringify(asli));
+  // blockId harus unik: kalau tidak, select menu role dua blok bertabrakan.
+  if (salinan.blockId) salinan.blockId = '';
+  blocks.splice(index + 1, 0, salinan);
+  renderBlocks();
+  renderPreview();
+}
+
 function removeBlock(index) {
   blocks.splice(index, 1);
   renderBlocks();
@@ -808,6 +992,45 @@ function resetAccent() {
  * Alasan: teks blok berasal dari admin dan bisa berisi apa saja; pratinjau
  * tidak boleh menjadi jalan masuk HTML ke halaman dashboard.
  */
+
+/**
+ * Bangun elemen Section untuk pratinjau: teks di kiri, satu aksesori di kanan.
+ *
+ * Dipakai blok section dan blok text yang diberi aksesori - keduanya
+ * menghasilkan bentuk yang SAMA di Discord, jadi pratinjaunya pun harus sama.
+ */
+function buatSectionPratinjau(teks, kecil, blok) {
+  var sec = document.createElement('div');
+  sec.className = 'pc-section';
+
+  var kiri = document.createElement('div');
+  kiri.className = 'pc-section-text';
+  var el = document.createElement('div');
+  el.className = 'pc-line' + (kecil ? ' pc-small' : '');
+  el.textContent = teks;
+  kiri.appendChild(el);
+  sec.appendChild(kiri);
+
+  var kanan = document.createElement('div');
+  kanan.className = 'pc-section-aksesori';
+  var label = blok.accessoryLabel || '';
+  var url = blok.url || blok.accessoryUrl || '';
+  if (label && /^https?:\\/\\//i.test(url)) {
+    var btn = document.createElement('span');
+    btn.className = 'pc-button pc-button-link';
+    btn.textContent = label;
+    kanan.appendChild(btn);
+  } else if (blok.thumbnail) {
+    var thumb = document.createElement('img');
+    thumb.src = blok.thumbnail;
+    thumb.className = 'pc-thumb';
+    thumb.alt = '';
+    kanan.appendChild(thumb);
+  }
+  sec.appendChild(kanan);
+  return sec;
+}
+
 function renderPreview() {
   var host = document.getElementById('previewHost');
   if (!host) return;
@@ -821,6 +1044,7 @@ function renderPreview() {
    */
   var isi = blocks.filter(function (b) {
     if (b.kind === 'divider' || b.kind === 'container' || b.kind === 'close') return true;
+    if (b.kind === 'file') return Boolean(b.data || String(b.value || '').trim());
     if (b.kind === 'section') return Boolean(String(b.value || '').trim() || String(b.thumbnail || '').trim());
     if (b.kind === 'image') return Boolean(b.data || b.value);
     return String(b.value || '').trim().length > 0;
@@ -940,37 +1164,40 @@ function renderPreview() {
 
     if (blok.kind === 'section') {
       // Discord: teks di kiri, aksesori (gambar kecil atau tombol) di kanan.
-      var sec = document.createElement('div');
-      sec.className = 'pc-section';
-
-      var kiri = document.createElement('div');
-      kiri.className = 'pc-section-text';
       var kecilSec = /^\\s*-#/.test(blok.value || '');
       var teksSec = kecilSec ? String(blok.value).replace(/^\\s*-#\s*/, '') : (blok.value || '');
-      var elSec = document.createElement('div');
-      elSec.className = 'pc-line' + (kecilSec ? ' pc-small' : '');
-      elSec.textContent = teksSec;
-      kiri.appendChild(elSec);
-      sec.appendChild(kiri);
-
-      var kanan = document.createElement('div');
-      kanan.className = 'pc-section-aksesori';
-      if (blok.accessoryLabel && /^https?:\\/\\//i.test(blok.url || '')) {
-        var btn = document.createElement('span');
-        btn.className = 'pc-button pc-button-link';
-        btn.textContent = blok.accessoryLabel;
-        kanan.appendChild(btn);
-      } else if (blok.thumbnail) {
-        var thumb = document.createElement('img');
-        thumb.src = blok.thumbnail;
-        thumb.className = 'pc-thumb';
-        thumb.alt = '';
-        thumb.onerror = function () { thumb.replaceWith(salinanTeks('[ gambar tidak bisa dimuat ]')); };
-        kanan.appendChild(thumb);
-      }
-      sec.appendChild(kanan);
-      targetTulis().appendChild(sec);
+      targetTulis().appendChild(buatSectionPratinjau(teksSec, kecilSec, blok));
       tandaiBerisi();
+      return;
+    }
+
+    if (blok.kind === 'file') {
+      /*
+       * Berkas selalu tampil di DASAR pesan, terpisah dari kartu — sama seperti
+       * lampiran Discord. Karena itu elemennya ditaruh di pembungkus luar, bukan
+       * di kartu tempat blok ini kebetulan berada.
+       */
+      var kartuFile = document.createElement('div');
+      kartuFile.className = 'pc-file' + (blok.spoiler ? ' pc-file-spoiler' : '');
+      var ikonFile = document.createElement('span');
+      ikonFile.className = 'pc-file-ikon';
+      ikonFile.textContent = '📄';
+      kartuFile.appendChild(ikonFile);
+      var isiFile = document.createElement('div');
+      isiFile.className = 'pc-file-isi';
+      var namaFile = document.createElement('div');
+      namaFile.className = 'pc-file-nama';
+      namaFile.textContent = blok.name || namaDariUrl(blok.value) || 'berkas';
+      isiFile.appendChild(namaFile);
+      var ketFile = document.createElement('div');
+      ketFile.className = 'pc-file-ket';
+      ketFile.textContent = blok.data
+        ? 'diunggah dari perangkat'
+        : (String(blok.value || '').length > 46 ? String(blok.value).slice(0, 45) + '…' : blok.value || '');
+      isiFile.appendChild(ketFile);
+      kartuFile.appendChild(isiFile);
+      tujuanLuar.appendChild(kartuFile);
+      tujuanLuar._adaIsi = true;
       return;
     }
 
@@ -984,13 +1211,13 @@ function renderPreview() {
       if (blok.data) {
         var img = document.createElement('img');
         img.src = blok.data;
-        img.className = 'pc-image';
+        img.className = 'pc-image' + (blok.spoiler ? ' pc-spoiler' : '');
         img.alt = 'gambar unggahan';
         targetTulis().appendChild(img);
       } else {
         var jauh = document.createElement('img');
         jauh.src = blok.value;
-        jauh.className = 'pc-image';
+        jauh.className = 'pc-image' + (blok.spoiler ? ' pc-spoiler' : '');
         jauh.alt = '';
         jauh.onerror = function () {
           jauh.replaceWith(salinanTeks('[ gambar tidak bisa dimuat ]'));
@@ -1000,13 +1227,25 @@ function renderPreview() {
       tandaiBerisi();
       return;
     }
-    // Teks: -# di awal = teks kecil di Discord.
+    /*
+     * Teks: -# di awal = teks kecil di Discord.
+     *
+     * Kalau blok teks punya aksesori (tombol link / thumbnail), Discord
+     * mengirimnya sebagai Section — jadi pratinjau juga menampilkannya dalam
+     * bentuk section, bukan teks polos. Kalau tidak, admin melihat teks biasa
+     * padahal hasil di Discord berbeda.
+     */
     var kecil = /^\\s*-#/.test(blok.value);
     var teks = kecil ? blok.value.replace(/^\\s*-#\s*/, '') : blok.value;
-    var el = document.createElement('div');
-    el.className = 'pc-line' + (kecil ? ' pc-small' : '');
-    el.textContent = teks;
-    targetTulis().appendChild(el);
+    var punyaAksesori = Boolean((blok.accessoryLabel && blok.url) || blok.thumbnail);
+    if (punyaAksesori) {
+      targetTulis().appendChild(buatSectionPratinjau(teks, kecil, blok));
+    } else {
+      var el = document.createElement('div');
+      el.className = 'pc-line' + (kecil ? ' pc-small' : '');
+      el.textContent = teks;
+      targetTulis().appendChild(el);
+    }
     tandaiBerisi();
   });
   if (tertunda.length) flushTombol();
@@ -1086,6 +1325,18 @@ function renderPreview() {
  * Emoji kustom berbentuk <:nama:id> tidak bisa digambar tanpa CDN, jadi yang
  * tampil hanya :nama: — cukup untuk memastikan admin memilih emoji yang benar.
  */
+/** Ambil nama berkas dari ujung URL, untuk label pratinjau. */
+function namaDariUrl(url) {
+  var bersih = String(url || '').split('?')[0].split('#')[0];
+  var bagian = bersih.split('/').filter(Boolean);
+  var akhir = bagian.length ? bagian[bagian.length - 1] : '';
+  try {
+    return decodeURIComponent(akhir);
+  } catch (e) {
+    return akhir;
+  }
+}
+
 function teksTombol(tombol) {
   // Tombol link menyimpan teksnya di value; tombol role di label.
   var label = tombol.value || tombol.label || '(tanpa label)';

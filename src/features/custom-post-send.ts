@@ -54,12 +54,17 @@ export interface SendRoleMenu {
   options: Array<{ roleId: string; label: string; emoji?: string | null; description?: string | null }>;
 }
 
-function buildPayload(
+async function buildPayload(
   blocks: PostBlock[],
   roleButtons: SendRoleButton[] = [],
   accentHex?: string,
   roleMenus: SendRoleMenu[] = [],
-): { components: ContainerBuilder[]; flags: number; files: AttachmentBuilder[] } | null {
+): Promise<{
+  components: ContainerBuilder[];
+  flags: number;
+  files: AttachmentBuilder[];
+  droppedFiles: string[];
+} | null> {
   const built = buildPostPayload(blocks, {
     ContainerBuilder,
     TextDisplayBuilder,
@@ -109,14 +114,49 @@ function buildPayload(
   });
   if (!built) return null;
 
-  // Data URI -> lampiran sungguhan. Discord menolak data URI mentah di
-  // komponen V2, jadi langkah ini wajib, bukan pilihan.
-  const files = built.files.map((file) => {
-    const base64 = file.dataUri.slice(file.dataUri.indexOf(',') + 1);
-    return new AttachmentBuilder(Buffer.from(base64, 'base64'), { name: file.name });
-  });
+  /** Berkas yang gagal diunduh — dikembalikan agar admin tahu, bukan hilang diam-diam. */
+  const droppedFiles: string[] = [];
 
-  return { components: built.components as ContainerBuilder[], flags: built.flags, files };
+  /*
+   * Lampiran sungguhan.
+   *
+   * Dua sumber:
+   *  - unggahan dashboard (data URI): diubah jadi Buffer di sini, karena
+   *    Discord menolak data URI mentah di komponen V2;
+   *  - berkas dari URL: diunduh lebih dulu. `FileBuilder` hanya menerima
+   *    attachment://, jadi berkas jarak-jauh harus jadi lampiran sungguhan.
+   */
+  const files: AttachmentBuilder[] = [];
+  for (const file of built.files) {
+    if (file.remoteUrl) {
+      try {
+        const res = await fetch(file.remoteUrl, { redirect: 'follow' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const isi = Buffer.from(await res.arrayBuffer());
+        // Batas aman: berkas besar bisa memakan memori bot (container kecil).
+        if (isi.length > 8 * 1024 * 1024) {
+          throw new Error('berkas lebih dari 8 MB');
+        }
+        files.push(new AttachmentBuilder(isi, { name: file.name }));
+      } catch (error) {
+        // Satu berkas gagal tidak boleh menggagalkan seluruh pesan: komponennya
+        // dirujuk lewat attachment:// yang tidak ada, jadi komponen itu dibuang
+        // dengan alasan yang bisa dibaca admin.
+        const sebab = error instanceof Error ? error.message : String(error);
+        droppedFiles.push(`${file.name} tidak bisa diunduh (${sebab})`);
+      }
+      continue;
+    }
+    const base64 = file.dataUri.slice(file.dataUri.indexOf(',') + 1);
+    files.push(new AttachmentBuilder(Buffer.from(base64, 'base64'), { name: file.name }));
+  }
+
+  return {
+    components: built.components as ContainerBuilder[],
+    flags: built.flags,
+    files,
+    droppedFiles,
+  };
 }
 
 async function resolveChannel(client: Client, channelId: string): Promise<TextChannel> {
@@ -132,6 +172,13 @@ export interface SendResult {
   messageId: string;
   /** true = pesan lama diperbarui, false = pesan baru dikirim. */
   edited: boolean;
+  /**
+   * Berkas yang gagal diunduh/dilampirkan.
+   *
+   * Pesan tetap terkirim tanpa berkas itu; daftar ini supaya admin tahu dan
+   * bisa memperbaiki URL-nya, bukan mengira berkasnya terkirim.
+   */
+  droppedFiles?: string[];
 }
 
 /**
@@ -152,7 +199,7 @@ export async function sendOrUpdatePost(options: {
   messageId: string | null;
   blocks: PostBlock[];
 }): Promise<SendResult> {
-  const built = buildPayload(options.blocks, options.roleButtons, options.accent, options.roleMenus);
+  const built = await buildPayload(options.blocks, options.roleButtons, options.accent, options.roleMenus);
   const payload = built;
   if (!payload) {
     throw new PostSendError('Pesan masih kosong — isi minimal satu teks atau gambar.');
@@ -169,13 +216,13 @@ export async function sendOrUpdatePost(options: {
     const lama = await channel.messages.fetch(options.messageId).catch((): null => null);
     if (lama) {
       await lama.edit(editPayload);
-      return { messageId: lama.id, edited: true };
+      return { messageId: lama.id, edited: true, ...(payload.droppedFiles.length ? { droppedFiles: payload.droppedFiles } : {}) };
     }
     logger.info(`Pesan kustom ${options.messageId} sudah tidak ada di channel — mengirim baru.`);
   }
 
   const sent: Message = await channel.send(payload);
-  return { messageId: sent.id, edited: false };
+  return { messageId: sent.id, edited: false, ...(payload.droppedFiles.length ? { droppedFiles: payload.droppedFiles } : {}) };
 }
 
 /** Hapus pesan yang pernah dikirim, kalau masih ada. Diam kalau sudah hilang. */
@@ -321,7 +368,7 @@ export async function sendOrUpdatePostViaWebhook(options: {
     );
   }
 
-  const built = buildPayload(options.blocks, [], options.accent, []);
+  const built = await buildPayload(options.blocks, [], options.accent, []);
   if (!built) {
     throw new PostSendError('Pesan masih kosong — isi minimal satu teks atau gambar.');
   }
@@ -343,7 +390,11 @@ export async function sendOrUpdatePostViaWebhook(options: {
       if (edited) return { messageId: options.messageId, edited: true };
     }
     const sent = await webhook.send(body);
-    return { messageId: sent.id, edited: false };
+    return {
+      messageId: sent.id,
+      edited: false,
+      ...(built.droppedFiles.length ? { droppedFiles: built.droppedFiles } : {}),
+    };
   } catch (error) {
     throw new PostSendError(`Gagal mengirim lewat webhook: ${errorMessage(error).slice(0, 160)}`);
   }

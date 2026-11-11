@@ -1193,6 +1193,82 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
 .preview-outside .pc-line { color: #dbdee1; }
 .preview-outside .pc-line.pc-small { color: #949ba4; }
 
+/*
+ * Aksesori di editor blok: tombol link dan thumbnail.
+ *
+ * Ditumpuk vertikal dengan garis pemisah tipis supaya jelas bahwa keduanya
+ * milik blok yang sama, bukan blok baru.
+ */
+.block-aksesori {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.09);
+}
+.block-aksesori-judul {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted, #8a8f98);
+}
+.block-aksesori input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Editor blok File */
+.block-file {
+  display: grid;
+  gap: 6px;
+}
+.block-file-unggah {
+  font-size: 12px;
+  color: var(--muted, #8a8f98);
+}
+
+/* Berkas di pratinjau: kartu unduhan di dasar pesan. */
+.pc-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #2b2d31;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+  padding: 10px 12px;
+  max-width: 340px;
+}
+.pc-file-ikon {
+  font-size: 20px;
+  line-height: 1;
+}
+.pc-file-isi {
+  min-width: 0;
+}
+.pc-file-nama {
+  font-size: 13px;
+  font-weight: 600;
+  color: #58b9ff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pc-file-ket {
+  font-size: 11px;
+  color: var(--muted, #8a8f98);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Spoiler: disamarkan, sama seperti perilaku Discord. */
+.pc-spoiler {
+  filter: blur(14px);
+}
+.pc-file-spoiler .pc-file-nama,
+.pc-file-spoiler .pc-file-ket {
+  filter: blur(6px);
+}
+
 .pc-section-text { flex: 1 1 auto; min-width: 0; }
 .pc-section-aksesori { flex: 0 0 auto; display: flex; align-items: center; }
 
