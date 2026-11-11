@@ -48,6 +48,21 @@ export function emptyState(): AgentState {
 /** Berapa banyak giliran percakapan yang disimpan sebagai konteks. */
 export const MEMORY_TURNS = 8;
 
+/**
+ * System prompt untuk kalimat pemecah sepi.
+ *
+ * Satu sumber untuk dua pemakai: `handleQuietChannel()` (timer di bot.ts) dan
+ * `previewQuietBreak()` (tombol "Tes pemecah sepi"). Dulu prompt-nya ditulis
+ * dua kali dengan kalimat berbeda, jadi yang dilihat admin di dashboard bukan
+ * yang benar-benar dikirim bot.
+ */
+export const QUIET_SYSTEM_PROMPT =
+  'Kamu anggota komunitas yang santai. Tulis satu kalimat pembuka singkat (maks 100 karakter) ' +
+  'untuk memecah keheningan. Jangan menyebut dirimu bot atau AI.';
+
+/** Batas panjang kalimat pemecah sepi sebelum dikirim ke Discord. */
+export const QUIET_MAX_CHARS = 200;
+
 /** Tambah satu giliran percakapan, dibatasi `MEMORY_TURNS` terakhir. */
 export function pushTurn(state: AgentState, turn: MemoryTurn): AgentState {
   return { ...state, turns: [...state.turns, turn].slice(-MEMORY_TURNS) };

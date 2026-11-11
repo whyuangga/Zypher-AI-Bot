@@ -756,6 +756,21 @@ await testAsync('navigasi dashboard tidak punya menu Memori & Transkrip', async 
   assert.ok(!html.includes('href="/transkrip"'), 'menu Transkrip masih ada');
 });
 
+await testAsync('tombol Upload dokumen di Ringkasan hanya pintasan ke /dokumen', async () => {
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+
+  // Tombol ini pernah ditanya "fungsinya apa?" — jawabannya: pintasan, bukan
+  // form. Dikunci supaya tidak diam-diam berubah jadi form kedua yang membuat
+  // admin bingung harus upload di mana.
+  assert.ok(
+    pages.includes('<a class=\"btn-primary\" href=\"/dokumen\">${icon(\'upload\', 16)} Upload dokumen</a>'),
+    'tombol berupa tautan ke halaman dokumen',
+  );
+  // Input file hanya boleh ada di halaman Dokumen, bukan Ringkasan.
+  const ringkasan = pages.slice(pages.indexOf('export function ringkasanPage'), pages.indexOf('export function dokumenPage'));
+  assert.equal(ringkasan.includes('type=\"file\"'), false, 'Ringkasan tidak punya input file');
+});
+
 await testAsync('halaman dashboard tidak menyebut channel arsip transkrip', async () => {
   const { moderasiPage } = await import('../src/web/ui/pages.js');
   const html = moderasiPage({
@@ -3056,6 +3071,78 @@ await testAsync('pratinjau: pemecah sepi menolak kalau fitur mati', async () => 
   });
   assert.equal(ambangNol.wouldFire, false);
   assert.ok(ambangNol.reason.includes('0 menit'));
+});
+
+await testAsync('pemecah sepi: pratinjau memakai aturan timer yang sama', async () => {
+  const { previewQuietBreak } = await import('../src/features/preview.js');
+  const { emptyState } = await import('../src/features/agent-core.js');
+
+  const now = new Date('2026-11-09T12:00:00+07:00').getTime();
+
+  // Belum pernah ada obrolan: timer tidak akan menyapa ruangan kosong.
+  const kosong = await previewQuietBreak({
+    settings: agentSettings() as never,
+    guildName: 'Komunitas Zypher',
+    state: emptyState(),
+    now,
+  });
+  assert.equal(kosong.wouldFire, false, 'timer tidak menyapa channel yang belum pernah ramai');
+  assert.ok(kosong.reason.includes('Belum ada obrolan'), 'alasan dijelaskan');
+
+  // Baru sunyi 5 menit, ambang 45 menit: belum waktunya.
+  const baru = await previewQuietBreak({
+    settings: agentSettings() as never,
+    guildName: 'Komunitas Zypher',
+    state: { ...emptyState(), traces: [{ userId: 'u1', at: now - 5 * 60_000 }] },
+    now,
+  });
+  assert.equal(baru.wouldFire, false, 'belum waktunya');
+  assert.ok(/baru sunyi|45 menit/.test(baru.reason), 'menyebut sisa waktu');
+
+  // Sunyi 60 menit, ambang 45: timer akan menyapa.
+  const siap = await previewQuietBreak({
+    settings: agentSettings({ cooldownSeconds: 0 }) as never,
+    guildName: 'Komunitas Zypher',
+    state: { ...emptyState(), traces: [{ userId: 'u1', at: now - 60 * 60_000 }] },
+    now,
+  });
+  assert.equal(siap.wouldFire, true, 'sudah waktunya menyapa');
+});
+
+await testAsync('pemecah sepi: prompt pratinjau identik dengan bot asli', async () => {
+  const core = await readFile('src/features/agent-core.ts', 'utf8');
+  const agent = await readFile('src/features/agent.ts', 'utf8');
+  const preview = await readFile('src/features/preview.ts', 'utf8');
+
+  // Dulu prompt ditulis dua kali dengan kalimat berbeda: yang dilihat admin di
+  // dashboard bukan yang benar-benar dikirim bot.
+  assert.ok(core.includes('export const QUIET_SYSTEM_PROMPT'), 'prompt punya satu sumber');
+  assert.ok(agent.includes('QUIET_SYSTEM_PROMPT'), 'bot asli memakainya');
+  assert.ok(preview.includes('QUIET_SYSTEM_PROMPT'), 'pratinjau memakainya');
+  assert.equal(
+    (agent.match(/Kamu anggota komunitas yang santai/g) ?? []).length,
+    0,
+    'prompt tidak lagi ditulis ulang di agent.ts',
+  );
+  assert.ok(preview.includes('shouldBreakSilence'), 'pratinjau memakai keputusan timer yang sama');
+});
+
+await testAsync('pemecah sepi: bisa dikirim nyata ke channel', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  const testSend = await readFile('src/features/test-send.ts', 'utf8');
+
+  assert.ok(server.includes("kind === 'quiet'"), 'API send-test menerima jenis quiet');
+  assert.ok(server.includes('sendQuietTest'), 'memanggil pengirim pemecah sepi');
+  assert.ok(testSend.includes('export async function sendQuietTest'), 'fungsinya ada');
+  assert.ok(testSend.includes('allowedMentions: { parse: [] as const }'), 'tidak men-tag siapa pun');
+  assert.ok(testSend.includes('QUIET_TEST_MARK'), 'pesan diberi penanda uji');
+
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  assert.ok(pages.includes('id="sendQuiet"'), 'tombol kirim ada di halaman agent');
+  assert.ok(pages.includes('async function sendQuietTest()'), 'fungsi JS-nya ada');
+  assert.ok(pages.includes("'/api/send-test/quiet'"), 'menembak endpoint kirim');
+  // Label lama menyesatkan: kartunya berisi tombol kirim nyata juga.
+  assert.ok(pages.includes('pratinjau gratis, atau kirim satu pesan nyata'), 'label kartu jujur');
 });
 
 await testAsync('pratinjau: pesan uji kosong ditolak API', async () => {

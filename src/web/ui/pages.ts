@@ -1580,7 +1580,7 @@ export function agentPage(options: AgentPageOptions): string {
 
   const testCard = card({
     title: 'Tes percakapan',
-    hint: 'tanpa mengirim ke channel',
+    hint: 'pratinjau gratis, atau kirim satu pesan nyata',
     right: `<span id="testState" class="hint" style="margin:0">Siap diuji</span>`,
     body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
   <div>
@@ -1613,8 +1613,16 @@ export function agentPage(options: AgentPageOptions): string {
     <button class="btn-ghost" type="button" id="sendAgent" onclick="sendAgentTest()" ${options.botOnline ? '' : 'disabled'}>
       ${icon('external', 15)} Kirim tes ke channel
     </button>
+    <button class="btn-ghost" type="button" id="sendQuiet" onclick="sendQuietTest()" ${options.botOnline ? '' : 'disabled'}>
+      ${icon('external', 15)} Kirim pemecah sepi ke channel
+    </button>
     <span class="hint" style="margin:0">Mengirim <b>satu</b> pesan nyata berisi balasan bot — diberi penanda "pesan uji".${options.botOnline ? '' : ' <b>Bot offline</b>.'}</span>
   </div>
+
+  <label class="check-row">
+    <input type="checkbox" id="forceQuiet" style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Paksa tulis kalimat walau timer belum waktunya menyapa <span class="hint">— berguna kalau channel masih ramai dan kamu ingin lihat contohnya</span></span>
+  </label>
 
   <div class="preview-box" id="outAgent" hidden>
     <div class="preview-meta" id="metaAgent"></div>
@@ -1728,16 +1736,19 @@ async function runQuietTest() {
   button.textContent = 'Menguji…';
   document.getElementById('testState').textContent = 'Menghubungi model…';
 
+  var forceEl = document.getElementById('forceQuiet');
+  var force = Boolean(forceEl && forceEl.checked);
+
   try {
     var data = await api('/api/preview/quiet', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ force: force }),
     });
     if (!data.wouldFire) {
-      showAgentResult('⏸️ tidak akan menyapa', '(tidak ada kalimat)', data.reason);
+      showAgentResult('⏸️ tidak akan menyapa', '(belum waktunya)', data.reason);
     } else if (data.source === 'ai') {
-      showAgentResult('✍️ kalimat pemecah sepi', data.text, data.reason);
+      showAgentResult(force ? '✍️ kalimat pemecah sepi (dipaksa)' : '✍️ kalimat pemecah sepi', data.text, data.reason);
     } else {
       showAgentResult('⚠️ gagal membuat kalimat', '(kosong)', data.note || data.reason);
     }
@@ -1780,6 +1791,42 @@ async function sendAgentTest() {
   } catch (error) {
     toast('Gagal mengirim: ' + error.message, true);
     showAgentResult('⚠️ gagal mengirim', '(tidak terkirim)', error.message);
+    document.getElementById('testState').textContent = 'Gagal mengirim';
+  } finally {
+    button.disabled = false;
+    button.innerHTML = label;
+  }
+}
+
+/**
+ * Kirim tes pemecah sepi ke channel ngobrol sungguhan.
+ *
+ * Kalimatnya dibuat ulang di server lewat jalur pratinjau yang sama, jadi yang
+ * dikirim = yang tampil di kotak pratinjau. Tanpa ini admin hanya bisa melihat
+ * demo dan tidak pernah tahu apakah sapaan benar-benar sampai ke channel.
+ */
+async function sendQuietTest() {
+  var button = document.getElementById('sendQuiet');
+  var label = button.innerHTML;
+  button.disabled = true;
+  button.textContent = 'Mengirim…';
+  document.getElementById('testState').textContent = 'Mengirim pemecah sepi…';
+
+  var forceEl = document.getElementById('forceQuiet');
+  var force = Boolean(forceEl && forceEl.checked);
+
+  try {
+    var data = await api('/api/send-test/quiet', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ force: force }),
+    });
+    toast('✅ Pemecah sepi terkirim ke #' + data.channelName);
+    showAgentResult('📨 pemecah sepi terkirim ke #' + data.channelName, data.text || '(kosong)', data.note);
+    document.getElementById('testState').textContent = 'Terkirim';
+  } catch (error) {
+    toast('Gagal mengirim: ' + error.message, true);
+    showAgentResult('⚠️ gagal mengirim pemecah sepi', '(tidak terkirim)', error.message);
     document.getElementById('testState').textContent = 'Gagal mengirim';
   } finally {
     button.disabled = false;

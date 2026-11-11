@@ -166,6 +166,22 @@ Cara mendapatkan Server ID: Discord → Server Settings → Widget, atau klik ka
 
 ---
 
+## Tombol "Upload dokumen" di Ringkasan
+
+Tombol besar di halaman Ringkasan **bukan** form upload — ia hanya pintasan ke
+halaman `/dokumen`, tempat upload sebenarnya berada. Di Ringkasan tidak ada
+input file, jadi kalau tombol diklik yang muncul adalah halaman Dokumen RAG.
+
+Alasannya: dokumen butuh konteks (nama file, uji pencarian, daftar yang sudah
+ada), dan menaruh dua form upload di dua halaman membuat admin bingung mana yang
+dipakai. Ringkasan tetap memuat tombolnya karena itu aksi pertama yang biasanya
+dicari orang setelah melihat statistik.
+
+Kalau tombol ini tidak melakukan apa-apa, biasanya karena halaman `/dokumen`
+gagal dimuat — cek log dashboard, bukan tombolnya.
+
+---
+
 ## Upload dokumen dari dashboard
 
 1. Buka `/dokumen`.
@@ -306,12 +322,28 @@ Halaman sendiri, sengaja terpisah dari sambutan karena yang diatur bukan
 - Batas per jam (gabungan kedua channel), jeda minimum, dan sakelar "diam saat
   ramai".
 
-Panel **Tes percakapan** menguji balasan bot untuk pesan contoh (mode ngobrol
-atau mode galeri) serta kalimat **pemecah sepi** — tanpa mengirim ke channel.
-Tombol "Kirim tes ke channel" di sebelahnya **mengirim** satu pesan nyata berisi
-kutipan pesan uji dan balasan bot, supaya gaya balasannya bisa dilihat langsung
-di Discord. Pesannya **teks biasa, bukan embed** — agent membalas sebagai pesan
-biasa supaya menyatu dengan obrolan member, jadi pesan uji harus berbentuk sama.
+Panel **Tes percakapan** punya dua tingkat:
+
+| Tombol | Biaya | Efek |
+|---|---|---|
+| **Tes balasan** / **Tes pemecah sepi** | satu panggilan model | pratinjau di dashboard, **tidak** mengirim apa pun ke Discord |
+| **Kirim tes ke channel** | satu panggilan model + satu pesan | mengirim balasan bot (dengan kutipan pesan uji) ke channel |
+| **Kirim pemecah sepi ke channel** | satu panggilan model + satu pesan | mengirim kalimat pemecah sepi ke channel ngobrol |
+
+Pesan uji **teks biasa, bukan embed** — agent membalas sebagai pesan biasa
+supaya menyatu dengan obrolan member, jadi pesan uji harus berbentuk sama.
+Semua pesan uji diberi penanda dan mention selalu dimatikan.
+
+**Tes pemecah sepi memakai aturan yang sama dengan timer sungguhan.** Bot
+memutuskan lewat `shouldBreakSilence()`: channel harus pernah ramai, sudah sunyi
+melewati ambang menit, dan jeda minimum sudah lewat. Kalau belum waktunya,
+dashboard menuliskan **sisa waktunya** (mis. "baru sunyi 5 menit, ambangnya 45
+menit — sekitar 40 menit lagi") alih-alih pura-pura menghasilkan sapaan.
+Centang **"Paksa tulis"** untuk menulis kalimatnya walau timer belum waktunya.
+
+Kalau dashboard dijalankan **terpisah dari bot**, state channel (kapan terakhir
+ada obrolan) tidak tersedia — pratinjau tetap membuat contoh kalimat, tapi
+waktunya tidak bisa dinilai. Jalankan `npm run dev` supaya keduanya satu proses.
 
 Detail perilaku & biaya API: [sambutan-agent.md](sambutan-agent.md).
 
@@ -351,6 +383,7 @@ Endpoint halaman Sambutan & AI Agent (pratinjau tidak mengirim apa pun;
 | `POST /api/send-test/welcome` `{target:'dm'\|'channel', ...form}` | Kirim **satu pesan uji** sambutan ke DM admin atau channel sambutan |
 | `POST /api/send-test/goodbye` `{...form}` | Kirim satu pesan uji salam perpisahan ke channel tersimpan |
 | `POST /api/send-test/agent` `{message, role, channelId}` | Kirim satu pesan uji berisi kutipan + balasan bot |
+| `POST /api/send-test/quiet` `{force?}` | Buat kalimat pemecah sepi lalu **kirim** ke channel ngobrol tersimpan |
 | `POST /api/persona` `{guild, persona}` | Simpan persona server (string atau `null`). Dipangkas, maks 1500 karakter; balas `{ok, persona}` |
 
 Semua `send-test` menolak dengan **400** kalau bot tidak jalan di proses

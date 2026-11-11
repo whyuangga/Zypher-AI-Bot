@@ -54,6 +54,7 @@ import {
   previewWelcome,
   SAMPLE_MEMBER_NAME,
 } from '../features/preview.js';
+import { channelState } from '../features/agent.js';
 import { normalizeDisplayMode } from '../features/display-mode.js';
 import { cardRendererAvailable, chromiumPath, renderWelcomeCard } from '../features/welcome-card.js';
 import {
@@ -68,6 +69,7 @@ import {
   SendTestError,
   sendAgentTest,
   sendGoodbyeTest,
+  sendQuietTest,
   sendWelcomeTest,
 } from '../features/test-send.js';
 import { previewAgentReply as composeAgentPreview } from '../features/preview.js';
@@ -1273,6 +1275,41 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         return;
       }
 
+      if (kind === 'quiet') {
+        const current = await getAgentSettings(guildId);
+        if (!current.channelId) {
+          sendJson(response, 400, {
+            error: 'Channel ngobrol belum dipilih. Pilih & simpan dulu sebelum mengirim tes.',
+          });
+          return;
+        }
+
+        const forced = payload.force === true;
+        // Kalimat dibuat lewat jalur pratinjau yang sama, jadi yang dikirim ke
+        // Discord benar-benar teks yang tadi dilihat admin di layar.
+        const result = await previewQuietBreak({
+          settings: current,
+          guildName: (await getGuildName(guildId)) ?? 'Server ini',
+          force: forced,
+        });
+
+        if (!result.text) {
+          sendJson(response, 400, {
+            error: result.note || result.reason || 'Model gagal menulis kalimat pemecah sepi.',
+          });
+          return;
+        }
+
+        const sent = await sendQuietTest(botClient, {
+          guildId,
+          channelId: current.channelId,
+          text: result.text,
+          forced,
+        });
+        sendJson(response, 200, { ...sent, ok: true, source: result.source, wouldFire: result.wouldFire });
+        return;
+      }
+
       if (kind === 'agent') {
         const message = typeof payload.message === 'string' ? payload.message.trim().slice(0, 500) : '';
         const channelIdForSend =
@@ -1489,6 +1526,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     const result = await previewQuietBreak({
       settings: current,
       guildName: (await getGuildName(guildId)) ?? 'Server ini',
+      // State channel hanya ada kalau bot jalan di proses ini. Tanpa itu,
+      // pratinjau tidak bisa menilai apakah timernya sudah waktunya.
+      state: current.channelId ? channelState(current.channelId) : undefined,
       force: payload.force === true,
     });
     sendJson(response, 200, { ok: true, ...result });

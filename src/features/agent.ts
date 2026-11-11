@@ -19,6 +19,8 @@ import { buildSystemPrompt } from './prompt.js';
 import { buildKnowledgeBlock, searchKnowledge } from './rag.js';
 import { collectImages, isImageAttachment, visionUserContent } from './vision.js';
 import {
+  QUIET_MAX_CHARS,
+  QUIET_SYSTEM_PROMPT,
   channelRole,
   emptyState,
   pushTurn,
@@ -341,11 +343,7 @@ export async function handleQuietChannel(
   try {
     const result = await chat({
       messages: [
-        {
-          role: 'system',
-          content: 'Kamu anggota komunitas yang santai. Tulis satu kalimat pembuka singkat (maks 100 karakter) ' +
-            'untuk memecah keheningan. Jangan menyebut dirimu bot atau AI.',
-        },
+        { role: 'system', content: QUIET_SYSTEM_PROMPT },
         { role: 'user', content: buildQuietPrompt(channel.guild.name) },
       ],
       maxTokens: config.ai.brevityTokens,
@@ -355,7 +353,7 @@ export async function handleQuietChannel(
     const text = (result.message.content ?? '').trim().replace(/^["'“”]|["'“”]$/g, '');
     if (!text) return false;
 
-    await channel.send({ content: truncate(text, 200), allowedMentions: { parse: [] } });
+    await channel.send({ content: truncate(text, QUIET_MAX_CHARS), allowedMentions: { parse: [] } });
     entry.state = recordReply(entry.state, now);
     entry.lastSeenAt = now;
     logger.info(`Agent menyapa channel sepi (${text.slice(0, 60)}…).`);

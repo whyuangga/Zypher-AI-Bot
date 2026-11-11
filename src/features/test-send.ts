@@ -27,7 +27,8 @@ import {
   type TextChannel,
   type AnyThreadChannel,
 } from 'discord.js';
-import type { GoodbyeSettings, WelcomeSettings } from '../db/repo.js';
+import { getAgentSettings, type GoodbyeSettings, type WelcomeSettings } from '../db/repo.js';
+import { QUIET_MAX_CHARS } from './agent-core.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
 import { previewGoodbye, previewWelcome } from './preview.js';
@@ -78,6 +79,14 @@ export interface SendTestResult {
 
 /** Penanda yang selalu ikut di pesan uji. */
 const TEST_MARK = '🧪 **Pesan uji dari dashboard** — bukan sambutan sungguhan.';
+
+/**
+ * Penanda untuk tes pemecah sepi. Dipisah karena pesan ini muncul di tengah
+ * obrolan, bukan saat member bergabung — penanda "bukan sambutan" akan
+ * membingungkan.
+ */
+const QUIET_TEST_MARK =
+  '🧪 **Tes pemecah sepi dari dashboard** — di pemakaian nyata kalimat ini muncul sendiri saat channel sunyi.';
 
 /**
  * Cari channel teks yang bisa ditulisi bot.
@@ -448,6 +457,61 @@ export async function sendAgentTest(
       text: options.reply,
       card: false,
       note: null,
+    };
+  } catch (error) {
+    throw new SendTestError(`Gagal mengirim ke #${channel.name}: ${explainDiscordError(error)}`);
+  }
+}
+
+/**
+ * Kirim tes **pemecah sepi** — benar-benar mengirim sapaan ke channel ngobrol.
+ *
+ * Bedanya dari `sendAgentTest`: di sini tidak ada kutipan pesan member, karena
+ * pemecah sepi memang kalimat yang muncul sendiri saat channel sunyi. Yang
+ * dikirim adalah bentuk aslinya (teks biasa + penanda uji), sehingga admin
+ * melihat persis seperti apa sapaan itu nanti di channel.
+ *
+ * Seperti tes lain, mention dimatikan: sapaan tidak boleh men-tag siapa pun.
+ */
+export async function sendQuietTest(
+  client: Client,
+  options: {
+    guildId: string;
+    /** Channel tujuan; kalau kosong diambil dari pengaturan agent. */
+    channelId?: string | null;
+    /** Isi sapaan yang sudah dibuat model. */
+    text: string;
+    /** true = dipaksa tulis walau timer belum waktunya. */
+    forced?: boolean;
+  },
+): Promise<SendTestResult> {
+  const guild = await client.guilds.fetch(options.guildId).catch(() => null);
+  if (!guild) throw new SendTestError('Server tidak ditemukan oleh bot.');
+
+  const settings = await getAgentSettings(options.guildId);
+  const targetId = options.channelId || settings.channelId;
+  if (!targetId) {
+    throw new SendTestError('Channel ngobrol belum dipilih. Pilih & simpan dulu sebelum mengirim tes.');
+  }
+
+  const { channel, reason } = await resolveChannel(guild, targetId);
+  if (!channel) throw new SendTestError(reason ?? 'Channel AI Agent tidak bisa dipakai.');
+
+  const body = truncate(options.text, QUIET_MAX_CHARS) || '(kosong)';
+
+  try {
+    await channel.send({
+      content: `${QUIET_TEST_MARK}\n\n${body}`,
+      allowedMentions: { parse: [] as const },
+    });
+    logger.info(`Kirim tes pemecah sepi ke #${channel.name} berhasil.`);
+    return {
+      ok: true,
+      where: 'channel',
+      channelName: channel.name,
+      text: body,
+      card: false,
+      note: options.forced ? 'Dikirim dengan "paksa tulis" — timer belum tentu waktunya menyapa sekarang.' : null,
     };
   } catch (error) {
     throw new SendTestError(`Gagal mengirim ke #${channel.name}: ${explainDiscordError(error)}`);
