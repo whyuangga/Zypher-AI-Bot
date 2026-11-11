@@ -62,7 +62,7 @@ export const DISPLAY_MODES: DisplayModeInfo[] = [
   {
     key: 'text',
     label: 'Text',
-    note: 'Teks biasa — satu-satunya mode yang bisa me-ping member.',
+    note: 'Teks biasa. Bisa me-ping member.',
     needsCard: false,
     canMention: true,
   },
