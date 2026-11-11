@@ -211,6 +211,72 @@ Aturan yang dijaga:
 - Angka awal sudah dirender server (`#resSeed`), jadi panel tidak berkedip
   kosong saat halaman dibuka.
 
+### Disk: diukur tiap 5 menit, bukan tiap 3 detik (dan kenapa)
+
+Ini bukan kelalaian, ini perbaikan setelah **server pemilik proyek dimatikan
+panel Wispbyte** dengan pesan *"stopped due to high CPU usage. Average CPU:
+22.03%"*.
+
+Versi pertama panel ini memindai **seluruh folder server setiap 3 detik** untuk
+menghitung pemakaian disk. Di proyek ini isinya ~7.300 berkas (7.001 di
+antaranya `node_modules`). Hasil pengukuran di mesin nyata:
+
+| | Sebelum | Sesudah |
+|---|---|---|
+| CPU per panggilan | **345 ms** | **5,7 ms** |
+| Beban rata-rata (polling 3 dtk) | **11,5%** dari 1 inti | **0,56%** |
+| Pemindaian folder | tiap 3 detik | tiap 5 menit |
+
+Ukuran folder tidak berubah dalam hitungan detik. Pertanyaan yang sebenarnya
+ingin dijawab admin adalah "apakah disk saya hampir penuh" — dan itu pertanyaan
+jam-jaman. Jadi angka disk **dipakai ulang sampai 5 menit** (`FOLDER_TTL_MS`),
+sementara CPU, memori, dan jaringan tetap segar tiap 3 detik.
+
+Kompromi yang diambil:
+
+- Panel menuliskan **kapan** disk terakhir diukur (`diukur 4 menit lalu`),
+  bukan berpura-pura angkanya dari detik ini.
+- Ada tombol **"ukur ulang disk"** di kaki panel untuk memaksa hitung sekarang
+  — kalau tidak ada, admin yang baru menghapus sesuatu akan mengira tombol
+  hapusnya gagal.
+- Menyimpan kuota di Pengaturan juga membuang cache, karena admin baru
+  mengubah angka dan ingin melihat hasilnya.
+- `node_modules` **tetap dihitung**. Melewatinya akan membuat angka disk
+  berbohong (pemakaian bisa tampak 14 MB padahal 174 MB) — yang salah cuma
+  frekuensinya, bukan cakupannya.
+
+Test mengunci ini dari dua arah: `shouldRescanFolder()` diuji sebagai fungsi
+murni, dan satu test memastikan `readResourceUsage()` **tidak** memanggil
+`folderBytes()` langsung — kalau seseorang mengembalikannya, beban 11% kembali
+tanpa gejala lain.
+
+### Ringkasan tidak menunggu pemindaian folder
+
+Keluhan lanjutan: *"aku buka dashboard sekarang jadi lemot saat memasuki
+Ringkasan. Untuk perpindahan halaman selain Ringkasan aman."*
+
+Itu benar, dan penyebabnya berbeda dari beban CPU. Halaman Ringkasan merender
+panel sumber daya saat **HTML-nya dibuat**, jadi ia menunggu pemindaian folder
+selesai — ~580 ms sebelum optimasi. Halaman lain tidak menyentuh disk sama
+sekali, karena itu terasa cepat.
+
+Dua perbaikan:
+
+1. **Pemindaian folder jadi paralel per folder.** Dulu ukuran tiap berkas
+   diambil berurutan (`await` satu per satu) — 7.331 berkas = 7.331 giliran.
+   Sekarang semua `stat()` dalam satu folder dijalankan bersamaan:
+   **580 ms → 238 ms**, hasil angkanya identik.
+2. **Render halaman tidak menunggu sama sekali** (`backgroundFolder: true`).
+   Kalau cache kosong, pemindaian dimulai di latar belakang dan halaman
+   langsung dikirim: **580 ms → 9 ms** untuk bagian itu, dan Ringkasan terukur
+   **52 ms** saat pertama dibuka (halaman lain 12–19 ms).
+
+Saat angka disk belum siap, panel menulis *"menghitung ukuran folder… angka
+muncul beberapa detik lagi"* — bukan `— terpakai` yang terbaca seperti
+kerusakan. Panel tetap terisi lewat polling 3 detik berikutnya, dan tidak ada
+pemindaian ganda: penanda `folderScan` memastikan hanya satu yang berjalan
+walau halaman di-refresh berkali-kali.
+
 ### CPU: dari `cpu.stat`, tanpa jeda
 
 CPU dihitung dari delta `usage_usec` di `cpu.stat` cgroup terhadap sampel
@@ -710,7 +776,7 @@ Tiga penyebab yang sudah diperbaiki:
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke # 334 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke # 346 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

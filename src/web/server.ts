@@ -59,7 +59,7 @@ import {
   type PreviewMemberLike,
 } from '../features/preview.js';
 import { channelState } from '../features/agent.js';
-import { readResourceUsage, readPartitionCapacity } from './resources.js';
+import { readResourceUsage, readPartitionCapacity, resetFolderCache } from './resources.js';
 import { TIME_ZONES } from '../lib/timezone.js';
 import { normalizeDisplayMode } from '../features/display-mode.js';
 import { cardRendererAvailable, chromiumPath, renderWelcomeCard } from '../features/welcome-card.js';
@@ -493,6 +493,13 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
           // kemudian menampilkannya — angka yang berubah sendiri membingungkan.
           diskLimitEnv: config.features.diskLimitBytes || null,
           diskLimitSetting: guildRow?.diskQuotaMb ? guildRow.diskQuotaMb * 1024 * 1024 : null,
+          // JANGAN tunggu pemindaian folder saat merender halaman.
+          //
+          // Pemindaian butuh ~240 ms di mesin ini (di disk jaringan panel
+          // hosting bisa jauh lebih lama), dan dulu HTML Ringkasan menunggu
+          // angka itu — akibatnya halaman ini terasa lemot padahal halaman
+          // lain cepat. Panel menampilkan "—" dulu, lalu polling mengisinya.
+          backgroundFolder: true,
         }).catch((error: unknown) => {
           logger.warn(`Gagal membaca pemakaian sumber daya — ${errorMessage(error)}`);
           return null;
@@ -1013,8 +1020,28 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     }
 
     await setGuildDiskQuota(guildId, value === null || value === 0 ? null : value);
+    // Kuota baru = admin ingin angka yang segar sekarang, bukan cache 5 menit.
+    resetFolderCache();
     const settings = await getGuildSettings(guildId);
     sendJson(response, 200, { ok: true, diskQuotaMb: settings?.diskQuotaMb ?? null });
+    return;
+  }
+
+  // Ukur ulang pemakaian disk SEKARANG.
+  //
+  // Angka disk dipakai ulang sampai 5 menit (lihat resources.ts) supaya tidak
+  // menjelajahi node_modules tiap 3 detik. Tanpa tombol ini, admin yang baru
+  // menghapus sesuatu harus menunggu sampai 5 menit untuk melihat efeknya —
+  // dan orang akan mengira tombol hapusnya tidak bekerja.
+  if (path === '/api/resources/refresh-disk' && method === 'POST') {
+    resetFolderCache();
+    const settingMb = guildId ? (await getGuildSettings(guildId))?.diskQuotaMb ?? null : null;
+    const usage = await readResourceUsage({
+      workDir: process.cwd(),
+      diskLimitEnv: config.features.diskLimitBytes || null,
+      diskLimitSetting: settingMb === null ? null : settingMb * 1024 * 1024,
+    });
+    sendJson(response, 200, { ok: true, diskUsed: usage.diskUsed, diskUsedAt: usage.diskUsedAt });
     return;
   }
 

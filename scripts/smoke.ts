@@ -5876,6 +5876,209 @@ await testAsync('dashboard: dua sakelar avatar ada di dua tab & terkirim ke serv
   assert.ok(pages.includes('embedMock'), 'halaman membaca embedMock dari server');
 });
 
+/* ------------------------------------------------------------------ */
+/*  Beban CPU: pemindaian folder tidak boleh tiap polling              */
+/* ------------------------------------------------------------------ */
+
+await testAsync('disk: pemindaian folder dipakai ulang, bukan tiap polling', async () => {
+  const { shouldRescanFolder } = await import('../src/web/resources.js');
+  const TTL = 5 * 60_000;
+  const now = 1_000_000;
+
+  // Belum ada hasil = harus pindai.
+  assert.equal(shouldRescanFolder(null, now, TTL), true, 'cache kosong = pindai');
+
+  // Baru saja dipindai: TIDAK boleh pindai lagi. Inilah inti perbaikan —
+  // dulu setiap polling 3 detik memindai seluruh node_modules (~345 ms CPU).
+  assert.equal(
+    shouldRescanFolder({ at: now - 1000, complete: true }, now, TTL),
+    false,
+    '1 detik lalu = pakai cache',
+  );
+  assert.equal(
+    shouldRescanFolder({ at: now - TTL + 1000, complete: true }, now, TTL),
+    false,
+    'hampir 5 menit = masih pakai cache',
+  );
+  assert.equal(
+    shouldRescanFolder({ at: now - TTL, complete: true }, now, TTL),
+    true,
+    'lewat 5 menit = pindai ulang',
+  );
+});
+
+await testAsync('disk: hasil tidak lengkap dihitung ulang lebih cepat', async () => {
+  const { shouldRescanFolder } = await import('../src/web/resources.js');
+  const TTL = 5 * 60_000;
+  const now = 1_000_000;
+  // Kena batas 60.000 berkas = angka kurang. Jangan disimpan 5 menit.
+  assert.equal(
+    shouldRescanFolder({ at: now - 31_000, complete: false }, now, TTL),
+    true,
+    'tidak lengkap = pindai ulang sesudah 30 detik',
+  );
+  assert.equal(
+    shouldRescanFolder({ at: now - 5_000, complete: false }, now, TTL),
+    false,
+    'tidak lengkap tapi baru 5 detik = masih pakai cache',
+  );
+});
+
+await testAsync('disk: panggilan berulang tidak memindai ulang folder', async () => {
+  const { readResourceUsage, resetFolderCache } = await import('../src/web/resources.js');
+  resetFolderCache();
+
+  const pertama = await readResourceUsage({ workDir: process.cwd() });
+  const kedua = await readResourceUsage({ workDir: process.cwd() });
+
+  assert.ok(pertama.diskUsed !== null, 'panggilan pertama mengisi angka disk');
+  assert.equal(kedua.diskUsed, pertama.diskUsed, 'angka disk sama (dari cache)');
+  // Waktu ukur TIDAK berubah: bukti bahwa folder tidak dipindai lagi.
+  assert.equal(kedua.diskUsedAt, pertama.diskUsedAt, 'waktu ukur tidak bergerak');
+  resetFolderCache();
+});
+
+await testAsync('disk: ukur ulang membuang cache', async () => {
+  const { readResourceUsage, resetFolderCache } = await import('../src/web/resources.js');
+  resetFolderCache();
+  const pertama = await readResourceUsage({ workDir: process.cwd() });
+  // Beri jeda supaya `Date.now()` pasti bergerak.
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  resetFolderCache();
+  const kedua = await readResourceUsage({ workDir: process.cwd() });
+  assert.ok(kedua.diskUsedAt! > pertama.diskUsedAt!, 'waktu ukur bergerak setelah cache dibuang');
+  resetFolderCache();
+});
+
+await testAsync('disk: dashboard menyebut umur angka, bukan berpura-pura segar', async () => {
+  const base = await readFile('src/web/ui/base.ts', 'utf8');
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  // Seed harus membawa waktu ukur, kalau tidak panel tidak bisa jujur.
+  assert.ok(base.includes('diskUsedAt'), 'seed panel membawa diskUsedAt');
+  assert.ok(pages.includes('diskAgeLabel'), 'ada label umur angka disk');
+  assert.ok(pages.includes('diukur '), 'panel menulis kapan disk diukur');
+  // Tombol paksa ukur ulang harus ada dan terhubung.
+  assert.ok(base.includes('id="resRefreshDisk"'), 'tombol ukur ulang ada di panel');
+  assert.ok(pages.includes('function refreshDisk'), 'fungsinya ada');
+  assert.ok(pages.includes('/api/resources/refresh-disk'), 'menembak endpoint yang benar');
+});
+
+await testAsync('disk: endpoint ukur ulang & simpan kuota membuang cache', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  const resources = await readFile('src/web/resources.ts', 'utf8');
+  assert.ok(resources.includes('export function resetFolderCache'), 'cache bisa dibuang');
+  assert.ok(
+    /api\/resources\/refresh-disk/.test(server),
+    'endpoint refresh-disk terdaftar',
+  );
+  // Simpan kuota juga harus membuang cache: admin baru mengubah angka, dan
+  // angka pemakaian lama bisa membingungkan.
+  const blokKuota = server.slice(server.indexOf("'/api/disk-quota'"));
+  assert.ok(
+    blokKuota.slice(0, 1200).includes('resetFolderCache()'),
+    'simpan kuota membuang cache disk',
+  );
+});
+
+await testAsync('disk: readResourceUsage memakai jalur ber-cache', async () => {
+  // Pengunci perilaku: kalau seseorang mengembalikan pemanggilan folderBytes()
+  // langsung ke readResourceUsage(), beban CPU 11% kembali tanpa test lain
+  // yang gagal — persis kejadian yang mematikan server di hosting.
+  const resources = await readFile('src/web/resources.ts', 'utf8');
+  const blok = resources.slice(resources.indexOf('export async function readResourceUsage'));
+  assert.ok(
+    blok.includes('cachedFolderBytes('),
+    'readResourceUsage memakai cachedFolderBytes',
+  );
+  assert.ok(
+    !/^\s*folderBytes\(options\.workDir\)/m.test(blok),
+    'tidak memanggil folderBytes langsung tiap sampel',
+  );
+});
+
+await testAsync('ringkasan: render halaman TIDAK menunggu pemindaian folder', async () => {
+  // Keluhan nyata: "buka dashboard jadi lemot saat masuk Ringkasan, halaman
+  // lain aman". Penyebabnya render halaman menunggu pemindaian folder (~580 ms).
+  const { readResourceUsage, resetFolderCache } = await import('../src/web/resources.js');
+  resetFolderCache();
+
+  const t0 = Date.now();
+  const hasil = await readResourceUsage({ workDir: process.cwd(), backgroundFolder: true });
+  const ms = Date.now() - t0;
+
+  assert.ok(ms < 150, `render halaman tidak menunggu pemindaian (dapat ${ms} ms)`);
+  assert.equal(hasil.diskUsed, null, 'angka disk boleh kosong dulu');
+  assert.equal(hasil.diskUsedAt, null, 'belum ada waktu ukur');
+
+  // Pemindaian berjalan di latar belakang: panggilan berikutnya mendapat angka.
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  const berikutnya = await readResourceUsage({ workDir: process.cwd() });
+  assert.ok(berikutnya.diskUsed !== null, 'panggilan berikutnya sudah punya angka disk');
+  resetFolderCache();
+});
+
+await testAsync('ringkasan: halaman & polling memakai jalur yang benar', async () => {
+  // Dua jalur berbeda dan keduanya penting:
+  //   render halaman -> backgroundFolder: true   (jangan tahan HTML)
+  //   polling        -> tanpa opsi itu           (angka harus ada)
+  // Mutasi yang menghapus `backgroundFolder: true` dari server.ts TIDAK
+  // tertangkap test perilaku di atas (fungsi tetap benar), jadi pemanggilnya
+  // dikunci di sini.
+  const server = await readFile('src/web/server.ts', 'utf8');
+  const blokHalaman = server.slice(server.indexOf('resources: await readResourceUsage'));
+  assert.ok(
+    blokHalaman.slice(0, 900).includes('backgroundFolder: true'),
+    'render halaman Ringkasan memakai backgroundFolder',
+  );
+
+  const blokApi = server.slice(server.indexOf("path === '/api/resources' && method === 'GET'"));
+  assert.ok(
+    !blokApi.slice(0, 900).includes('backgroundFolder'),
+    'polling /api/resources TIDAK memakai background (angka harus ada)',
+  );
+});
+
+await testAsync('ringkasan: pemindaian latar belakang tidak menumpuk', async () => {
+  const resources = await readFile('src/web/resources.ts', 'utf8');
+  // Tanpa penjaga `folderScan`, satu halaman yang di-refresh berulang kali bisa
+  // memicu banyak pemindaian bersamaan — persis beban yang ingin dihindari.
+  assert.ok(resources.includes('let folderScan'), 'ada penanda pemindaian berjalan');
+  assert.ok(
+    /if \(!folderScan\)/.test(resources),
+    'pemindaian baru hanya dimulai kalau belum ada yang berjalan',
+  );
+});
+
+await testAsync('ringkasan: panel jujur saat angka disk belum ada', async () => {
+  const base = await readFile('src/web/ui/base.ts', 'utf8');
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  // "— terpakai" akan terbaca seperti kerusakan; ganti dengan penjelasan.
+  assert.ok(
+    base.includes('menghitung ukuran folder'),
+    'render server menjelaskan angka disk belum siap',
+  );
+  assert.ok(
+    pages.includes('menghitung ukuran folder'),
+    'polling di browser memakai kalimat yang sama',
+  );
+});
+
+await testAsync('disk: pemindaian folder paralel per folder, bukan per berkas', async () => {
+  // 7.331 berkas dengan `await` berurutan = ~580 ms. Mengelompokkan stat per
+  // folder memangkasnya jadi ~240 ms tanpa mengubah hasil.
+  const resources = await readFile('src/web/resources.ts', 'utf8');
+  const blok = resources.slice(
+    resources.indexOf('async function folderBytes('),
+    resources.indexOf('async function folderBytes(') + 3000,
+  );
+  assert.ok(blok.includes('statJobs.push('), 'ukuran berkas dikumpulkan dulu');
+  assert.ok(blok.includes('await Promise.all(statJobs)'), 'lalu dijalankan bersamaan');
+  assert.ok(
+    !/bytes \+= \(await stat\(full\)\)\.size/.test(blok),
+    'tidak lagi meng-await stat satu per satu',
+  );
+});
+
 /*
  * Pemeriksaan terakhir: angka test di dokumentasi harus sama dengan jumlah test
  * yang benar-benar dijalankan.

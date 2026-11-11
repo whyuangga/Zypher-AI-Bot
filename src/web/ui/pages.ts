@@ -340,6 +340,15 @@ const LIVE_RESOURCES_JS = `<script>
     else if (width >= 65) barEl.classList.add('warn');
   }
 
+  /** "baru saja" / "4 menit lalu" untuk angka yang tidak diukur tiap polling. */
+  function diskAgeLabel(at) {
+    if (!at) return '';
+    var seconds = Math.max(0, Math.round((Date.now() - at) / 1000));
+    if (seconds < 45) return 'baru saja';
+    var minutes = Math.round(seconds / 60);
+    return minutes <= 1 ? '1 menit lalu' : minutes + ' menit lalu';
+  }
+
   function render(data) {
     var memPercent = data.memoryTotal ? (data.memoryUsed / data.memoryTotal) * 100 : null;
     var memSub = data.memoryTotal
@@ -364,13 +373,21 @@ const LIVE_RESOURCES_JS = `<script>
       ? (data.diskUsed / data.diskTotal) * 100
       : null;
     var diskSub = !data.diskTotal
-      ? 'kuota container belum diatur \u00b7 ' + bytes(data.diskUsed) + ' terpakai'
-        + (data.partitionTotal ? ' (partisi mesin ' + bytes(data.partitionTotal) + ')' : '')
+      ? (data.diskUsed === null
+          ? 'menghitung ukuran folder\u2026 angka muncul beberapa detik lagi'
+          : 'kuota container belum diatur \u00b7 ' + bytes(data.diskUsed) + ' terpakai'
+            + (data.partitionTotal ? ' (partisi mesin ' + bytes(data.partitionTotal) + ')' : ''))
       : pct(diskPercent) + '% dari ' + bytes(data.diskTotal)
         + (data.diskTotalSource === 'env' ? ' (dari .env)' : data.diskTotalSource === 'setting' ? ' (dari Pengaturan)' : '');
     if (data.diskReadRate !== null || data.diskWriteRate !== null) {
       diskSub += ' \u00b7 baca ' + rate(data.diskReadRate) + ' / tulis ' + rate(data.diskWriteRate);
     }
+    // Disk diukur ulang paling sering 5 menit sekali (penjelasan di
+    // resources.ts: memindai node_modules tiap 3 detik memakan ~345 ms CPU dan
+    // itulah yang membuat panel hosting mematikan server). Keterangan ini
+    // membuatnya jujur: admin tahu angkanya bukan dari detik ini.
+    var diskAge = diskAgeLabel(data.diskUsedAt);
+    if (diskAge) diskSub += ' \u00b7 diukur ' + diskAge;
     paint(3, bytes(data.diskUsed), diskSub, diskPercent);
 
     var updated = document.getElementById('resUpdated');
@@ -378,6 +395,29 @@ const LIVE_RESOURCES_JS = `<script>
       updated.innerHTML = 'Proses hidup ' + humanUptime(data.uptimeSeconds)
         + ' \u00b7 angka di sini milik <b>proses bot ini</b>, bukan seluruh mesin.';
     }
+  }
+
+  /**
+   * Paksa hitung ulang pemakaian disk SEKARANG.
+   *
+   * Angka disk dipakai ulang sampai 5 menit (supaya dashboard tidak
+   * menjelajahi node_modules tiap 3 detik). Tanpa tombol ini, admin yang baru
+   * menghapus sesuatu harus menunggu — dan akan mengira tombol hapusnya gagal.
+   */
+  function refreshDisk() {
+    var button = document.getElementById('resRefreshDisk');
+    if (button) { button.disabled = true; button.textContent = 'menghitung\u2026'; }
+    api('/api/resources/refresh-disk', { method: 'POST' })
+      .then(function (data) {
+        toast('Disk diukur ulang: ' + bytes(data.diskUsed));
+        // Ambil angka lengkap sekali lagi supaya panel langsung menampilkan
+        // hasilnya, bukan menunggu polling berikutnya.
+        return tick();
+      })
+      .catch(function (error) { toast('Gagal mengukur disk: ' + error.message, true); })
+      .then(function () {
+        if (button) { button.disabled = false; button.textContent = 'ukur ulang disk'; }
+      });
   }
 
   function mark(ok) {
