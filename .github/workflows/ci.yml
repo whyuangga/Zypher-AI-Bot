@@ -13,7 +13,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -44,27 +43,7 @@ jobs:
         run: npm run typecheck:strict
 
       - name: Smoke test
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NOMOR: ${{ github.event.pull_request.number }}
-        # pipefail WAJIB: tanpa itu exit code diambil dari `tee` (selalu 0),
-        # sehingga smoke yang gagal akan terlihat hijau.
-        run: |
-          set -o pipefail
-          npm run smoke 2>&1 | tee /tmp/smoke.log || {
-            # SEMENTARA (debugging): kegagalan dilaporkan sebagai komentar PR
-            # supaya bisa dibaca walau log blob diblokir. Dihapus setelah selesai.
-            {
-              echo "### Smoke gagal"
-              echo '```'
-              grep -n "❌" -A 12 /tmp/smoke.log | head -60
-              echo '```'
-              echo "node: $(node -p 'process.version')"
-              node -e "try{require('node:sqlite');console.log('node:sqlite ADA')}catch(e){console.log('node:sqlite TIDAK ADA:',e.message)}"
-            } > /tmp/body.md
-            gh pr comment "$PR_NOMOR" --body-file /tmp/body.md || true
-            exit 1
-          }
+        run: npm run smoke
 
       - name: Uji rantai fallback AI
         run: npm run test:fallback

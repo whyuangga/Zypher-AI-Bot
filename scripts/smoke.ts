@@ -1992,14 +1992,20 @@ await testAsync('mode tampilan: tiap mode mengirim bentuk berbeda (channel palsu
   assert.ok(Array.isArray(embedKirim.embeds) && embedKirim.embeds.length === 1, 'mode embed mengirim 1 embed');
   assert.deepEqual(embedKirim.files, [], 'mode embed tanpa lampiran (tanpa banner)');
 
-  // Mode card tanpa Chromium: jatuh ke embed, tidak pernah pesan kosong.
+  // Mode card. Hasilnya BERGANTUNG lingkungan: kalau Chromium ada (runner CI
+  // Ubuntu sudah punya Chrome), kartu terender -> files berisi PNG. Kalau tidak
+  // ada (sandbox/dev), bot mundur ke embed. Yang tidak boleh terjadi di dua-duanya:
+  // pesan kosong.
   await sendGoodbyeTest(client, {
     guildId: guild.id,
     member: member as never,
     settings: { ...GOODBYE_DEFAULTS, guildId: guild.id, enabled: true, useAi: false, channelId: channel.id, displayMode: 'card', updatedAt: 0 } as never,
   });
   const cardKirim = sent.at(-1)!;
-  assert.ok(Array.isArray(cardKirim.embeds) && (cardKirim.embeds as unknown[]).length === 1, 'kartu gagal -> embed');
+  const adaFile = Array.isArray(cardKirim.files) && (cardKirim.files as unknown[]).length === 1;
+  const adaEmbed = Array.isArray(cardKirim.embeds) && (cardKirim.embeds as unknown[]).length === 1;
+  assert.ok(adaFile || adaEmbed, 'mode card mengirim kartu ATAU mundur ke embed, bukan pesan kosong');
+  assert.ok(!(adaFile && adaEmbed), 'tidak mengirim kartu dan embed sekaligus');
 });
 
 await testAsync('mode tampilan: card, embed, text dikenali', async () => {
