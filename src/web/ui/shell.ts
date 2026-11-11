@@ -11,6 +11,7 @@ export type PageKey =
   | 'ringkasan'
   | 'panel'
   | 'sambutan'
+  | 'pesan'
   | 'agent'
   | 'dokumen'
   | 'keyword'
@@ -33,6 +34,7 @@ const NAV: Array<{ key: PageKey; label: string; href: string; icon: IconName }> 
   { key: 'ringkasan', label: 'Ringkasan', href: '/', icon: 'home' },
   { key: 'panel', label: 'Panel', href: '/panel', icon: 'sparkles' },
   { key: 'sambutan', label: 'Sambutan', href: '/sambutan', icon: 'users' },
+  { key: 'pesan', label: 'Pesan', href: '/pesan', icon: 'file' },
   { key: 'agent', label: 'AI Agent', href: '/agent', icon: 'message' },
   { key: 'dokumen', label: 'Dokumen RAG', href: '/dokumen', icon: 'book' },
   { key: 'keyword', label: 'Keyword', href: '/keyword', icon: 'tag' },

@@ -46,9 +46,17 @@ import {
   setModerationSettings,
   setPanelEnabled,
   setPersona,
+  listCustomPosts,
+  getCustomPost,
+  createCustomPost,
+  updateCustomPost,
+  deleteCustomPost,
+  setCustomPostMessage,
 } from '../db/repo.js';
 import { invalidateModerationCache } from '../features/moderation.js';
 import { listPanelChannels, PanelError, publishPanel, removePanel } from '../features/panel.js';
+import { deletePostMessage, PostSendError, sendOrUpdatePost } from '../features/custom-post-send.js';
+import { sanitizeBlocks } from '../features/custom-post.js';
 import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
 import {
   previewAgentReply,
@@ -94,6 +102,7 @@ import {
   welcomePage,
   agentPage,
 } from './ui/pages.js';
+import { pesanPage } from './ui/pesan.js';
 import { dbLabel, dialect } from '../db/index.js';
 import { parseLoginLink } from './login-link.js';
 import { dashboardStatus } from './status.js';
@@ -608,6 +617,42 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         sampleName: SAMPLE_MEMBER_NAME,
         status,
         counts,
+      }),
+    );
+    return;
+  }
+
+  if (path === '/pesan' && method === 'GET') {
+    // Daftar channel hanya bisa dibaca saat bot online; di mode dashboard-saja
+    // admin tetap bisa menyimpan pesan, hanya belum bisa mengirim.
+    let channels: Array<{ id: string; name: string }> = [];
+    if (guildId && botClient?.isReady()) {
+      channels = await listPanelChannels(botClient, guildId).catch((error: unknown) => {
+        logger.warn(`Pesan: gagal membaca daftar channel — ${errorMessage(error)}`);
+        return [];
+      });
+    }
+
+    sendHtml(
+      response,
+      200,
+      pesanPage({
+        guildId,
+        guildName: await getGuildName(guildId),
+        posts: guildId
+          ? (await listCustomPosts(guildId)).map((post) => ({
+              id: post.id,
+              name: post.name,
+              channelId: post.channelId,
+              blocks: post.blocks,
+              messageId: post.messageId,
+              updatedAt: post.updatedAt,
+            }))
+          : [],
+        channels,
+        botReady: Boolean(botClient?.isReady()),
+        status: dashboardStatus(),
+        counts: await navCounts(guildId),
       }),
     );
     return;
@@ -1563,6 +1608,123 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
   // Endpoint pratinjau sengaja tidak menyentuh Discord sama sekali: admin bisa
   // mencoba sapaan berkali-kali tanpa mengirim pesan ke channel mana pun.
   // Yang dikembalikan adalah hasil persis seperti yang akan dikirim bot.
+
+  /* ---------------- Pesan container (halaman /pesan) ---------------- */
+
+  /** `?withMessage=1` saat DELETE = hapus juga pesan di Discord. */
+
+  if (path === '/api/posts' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const payload = await readJson(request, response);
+    if (!payload) return;
+
+    const name = String(payload.name ?? '').trim();
+    if (!name) {
+      sendJson(response, 400, { error: 'Nama pesan wajib diisi.' });
+      return;
+    }
+    const channelId = typeof payload.channelId === 'string' && payload.channelId.trim() ? payload.channelId.trim() : null;
+
+    // Blok dirapikan di repo (sanitizeBlocks). Hasil buangannya dikembalikan
+    // supaya admin tahu apa yang tidak jadi dikirim, bukan disembunyikan.
+    const post = await createCustomPost(guildId, { name, channelId, blocks: payload.blocks });
+    const { dropped } = sanitizeBlocks(payload.blocks);
+    sendJson(response, 200, { ok: true, post: { ...post } as unknown as Record<string, unknown>, dropped });
+    return;
+  }
+
+  const postMatch = /^\/api\/posts\/(\d+)(\/send)?$/.exec(path);
+  if (postMatch) {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const id = Number(postMatch[1]);
+    const isSend = Boolean(postMatch[2]);
+
+    if (isSend && method === 'POST') {
+      if (!botClient?.isReady()) {
+        sendJson(response, 400, { error: 'Bot sedang offline di proses ini, jadi pesan tidak bisa dikirim.' });
+        return;
+      }
+      const post = await getCustomPost(guildId, id);
+      if (!post) {
+        sendJson(response, 404, { error: 'Pesan tidak ditemukan.' });
+        return;
+      }
+      if (!post.channelId) {
+        sendJson(response, 400, { error: 'Channel tujuan belum dipilih.' });
+        return;
+      }
+      try {
+        const result = await sendOrUpdatePost({
+          client: botClient,
+          channelId: post.channelId,
+          messageId: post.messageId,
+          blocks: post.blocks,
+        });
+        await setCustomPostMessage(guildId, id, result.messageId);
+        sendJson(response, 200, { ok: true, messageId: result.messageId, edited: result.edited });
+      } catch (error) {
+        // PostSendError = kesalahan yang bisa dimengerti admin (channel hilang,
+        // pesan kosong). Selain itu tetap dicatat sebagai kesalahan server.
+        if (error instanceof PostSendError) {
+          sendJson(response, 400, { error: error.message });
+        } else {
+          logger.error('Gagal mengirim pesan kustom', errorMessage(error));
+          sendJson(response, 500, { error: 'Gagal mengirim ke Discord.' });
+        }
+      }
+      return;
+    }
+
+    if (method === 'POST') {
+      const payload = await readJson(request, response);
+      if (!payload) return;
+      const post = await updateCustomPost(guildId, id, {
+        name: payload.name === undefined ? undefined : String(payload.name).trim(),
+        channelId:
+          payload.channelId === undefined
+            ? undefined
+            : typeof payload.channelId === 'string' && payload.channelId.trim()
+              ? payload.channelId.trim()
+              : null,
+        blocks: payload.blocks,
+      });
+      if (!post) {
+        sendJson(response, 404, { error: 'Pesan tidak ditemukan.' });
+        return;
+      }
+      const { dropped } = payload.blocks === undefined ? { dropped: [] } : sanitizeBlocks(payload.blocks);
+      sendJson(response, 200, { ok: true, post: { ...post } as unknown as Record<string, unknown>, dropped });
+      return;
+    }
+
+    if (method === 'DELETE') {
+      const post = await getCustomPost(guildId, id);
+      if (!post) {
+        sendJson(response, 404, { error: 'Pesan tidak ditemukan.' });
+        return;
+      }
+      // Pesan di Discord sengaja TIDAK dihapus saat menghapus dari dashboard:
+      // kalau admin hanya ingin membersihkan daftar, pesan yang sudah dibaca
+      // member jangan lenyap. Ada endpoint terpisah untuk itu (withMessage).
+      if (url.searchParams.get('withMessage') === '1' && botClient) {
+        const deleted = await deletePostMessage({
+          client: botClient,
+          channelId: post.channelId,
+          messageId: post.messageId,
+        }).catch(() => false);
+        logger.info(`Pesan kustom ${id}: pesan Discord ${deleted ? 'dihapus' : 'tidak dihapus'}.`);
+      }
+      await deleteCustomPost(guildId, id);
+      sendJson(response, 200, { ok: true });
+      return;
+    }
+  }
 
   if (path === '/api/preview/goodbye' && method === 'POST') {
     if (!guildId) {

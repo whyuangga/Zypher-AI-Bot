@@ -344,6 +344,63 @@ await test('agent: quiet_hours ada di Postgres', async () => {
 });
 
 /* ------------------------------------------------------------------ */
+/*  Pesan container (tabel custom_posts)                               */
+/* ------------------------------------------------------------------ */
+
+console.log('\nPesan container');
+
+await test('posting: simpan, baca, perbarui, hapus', async () => {
+  const guild = 'g-posts-pg';
+
+  const dibuat = await repo.createCustomPost(guild, {
+    name: 'Rules',
+    channelId: '1400000000000000001',
+    blocks: [
+      { kind: 'text', value: 'Aturan server' },
+      { kind: 'divider' },
+      { kind: 'button', value: 'Gabung', url: 'https://discord.gg/x' },
+    ],
+  });
+  // `insert()` memakai RETURNING id di Postgres — kalau pemetaan itu salah,
+  // id akan NaN dan semua operasi berikutnya ikut gagal.
+  assert.ok(Number.isInteger(dibuat.id) && dibuat.id > 0, `id berupa angka, dapat ${dibuat.id}`);
+  assert.equal(dibuat.name, 'Rules');
+  assert.deepEqual(dibuat.blocks.map((b) => b.kind), ['text', 'divider', 'button']);
+  assert.equal(dibuat.messageId, null, 'belum pernah dikirim');
+
+  // Tahap "dikirim": ID pesan Discord disimpan supaya bisa diperbarui.
+  await repo.setCustomPostMessage(guild, dibuat.id, '999888777666555444');
+  const terkirim = await repo.getCustomPost(guild, dibuat.id);
+  assert.equal(terkirim!.messageId, '999888777666555444', 'ID pesan tersimpan');
+
+  const diubah = await repo.updateCustomPost(guild, dibuat.id, {
+    name: 'Rules v2',
+    blocks: [{ kind: 'text', value: 'Versi kedua' }],
+  });
+  assert.equal(diubah!.name, 'Rules v2');
+  assert.equal(diubah!.blocks.length, 1, 'blok lama diganti');
+  assert.equal(diubah!.messageId, '999888777666555444', 'ID pesan dipertahankan saat isi diubah');
+
+  await repo.deleteCustomPost(guild, dibuat.id);
+  assert.equal(await repo.getCustomPost(guild, dibuat.id), null, 'terhapus');
+});
+
+await test('posting: blok berbahaya dibuang sebelum disimpan', async () => {
+  const guild = 'g-posts-pg-jahat';
+  const dibuat = await repo.createCustomPost(guild, {
+    name: 'Uji',
+    channelId: null,
+    blocks: [
+      { kind: 'text', value: 'Aman' },
+      { kind: 'button', value: 'Jahat', url: 'javascript:alert(1)' },
+      { kind: 'image', value: 'bukan-url' },
+    ],
+  });
+  // Yang disimpan hanya bentuk yang mungkin dikirim Discord.
+  assert.deepEqual(dibuat.blocks.map((b) => b.kind), ['text'], 'hanya blok sah');
+});
+
+/* ------------------------------------------------------------------ */
 
 await driver.close();
 

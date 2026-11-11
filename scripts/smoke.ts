@@ -2020,7 +2020,16 @@ await testAsync('agent: tidak pernah membalas pesan bot lain', async () => {
 
 await testAsync('agent: menyapa saat sepi hanya setelah batas waktu', async () => {
   const { shouldBreakSilence, recordTrace, emptyState } = await import('../src/features/agent-core.js');
-  const now = Date.now();
+  const { hourInZone } = await import('../src/lib/timezone.js');
+  // Jam DIPATOK, bukan Date.now().
+  //
+  // Test ini dulu memakai jam mesin, dan `quietHours` default menyala. Zona
+  // bawaannya WIB (UTC+7), jadi antara 16:00–22:59 UTC jam WIB sudah 23:00+
+  // — masuk jam tenang, sapaan ditahan, dan test gagal padahal kodenya benar.
+  // Hasilnya: CI hijau bila kebetulan jalan siang, merah bila jalan malam.
+  // 09:00 WIB dipilih supaya jauh dari batas jam tenang (23:00–06:00).
+  const now = Date.parse('2026-01-15T02:00:00.000Z');
+  assert.equal(hourInZone(now, 'Asia/Jakarta'), 9, 'prasyarat: 09:00 WIB, di luar jam tenang');
   const settings = agentSettings({ quietMinutes: 45, cooldownSeconds: 0 });
 
   // 10 menit lalu masih ada obrolan → belum sepi.
@@ -5703,6 +5712,248 @@ await testAsync('embed-mock: container dibaca baris, aksen, dan teks kecilnya', 
   assert.equal(kecil!.kind === 'small' ? kecil!.text : '', '-# Member baru · Komunitas', 'teks kecil terbaca');
   const gambar = mock!.blocks[1];
   assert.equal(gambar!.kind === 'image' ? gambar!.url : '', 'attachment://avatar.png', 'rujukan lampiran terbaca');
+});
+
+/* ------------------------------------------------------------------ */
+/*  Pesan container buatan admin (halaman /pesan)                      */
+/* ------------------------------------------------------------------ */
+
+await testAsync('pesan: blok dirapikan, yang mustahil dikirim dibuang', async () => {
+  const { sanitizeBlocks } = await import('../src/features/custom-post.js');
+
+  const { blocks, dropped } = sanitizeBlocks([
+    { kind: 'text', value: '  Selamat datang  ' },
+    { kind: 'divider', value: '' },
+    { kind: 'divider', value: '' }, // dobel -> digabung
+    { kind: 'image', value: 'bukan-url' },
+    { kind: 'image', value: 'https://contoh.test/a.png' },
+    { kind: 'button', value: 'Gabung', url: 'https://discord.gg/x' },
+    { kind: 'button', value: 'Rusak', url: 'javascript:alert(1)' },
+    { kind: 'button', value: '', url: 'https://x.test' },
+    { kind: 'entah', value: 'x' },
+    { kind: 'text', value: '   ' },
+  ]);
+
+  assert.deepEqual(
+    blocks.map((b) => b.kind),
+    ['text', 'divider', 'image', 'button'],
+    'hanya blok yang sah tersisa',
+  );
+  assert.equal(blocks[0]!.kind === 'text' ? blocks[0]!.value : '', 'Selamat datang', 'teks dirapikan');
+  // javascript: adalah celah XSS klasik — harus ditolak, bukan diizinkan.
+  assert.ok(dropped.some((d) => d.includes('Rusak')), 'tombol ber-URL berbahaya dibuang');
+  assert.ok(dropped.some((d) => d.includes('jenis blok tidak dikenal')), 'jenis asing dilaporkan');
+  assert.equal(dropped.filter((d) => d.includes('gambar')).length, 1, 'gambar tanpa URL dibuang');
+});
+
+await testAsync('pesan: teks dipotong di batas satu pesan, bukan dibuang', async () => {
+  const { sanitizeBlocks, LIMITS } = await import('../src/features/custom-post.js');
+  const panjang = 'a'.repeat(LIMITS.totalText + 500);
+  const { blocks } = sanitizeBlocks([{ kind: 'text', value: panjang }]);
+  assert.equal(blocks.length, 1, 'tetap satu blok');
+  const isi = blocks[0]!.kind === 'text' ? blocks[0]!.value : '';
+  assert.equal(isi.length, LIMITS.totalText, 'dipotong tepat di batas');
+});
+
+await testAsync('pesan: data rusak di database tidak membuat halaman gagal', async () => {
+  const { parseBlocks } = await import('../src/features/custom-post.js');
+  // JSON rusak, kolom kosong, dan bentuk lama harus menghasilkan daftar kosong
+  // — bukan melempar, karena halaman /pesan tetap harus bisa dibuka.
+  for (const raw of ['{bukan json', '', null, undefined, 42, '{}']) {
+    assert.deepEqual(parseBlocks(raw), [], `input ${String(raw)} aman`);
+  }
+  assert.equal(parseBlocks('[{"kind":"text","value":"Halo"}]')[0]?.value, 'Halo', 'JSON sah terbaca');
+});
+
+await testAsync('pesan: kirim memperbarui pesan lama, bukan mengirim ulang', async () => {
+  const { sendOrUpdatePost, deletePostMessage, PostSendError } = await import(
+    '../src/features/custom-post-send.js'
+  );
+
+  // Client tiruan: yang diuji adalah keputusan kirim-vs-edit, bukan Discord.
+  let kirim = 0;
+  let edit = 0;
+  const client = (pesanAda: boolean, channelAda = true) =>
+    ({
+      channels: {
+        async fetch(id: string) {
+          if (!channelAda) throw new Error('Unknown Channel');
+          return {
+            id,
+            isTextBased: () => true,
+            isDMBased: () => false,
+            async send() {
+              kirim += 1;
+              return { id: 'pesan-baru' };
+            },
+            messages: {
+              async fetch(messageId: string) {
+                if (!pesanAda) throw new Error('Unknown Message');
+                return {
+                  id: messageId,
+                  async edit() {
+                    edit += 1;
+                    return { id: messageId };
+                  },
+                  async delete() {
+                    return undefined;
+                  },
+                };
+              },
+            },
+          };
+        },
+      },
+    }) as unknown as import('discord.js').Client;
+
+  const blocks = [{ kind: 'text' as const, value: 'Halo' }];
+
+  // Pesan lama masih ada: harus EDIT. Ini inti janji halaman /pesan — member
+  // yang sudah menyimpan tautan ke pesan itu tetap menemukannya.
+  const a = await sendOrUpdatePost({ client: client(true), channelId: 'c1', messageId: 'lama', blocks });
+  assert.equal(a.edited, true, 'pesan lama diperbarui');
+  assert.equal(kirim, 0, 'tidak ada pesan baru dikirim');
+
+  // Pesan lama sudah dihapus orang: jangan menyerah, kirim baru.
+  const b = await sendOrUpdatePost({ client: client(false), channelId: 'c2', messageId: 'hilang', blocks });
+  assert.equal(b.edited, false, 'pesan baru dikirim');
+  assert.equal(kirim, 1, 'kirim baru terjadi sekali');
+
+  // Isi kosong: kesalahan yang bisa dipahami admin, bukan crash.
+  await assert.rejects(
+    () => sendOrUpdatePost({ client: client(true), channelId: 'c3', messageId: null, blocks: [{ kind: 'divider', value: '' }] }),
+    (error: unknown) => error instanceof PostSendError && /kosong/i.test((error as Error).message),
+    'isi kosong ditolak dengan pesan jelas',
+  );
+
+  // Channel hilang: pesan jelas, bukan "Unknown Channel" mentah.
+  await assert.rejects(
+    () => sendOrUpdatePost({ client: client(true, false), channelId: 'c4', messageId: null, blocks }),
+    (error: unknown) => error instanceof PostSendError,
+    'channel hilang jadi PostSendError',
+  );
+
+  // Hapus pesan: benar kalau berhasil, dan TIDAK melempar kalau channel hilang.
+  assert.equal(
+    await deletePostMessage({ client: client(true), channelId: 'c5', messageId: 'm5' }),
+    true,
+    'pesan terhapus',
+  );
+  assert.equal(
+    await deletePostMessage({ client: client(true, false), channelId: 'c6', messageId: 'm6' }),
+    false,
+    'channel hilang tidak melempar',
+  );
+});
+
+await testAsync('pesan: isi blok tidak bisa keluar dari tag <script>', async () => {
+  const { pesanPage } = await import('../src/web/ui/pesan.js');
+
+  // Serangan klasik: tutup <script> lebih awal, lalu suntik HTML. Isi blok
+  // berasal dari admin, jadi tidak boleh dipercaya.
+  const evil = '</script><img src=x onerror="alert(1)">';
+  const html = pesanPage({
+    guildId: '123456789012345678',
+    guildName: 'Server',
+    status: { online: false, mode: 'standalone', uptimeSeconds: 1 },
+    posts: [
+      {
+        id: 1,
+        name: '</script><b>nama</b>',
+        channelId: null,
+        blocks: [{ kind: 'text', value: evil }],
+        messageId: null,
+        updatedAt: Date.now(),
+      },
+    ],
+    channels: [],
+    botReady: false,
+  });
+
+  // Yang diperiksa: TIDAK ADA penutup script yang diikuti tag HTML.
+  assert.ok(!/<\/script>\s*<img/i.test(html), 'penutup script tidak bisa disuntik');
+  assert.ok(!html.includes('onerror="alert(1)"'), 'atribut onerror tidak muncul mentah');
+  // Dan isinya masih ada dalam bentuk aman, jadi admin tetap melihat teksnya.
+  assert.ok(html.includes('u003c/script'), 'isi di-encode, bukan dibuang');
+  // Nama pesan di daftar tetap harus ter-escape sebagai HTML biasa.
+  assert.ok(!html.includes('<b>nama</b>'), 'nama tidak dirender sebagai tag');
+});
+
+await testAsync('pesan: payload container berisi Section/ActionRow sesuai urutan', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const { blocks } = sanitizeBlocks([
+    { kind: 'text', value: 'Aturan server' },
+    { kind: 'divider' },
+    { kind: 'image', value: 'https://contoh.test/a.png' },
+    { kind: 'button', value: 'Gabung', url: 'https://discord.gg/x' },
+  ]);
+
+  const built = buildPostPayload(blocks, {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+  });
+  assert.ok(built, 'payload terbentuk');
+  const json = (built!.components[0] as { toJSON: () => { components: Array<Record<string, unknown>> } }).toJSON();
+  // 10 = teks, 14 = pemisah, 12 = galeri, 1 = action row (tombol)
+  assert.deepEqual(json.components.map((c) => c.type), [10, 14, 12, 1], 'urutan blok dijaga');
+  // Flag Components V2 wajib; tanpa itu Discord menganggap pesan kosong.
+  assert.equal(built!.flags, d.MessageFlags.IsComponentsV2, 'flag V2 dipasang');
+
+  const row = json.components[3] as { components: Array<Record<string, unknown>> };
+  assert.equal(row.components[0]!.label, 'Gabung', 'label tombol');
+  assert.equal(row.components[0]!.style, d.ButtonStyle.Link, 'tombol memakai gaya link');
+});
+
+await testAsync('pesan: pesan kosong tidak menghasilkan payload', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+  };
+  assert.equal(buildPostPayload([], deps), null, 'tanpa blok = null');
+  const hanyaGaris = sanitizeBlocks([{ kind: 'divider' }, { kind: 'button', value: 'a', url: 'https://x.test' }]);
+  assert.equal(
+    buildPostPayload(hanyaGaris.blocks, deps),
+    null,
+    'hanya pemisah + tombol = tidak ada isi, ditolak',
+  );
+});
+
+await testAsync('pesan: tombol dipecah maksimum 5 per baris', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const tombol = Array.from({ length: 7 }, (_, i) => ({
+    kind: 'button',
+    value: `Tombol ${i + 1}`,
+    url: `https://contoh.test/${i}`,
+  }));
+  const { blocks } = sanitizeBlocks([{ kind: 'text', value: 'Pilih role' }, ...tombol]);
+  const built = buildPostPayload(blocks, {
+    ContainerBuilder: d.ContainerBuilder, TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder, MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder, ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder, ButtonStyle: d.ButtonStyle,
+  });
+  const json = (built!.components[0] as { toJSON: () => { components: Array<Record<string, unknown>> } }).toJSON();
+  const rows = json.components.filter((c) => c.type === 1);
+  // Discord menolak lebih dari 5 tombol per ActionRow.
+  assert.equal(rows.length, 2, 'dua baris tombol');
+  assert.equal((rows[0] as { components: unknown[] }).components.length, 5, 'baris pertama 5 tombol');
+  assert.equal((rows[1] as { components: unknown[] }).components.length, 2, 'baris kedua 2 tombol');
 });
 
 await testAsync('container: banner di ATAS teks, avatar jadi thumbnail kanan', async () => {

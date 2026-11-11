@@ -367,6 +367,7 @@ const {
   agentPage,
   moderasiPage,
 } = await import('../src/web/ui/pages.js');
+const { pesanPage } = await import('../src/web/ui/pesan.js');
 
 const pages: Array<{ name: string; render: () => string }> = [
   { name: '/login', render: () => loginPage() },
@@ -435,6 +436,34 @@ const pages: Array<{ name: string; render: () => string }> = [
         model: null,
         defaultModel: 'gpt-uji',
         stats: { rooms: 0, messages: 0, documents: 0 },
+      } as never),
+  },
+  {
+    name: '/pesan',
+    render: () => pesanPage({ ...base, posts: [], channels: [channel], botReady: true } as never),
+  },
+  {
+    // Varian berisi: menguji mode ubah (?id=) memuat blok dan nama dengan benar.
+    name: '/pesan?isi',
+    render: () =>
+      pesanPage({
+        ...base,
+        posts: [
+          {
+            id: 1,
+            name: 'Rules',
+            channelId: channel.id,
+            blocks: [
+              { kind: 'text', value: 'Aturan server' },
+              { kind: 'divider', value: '' },
+              { kind: 'button', value: 'Gabung', url: 'https://discord.gg/x' },
+            ],
+            messageId: '999',
+            updatedAt: Date.now(),
+          },
+        ],
+        channels: [channel],
+        botReady: true,
       } as never),
   },
   { name: '/dokumen', render: () => dokumenPage({ ...base, documents: [], embedModel: null } as never) },

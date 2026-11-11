@@ -1056,6 +1056,53 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   height: 20px;
 }
 
+/* --- Editor blok halaman Pesan --- */
+.block-list {
+  display: grid;
+  gap: 10px;
+}
+.block-row {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  display: grid;
+  gap: 8px;
+}
+.block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.block-kind {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+.block-tools {
+  display: flex;
+  gap: 4px;
+}
+.block-divider {
+  height: 1px;
+  background: var(--line-strong);
+  margin: 2px 0;
+}
+.block-add {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.list-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
 /* --- Container (Components V2) --- */
 .preview-container {
   border-radius: 4px;

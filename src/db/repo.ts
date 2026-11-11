@@ -1,6 +1,7 @@
 import { all, get, insert, run } from './index.js';
 import { config } from '../config.js';
 import { normalizeTimeZone } from '../lib/timezone.js';
+import { parseBlocks, sanitizeBlocks, type PostBlock } from '../features/custom-post.js';
 import {
   modeFromLegacySettings,
   normalizeDisplayMode,
@@ -1403,4 +1404,121 @@ export async function setPanelEnabled(guildId: string, enabled: boolean): Promis
     [guildId, enabled ? 1 : 0, now, enabled ? 1 : 0, now],
   );
   return getPanel(guildId);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Pesan container buatan admin (halaman /pesan)                      */
+/* ------------------------------------------------------------------ */
+
+export interface CustomPost {
+  id: number;
+  /** Blok berurutan; sudah dirapikan oleh `parseBlocks()`. */
+  blocks: PostBlock[];
+  name: string;
+  channelId: string | null;
+  /** ID pesan Discord yang sudah dikirim (null = belum pernah dikirim). */
+  messageId: string | null;
+  updatedAt: number;
+}
+
+interface CustomPostRow {
+  id: number | string;
+  guild_id: string;
+  name: string;
+  channel_id: string | null;
+  blocks: string;
+  message_id: string | null;
+  updated_at: number | string;
+}
+
+function toCustomPost(row: CustomPostRow): CustomPost {
+  return {
+    id: Number(row.id),
+    name: row.name,
+    channelId: row.channel_id,
+    blocks: parseBlocks(row.blocks),
+    messageId: row.message_id,
+    updatedAt: Number(row.updated_at),
+  };
+}
+
+/** Semua pesan milik satu server, terbaru lebih dulu. */
+export async function listCustomPosts(guildId: string): Promise<CustomPost[]> {
+  // Dibatasi: pesan container adalah dokumen panjang, dan halaman /pesan
+  // menanam semua isinya ke HTML. 200 pesan x 3500 karakter sudah ~700 KB —
+  // batas ini menjaga halaman tetap ringan tanpa memotong pemakaian wajar.
+  const rows = await all<CustomPostRow>(
+    'SELECT * FROM custom_posts WHERE guild_id = ? ORDER BY updated_at DESC LIMIT 200',
+    [guildId],
+  );
+  return rows.map(toCustomPost);
+}
+
+export async function getCustomPost(guildId: string, id: number): Promise<CustomPost | null> {
+  const row = await get<CustomPostRow>('SELECT * FROM custom_posts WHERE guild_id = ? AND id = ?', [
+    guildId,
+    id,
+  ]);
+  return row ? toCustomPost(row) : null;
+}
+
+/**
+ * Buat pesan baru.
+ *
+ * Blok dirapikan LEBIH DULU lewat `sanitizeBlocks()`, jadi yang tersimpan
+ * selalu bentuk yang mungkin dikirim Discord — bukan input mentah dashboard.
+ */
+export async function createCustomPost(
+  guildId: string,
+  input: { name: string; channelId: string | null; blocks: unknown },
+): Promise<CustomPost> {
+  const blocks = sanitizeBlocks(input.blocks).blocks;
+  const id = await insert(
+    `INSERT INTO custom_posts (guild_id, name, channel_id, blocks, message_id, updated_at)
+     VALUES (?, ?, ?, ?, NULL, ?)`,
+    [guildId, input.name.slice(0, 120), input.channelId, JSON.stringify(blocks), Date.now()],
+  );
+  return (await getCustomPost(guildId, id))!;
+}
+
+/** Perbarui isi pesan. `message_id` dipertahankan supaya bisa diedit di Discord. */
+export async function updateCustomPost(
+  guildId: string,
+  id: number,
+  input: { name?: string; channelId?: string | null; blocks?: unknown },
+): Promise<CustomPost | null> {
+  const current = await getCustomPost(guildId, id);
+  if (!current) return null;
+
+  const blocks = input.blocks === undefined ? current.blocks : sanitizeBlocks(input.blocks).blocks;
+  await run(
+    'UPDATE custom_posts SET name = ?, channel_id = ?, blocks = ?, updated_at = ? WHERE guild_id = ? AND id = ?',
+    [
+      (input.name ?? current.name).slice(0, 120),
+      input.channelId === undefined ? current.channelId : input.channelId,
+      JSON.stringify(blocks),
+      Date.now(),
+      guildId,
+      id,
+    ],
+  );
+  return getCustomPost(guildId, id);
+}
+
+/** Simpan ID pesan Discord setelah berhasil dikirim. */
+export async function setCustomPostMessage(
+  guildId: string,
+  id: number,
+  messageId: string | null,
+): Promise<void> {
+  await run('UPDATE custom_posts SET message_id = ?, updated_at = ? WHERE guild_id = ? AND id = ?', [
+    messageId,
+    Date.now(),
+    guildId,
+    id,
+  ]);
+}
+
+export async function deleteCustomPost(guildId: string, id: number): Promise<void> {
+  await run('DELETE FROM custom_posts WHERE guild_id = ? AND id = ?', [guildId, id]);
 }

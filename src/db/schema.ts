@@ -193,6 +193,21 @@ CREATE TABLE IF NOT EXISTS panels (
   enabled    INTEGER NOT NULL DEFAULT 1,
   updated_at INTEGER NOT NULL
 );
+
+-- ---------- pesan container buatan admin (halaman /pesan) ----------
+-- Menyimpan pesan bertema yang disusun dari dashboard: rules, ambil roles,
+-- pengumuman, dsb. Kolom blocks berisi JSON daftar blok berurutan, message_id
+-- menyimpan ID pesan yang sudah dikirim supaya bisa DIPERBARUI (bukan kirim
+-- ulang) saat isinya diubah.
+CREATE TABLE IF NOT EXISTS custom_posts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id   TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  channel_id TEXT,
+  blocks     TEXT NOT NULL,
+  message_id TEXT,
+  updated_at INTEGER NOT NULL
+);
 `;
 
 /**
@@ -375,6 +390,16 @@ CREATE TABLE IF NOT EXISTS panels (
   channel_id TEXT,
   message_id TEXT,
   enabled    INTEGER NOT NULL DEFAULT 1,
+  updated_at BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS custom_posts (
+  id         SERIAL PRIMARY KEY,
+  guild_id   TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  channel_id TEXT,
+  blocks     TEXT NOT NULL,
+  message_id TEXT,
   updated_at BIGINT NOT NULL
 );
 `;
