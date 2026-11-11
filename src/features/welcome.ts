@@ -440,12 +440,22 @@ async function composePayload(options: {
   const bannerFile = allowed.attach
     ? await readBannerAttachment(options.bannerPath, options.bannerData)
     : null;
+
+  // Mention di mode embed dikirim lewat `content`, BUKAN lewat deskripsi embed:
+  // `<@id>` di dalam embed hanya teks biasa dan tidak pernah memicu notifikasi.
+  // Isinya mention saja — teks sapaan sudah ada di deskripsi embed, jadi
+  // menambahkannya lagi ke content akan membuat sapaan tampil dua kali.
+  //
+  // Dulu kedua jalur di bawah mengembalikan `content: ''`, sehingga member baru
+  // tidak pernah menerima notifikasi di mode embed.
+  const mention = mentionUser ? `<@${member.id}>` : '';
+
   if (bannerFile) {
     embed.setImage(`attachment://${bannerFile.name}`);
-    return { content: '', embeds: [embed], files: [bannerFile.attachment] };
+    return { content: mention, embeds: [embed], files: [bannerFile.attachment] };
   }
 
-  return { content: '', embeds: [embed], files: [] };
+  return { content: mention, embeds: [embed], files: [] };
 }
 
 async function buildCard(

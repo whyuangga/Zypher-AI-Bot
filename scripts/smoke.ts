@@ -2826,13 +2826,106 @@ await testAsync('mode tampilan: welcomeMember mengirim sesuai mode (end-to-end)'
     'mention diizinkan (kalau tidak, tidak akan memicu notifikasi)',
   );
 
-  // Mode embed: tanpa mention, ada satu embed.
+  // Mode embed: satu embed, dan mention lewat content.
+  //
+  // Test ini dulu berbunyi "mode embed tidak menulis content" — dan itulah
+  // bug-nya: member baru tidak pernah menerima notifikasi di mode embed.
+  // Mention HARUS di content, karena `<@id>` di dalam embed cuma teks biasa.
   await saveWelcomeSettings(guild.id, { displayMode: 'embed' });
   await welcomeMember(member as never);
   const embedKirim = sent.at(-1)!;
-  assert.equal(kirim.content === embedKirim.content, false, 'embed tidak mengirim teks yang sama di content');
-  assert.equal(embedKirim.content, undefined, 'mode embed tidak menulis content');
   assert.equal((embedKirim.embeds as unknown[]).length, 1, 'mode embed mengirim 1 embed');
+  assert.equal(embedKirim.content, '<@555555555555555555>', 'mention dikirim lewat content');
+  assert.ok(
+    !String(embedKirim.content).includes('Halo Sky'),
+    'teks sapaan tidak diulang di content — sudah ada di deskripsi embed',
+  );
+  assert.ok(
+    JSON.stringify(embedKirim.allowedMentions).includes('555555555555555555'),
+    'mention diizinkan',
+  );
+});
+
+await testAsync('mention: aktif di SEMUA mode, bukan hanya text', async () => {
+  // Bug nyata: mode embed mengembalikan `content: ''`, jadi member baru tidak
+  // pernah dapat notifikasi. Test lama justru mengunci bug itu ("mode embed
+  // tidak menulis content"). Sekarang seluruh matriks diuji sekaligus supaya
+  // tidak ada mode yang terlewat lagi.
+  const { welcomeMember } = await import('../src/features/welcome.js');
+  const { saveWelcomeSettings } = await import('../src/db/repo.js');
+
+  const ID = '222222222222222222';
+  const sent: Record<string, unknown>[] = [];
+  const channel = {
+    id: '999999999999999991', name: 'join-leave',
+    isTextBased: () => true, isDMBased: () => false,
+    permissionsFor: () => ({ has: () => true }),
+    send: async (p: Record<string, unknown>) => { sent.push(p); return { id: '1' }; },
+  };
+  const guild = {
+    id: '156942477750257700', name: 'Komunitas Zypher', memberCount: 5,
+    channels: { fetch: async () => channel },
+    members: { me: { id: '999999999999999999' } },
+  };
+  const member = {
+    id: ID, displayName: 'Sky', guild,
+    displayAvatarURL: () => 'https://x/y.png',
+    user: { bot: false, username: 'sky', tag: 'sky#0000', displayAvatarURL: () => 'https://x/y.png' },
+  };
+
+  for (const mode of ['card', 'embed', 'text', 'container'] as const) {
+    await saveWelcomeSettings(guild.id, {
+      enabled: true, useAi: false, channelId: channel.id,
+      template: 'Halo {user}!', displayMode: mode, bannerPath: null,
+    });
+    await welcomeMember(member as never);
+    const p = sent.at(-1)!;
+
+    // Container menaruh mention di komponen; mode lain di content.
+    // Yang dibandingkan adalah payload utuh, karena itu yang diterima Discord.
+    const utuh = JSON.stringify({ content: p.content ?? '', components: p.components ?? [] });
+    assert.ok(utuh.includes(`<@${ID}>`), `mode ${mode}: member di-mention`);
+    assert.ok(
+      JSON.stringify(p.allowedMentions ?? {}).includes(ID),
+      `mode ${mode}: mention diizinkan (tanpa ini yang tampil teks mentah)`,
+    );
+  }
+});
+
+await testAsync('mention: mode embed tidak mengulang teks sapaan di content', async () => {
+  // Mention embed harus dikirim sebagai content, TAPI teksnya sudah ada di
+  // deskripsi embed. Kalau ditempel lagi, sapaan tampil dua kali.
+  const { welcomeMember } = await import('../src/features/welcome.js');
+  const { saveWelcomeSettings } = await import('../src/db/repo.js');
+
+  const sent: Record<string, unknown>[] = [];
+  const channel = {
+    id: '999999999999999992', name: 'join-leave',
+    isTextBased: () => true, isDMBased: () => false,
+    permissionsFor: () => ({ has: () => true }),
+    send: async (p: Record<string, unknown>) => { sent.push(p); return { id: '1' }; },
+  };
+  const guild = {
+    id: '156942477750257701', name: 'Komunitas Zypher', memberCount: 5,
+    channels: { fetch: async () => channel },
+    members: { me: { id: '999999999999999999' } },
+  };
+  const member = {
+    id: '222222222222222223', displayName: 'Rani', guild,
+    displayAvatarURL: () => 'https://x/y.png',
+    user: { bot: false, username: 'rani', tag: 'rani#0000', displayAvatarURL: () => 'https://x/y.png' },
+  };
+
+  await saveWelcomeSettings(guild.id, {
+    enabled: true, useAi: false, channelId: channel.id,
+    template: 'Halo {user}!', displayMode: 'embed', bannerPath: null,
+  });
+  await welcomeMember(member as never);
+
+  const p = sent.at(-1)!;
+  assert.equal(p.content, '<@222222222222222223>', 'content hanya berisi mention');
+  const embed = (p.embeds as Array<{ data?: { description?: string } }>)[0];
+  assert.ok(String(embed?.data?.description).includes('Halo Rani'), 'teks sapaan ada di embed');
 });
 
 await testAsync('mode tampilan: DM tidak pernah menyertakan mention', async () => {
@@ -5022,6 +5115,8 @@ await testAsync('kirim tes: pesan benar-benar terkirim lewat channel (channel pa
   };
   const fakeClient = { guilds: { fetch: async () => guild } } as never;
   const member = {
+    // `id` wajib: mention dibangun dari id, bukan nama.
+    id: '222222222222222999',
     displayName: 'Sky',
     user: { username: 'sky', tag: 'sky#0001' },
     displayAvatarURL: () => 'https://contoh.invalid/a.png',
@@ -5043,8 +5138,70 @@ await testAsync('kirim tes: pesan benar-benar terkirim lewat channel (channel pa
 
   const payload = sent[0]!;
   assert.ok(String(payload.content).includes('Pesan uji dari dashboard'), 'pesan diberi penanda');
-  assert.deepEqual(payload.allowedMentions, { parse: [] }, 'mention tidak dipicu');
+  // Mode embed: mention lewat content (dulu 'parse: []' sehingga tidak pernah ping).
+  assert.ok(
+    String(payload.content).includes('<@222222222222222999>'),
+    'member di-mention di pesan uji',
+  );
+  assert.deepEqual(payload.allowedMentions, { users: ['222222222222222999'] }, 'hanya member itu yang diizinkan');
   assert.equal(result.text, 'Sampai jumpa Sky!', 'isi pesan = hasil pratinjau');
+});
+
+await testAsync('kirim tes: mention tetap ada di SEMUA mode (sambutan & perpisahan)', async () => {
+  // Bug nyata: pesan uji mode embed memakai `content: TEST_MARK` +
+  // `allowedMentions: { parse: [] }`, jadi admin menguji bentuk yang TIDAK
+  // memuat mention — padahal pesan sungguhannya men-mention member. Pesan uji
+  // harus memperlihatkan bentuk akhir, bukan versi yang lebih aman.
+  const { sendWelcomeTest, sendGoodbyeTest } = await import('../src/features/test-send.js');
+
+  const ID = '222222222222222777';
+  for (const mode of ['card', 'embed', 'text', 'container'] as const) {
+    const sent: Record<string, unknown>[] = [];
+    const channel = {
+      id: '111111111111111112', name: 'join-leave',
+      isTextBased: () => true, isDMBased: () => false,
+      permissionsFor: () => ({ has: () => true }),
+      send: async (p: Record<string, unknown>) => { sent.push(p); return { id: '1' }; },
+    };
+    const guild = {
+      id: '156942477750257800', name: 'Komunitas Zypher', memberCount: 7,
+      channels: { fetch: async () => channel },
+      members: { me: { id: '2' } },
+    };
+    const client = { guilds: { fetch: async () => guild } } as never;
+    const member = {
+      id: ID, displayName: 'Sky', guild,
+      displayAvatarURL: () => 'https://x/y.png',
+      user: { username: 'sky', tag: 'sky#0000' },
+      send: async () => ({ id: '3' }),
+    } as never;
+    const settings = {
+      guildId: guild.id, channelId: channel.id, useAi: false,
+      displayMode: mode, imageEnabled: false,
+      cardAvatar: true, cardText: true, embedAvatar: false,
+      template: 'Halo {user}!', style: '', example: '', bannerPath: null,
+    } as never;
+
+    await sendWelcomeTest(client, { guildId: guild.id, settings, member, target: 'channel' });
+    await sendGoodbyeTest(client, { guildId: guild.id, settings, member });
+
+    const [masuk, keluar] = sent;
+    for (const [label, p] of [['sambutan', masuk], ['perpisahan', keluar]] as const) {
+      assert.ok(p, `${mode}/${label}: pesan terkirim`);
+      // Container menyimpan mention di komponen; mode lain di `content`.
+      const utuh = JSON.stringify({ c: p.content ?? '', comp: p.components ?? [] });
+      assert.ok(utuh.includes(`<@${ID}>`), `${mode}/${label}: pesan uji men-mention member`);
+      assert.ok(
+        JSON.stringify(p.allowedMentions ?? {}).includes(ID),
+        `${mode}/${label}: mention diizinkan`,
+      );
+      // Penanda uji tidak boleh hilang — mention bukan alasan menghapusnya.
+      assert.ok(
+        utuh.includes('Pesan uji dari dashboard'),
+        `${mode}/${label}: penanda uji tetap ada`,
+      );
+    }
+  }
 });
 
 await testAsync('kirim tes: menolak perpisahan tanpa channel, tidak ada yang terkirim', async () => {

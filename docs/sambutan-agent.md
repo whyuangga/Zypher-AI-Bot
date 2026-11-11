@@ -396,6 +396,18 @@ Catatan jujur untuk perpisahan: membernya **sudah keluar** dari server, jadi
 Discord tidak memicu notifikasi untuk mention itu — yang tampil hanya nama yang
 bisa diklik. Teksnya tetap mention, bukan nama polos.
 
+**Bagaimana mention dikirim per mode:**
+
+| Mode | Tempat mention | Kenapa |
+|---|---|---|
+| Card | `content` bersama teks sapaan | teks di luar gambarlah yang bisa me-ping |
+| Embed | `content`, **mention saja** | mention di dalam embed mati; teksnya sudah ada di deskripsi embed jadi tidak diulang |
+| Text | `content` | memang teks biasa |
+| Container | di dalam Text Display | Components V2 melarang `content` |
+
+Dulu mode **Embed** mengirim `content: ''` sehingga member baru tidak pernah
+menerima notifikasi sama sekali.
+
 **Container** (Components V2) butuh discord.js ≥ 14.19 — di proyek ini
 14.28.1. Kalau pustakanya lebih lama, bot otomatis mundur ke Embed dan
 mencatat alasannya di log. Pesan ber-flag Components V2 tidak boleh memuat
@@ -510,7 +522,7 @@ Tiga penyebab yang sudah diperbaiki:
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 310 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 313 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),
