@@ -60,6 +60,12 @@ export interface ResourceUsage {
    */
   diskUsed: number | null;
   /**
+   * Kapan `diskUsed` benar-benar diukur (epoch ms). Angka disk dipakai ulang
+   * sampai 5 menit, jadi UI perlu bisa bilang "diperbarui X menit lalu"
+   * alih-alih berpura-pura angka itu baru.
+   */
+  diskUsedAt: number | null;
+  /**
    * Kuota disk container (byte). `null` = tidak diketahui.
    *
    * cgroup TIDAK menyediakan kuota disk (`io.max` hanya membatasi kecepatan
@@ -255,6 +261,47 @@ async function networkBytes(): Promise<{ rx: number; tx: number } | null> {
 }
 
 /**
+ * Berapa lama hasil hitung folder dipakai ulang.
+ *
+ * ANGKA INI PENTING, dan 3 detik adalah kesalahan yang sempat mematikan server
+ * pemilik proyek di panel hosting: setiap polling menjelajahi seluruh folder —
+ * termasuk `node_modules` dengan 7000+ berkas — dan itu memakan ~345 ms CPU.
+ * Dengan polling 3 detik, bebannya ~11% CPU TERUS-MENERUS, dan panel Wispbyte
+ * mematikan server saat rata-ratanya menyentuh ~22%.
+ *
+ * Ukuran folder tidak berubah dalam hitungan detik: yang perlu dipantau admin
+ * adalah "apakah disk saya penuh", dan itu pertanyaan jam-jaman, bukan detik.
+ */
+const FOLDER_TTL_MS = 5 * 60_000;
+
+/** Batas berkas yang discan. Lewat dari ini hasilnya ditandai tidak lengkap. */
+const FOLDER_MAX_ENTRIES = 60_000;
+
+/**
+ * Hasil hitung folder terakhir — dipakai ulang selama TTL belum lewat.
+ *
+ * `root` ikut disimpan: dashboard bisa dijalankan dari direktori kerja yang
+ * berbeda, dan memakai angka folder lain akan menyesatkan.
+ */
+let folderCache: { at: number; root: string; bytes: number; complete: boolean } | null = null;
+
+/**
+ * Perlu menghitung ulang folder sekarang? **Fungsi murni** supaya bisa diuji
+ * tanpa menunggu lima menit.
+ */
+export function shouldRescanFolder(
+  cached: { at: number; complete: boolean } | null,
+  now: number,
+  ttlMs: number,
+): boolean {
+  if (!cached) return true;
+  // Hasil yang tidak lengkap (kena batas 60.000 berkas) dihitung ulang lebih
+  // cepat: angka yang kurang bisa menyesatkan, jadi jangan disimpan lama.
+  if (!cached.complete) return now - cached.at >= 30_000;
+  return now - cached.at >= ttlMs;
+}
+
+/**
  * Jumlah byte yang dipakai folder server (rekursif).
  *
  * Ini pengganti `statfs()`. Di hosting, `statfs()` membaca **partisi mesin
@@ -268,7 +315,7 @@ async function networkBytes(): Promise<{ rx: number; tx: number } | null> {
  */
 async function folderBytes(
   root: string,
-  maxEntries = 60_000,
+  maxEntries = FOLDER_MAX_ENTRIES,
 ): Promise<{ bytes: number; complete: boolean } | null> {
   const seenDirs = new Set<string>();
   let bytes = 0;
@@ -322,6 +369,38 @@ async function folderBytes(
     return null;
   }
   return { bytes, complete };
+}
+
+/**
+ * Ukuran folder dengan cache TTL.
+ *
+ * Kenapa tidak dihitung tiap panggilan: lihat FOLDER_TTL_MS. Ini satu-satunya
+ * sumber angka `diskUsed`, jadi semua pemanggil ikut hemat tanpa perlu tahu.
+ *
+ * Panggilan pertama sesudah proses hidup tetap memindai (belum ada cache) —
+ * dashboard boleh lambat sekali di awal, asal tidak terus-menerus.
+ */
+export async function cachedFolderBytes(
+  root: string,
+  now: number = Date.now(),
+): Promise<{ bytes: number; complete: boolean; cached: boolean } | null> {
+  // Folder berbeda = cache tidak berlaku (dashboard bisa dijalankan dari cwd lain).
+  if (folderCache && folderCache.root === root && !shouldRescanFolder(folderCache, now, FOLDER_TTL_MS)) {
+    return { bytes: folderCache.bytes, complete: folderCache.complete, cached: true };
+  }
+
+  const result = await folderBytes(root);
+  if (!result) return null;
+  folderCache = { at: now, root, bytes: result.bytes, complete: result.complete };
+  return { ...result, cached: false };
+}
+
+/**
+ * Buang cache folder. Dipakai test dan POST /api/disk-quota (kuota berubah,
+ * angka pemakaian sebaiknya ikut segar saat admin baru menyimpan).
+ */
+export function resetFolderCache(): void {
+  folderCache = null;
 }
 
 /**
@@ -477,7 +556,11 @@ export async function readResourceUsage(options: {
       networkBytes(),
       cgroupCpuMicros(),
       cgroupDiskIo(),
-      folderBytes(options.workDir),
+      // Ber-cache: pemindaian folder hanya dilakukan sekali per 5 menit.
+      // Sebelum ini, setiap polling 3 detik menjelajahi seluruh node_modules
+      // (~7000 berkas, ~345 ms CPU) — itulah yang membuat panel hosting
+      // mematikan server karena "high CPU usage".
+      cachedFolderBytes(options.workDir, now),
       detectContainer(),
       processStartTime(),
       procRss(),
@@ -546,6 +629,9 @@ export async function readResourceUsage(options: {
     networkInRate: base ? rate(sample.netIn, base.netIn, elapsedMs) : null,
     networkOutRate: base ? rate(sample.netOut, base.netOut, elapsedMs) : null,
     diskUsed: folder ? folder.bytes : null,
+    // Waktu pengukuran, bukan waktu respons: bar disk memang tidak segar
+    // setiap 3 detik, dan UI harus jujur soal itu.
+    diskUsedAt: folder ? (folder.cached ? (folderCache?.at ?? now) : now) : null,
     diskTotal,
     diskTotalSource,
     diskReadRate: base ? rate(sample.readBytes, base.readBytes, elapsedMs) : null,

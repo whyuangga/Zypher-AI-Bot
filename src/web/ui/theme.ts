@@ -372,6 +372,17 @@ code {
    Saat gagal, titik jadi abu-abu dan teksnya "terputus" — angka terakhir
    tetap tampil, karena menghapusnya justru lebih membingungkan. */
 .res-live { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+/* Tombol kecil "ukur ulang disk". Angka disk di-cache 5 menit supaya dashboard
+   tidak menjelajahi node_modules tiap 3 detik; tombol ini yang memberi admin
+   kendali untuk memaksa angka segar tanpa menunggu. */
+.res-refresh {
+  appearance: none; background: transparent; border: 1px solid var(--line);
+  border-radius: 6px; color: var(--text-3); cursor: pointer;
+  font-family: inherit; font-size: 11px; letter-spacing: .02em;
+  padding: 3px 8px; white-space: nowrap;
+}
+.res-refresh:hover:not(:disabled) { color: var(--text); border-color: var(--line-strong); }
+.res-refresh:disabled { opacity: .5; cursor: default; }
 .res-dot {
   width: 5px; height: 5px; border-radius: 50%; background: var(--ok);
   box-shadow: 0 0 0 3px var(--ok-soft); animation: resPulse 2.4s ease-in-out infinite;

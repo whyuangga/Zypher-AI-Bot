@@ -468,7 +468,7 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke # 334 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
+npm run smoke # 341 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
 npm run smoke:pg       # 16 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # 15 pemeriksaan rantai fallback provider (server tiruan)
 npm run test:ui        # 75 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
@@ -538,6 +538,8 @@ atau rantai fallback yang rusak ketahuan sebelum di-merge, bukan setelah bot dia
 | Mau provider lain di luar daftar | Hanya 5 nama yang dikenali: `groq`, `gemini`, `openrouter`, `nvidia`, `ollama`. Provider yang minta kartu (Cerebras, Mistral) sengaja tidak didukung. |
 | `Cannot find module 'node:sqlite'` / `ERR_UNKNOWN_BUILTIN_MODULE` | Node.js di server masih v20 ke bawah. Bot butuh **v22+**; di panel hosting ganti Docker image ke Node 22/24, di VPS pasang Node 22 LTS. |
 | Bot mati saat `npm install` di panel hosting | RAM hosting habis. Upload folder `node_modules` dari laptop, atau pakai image/hosting dengan RAM ≥512 MB. |
+| **Server dimatikan panel hosting karena "high CPU usage"** | Diukur pada kasus nyata: panel sumber daya versi lama memindai seluruh folder (termasuk 7.000 berkas `node_modules`) setiap 3 detik = **11,5% CPU terus-menerus**, dan Wispbyte mematikan server pada rata-rata 22%. Sekarang dipindai **tiap 5 menit** (0,56%). Perbarui ke versi terbaru, lalu pastikan dashboard **tidak dibiarkan terbuka** di banyak tab. |
+| Disk di dashboard tidak berubah padahal baru menghapus file | Angka disk di-cache 5 menit supaya tidak membebani CPU. Tekan **"ukur ulang disk"** di kaki panel Pemakaian server untuk menghitung sekarang. |
 | Jawaban muncul sekaligus, bukan streaming | Normal bila provider/model menolak `stream: true` — bot otomatis memakai mode non-streaming di provider tersebut (lihat log). |
 | AI tidak menjawab dari dokumen | Cek `/dokumen cari pertanyaan:...`. Kalau kosong, kata kuncinya tidak ada di dokumen — tambahkan sinonim atau pakai istilah yang dipakai member. |
 | Upload PDF/DOCX gagal | Maksimal **8 MB**, PDF harus berisi teks (hasil scan perlu OCR dulu), dan file tidak boleh terkunci password. Lihat [docs/rag.md](docs/rag.md). |

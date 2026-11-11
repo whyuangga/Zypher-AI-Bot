@@ -193,6 +193,14 @@ export interface ResourcePanelData {
   networkOutRate?: number | null;
   /** Pemakaian folder server (bukan partisi mesin). */
   diskUsed: number | null;
+  /**
+   * Kapan `diskUsed` benar-benar diukur (epoch ms).
+   *
+   * Angka disk dipakai ulang sampai 5 menit supaya dashboard tidak menjelajahi
+   * node_modules tiap polling — lihat resources.ts. Panel menuliskan umurnya
+   * supaya admin tidak mengira angka itu baru.
+   */
+  diskUsedAt?: number | null;
   /** Kuota container. `null` = tidak diatur → bar disk tidak ditampilkan. */
   diskTotal: number | null;
   diskTotalSource?: 'env' | 'setting' | null;
@@ -324,6 +332,7 @@ export function resourcePanel(data: ResourcePanelData): string {
     networkInRate: data.networkInRate ?? null,
     networkOutRate: data.networkOutRate ?? null,
     diskUsed: data.diskUsed,
+    diskUsedAt: data.diskUsedAt ?? null,
     diskTotal: data.diskTotal,
     diskTotalSource: data.diskTotalSource ?? null,
     diskReadRate: data.diskReadRate ?? null,
@@ -338,6 +347,7 @@ export function resourcePanel(data: ResourcePanelData): string {
 <div class="res-foot">
   <span id="resUpdated">Proses hidup ${esc(humanUptime(data.uptimeSeconds))} · angka di sini milik <b>proses bot ini</b>, bukan seluruh mesin.</span>
   <span class="res-live"><span class="res-dot" id="resDot"></span><span id="resLive">langsung</span></span>
+  <button class="res-refresh" type="button" id="resRefreshDisk" onclick="refreshDisk()" title="Hitung ulang pemakaian folder sekarang">ukur ulang disk</button>
 </div>
 <script type="application/json" id="resSeed">${live}</script>`;
 }
