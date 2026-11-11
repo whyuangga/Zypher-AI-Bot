@@ -8,6 +8,9 @@ CREATE TABLE IF NOT EXISTS guilds (
   name           TEXT,
   persona        TEXT,
   model          TEXT,
+  -- Zona waktu server: 'Asia/Jakarta' (WIB), 'Asia/Makassar' (WITA),
+  -- 'Asia/Jayapura' (WIT). NULL = WIB (perilaku lama).
+  timezone       TEXT,
   tts_reply_in_room INTEGER,
   rag_enabled    INTEGER,
   auto_memory    INTEGER,
@@ -117,6 +120,9 @@ CREATE TABLE IF NOT EXISTS agent (
   react_images     INTEGER NOT NULL DEFAULT 1,
   busy_mute        INTEGER NOT NULL DEFAULT 1,
   cooldown_seconds INTEGER NOT NULL DEFAULT 90,
+  -- 1 = jangan sapaan otomatis malam hari (23:00-06:00 WIB). Balasan ke
+  -- mention tetap jalan; hanya sapaan pemecah sepi yang ditahan.
+  quiet_hours      INTEGER NOT NULL DEFAULT 1,
   updated_at       INTEGER NOT NULL
 );
 
@@ -142,6 +148,8 @@ CREATE TABLE IF NOT EXISTS goodbye (
   image_enabled   INTEGER NOT NULL DEFAULT 0,
   include_avatar  INTEGER NOT NULL DEFAULT 1,
   banner_path     TEXT,
+  banner_mime     TEXT,
+  banner_bytes    TEXT,
   updated_at      INTEGER NOT NULL
 );
 
@@ -159,6 +167,8 @@ CREATE TABLE IF NOT EXISTS welcome (
   example         TEXT,
   include_avatar  INTEGER NOT NULL DEFAULT 1,
   banner_path     TEXT,
+  banner_mime     TEXT,
+  banner_bytes    TEXT,
   updated_at      INTEGER NOT NULL
 );
 
@@ -185,6 +195,7 @@ CREATE TABLE IF NOT EXISTS guilds (
   name              TEXT,
   persona           TEXT,
   model             TEXT,
+  timezone          TEXT,
   tts_reply_in_room BOOLEAN,
   rag_enabled       BOOLEAN,
   auto_memory       BOOLEAN,
@@ -289,6 +300,7 @@ CREATE TABLE IF NOT EXISTS agent (
   react_images     INTEGER NOT NULL DEFAULT 1,
   busy_mute        INTEGER NOT NULL DEFAULT 1,
   cooldown_seconds INTEGER NOT NULL DEFAULT 90,
+  quiet_hours      INTEGER NOT NULL DEFAULT 1,
   updated_at       BIGINT NOT NULL
 );
 
@@ -311,6 +323,8 @@ CREATE TABLE IF NOT EXISTS goodbye (
   image_enabled   INTEGER NOT NULL DEFAULT 0,
   include_avatar  INTEGER NOT NULL DEFAULT 1,
   banner_path     TEXT,
+  banner_mime     TEXT,
+  banner_bytes    TEXT,
   updated_at      BIGINT NOT NULL
 );
 
@@ -326,6 +340,8 @@ CREATE TABLE IF NOT EXISTS welcome (
   example         TEXT,
   include_avatar  INTEGER NOT NULL DEFAULT 1,
   banner_path     TEXT,
+  banner_mime     TEXT,
+  banner_bytes    TEXT,
   updated_at      BIGINT NOT NULL
 );
 

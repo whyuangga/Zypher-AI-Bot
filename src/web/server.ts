@@ -40,6 +40,8 @@ import {
   setGuildRagEnabled,
   setGuildAutoMemory,
   setGuildAdminOnlyRooms,
+  setGuildTimeZone,
+  resolveTimeZone,
   setModerationSettings,
   setPanelEnabled,
   setPersona,
@@ -54,6 +56,9 @@ import {
   previewWelcome,
   SAMPLE_MEMBER_NAME,
 } from '../features/preview.js';
+import { channelState } from '../features/agent.js';
+import { readResourceUsage } from './resources.js';
+import { TIME_ZONES } from '../lib/timezone.js';
 import { normalizeDisplayMode } from '../features/display-mode.js';
 import { cardRendererAvailable, chromiumPath, renderWelcomeCard } from '../features/welcome-card.js';
 import {
@@ -68,6 +73,7 @@ import {
   SendTestError,
   sendAgentTest,
   sendGoodbyeTest,
+  sendQuietTest,
   sendWelcomeTest,
 } from '../features/test-send.js';
 import { previewAgentReply as composeAgentPreview } from '../features/preview.js';
@@ -468,7 +474,17 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         embedModel: embeddingModelName(),
         model: config.ai.model,
         storage: dialect() === 'pg' ? 'PostgreSQL' : 'SQLite',
-        series: guildId ? await messagesPerDay(guildId, 7) : await messagesPerDay('', 7),
+        // Grafik dihitung pada zona server: batang "Hari ini" harus hari ini
+        // menurut member, bukan menurut Jakarta.
+        series: guildId
+          ? await messagesPerDay(guildId, 7, await resolveTimeZone(guildId))
+          : await messagesPerDay('', 7),
+        // Dibaca dengan `catch`: kalau cgroup/proc tidak bisa dibaca di hosting,
+        // panelnya hilang — halaman Ringkasan tetap tampil utuh.
+        resources: await readResourceUsage({ workDir: process.cwd() }).catch((error: unknown) => {
+          logger.warn(`Gagal membaca pemakaian sumber daya — ${errorMessage(error)}`);
+          return null;
+        }),
         status: dashboardStatus(),
         counts: await navCounts(guildId),
       }),
@@ -548,6 +564,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       agentPage({
         guildId,
         guildName,
+        persona: guildId ? ((await getGuildSettings(guildId))?.persona ?? null) : null,
         agent: {
           channelId: agent.channelId,
           galleryChannelId: agent.galleryChannelId,
@@ -557,6 +574,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
           reactImages: agent.reactImages,
           busyMute: agent.busyMute,
           cooldownSeconds: agent.cooldownSeconds,
+          quietHours: agent.quietHours,
         },
         channels,
         botOnline: status.online,
@@ -677,7 +695,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       pengaturanPage({
         guildId,
         guildName: await getGuildName(guildId),
-        persona: settings?.persona ?? null,
+        timeZone: settings?.timezone ?? null,
+        effectiveTimeZone: await resolveTimeZone(guildId),
+        defaultTimeZone: config.features.timeZone,
         model: settings?.model ?? null,
         defaultModel: config.ai.model,
         embedModel: embeddingModelName(),
@@ -831,6 +851,71 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     }
 
     sendJson(response, 200, { ok: true, id: result.id });
+    return;
+  }
+
+  /**
+   * Persona AI — endpoint sendiri.
+   *
+   * Dulu persona hanya bisa disimpan lewat /api/pengaturan, karena kartunya
+   * ada di halaman Pengaturan. Setelah kartunya pindah ke halaman AI Agent,
+   * endpoint terpisah membuat kedua halaman tidak saling bergantung.
+   */
+  if (path === '/api/persona' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const raw = await readBody(request, 8 * 1024);
+    let payload: { persona?: unknown };
+    try {
+      payload = JSON.parse(raw) as { persona?: unknown };
+    } catch {
+      sendJson(response, 400, { error: 'Format JSON tidak valid.' });
+      return;
+    }
+    if (typeof payload.persona !== 'string' && payload.persona !== null) {
+      sendJson(response, 400, { error: 'persona harus teks.' });
+      return;
+    }
+    const persona = typeof payload.persona === 'string' ? payload.persona.trim() : '';
+    if (persona.length > 1500) {
+      sendJson(response, 400, { error: 'Persona terlalu panjang (maks 1500 karakter).' });
+      return;
+    }
+    await setPersona(guildId, persona || null);
+    sendJson(response, 200, { ok: true, persona: persona || null });
+    return;
+  }
+
+  // Zona waktu server (WIB/WITA/WIT).
+  //
+  // Endpoint sendiri, bukan menumpang /api/pengaturan: nilainya bukan boolean
+  // dan butuh validasi daftar tertutup — kalau nilai ngawur diterima, semua
+  // jam (termasuk jam tenang malam) meleset tanpa error.
+  if (path === '/api/timezone' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const raw = await readBody(request, 4 * 1024);
+    let payload: { timezone?: unknown };
+    try {
+      payload = JSON.parse(raw) as { timezone?: unknown };
+    } catch {
+      sendJson(response, 400, { error: 'Format JSON tidak valid.' });
+      return;
+    }
+    const requested = typeof payload.timezone === 'string' ? payload.timezone.trim() : '';
+    const known = TIME_ZONES.some((zone) => zone.id === requested);
+    if (!known) {
+      sendJson(response, 400, {
+        error: `Zona waktu tidak dikenal. Pilih ${TIME_ZONES.map((zone) => `${zone.label} (${zone.id})`).join(', ')}.`,
+      });
+      return;
+    }
+    await setGuildTimeZone(guildId, requested);
+    sendJson(response, 200, { ok: true, timezone: requested });
     return;
   }
 
@@ -1044,6 +1129,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       busyMute: bool(payload.busyMute, current.busyMute),
       reactEmoji: bool(payload.reactEmoji, current.reactEmoji),
       reactImages: bool(payload.reactImages, current.reactImages),
+      quietHours: bool(payload.quietHours, current.quietHours),
     });
 
     sendJson(response, 200, { ok: true, agent: await getAgentSettings(guildId) });
@@ -1101,8 +1187,10 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     // Hapus banner.
     if (payload.remove === true) {
       await deleteBanner(current.bannerPath);
-      if (kind === 'welcome') await saveWelcomeSettings(guildId, { bannerPath: null });
-      else await saveGoodbyeSettings(guildId, { bannerPath: null });
+      // Salinan di database ikut dihapus — kalau tidak, banner yang sudah
+      // dihapus akan "hidup lagi" saat file-nya dipulihkan.
+      if (kind === 'welcome') await saveWelcomeSettings(guildId, { bannerPath: null, bannerData: null });
+      else await saveGoodbyeSettings(guildId, { bannerPath: null, bannerData: null });
       sendJson(response, 200, { ok: true, banner: null });
       return;
     }
@@ -1118,8 +1206,19 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       // File lama dihapus setelah file baru tersimpan — kalau penyimpanan gagal,
       // banner lama tetap dipakai (tidak ada kondisi "tidak punya banner").
       await deleteBanner(current.bannerPath);
-      if (kind === 'welcome') await saveWelcomeSettings(guildId, { bannerPath: saved.name });
-      else await saveGoodbyeSettings(guildId, { bannerPath: saved.name });
+
+      // Simpan SALINAN di database juga. Hosting panel sering me-reset folder
+      // kerja saat deploy (`git pull`), sehingga file di data/banners/ hilang
+      // padahal nama file-nya masih tersimpan di DB — dulu hasilnya banner
+      // hilang tanpa satu pun log. Salinan ini yang memulihkannya otomatis.
+      // MIME diambil dari data URI itu sendiri (browser sudah mengisinya),
+      // bukan ditebak dari ekstensi nama file.
+      const mimeMatch = /^data:([^;]+);base64,/.exec(dataUri);
+      const base64 = dataUri.replace(/^data:[^;]+;base64,/, '').replace(/\s/g, '');
+      const bannerData = { mime: mimeMatch?.[1] ?? 'image/png', base64 };
+
+      if (kind === 'welcome') await saveWelcomeSettings(guildId, { bannerPath: saved.name, bannerData });
+      else await saveGoodbyeSettings(guildId, { bannerPath: saved.name, bannerData });
 
       // Kembalikan URL (bukan data URI) supaya dashboard tinggal memasang <img src>.
       // Query `v` = nama file, jadi browser tidak menampilkan banner lama dari cache.
@@ -1223,6 +1322,42 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
           member: me,
         });
         sendJson(response, 200, { ...result, ok: true });
+        return;
+      }
+
+      if (kind === 'quiet') {
+        const current = await getAgentSettings(guildId);
+        if (!current.channelId) {
+          sendJson(response, 400, {
+            error: 'Channel ngobrol belum dipilih. Pilih & simpan dulu sebelum mengirim tes.',
+          });
+          return;
+        }
+
+        const forced = payload.force === true;
+        // Kalimat dibuat lewat jalur pratinjau yang sama, jadi yang dikirim ke
+        // Discord benar-benar teks yang tadi dilihat admin di layar.
+        const result = await previewQuietBreak({
+          settings: current,
+          guildName: (await getGuildName(guildId)) ?? 'Server ini',
+          timeZone: await resolveTimeZone(guildId),
+          force: forced,
+        });
+
+        if (!result.text) {
+          sendJson(response, 400, {
+            error: result.note || result.reason || 'Model gagal menulis kalimat pemecah sepi.',
+          });
+          return;
+        }
+
+        const sent = await sendQuietTest(botClient, {
+          guildId,
+          channelId: current.channelId,
+          text: result.text,
+          forced,
+        });
+        sendJson(response, 200, { ...sent, ok: true, source: result.source, wouldFire: result.wouldFire });
         return;
       }
 
@@ -1365,6 +1500,8 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       name,
       guildName,
       templateOnly: payload.templateOnly === true,
+      // Zona server menentukan kata "pagi/siang/sore" di sambutan.
+      timeZone: await resolveTimeZone(guildId),
       withCard,
       // Banner unggahan ikut dirender supaya admin melihat hasil akhirnya.
       bannerDataUri: await readBannerDataUri(settings.bannerPath),
@@ -1442,6 +1579,10 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     const result = await previewQuietBreak({
       settings: current,
       guildName: (await getGuildName(guildId)) ?? 'Server ini',
+      // State channel hanya ada kalau bot jalan di proses ini. Tanpa itu,
+      // pratinjau tidak bisa menilai apakah timernya sudah waktunya.
+      state: current.channelId ? channelState(current.channelId) : undefined,
+      timeZone: await resolveTimeZone(guildId),
       force: payload.force === true,
     });
     sendJson(response, 200, { ok: true, ...result });

@@ -27,7 +27,7 @@ const { setPersona, getGuildSettings } = await import('../src/db/repo.js');
 const { getGuildName, countGuildRows, countGuildMessages, messagesPerDay } = await import('../src/db/repo.js');
 const { setGuildName, getPanel, setPanelMessage, setPanelEnabled } = await import('../src/db/repo.js');
 const { ringkasanPage, keywordPage, moderasiPage, panelPage } = await import('../src/web/ui/pages.js');
-const { pengaturanPage } = await import('../src/web/ui/pages.js');
+const { pengaturanPage, agentPage } = await import('../src/web/ui/pages.js');
 const {
   setModerationSettings,
   getModerationSettings,
@@ -756,6 +756,92 @@ await testAsync('navigasi dashboard tidak punya menu Memori & Transkrip', async 
   assert.ok(!html.includes('href="/transkrip"'), 'menu Transkrip masih ada');
 });
 
+await testAsync('Ringkasan: tombol Upload dokumen di header sudah dihapus', async () => {
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  const ringkasan = pages.slice(
+    pages.indexOf('export function ringkasanPage'),
+    pages.indexOf('export function dokumenPage'),
+  );
+
+  // User meminta tombol besar di header Ringkasan dihapus: halaman itu bukan
+  // tempat upload, dan tombolnya cuma melempar orang ke halaman lain.
+  assert.equal(
+    ringkasan.includes('<a class=\"btn-primary\" href=\"/dokumen\">${icon(\'upload\', 16)} Upload dokumen</a>'),
+    false,
+    'tombol header sudah tidak ada',
+  );
+  // Input file tetap hanya di halaman Dokumen.
+  assert.equal(ringkasan.includes('type=\"file\"'), false, 'Ringkasan tidak punya input file');
+  // Pintasan di keadaan kosong masih boleh — itu bagian alur, bukan header.
+  assert.ok(ringkasan.includes('Belum ada dokumen'), 'keadaan kosong tetap ada');
+});
+
+await testAsync('Ringkasan: panel pemakaian server muncul setelah Aktivitas 7 hari', async () => {
+  const { ringkasanPage } = await import('../src/web/ui/pages.js');
+  const html = ringkasanPage({
+    guildId: 'g-res',
+    guildName: 'Server Uji',
+    status: { online: true, mode: 'standalone', uptimeSeconds: 120 },
+    stats: { rooms: 0, documents: 0, chunks: 0, keywords: 0, messages: 0 },
+    rooms: [],
+    documents: [],
+    series: [],
+    ragEnabled: true,
+    embedModel: null,
+    model: 'test',
+    resources: {
+      cpuPercent: 12.5,
+      memoryUsed: 96 * 1024 * 1024,
+      memoryTotal: 612 * 1024 * 1024,
+      memoryFromCgroup: true,
+      networkIn: 2048,
+      networkOut: 1024,
+      diskUsed: 184 * 1024 * 1024,
+      diskTotal: 1024 * 1024 * 1024,
+      uptimeSeconds: 120,
+      inContainer: true,
+    },
+  } as never);
+
+  assert.ok(html.includes('Pemakaian server'), 'kartu sumber daya ada');
+  for (const label of ['CPU', 'Memori', 'Jaringan', 'Disk']) {
+    assert.ok(html.includes(`> ${label}</span>`), `baris ${label} ada`);
+  }
+  // Urutan yang diminta user: di bawah Aktivitas 7 hari.
+  const aktivitas = html.indexOf('Aktivitas 7 hari');
+  const sumberDaya = html.indexOf('Pemakaian server');
+  const status = html.indexOf('Status sistem');
+  assert.ok(aktivitas >= 0 && sumberDaya > aktivitas, 'di bawah Aktivitas 7 hari');
+  assert.ok(status > sumberDaya, 'status sistem setelah panel sumber daya');
+
+  // Angka harus dari data, bukan karangan.
+  assert.ok(html.includes('96 MB'), 'memori terpakai dari data');
+  assert.ok(html.includes('612 MB'), 'batas container dari data');
+  assert.ok(html.includes('12,5%'), 'persen CPU terformat id-ID');
+  assert.ok(html.includes('batas container'), 'menjelaskan asal batas memori');
+});
+
+await testAsync('Ringkasan: tanpa data sumber daya, kartunya hilang (bukan 0%)', async () => {
+  const { ringkasanPage } = await import('../src/web/ui/pages.js');
+  const html = ringkasanPage({
+    guildId: 'g-res2',
+    guildName: 'Server Uji',
+    status: { online: false, mode: 'dashboard', uptimeSeconds: 1 },
+    stats: { rooms: 0, documents: 0, chunks: 0, keywords: 0, messages: 0 },
+    rooms: [],
+    documents: [],
+    series: [],
+    ragEnabled: false,
+    embedModel: null,
+    model: 'test',
+    resources: null,
+  } as never);
+
+  // Klaim "0%" dan "tidak bisa dibaca" berbeda — kalau gagal, sembunyikan.
+  assert.equal(html.includes('Pemakaian server'), false, 'panel tidak dirender');
+  assert.ok(html.includes('Aktivitas 7 hari'), 'halaman tetap utuh');
+});
+
 await testAsync('halaman dashboard tidak menyebut channel arsip transkrip', async () => {
   const { moderasiPage } = await import('../src/web/ui/pages.js');
   const html = moderasiPage({
@@ -1185,7 +1271,9 @@ test('pengaturanPage menampilkan toggle fitur', () => {
   const page = pengaturanPage({
     guildId: '123',
     guildName: 'Server Uji',
-    persona: null,
+    timeZone: null,
+    effectiveTimeZone: 'Asia/Jakarta',
+    defaultTimeZone: 'Asia/Jakarta',
     model: null,
     defaultModel: 'test',
     embedModel: null,
@@ -1214,6 +1302,83 @@ test('pengaturanPage menampilkan toggle fitur', () => {
   assert.ok(page.includes('Tombol chat DM khusus admin'), 'label baru spesifik');
   assert.ok(page.includes('Manage Server'), 'menyebut izin yang dicek');
   assert.ok(page.includes('AI Agent di channel tidak terpengaruh'), 'menjelaskan batasnya');
+
+  // Persona pindah ke halaman AI Agent: kalau muncul lagi di sini, orang akan
+  // mengira itu pengaturan akun (keluhan aslinya).
+  assert.equal(page.includes('id="persona"'), false, 'textarea persona tidak di pengaturan');
+  assert.equal(page.includes('savePersona'), false, 'tombol simpan persona tidak di pengaturan');
+  assert.equal(page.includes('Persona AI'), false, 'kartu Persona AI tidak di pengaturan');
+});
+
+console.log('\nPersona di halaman AI Agent');
+
+await testAsync('halaman agent memuat kartu persona beserta nilainya', async () => {
+  const page = agentPage({
+    guildId: '123',
+    guildName: 'Server Uji',
+    guildIconUrl: null,
+    persona: 'Kamu asisten yang ramah dan santai.',
+    channels: [],
+    agent: {
+      channelId: null,
+      galleryChannelId: null,
+      quietMinutes: 0,
+      maxPerHour: 6,
+      reactEmoji: true,
+      reactImages: true,
+      busyMute: true,
+      cooldownSeconds: 0,
+    },
+    status: { online: false, mode: 'standalone', uptimeSeconds: 0 },
+    counts: {},
+  } as never);
+
+  assert.ok(page.includes('id="persona"'), 'textarea persona ada di halaman agent');
+  assert.ok(page.includes('rows="4"'), 'textarea cukup tinggi');
+  assert.ok(page.includes('Persona AI'), 'judul kartu ada');
+  assert.ok(page.includes('Kamu asisten yang ramah dan santai.'), 'nilai persona terisi');
+  assert.ok(page.includes('id="savePersona"'), 'tombol simpan ada');
+  assert.ok(page.includes('async function savePersona()'), 'fungsi simpan ada');
+  assert.ok(page.includes("postJson('/api/persona'"), 'memanggil endpoint persona');
+});
+
+await testAsync('persona kosong dirender sebagai textarea kosong, bukan "null"', async () => {
+  const page = agentPage({
+    guildId: '123',
+    guildName: 'Server Uji',
+    guildIconUrl: null,
+    persona: null,
+    channels: [],
+    agent: {
+      channelId: null,
+      galleryChannelId: null,
+      quietMinutes: 0,
+      maxPerHour: 6,
+      reactEmoji: true,
+      reactImages: true,
+      busyMute: true,
+      cooldownSeconds: 0,
+    },
+    status: { online: false, mode: 'standalone', uptimeSeconds: 0 },
+    counts: {},
+  } as never);
+
+  assert.equal(page.includes('>null<'), false, 'tidak menulis null ke layar');
+  assert.ok(page.includes('id="persona"'), 'textarea tetap ada');
+});
+
+await testAsync('endpoint /api/persona menjaga batas dan tipe', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(server.includes("path === '/api/persona'"), 'endpoint terdaftar');
+  assert.ok(server.includes('maks 1500 karakter'), 'menolak persona kepanjangan');
+  assert.ok(server.includes("persona harus teks"), 'menolak tipe selain teks');
+  assert.ok(server.includes('setPersona(guildId'), 'menyimpan lewat repo');
+  // Persona tidak boleh lagi dikirim ke halaman pengaturan.
+  assert.equal(
+    /pengaturanPage\(\{[^}]*persona/.test(server),
+    false,
+    'persona tidak dikirim ke halaman pengaturan',
+  );
 });
 
 console.log('\nSlash command di DM');
@@ -1613,6 +1778,7 @@ const agentSettings = (patch: Record<string, unknown> = {}) => ({
   reactImages: true,
   busyMute: true,
   cooldownSeconds: 90,
+  quietHours: true,
   updatedAt: 0,
   ...patch,
 });
@@ -1628,6 +1794,7 @@ const welcomeSettings = (patch: Record<string, unknown> = {}) => ({
   displayMode: 'embed' as const, imageEnabled: false,
   includeAvatar: true,
   bannerPath: null,
+  bannerData: null,
   updatedAt: 0,
   ...patch,
 });
@@ -1643,6 +1810,7 @@ const goodbyeSettings = (patch: Record<string, unknown> = {}) => ({
   displayMode: 'embed' as const, imageEnabled: false,
   includeAvatar: true,
   bannerPath: null,
+  bannerData: null,
   updatedAt: 0,
   ...patch,
 });
@@ -2099,6 +2267,108 @@ await testAsync('dashboard: tombol Kelola tidak memakai panah dropdown', async (
   assert.ok(pages.includes("icon('chevron', 15)"), 'select masih memakai chevron');
 });
 
+/** PNG RGBA satu warna — cukup untuk menguji jalur baca/tulis banner. */
+async function buatPngMinimal(width: number, height: number): Promise<Buffer> {
+  const { deflateSync } = await import('node:zlib');
+  const crc32 = (buffer: Buffer): number => {
+    let crc = 0xffffffff;
+    for (const byte of buffer) {
+      crc ^= byte;
+      for (let i = 0; i < 8; i += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+    return (crc ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([length, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 6; // RGBA
+  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(width * 4, 90)]);
+  const raw = Buffer.concat(Array.from({ length: height }, () => row));
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+await testAsync('banner: dipulihkan dari database saat file hilang', async () => {
+  // Hosting panel men-deploy ulang dengan `git pull` dan me-reset folder kerja,
+  // jadi data/banners/ bisa hilang padahal nama file masih tersimpan di DB.
+  // Dulu hasilnya banner hilang TANPA satu pun log — tidak mungkin didiagnosis.
+  const { rmSync, existsSync } = await import('node:fs');
+  const { BANNER_DIR } = await import('../src/features/banner.js');
+  const { join } = await import('node:path');
+
+  const name = 'banner-uji-pulih.png';
+  const target = join(BANNER_DIR, name);
+  // PNG minimal dibangun di sini, bukan dibaca dari file contoh — test harus
+  // mandiri supaya tidak rusak hanya karena berkas contohnya dihapus.
+  const png = await buatPngMinimal(400, 120);
+  rmSync(target, { force: true });
+
+  assert.equal(existsSync(target), false, 'file belum ada');
+
+  // Diuji lewat jalur yang benar-benar dipakai sambutan — memanggil
+  // ensureBannerFile() saja tidak cukup: dulu readBannerAttachment() bisa
+  // melewatinya dan tetap mengembalikan null tanpa log.
+  const { readBannerAttachment } = await import('../src/features/banner.js');
+  const att = await readBannerAttachment(name, { mime: 'image/png', base64: png.toString('base64') });
+  assert.ok(att, 'lampiran terbentuk dari salinan database');
+  assert.equal(att!.name, name, 'nama lampiran benar');
+  assert.equal(existsSync(target), true, 'file kembali ada di disk');
+  rmSync(target, { force: true });
+
+  // Tanpa salinan DAN tanpa file: menolak, tapi tidak melempar error.
+  const gagal = await readBannerAttachment(name, null);
+  assert.equal(gagal, null, 'tanpa salinan tidak bisa dipulihkan');
+});
+
+await testAsync('banner: unggahan menyimpan salinan ke database', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(/bannerData\s*=\s*\{\s*mime/.test(server), 'membentuk bannerData saat unggah');
+  assert.ok(
+    server.includes('saveWelcomeSettings(guildId, { bannerPath: saved.name, bannerData })'),
+    'salinan ikut disimpan (sambutan)',
+  );
+  assert.ok(
+    server.includes('{ bannerPath: null, bannerData: null }'),
+    'salinan ikut dihapus saat banner dihapus',
+  );
+});
+
+await testAsync('banner: dipakai di mode container lewat Media Gallery', async () => {
+  const { buildContainerCard } = await import('../src/features/container-card.js');
+
+  const dengan = buildContainerCard({
+    kind: 'welcome', text: 'Halo Sky', guildName: 'Z', memberCount: 5, bannerName: 'banner-x.png',
+  });
+  const json = JSON.stringify(dengan!.toJSON());
+  assert.ok(json.includes('attachment://banner-x.png'), 'banner dirujuk lewat attachment://');
+  assert.ok(json.includes('"type":12'), 'memakai Media Gallery (tipe 12)');
+
+  const tanpa = buildContainerCard({ kind: 'welcome', text: 'Halo Sky', guildName: 'Z' });
+  assert.ok(!JSON.stringify(tanpa!.toJSON()).includes('"type":12'), 'tanpa banner tidak ada galeri');
+});
+
+await testAsync('banner: files tetap boleh di Components V2', async () => {
+  // Yang dilarang hanya content, embeds, stickers, poll. `files` justru cara
+  // mengirim banner, jadi jangan sampai ada yang "merapikan" kode dengan
+  // membuang files dari payload container.
+  const source = await readFile('src/features/welcome.ts', 'utf8');
+  const blok = source.slice(source.indexOf('payload.components?.length'));
+  assert.ok(/components: payload\.components,\s*flags: payload\.flags,\s*files/.test(blok), 'files ikut terkirim');
+});
+
 await testAsync('mode container: komponen V2 dibentuk, tanpa embed', async () => {
   const { buildContainerCard, containerPayload } = await import('../src/features/container-card.js');
   const { MessageFlags } = await import('discord.js');
@@ -2173,7 +2443,9 @@ await testAsync('mode container: dikirim tanpa content/embeds (channel palsu)', 
   assert.ok(Array.isArray(kirim.components) && (kirim.components as unknown[]).length === 1, 'mengirim komponen');
   assert.equal(kirim.content, undefined, 'tanpa content (dilarang di V2)');
   assert.equal(kirim.embeds, undefined, 'tanpa embed (dilarang di V2)');
-  assert.equal(kirim.files, undefined, 'tanpa file (dilarang di V2)');
+  // `files` TIDAK dilarang di Components V2 — hanya content/embeds/stickers/poll.
+  // Ini yang dipakai mengirim banner, jadi harus tetap boleh ada.
+  assert.ok(Array.isArray(kirim.files), 'files boleh ada (untuk banner)');
   assert.ok(typeof kirim.flags === 'number', 'flag ikut terkirim');
 });
 
@@ -2874,6 +3146,388 @@ await testAsync('pratinjau: pemecah sepi menolak kalau fitur mati', async () => 
   });
   assert.equal(ambangNol.wouldFire, false);
   assert.ok(ambangNol.reason.includes('0 menit'));
+});
+
+await testAsync('pemecah sepi: pratinjau memakai aturan timer yang sama', async () => {
+  const { previewQuietBreak } = await import('../src/features/preview.js');
+  const { emptyState } = await import('../src/features/agent-core.js');
+
+  const now = new Date('2026-11-09T12:00:00+07:00').getTime();
+
+  // Belum pernah ada obrolan: timer tidak akan menyapa ruangan kosong.
+  const kosong = await previewQuietBreak({
+    settings: agentSettings() as never,
+    guildName: 'Komunitas Zypher',
+    state: emptyState(),
+    now,
+  });
+  assert.equal(kosong.wouldFire, false, 'timer tidak menyapa channel yang belum pernah ramai');
+  assert.ok(kosong.reason.includes('Belum ada obrolan'), 'alasan dijelaskan');
+
+  // Baru sunyi 5 menit, ambang 45 menit: belum waktunya.
+  const baru = await previewQuietBreak({
+    settings: agentSettings() as never,
+    guildName: 'Komunitas Zypher',
+    state: { ...emptyState(), traces: [{ userId: 'u1', at: now - 5 * 60_000 }] },
+    now,
+  });
+  assert.equal(baru.wouldFire, false, 'belum waktunya');
+  assert.ok(/baru sunyi|45 menit/.test(baru.reason), 'menyebut sisa waktu');
+
+  // Sunyi 60 menit, ambang 45: timer akan menyapa.
+  const siap = await previewQuietBreak({
+    settings: agentSettings({ cooldownSeconds: 0 }) as never,
+    guildName: 'Komunitas Zypher',
+    state: { ...emptyState(), traces: [{ userId: 'u1', at: now - 60 * 60_000 }] },
+    now,
+  });
+  assert.equal(siap.wouldFire, true, 'sudah waktunya menyapa');
+});
+
+await testAsync('pemecah sepi: prompt pratinjau identik dengan bot asli', async () => {
+  const core = await readFile('src/features/agent-core.ts', 'utf8');
+  const agent = await readFile('src/features/agent.ts', 'utf8');
+  const preview = await readFile('src/features/preview.ts', 'utf8');
+
+  // Dulu prompt ditulis dua kali dengan kalimat berbeda: yang dilihat admin di
+  // dashboard bukan yang benar-benar dikirim bot.
+  assert.ok(core.includes('export const QUIET_SYSTEM_PROMPT'), 'prompt punya satu sumber');
+  assert.ok(agent.includes('QUIET_SYSTEM_PROMPT'), 'bot asli memakainya');
+  assert.ok(preview.includes('QUIET_SYSTEM_PROMPT'), 'pratinjau memakainya');
+  assert.equal(
+    (agent.match(/Kamu anggota komunitas yang santai/g) ?? []).length,
+    0,
+    'prompt tidak lagi ditulis ulang di agent.ts',
+  );
+  assert.ok(preview.includes('shouldBreakSilence'), 'pratinjau memakai keputusan timer yang sama');
+});
+
+await testAsync('pemecah sepi: tidak mengulang kalimat yang sama', async () => {
+  const { buildAntiRepeatBlock, pickQuietAngle, QUIET_ANGLES } = await import('../src/features/agent-core.js');
+  const { buildQuietPrompt } = await import('../src/features/preview.js');
+
+  // Tanpa riwayat: tidak ada blok larangan (jangan menulis kalimat kosong).
+  assert.equal(buildAntiRepeatBlock([]), '', 'kosong kalau belum ada riwayat');
+
+  const block = buildAntiRepeatBlock(['Sepi banget ya', 'Halo semua']);
+  assert.ok(block.includes('Sepi banget ya'), 'menyebut kalimat lama');
+  assert.ok(block.includes('Halo semua'), 'menyebut semua kalimat lama');
+  assert.match(block, /JANGAN/, 'instruksi tegas');
+
+  // Maksimal 5 kalimat terakhir — prompt tidak boleh membengkak.
+  const many = buildAntiRepeatBlock(['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7']);
+  assert.equal(many.includes('a1'), false, 'yang lama dibuang');
+  assert.ok(many.includes('a7'), 'yang terbaru dipakai');
+
+  // Prompt lengkap memuat sudut + larangan mengulang.
+  const prompt = buildQuietPrompt('Server Uji', { angle: 'Tanya lagi pada sibuk apa', recent: ['Sepi banget'] });
+  assert.ok(prompt.includes('Tanya lagi pada sibuk apa'), 'sudut masuk ke prompt');
+  assert.ok(prompt.includes('Sepi banget'), 'riwayat masuk ke prompt');
+
+  // Sudut selalu diambil dari daftar, dan bisa bervariasi.
+  assert.ok(QUIET_ANGLES.length >= 5, 'cukup banyak sudut');
+  assert.equal(pickQuietAngle(() => 0), QUIET_ANGLES[0]);
+  assert.equal(pickQuietAngle(() => 0.999), QUIET_ANGLES[QUIET_ANGLES.length - 1]);
+  const picks = new Set(Array.from({ length: 40 }, () => pickQuietAngle()));
+  assert.ok(picks.size >= 3, `sudut bervariasi (dapat ${picks.size})`);
+});
+
+await testAsync('pemecah sepi: bot asli & pratinjau sama-sama pakai sudut acak', async () => {
+  const agent = await readFile('src/features/agent.ts', 'utf8');
+  const preview = await readFile('src/features/preview.ts', 'utf8');
+  // Kalau hanya salah satu yang memakai, pratinjau kembali bukan cermin bot.
+  assert.ok(agent.includes('pickQuietAngle'), 'bot asli memakai sudut acak');
+  assert.ok(preview.includes('pickQuietAngle'), 'pratinjau memakai sudut acak');
+  // Cek perilaku (argumen `angle` benar-benar diteruskan), bukan format satu
+  // baris — dulu test ini merah hanya karena pemanggilnya dipecah ke banyak
+  // baris saat menambah parameter `clock`.
+  assert.ok(/buildQuietPrompt\(channel\.guild\.name,\s*\{[^}]*angle/.test(agent), 'bot meneruskan sudut');
+  assert.ok(/buildQuietPrompt\(guildName,\s*\{[^}]*angle/.test(preview), 'pratinjau meneruskan sudut');
+});
+
+await testAsync('jam tenang malam menahan sapaan 23:00–06:00 WIB', async () => {
+  const { emptyState, isQuietHour, shouldBreakSilence } = await import('../src/features/agent-core.js');
+
+  // Zona waktu WIB, bukan zona server (hosting biasanya UTC).
+  const at = (iso: string) => new Date(iso).getTime();
+  assert.equal(isQuietHour(at('2026-11-09T23:30:00+07:00')), true, '23:30 tenang');
+  assert.equal(isQuietHour(at('2026-11-09T03:00:00+07:00')), true, '03:00 tenang');
+  assert.equal(isQuietHour(at('2026-11-09T06:00:00+07:00')), false, '06:00 sudah boleh');
+  assert.equal(isQuietHour(at('2026-11-09T12:00:00+07:00')), false, 'siang boleh');
+  assert.equal(isQuietHour(at('2026-11-09T22:59:00+07:00')), false, '22:59 masih boleh');
+
+  // Channel sunyi 2 jam sebelum waktu uji (trace dibuat relatif, bukan jam
+  // tetap — trace setelah `now` akan dianggap "masa depan" dan tidak sepi).
+  const idleSince = (now: number) => ({ ...emptyState(), traces: [{ userId: 'u1', at: now - 2 * 60 * 60_000 }] });
+
+  const malamAt = at('2026-11-09T23:30:00+07:00');
+  const malam = shouldBreakSilence(
+    agentSettings({ cooldownSeconds: 0 }) as never,
+    idleSince(malamAt),
+    malamAt,
+  );
+  assert.equal(malam, false, 'ditahan saat jam tenang');
+
+  // Saklar dimatikan -> kembali menyapa.
+  const mati = shouldBreakSilence(
+    agentSettings({ cooldownSeconds: 0, quietHours: false }) as never,
+    idleSince(malamAt),
+    malamAt,
+  );
+  assert.equal(mati, true, 'menyapa kalau jam tenang dimatikan');
+
+  // Siang hari tetap menyapa seperti biasa.
+  const siangAt = at('2026-11-09T12:00:00+07:00');
+  const siang = shouldBreakSilence(
+    agentSettings({ cooldownSeconds: 0 }) as never,
+    idleSince(siangAt),
+    siangAt,
+  );
+  assert.equal(siang, true, 'siang tetap menyapa');
+});
+
+console.log('\nZona waktu Indonesia (WIB/WITA/WIT)');
+
+await testAsync('zona waktu: tiga zona resmi Indonesia dikenali', async () => {
+  const { TIME_ZONES, DEFAULT_TIME_ZONE, normalizeTimeZone, timeZoneLabel, hourInZone } = await import(
+    '../src/lib/timezone.js'
+  );
+
+  assert.equal(TIME_ZONES.length, 3, 'tepat tiga zona');
+  assert.deepEqual(
+    TIME_ZONES.map((zone) => zone.label),
+    ['WIB', 'WITA', 'WIT'],
+    'label sesuai referensi',
+  );
+  assert.deepEqual(
+    TIME_ZONES.map((zone) => zone.offset),
+    [7, 8, 9],
+    'offset 7/8/9 dari UTC',
+  );
+  assert.equal(DEFAULT_TIME_ZONE, 'Asia/Jakarta', 'bawaan WIB (perilaku lama)');
+
+  // Normalisasi menerima nama IANA, label, dan label huruf kecil.
+  assert.equal(normalizeTimeZone('Asia/Makassar'), 'Asia/Makassar');
+  assert.equal(normalizeTimeZone('WITA'), 'Asia/Makassar', 'label diterima');
+  assert.equal(normalizeTimeZone('wit'), 'Asia/Jayapura', 'huruf kecil oke');
+  assert.equal(normalizeTimeZone('Asia/Jayapura'), 'Asia/Jayapura');
+  // Nilai ngawur tidak boleh melempar / mengubah jam jadi acak.
+  assert.equal(normalizeTimeZone('Mars/Olympus'), 'Asia/Jakarta', 'tak dikenal -> WIB');
+  assert.equal(normalizeTimeZone(null), 'Asia/Jakarta');
+  assert.equal(normalizeTimeZone(''), 'Asia/Jakarta');
+
+  assert.equal(timeZoneLabel('Asia/Makassar'), 'WITA');
+  assert.equal(timeZoneLabel(null), 'WIB');
+
+  // Jam harus benar-benar berbeda 1 jam antar zona (12:00 UTC).
+  const noon = Date.UTC(2026, 10, 9, 5, 0, 0); // 12:00 WIB
+  assert.equal(hourInZone(noon, 'Asia/Jakarta'), 12);
+  assert.equal(hourInZone(noon, 'Asia/Makassar'), 13, 'WITA +1 jam');
+  assert.equal(hourInZone(noon, 'Asia/Jayapura'), 14, 'WIT +2 jam');
+});
+
+await testAsync('zona waktu: tengah malam dibaca 0, bukan 24', async () => {
+  const { hourInZone } = await import('../src/lib/timezone.js');
+  // 17:00 UTC = 00:00 WIB. Kalau jam dibaca 24, `24 >= 23` membuat seluruh
+  // dini hari salah dianggap jam tenang — dan itu bug yang sulit terlihat.
+  const midnight = Date.UTC(2026, 10, 8, 17, 0, 0);
+  assert.equal(hourInZone(midnight, 'Asia/Jakarta'), 0);
+});
+
+await testAsync('zona waktu: jam tenang mengikuti zona server', async () => {
+  const { isQuietHour } = await import('../src/features/agent-core.js');
+  // 23:30 WIB = 00:30 WITA = 01:30 WIT (semua masih jam tenang).
+  const at = (iso: string) => new Date(iso).getTime();
+  const wib = at('2026-11-09T23:30:00+07:00');
+  assert.equal(isQuietHour(wib, 'Asia/Jakarta'), true);
+
+  // 22:30 WIB = 23:30 WITA: server WITA sudah tenang, WIB belum.
+  const beda = at('2026-11-09T22:30:00+07:00');
+  assert.equal(isQuietHour(beda, 'Asia/Makassar'), true, 'WITA sudah masuk batas');
+  assert.equal(isQuietHour(beda, 'Asia/Jakarta'), false, 'WIB belum');
+});
+
+await testAsync('zona waktu: tersimpan per server & didahulukan dari .env', async () => {
+  const { getGuildSettings, setGuildTimeZone, resolveTimeZone } = await import('../src/db/repo.js');
+  const { config } = await import('../src/config.js');
+
+  await setGuildTimeZone(GUILD, 'Asia/Makassar');
+  assert.equal((await getGuildSettings(GUILD))?.timezone, 'Asia/Makassar', 'tersimpan');
+  assert.equal(await resolveTimeZone(GUILD), 'Asia/Makassar', 'dipakai, menang atas .env');
+
+  // Tanpa baris DB (server baru) -> default .env.
+  assert.equal(await resolveTimeZone('guild-belum-ada-123'), config.features.timeZone);
+
+  // Nilai ngawur dinormalisasi, bukan disimpan mentah.
+  await setGuildTimeZone(GUILD, 'WIT');
+  assert.equal((await getGuildSettings(GUILD))?.timezone, 'Asia/Jayapura', 'label -> IANA');
+
+  await setGuildTimeZone(GUILD, 'Asia/Jakarta');
+});
+
+await testAsync('zona waktu: prompt & sambutan memakai zona server', async () => {
+  const { buildSystemPrompt } = await import('../src/features/prompt.js');
+
+  const prompt = buildSystemPrompt({
+    botName: 'Zypher',
+    guildName: 'Server Uji',
+    userName: 'Bagas',
+    persona: null,
+    memories: [],
+    keywords: [],
+    now: new Date('2026-11-09T14:05:00+08:00'),
+    timeZone: 'Asia/Makassar',
+  });
+  // Label zona harus tertulis supaya model tahu "pagi" itu jam berapa.
+  assert.ok(prompt.includes('WITA'), 'label zona ada di prompt');
+  assert.equal(prompt.includes('WIB'), false, 'tidak memakai WIB saat disetel WITA');
+
+  const source = await readFile('src/features/prompt.ts', 'utf8');
+  assert.equal(
+    /timeZone: 'Asia\/Jakarta'/.test(source),
+    false,
+    'tidak ada lagi zona yang dipaku di prompt',
+  );
+});
+
+await testAsync('zona waktu: transkrip & grafik ikut zona server', async () => {
+  const { buildTranscriptHtml } = await import('../src/lib/transcript.js');
+  const { messagesPerDay } = await import('../src/db/repo.js');
+
+  const base = {
+    guildName: 'Server Uji',
+    guildIconUrl: null,
+    userName: 'Bagas',
+    userTag: 'bagas',
+    channelName: 'DM',
+    startedAt: new Date('2026-11-09T21:00:00+08:00'),
+    endedAt: new Date('2026-11-09T22:00:00+08:00'),
+    messages: [],
+    memoryLines: [],
+  };
+
+  const wita = buildTranscriptHtml({ ...base, timeZone: 'Asia/Makassar' });
+  const wib = buildTranscriptHtml({ ...base, timeZone: 'Asia/Jakarta' });
+  assert.ok(wita.includes('WITA'), 'footer memakai label zona server');
+  assert.ok(wib.includes('WIB'), 'WIB tetap benar');
+  // Jam di WITA harus 1 jam lebih maju daripada WIB untuk waktu yang sama.
+  assert.notEqual(wita.slice(0, 200), wib.slice(0, 200), 'tanggal/jam berbeda antar zona');
+
+  // Grafik: pengelompokan tanggal mengikuti zona yang diberikan.
+  const now = Date.now();
+  const seriesWita = await messagesPerDay(GUILD, 3, 'Asia/Makassar');
+  const seriesWib = await messagesPerDay(GUILD, 3, 'Asia/Jakarta');
+  assert.equal(seriesWita.length, 3, 'tetap 3 hari');
+  assert.ok(seriesWib.length === 3 && now > 0);
+
+  // Server.ts harus meneruskan zona server, bukan default.
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(/messagesPerDay\(guildId, 7, await resolveTimeZone/.test(server), 'grafik pakai zona server');
+});
+
+await testAsync('zona waktu: tidak ada lagi jam yang dipaku ke WIB', async () => {
+  // Pemindaian sumber: zona yang benar-benar memengaruhi perilaku harus lewat
+  // `lib/timezone.ts`. Format tanggal murni-tampilan (label hari di dashboard)
+  // memang tetap WIB — itu disengaja, karena dashboard dipakai admin Indonesia.
+  const files = [
+    'src/features/prompt.ts',
+    'src/features/agent-core.ts',
+    'src/features/preview.ts',
+    'src/features/welcome.ts',
+    'src/features/agent.ts',
+  ];
+  for (const file of files) {
+    const source = await readFile(file, 'utf8');
+    assert.equal(
+      /timeZone: 'Asia\/Jakarta'/.test(source),
+      false,
+      `${file} masih memaku zona waktu`,
+    );
+  }
+
+  // Fungsi zona harus punya satu sumber.
+  const zone = await readFile('src/lib/timezone.ts', 'utf8');
+  assert.ok(zone.includes('hourCycle'), 'pakai h23 supaya tengah malam = 0');
+  assert.ok(zone.includes("DEFAULT_TIME_ZONE: TimeZoneId = 'Asia/Jakarta'"), 'bawaan WIB');
+});
+
+await testAsync('zona waktu: bisa diatur dari dashboard', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(server.includes("path === '/api/timezone'"), 'endpoint ada');
+  assert.ok(server.includes('Zona waktu tidak dikenal'), 'nilai ngawur ditolak');
+  assert.ok(server.includes('setGuildTimeZone'), 'disimpan lewat repo');
+
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  assert.ok(pages.includes('id="timeZone"'), 'ada pilihan di halaman pengaturan');
+  assert.ok(pages.includes('async function saveTimeZone()'), 'fungsi simpan ada');
+  assert.ok(pages.includes("'/api/timezone'"), 'menembak endpoint yang benar');
+  for (const label of ['WIB', 'WITA', 'WIT']) {
+    assert.ok(pages.includes(label), `pilihan ${label} ada`);
+  }
+
+  // Halaman pengaturan mengirim zona efektif, bukan hanya nilai tersimpan.
+  assert.ok(server.includes('effectiveTimeZone'), 'zona efektif dikirim ke UI');
+
+  const schema = await readFile('src/db/schema.ts', 'utf8');
+  assert.ok(schema.includes('timezone'), 'kolom DB ada');
+  const migrate = await readFile('src/db/index.ts', 'utf8');
+  assert.ok(migrate.includes('ALTER TABLE guilds ADD COLUMN timezone'), 'database lama dimigrasi');
+});
+
+await testAsync('jam tenang: pratinjau menjelaskan alasannya', async () => {
+  const { previewQuietBreak } = await import('../src/features/preview.js');
+  const { emptyState } = await import('../src/features/agent-core.js');
+
+  const hasil = await previewQuietBreak({
+    settings: agentSettings({ cooldownSeconds: 0 }) as never,
+    guildName: 'Komunitas Zypher',
+    state: {
+      ...emptyState(),
+      traces: [{ userId: 'u1', at: new Date('2026-11-09T23:30:00+07:00').getTime() - 2 * 60 * 60_000 }],
+    },
+    now: new Date('2026-11-09T23:30:00+07:00').getTime(),
+  });
+
+  assert.equal(hasil.wouldFire, false, 'tidak menyapa');
+  assert.ok(hasil.reason.includes('jam tenang'), 'alasan disebut');
+  assert.ok(hasil.reason.includes('23:00'), 'jamnya jelas');
+  assert.ok(hasil.reason.includes('mention'), 'menjelaskan batasnya');
+});
+
+await testAsync('jam tenang: tersimpan & bisa diatur dari dashboard', async () => {
+  const { getAgentSettings, saveAgentSettings } = await import('../src/db/repo.js');
+  await saveAgentSettings(GUILD, { quietHours: true });
+  assert.equal((await getAgentSettings(GUILD)).quietHours, true, 'bisa dinyalakan');
+  await saveAgentSettings(GUILD, { quietHours: false });
+  assert.equal((await getAgentSettings(GUILD)).quietHours, false, 'bisa dimatikan');
+
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  assert.ok(pages.includes('id="agentQuietHours"'), 'ada checkbox di halaman agent');
+  assert.ok(pages.includes('quietHours: document.getElementById'), 'ikut terkirim saat simpan');
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(server.includes('quietHours: bool(payload.quietHours'), 'API menerimanya');
+  const schema = await readFile('src/db/schema.ts', 'utf8');
+  assert.ok(schema.includes('quiet_hours'), 'kolom DB ada');
+  const migrate = await readFile('src/db/index.ts', 'utf8');
+  assert.ok(migrate.includes('ALTER TABLE agent ADD COLUMN quiet_hours'), 'database lama ikut dimigrasi');
+});
+
+await testAsync('pemecah sepi: bisa dikirim nyata ke channel', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  const testSend = await readFile('src/features/test-send.ts', 'utf8');
+
+  assert.ok(server.includes("kind === 'quiet'"), 'API send-test menerima jenis quiet');
+  assert.ok(server.includes('sendQuietTest'), 'memanggil pengirim pemecah sepi');
+  assert.ok(testSend.includes('export async function sendQuietTest'), 'fungsinya ada');
+  assert.ok(testSend.includes('allowedMentions: { parse: [] as const }'), 'tidak men-tag siapa pun');
+  assert.ok(testSend.includes('QUIET_TEST_MARK'), 'pesan diberi penanda uji');
+
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  assert.ok(pages.includes('id="sendQuiet"'), 'tombol kirim ada di halaman agent');
+  assert.ok(pages.includes('async function sendQuietTest()'), 'fungsi JS-nya ada');
+  assert.ok(pages.includes("'/api/send-test/quiet'"), 'menembak endpoint kirim');
+  // Label lama menyesatkan: kartunya berisi tombol kirim nyata juga.
+  assert.ok(pages.includes('pratinjau gratis, atau kirim satu pesan nyata'), 'label kartu jujur');
 });
 
 await testAsync('pratinjau: pesan uji kosong ditolak API', async () => {

@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { z } from 'zod';
+import { normalizeTimeZone } from './lib/timezone.js';
 
 /**
  * Konversi string env -> boolean dengan benar.
@@ -85,6 +86,12 @@ const optionalSecret = z
   .optional()
   .transform((value) => (value && value.trim() !== '' ? value.trim() : undefined));
 
+/** Teks bebas yang boleh kosong (mis. TIMEZONE). Kosong -> undefined. */
+const optionalString = z
+  .string()
+  .optional()
+  .transform((value) => (value && value.trim() !== '' ? value.trim() : undefined));
+
 /** Token dashboard: kosong = fitur mati; kalau diisi harus cukup panjang. */
 const optionalToken = z
   .string()
@@ -152,6 +159,12 @@ const schema = z.object({
   PUBLIC_URL: optionalHost,
   WEB_PUBLIC_URL: optionalHost,
   DATABASE_PATH: z.string().default('./data/zypher.db'),
+  // Folder banner sambutan/perpisahan. Di hosting panel yang me-reset folder
+  // kerja saat deploy, arahkan ini ke volume persisten.
+  BANNER_DIR: z
+    .string()
+    .optional()
+    .transform((value) => (value && value.trim() ? value.trim() : undefined)),
   // Postgres opsional. Terisi = semua data disimpan di Postgres, bukan SQLite.
   // Contoh: postgres://user:pass@host:5432/db?sslmode=require
   DATABASE_URL: z
@@ -163,6 +176,9 @@ const schema = z.object({
   SHARD_INDEX: numberish(0, 0, 255),
   SHARD_COUNT: numberish(1, 1, 256),
   AUTO_MEMORY: booleanish(true),
+  // Zona waktu bawaan: WIB/WITA/WIT (atau nama IANA). Bisa dioverride per
+  // server lewat dashboard; ini hanya cadangan untuk database lama.
+  TIMEZONE: optionalString,
   RATE_LIMIT_PER_MINUTE: numberish(12, 0, 240),
   MAX_INPUT_CHARS: numberish(2000, 100, 6000),
   MODLOG_CHANNEL_ID: optionalId,
@@ -300,6 +316,8 @@ export const config = {
   })(),
   database: {
     path: env.DATABASE_PATH,
+    // null = pakai default `data/banners` relatif ke folder kerja.
+    bannerDir: env.BANNER_DIR ?? null,
     url: env.DATABASE_URL,
     shardIndex: env.SHARD_INDEX,
     shardCount: env.SHARD_COUNT,
@@ -330,8 +348,10 @@ export const config = {
     maxBytes: env.VOICE_MAX_MB * 1024 * 1024,
   },
   features: {
-    // Zona waktu untuk jam di prompt sambutan & statistik dashboard.
-    timeZone: 'Asia/Jakarta',
+    // Zona waktu bawaan untuk jam di prompt & statistik dashboard.
+    // Nilai per server (guilds.timezone) menang atas ini — lihat
+    // `resolveTimeZone()` di db/repo.ts.
+    timeZone: normalizeTimeZone(env.TIMEZONE),
     autoMemory: env.AUTO_MEMORY,
     rateLimitPerMinute: env.RATE_LIMIT_PER_MINUTE,
     maxInputChars: env.MAX_INPUT_CHARS,

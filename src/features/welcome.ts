@@ -23,7 +23,13 @@ import {
   type TextChannel,
   type AnyThreadChannel,
 } from 'discord.js';
-import { getGoodbyeSettings, getWelcomeSettings, type GoodbyeSettings, type WelcomeSettings } from '../db/repo.js';
+import {
+  getGoodbyeSettings,
+  getWelcomeSettings,
+  resolveTimeZone,
+  type GoodbyeSettings,
+  type WelcomeSettings,
+} from '../db/repo.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
 import { renderWelcomeCard } from './welcome-card.js';
@@ -80,7 +86,11 @@ async function generateGreeting(
   settings: WelcomeSettings,
   member: GuildMember,
 ): Promise<string | null> {
-  const result = await previewWelcome({ settings, ...memberShape(member) });
+  const result = await previewWelcome({
+    settings,
+    ...memberShape(member),
+    timeZone: await resolveTimeZone(member.guild.id),
+  });
   return result.source === 'ai' ? result.text : null;
 }
 
@@ -191,6 +201,7 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
     attachment,
     includeAvatar: settings.includeAvatar,
     bannerPath: settings.bannerPath,
+    bannerData: settings.bannerData,
     allowed,
     // Mention hanya berguna di channel. Di DM, member sudah tahu dia baru
     // bergabung — dan menulis <@id> di sana hanya terlihat seperti gangguan.
@@ -225,10 +236,12 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
     if (channel) {
       await channel.send(
         payload.components?.length
-          ? // Components V2: content/embeds/files tidak boleh ikut sama sekali.
+          ? // Components V2: content/embeds/stickers/poll dilarang. `files`
+            // tetap boleh — dipakai untuk lampiran banner.
             {
               components: payload.components,
               flags: payload.flags,
+              files,
               allowedMentions: { users: [member.id] },
             }
           : {
@@ -242,7 +255,7 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
             },
       );
     } else if (payload.components?.length) {
-      await member.send({ components: payload.components, flags: payload.flags });
+      await member.send({ components: payload.components, flags: payload.flags, files });
     } else {
       await member.send({ content: plainText || undefined, embeds, files });
     }
@@ -330,6 +343,8 @@ async function composePayload(options: {
   attachment: AttachmentBuilder | null;
   includeAvatar: boolean;
   bannerPath: string | null;
+  /** Salinan banner di database — untuk memulihkan file yang hilang saat deploy. */
+  bannerData?: { mime: string; base64: string } | null;
   allowed: { embed: boolean; attach: boolean };
   /**
    * Boleh menulis `<@id>` di `content`? Sambutan: ya. Perpisahan: tidak —
@@ -356,18 +371,29 @@ async function composePayload(options: {
     return { content: mentionUser ? `<@${member.id}> ${text}` : text, embeds: [], files: [] };
   }
 
-  // Mode container (Components V2). Pesan ber-flag ini TIDAK BOLEH memuat
-  // content/embeds/files, jadi mention harus ikut di dalam teksnya.
+  // Mode container (Components V2). Pesan ber-flag ini tidak boleh memuat
+  // `content`, `embeds`, `stickers`, atau `poll` — jadi mention ikut di dalam
+  // teks. `files` TETAP boleh, dan itulah cara banner dikirim (dirujuk lewat
+  // `attachment://` di Media Gallery).
   if (mode === 'container') {
     const teks = mentionUser ? `<@${member.id}> ${text}` : text;
+    const bannerFile = allowed.attach
+      ? await readBannerAttachment(options.bannerPath, options.bannerData)
+      : null;
     const card = buildContainerCard({
       kind,
       text: teks,
       guildName: member.guild.name,
       memberCount: member.guild.memberCount,
+      bannerName: bannerFile?.name ?? null,
     });
     if (card) {
-      return { content: '', embeds: [], files: [], ...containerPayload(card) };
+      return {
+        content: '',
+        embeds: [],
+        files: bannerFile ? [bannerFile.attachment] : [],
+        ...containerPayload(card),
+      };
     }
     // Pustaka tidak mendukung: jatuh ke embed di bawah (tidak pernah pesan kosong).
   }
@@ -387,7 +413,9 @@ async function composePayload(options: {
   // Mode embed: banner opsional sebagai gambar embed. Discord MENOLAK data URI
   // di setImage() ("Received one or more errors"), jadi banner harus dikirim
   // sebagai lampiran dan dirujuk lewat attachment://.
-  const bannerFile = allowed.attach ? await readBannerAttachment(options.bannerPath) : null;
+  const bannerFile = allowed.attach
+    ? await readBannerAttachment(options.bannerPath, options.bannerData)
+    : null;
   if (bannerFile) {
     embed.setImage(`attachment://${bannerFile.name}`);
     return { content: '', embeds: [embed], files: [bannerFile.attachment] };
@@ -514,6 +542,7 @@ export async function goodbyeMember(member: GuildMember): Promise<boolean> {
     attachment,
     includeAvatar: settings.includeAvatar,
     bannerPath: settings.bannerPath,
+    bannerData: settings.bannerData,
     allowed,
     // Member sudah keluar: jangan pernah mention.
     mentionUser: false,
@@ -537,7 +566,7 @@ export async function goodbyeMember(member: GuildMember): Promise<boolean> {
   try {
     await channel.send(
       payload.components?.length
-        ? { components: payload.components, flags: payload.flags, allowedMentions: { parse: [] } }
+        ? { components: payload.components, flags: payload.flags, files, allowedMentions: { parse: [] } }
         : {
             // `content` hanya berisi sesuatu pada mode text (lihat composePayload).
             content: plainText || undefined,

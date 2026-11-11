@@ -25,9 +25,15 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { errorMessage, logger } from '../lib/logger.js';
+import { config } from '../config.js';
 
-/** Folder penyimpanan banner. Dibuat saat pertama dibutuhkan. */
-export const BANNER_DIR = join(process.cwd(), 'data', 'banners');
+/**
+ * Folder penyimpanan banner.
+ *
+ * Bisa dipindah lewat `BANNER_DIR` — penting untuk hosting panel yang
+ * me-reset folder kerja setiap deploy (lihat `ensureBannerFile`).
+ */
+export const BANNER_DIR = config.database.bannerDir ?? join(process.cwd(), 'data', 'banners');
 
 /** Batas ukuran file — Discord sendiri membatasi 10 MB, kita lebih ketat. */
 export const MAX_BANNER_BYTES = 8 * 1024 * 1024;
@@ -212,6 +218,59 @@ export async function readBannerBytes(
 }
 
 /**
+ * Pulihkan file banner dari salinan di database bila file-nya hilang.
+ *
+ * Kenapa perlu: banyak hosting panel men-deploy ulang dengan `git pull` dan
+ * me-reset folder kerja, sehingga `data/banners/` hilang padahal nama file-nya
+ * masih tersimpan di database. Dulu hasilnya banner hilang **tanpa satu pun
+ * log**, jadi tidak mungkin didiagnosis dari console.
+ *
+ * `true` = file siap dipakai (sudah ada, atau berhasil dipulihkan).
+ */
+export async function ensureBannerFile(
+  name: string | null,
+  backup: { mime: string; base64: string } | null | undefined,
+): Promise<boolean> {
+  if (!isSafeBannerName(name)) return false;
+
+  // Sudah ada di disk — kasus normal.
+  if (existsSync(bannerPath(name))) {
+    try {
+      const buffer = await readFile(bannerPath(name));
+      if (detectImage(buffer)) return true;
+    } catch {
+      // Rusak/tidak terbaca: lanjut ke pemulihan di bawah.
+    }
+  }
+
+  if (!backup?.base64) {
+    logger.warn(
+      `Banner "${name}" tidak ada di disk dan tidak punya salinan di database — ` +
+        'banner dilewati. Unggah ulang lewat dashboard untuk memperbaiki.',
+    );
+    return false;
+  }
+
+  try {
+    const buffer = Buffer.from(backup.base64, 'base64');
+    const meta = detectImage(buffer);
+    if (!meta) {
+      logger.warn(`Salinan banner "${name}" di database rusak — banner dilewati.`);
+      return false;
+    }
+    await mkdir(BANNER_DIR, { recursive: true });
+    await writeFile(bannerPath(name), buffer);
+    logger.info(
+      `Banner "${name}" hilang dari disk — dipulihkan dari database (${buffer.byteLength} B).`,
+    );
+    return true;
+  } catch (error) {
+    logger.warn(`Gagal memulihkan banner "${name}" dari database`, errorMessage(error));
+    return false;
+  }
+}
+
+/**
  * Baca banner sebagai lampiran Discord.
  *
  * Penting: Discord **menolak** `embed.setImage()` berisi data URI dengan pesan
@@ -221,14 +280,25 @@ export async function readBannerBytes(
  */
 export async function readBannerAttachment(
   name: string | null,
+  /** Salinan dari database — dipakai kalau file di disk hilang. */
+  backup?: { mime: string; base64: string } | null,
 ): Promise<{ attachment: AttachmentBuilder; name: string } | null> {
   if (!isSafeBannerName(name)) return null;
+
+  // Banner diatur tapi file-nya tidak ada: dulu `null` tanpa log, sehingga
+  // sambutan tampil tanpa banner dan tidak ada cara tahu kenapa.
+  if (!(await ensureBannerFile(name, backup))) return null;
+
   try {
     const buffer = await readFile(bannerPath(name));
     const meta = detectImage(buffer);
-    if (!meta) return null;
+    if (!meta) {
+      logger.warn(`Banner "${name}" tidak bisa dibaca sebagai gambar — banner dilewati.`);
+      return null;
+    }
     return { attachment: new AttachmentBuilder(buffer, { name }), name };
-  } catch {
+  } catch (error) {
+    logger.warn(`Gagal membaca banner "${name}"`, errorMessage(error));
     return null;
   }
 }

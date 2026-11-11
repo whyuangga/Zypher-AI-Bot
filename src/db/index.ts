@@ -53,6 +53,21 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
     // yang sudah berjalan tidak berubah karena pembaruan ini.
     'ALTER TABLE welcome ADD COLUMN display_mode TEXT',
     'ALTER TABLE goodbye ADD COLUMN display_mode TEXT',
+    // Salinan banner di database. Hosting panel sering me-reset folder kerja
+    // saat deploy, sehingga file di `data/banners/` hilang padahal path-nya
+    // masih tersimpan. Dengan salinan ini banner dipulihkan otomatis.
+    'ALTER TABLE welcome ADD COLUMN banner_mime TEXT',
+    'ALTER TABLE welcome ADD COLUMN banner_bytes TEXT',
+    'ALTER TABLE goodbye ADD COLUMN banner_mime TEXT',
+    'ALTER TABLE goodbye ADD COLUMN banner_bytes TEXT',
+    // Jam tenang malam: jangan menyapa channel otomatis saat orang tidur.
+    // Default 1 (aktif) mengikuti referensi, tapi baris lama ikut jadi aktif
+    // hanya setelah kolom ini ditambahkan — perilaku lama tidak berubah
+    // sampai admin menyimpan pengaturan agent lagi.
+    'ALTER TABLE agent ADD COLUMN quiet_hours INTEGER',
+    // Zona waktu per server (WIB/WITA/WIT). NULL = WIB, jadi database lama
+    // tidak berubah perilaku sampai admin memilih zona lain.
+    'ALTER TABLE guilds ADD COLUMN timezone TEXT',
   ];
 
   for (const statement of statements) {

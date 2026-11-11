@@ -28,7 +28,11 @@ export type IconName =
   | 'upload'
   | 'external'
   | 'shield'
-  | 'mic';
+  | 'mic'
+  | 'cpu'
+  | 'memory'
+  | 'network'
+  | 'disk';
 
 const PATHS: Record<IconName, string> = {
   home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.8V21h14V9.8"/>',
@@ -57,6 +61,10 @@ const PATHS: Record<IconName, string> = {
   external: '<path d="M14 4h6v6"/><path d="M20 4 11 13"/><path d="M18 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5"/>',
   shield: '<path d="M12 3 5 6v6c0 4.2 2.9 7.6 7 9 4.1-1.4 7-4.8 7-9V6l-7-3Z"/><path d="m9.2 12.2 2 2 3.6-3.9"/>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"/><path d="M12 18v3"/>',
+  cpu: '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v2"/><path d="M15 2v2"/><path d="M9 20v2"/><path d="M15 20v2"/><path d="M2 9h2"/><path d="M2 15h2"/><path d="M20 9h2"/><path d="M20 15h2"/>',
+  memory: '<rect x="2" y="7" width="20" height="10" rx="2"/><path d="M6 17v3"/><path d="M12 17v3"/><path d="M18 17v3"/><path d="M7 11h2"/><path d="M12 11h2"/><path d="M17 11h1"/>',
+  network: '<path d="M4 9 12 3l8 6"/><path d="M4 20 12 14l8 6"/><path d="M12 3v18"/>',
+  disk: '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
 };
 
 export function icon(name: IconName, size = 18): string {

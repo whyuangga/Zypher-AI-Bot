@@ -12,6 +12,7 @@
  *   5. Menyapa saat sepi hanya kalau memang sudah lama tidak ada obrolan.
  */
 import type { AgentSettings } from '../db/repo.js';
+import { hourInZone } from '../lib/timezone.js';
 
 /** Jejak satu pesan member di channel agent. */
 export interface ChannelTrace {
@@ -47,6 +48,63 @@ export function emptyState(): AgentState {
 
 /** Berapa banyak giliran percakapan yang disimpan sebagai konteks. */
 export const MEMORY_TURNS = 8;
+
+/**
+ * System prompt untuk kalimat pemecah sepi.
+ *
+ * Satu sumber untuk dua pemakai: `handleQuietChannel()` (timer di bot.ts) dan
+ * `previewQuietBreak()` (tombol "Tes pemecah sepi"). Dulu prompt-nya ditulis
+ * dua kali dengan kalimat berbeda, jadi yang dilihat admin di dashboard bukan
+ * yang benar-benar dikirim bot.
+ */
+export const QUIET_SYSTEM_PROMPT =
+  'Kamu anggota komunitas yang santai. Tulis satu kalimat pembuka singkat (maks 100 karakter) ' +
+  'untuk memecah keheningan. Jangan menyebut dirimu bot atau AI.';
+
+/**
+ * Sudut obrolan untuk pemecah sepi — dipilih acak supaya sapaan tidak selalu
+ * berbentuk sama.
+ *
+ * Tanpa ini model cenderung mengulang pola "Sepi banget ya…" setiap kali.
+ * Diambil dari referensi `ai-discord-chat` (`_ICEBREAKER_ANGLES`), tapi ditulis
+ * ulang untuk konteks Indonesia dan dipangkas jadi sudut yang paling sering
+ * memicu balasan.
+ */
+export const QUIET_ANGLES: readonly string[] = [
+  'Sapa warga santai sesuai jam sekarang, lalu tanya lagi pada sibuk apa.',
+  'Lempar satu pertanyaan pilihan ringan (makanan/minuman favorit, kebiasaan unik).',
+  'Tanya santai warga lagi dengar lagu apa, nonton apa, atau main game apa.',
+  'Nyeletuk soal suasana hari ini (hari kerja vs weekend, jam ngantuk, jam rebahan).',
+  'Ajak ngobrol ringan soal hobi yang nyambung dengan tema server.',
+  'Sapa dengan gaya akrab seolah baru buka HP dan mampir ke channel.',
+  'Lempar celetukan relate soal kehidupan sehari-hari biar warga nyaut.',
+];
+
+/** Pilih sudut acak. Dipisah supaya test bisa mengunci perilakunya. */
+export function pickQuietAngle(random: () => number = Math.random): string {
+  const index = Math.floor(random() * QUIET_ANGLES.length);
+  return QUIET_ANGLES[Math.min(Math.max(index, 0), QUIET_ANGLES.length - 1)]!;
+}
+
+/**
+ * Larangan mengulang kalimat sebelumnya.
+ *
+ * Model tidak punya ingatan antar panggilan, jadi tanpa blok ini sapaan bisa
+ * nyaris identik berulang kali. `recent` = kalimat-kalimat bot terakhir di
+ * channel itu.
+ */
+export function buildAntiRepeatBlock(recent: readonly string[]): string {
+  const cleaned = recent.map((text) => text.trim()).filter(Boolean).slice(-5);
+  if (cleaned.length === 0) return '';
+  const quoted = cleaned.map((text) => `"${text.slice(0, 120)}"`).join(' | ');
+  return (
+    `\nPENTING: kamu sudah pernah mengirim kalimat ini di channel yang sama: [${quoted}]. ` +
+    'JANGAN memakai awalan, struktur, atau topik yang mirip. Jangan mengawali dengan "Sepi banget" atau "Aduh sepi".'
+  );
+}
+
+/** Batas panjang kalimat pemecah sepi sebelum dikirim ke Discord. */
+export const QUIET_MAX_CHARS = 200;
 
 /** Tambah satu giliran percakapan, dibatasi `MEMORY_TURNS` terakhir. */
 export function pushTurn(state: AgentState, turn: MemoryTurn): AgentState {
@@ -134,10 +192,31 @@ export function shouldReply(input: ShouldReplyInput): ReplyDecision {
   return { reply: true, summoned };
 }
 
-/** Boleh menyapa duluan karena channel sudah sepi? */
-export function shouldBreakSilence(settings: AgentSettings, state: AgentState, now: number): boolean {
+/**
+ * Apakah `now` masuk jam tenang malam (23:00–06:00)?
+ *
+ * `timeZone` = zona waktu server (WIB/WITA/WIT). Dulu dipaku ke Asia/Jakarta,
+ * jadi server di Makassar baru berhenti menyapa satu jam lebih lambat dari
+ * jadwal yang tertulis di dashboard. Hosting umumnya UTC, jadi zona harus
+ * disebut eksplisit — bukan memakai zona mesin.
+ */
+export function isQuietHour(now: number, timeZone?: string | null): boolean {
+  const hour = hourInZone(now, timeZone);
+  return hour >= 23 || hour < 6;
+}
+
+export function shouldBreakSilence(
+  settings: AgentSettings,
+  state: AgentState,
+  now: number,
+  timeZone?: string | null,
+): boolean {
   // Channel galeri tidak pernah disapa sendiri — isinya foto, bukan obrolan.
   if (!settings.channelId || settings.quietMinutes <= 0) return false;
+
+  // Jam tenang malam: jangan menyapa channel kosong saat orang tidur. Balasan
+  // ke mention tetap jalan lewat jalur lain — yang ditahan hanya sapaan.
+  if (settings.quietHours && isQuietHour(now, timeZone)) return false;
   if (settings.cooldownSeconds > 0 && now - state.lastReplyAt < settings.cooldownSeconds * 1000) return false;
 
   const lastTrace = state.traces[state.traces.length - 1];

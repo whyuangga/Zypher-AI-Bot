@@ -1,4 +1,6 @@
 import { all, get, insert, run } from './index.js';
+import { config } from '../config.js';
+import { normalizeTimeZone } from '../lib/timezone.js';
 import {
   modeFromLegacySettings,
   normalizeDisplayMode,
@@ -29,6 +31,13 @@ export interface GuildSettings {
   autoMemory: boolean | null;
   /** Hanya admin yang boleh memulai chat AI. `null` = memakai ADMIN_ONLY_ROOMS dari .env. */
   adminOnlyRooms: boolean | null;
+  /**
+   * Zona waktu server: `Asia/Jakarta` (WIB), `Asia/Makassar` (WITA), atau
+   * `Asia/Jayapura` (WIT).
+   *
+   * `null` = memakai `TIMEZONE` dari .env; kalau itu juga kosong, WIB.
+   */
+  timezone: string | null;
   createdAt: number;
 }
 
@@ -108,6 +117,7 @@ interface GuildRow {
   name: string | null;
   persona: string | null;
   model: string | null;
+  timezone: string | null;
   tts_reply_in_room: number | boolean | null;
   rag_enabled: number | boolean | null;
   auto_memory: number | boolean | null;
@@ -161,6 +171,7 @@ const toGuild = (row: GuildRow): GuildSettings => ({
   name: row.name ?? null,
   persona: row.persona,
   model: row.model,
+  timezone: row.timezone ?? null,
   ttsReplyInRoom:
     row.tts_reply_in_room === null || row.tts_reply_in_room === undefined
       ? null
@@ -244,6 +255,34 @@ export async function setPersona(guildId: string, persona: string | null): Promi
 export async function setGuildModel(guildId: string, model: string | null): Promise<void> {
   await ensureGuild(guildId);
   await run('UPDATE guilds SET model = ? WHERE guild_id = ?', [model, guildId]);
+}
+
+/**
+ * Simpan zona waktu server (WIB/WITA/WIT).
+ *
+ * Nilai dinormalisasi di sini, bukan hanya di UI: endpoint JSON bisa dipanggil
+ * langsung, dan satu nilai ngawur di DB akan membuat semua jam meleset tanpa
+ * error. `null` dikembalikan sebagai "ikuti default .env".
+ */
+export async function setGuildTimeZone(guildId: string, timeZone: string | null): Promise<void> {
+  await ensureGuild(guildId);
+  const clean = timeZone === null ? null : normalizeTimeZone(timeZone);
+  await run('UPDATE guilds SET timezone = ? WHERE guild_id = ?', [clean, guildId]);
+}
+
+/**
+ * Zona waktu yang **benar-benar dipakai** untuk server ini.
+ *
+ * Urutan: kolom `guilds.timezone` → `TIMEZONE` dari .env → WIB. Semua pemanggil
+ * (prompt, jam tenang, dashboard) harus lewat fungsi ini supaya tidak ada
+ * tempat yang masih memakai WIB saat server disetel WITA.
+ */
+export async function resolveTimeZone(guildId: string | null | undefined): Promise<string> {
+  if (guildId) {
+    const row = await get<{ timezone: string | null }>('SELECT timezone FROM guilds WHERE guild_id = ?', [guildId]);
+    if (row?.timezone) return normalizeTimeZone(row.timezone);
+  }
+  return normalizeTimeZone(config.features.timeZone);
 }
 
 /**
@@ -597,6 +636,14 @@ export interface AgentSettings {
   busyMute: boolean;
   /** Jeda minimum antar balasan, supaya bot tidak mendominasi. */
   cooldownSeconds: number;
+  /**
+   * Tahan sapaan otomatis malam hari (23:00–06:00 WIB).
+   *
+   * Balasan ke mention/reply tetap jalan — yang ditahan hanya sapaan
+   * "pemecah sepi", karena menyapa channel kosong jam 3 pagi tidak ada
+   * gunanya dan mengganggu notifikasi.
+   */
+  quietHours: boolean;
   updatedAt: number;
 }
 
@@ -607,6 +654,7 @@ export const AGENT_DEFAULTS = {
   reactImages: true,
   busyMute: true,
   cooldownSeconds: 90,
+  quietHours: true,
 } as const;
 
 interface AgentRow {
@@ -619,6 +667,7 @@ interface AgentRow {
   react_images: number | boolean;
   busy_mute: number | boolean;
   cooldown_seconds: number;
+  quiet_hours: number | boolean | null;
   updated_at: number;
 }
 
@@ -645,6 +694,9 @@ export async function getAgentSettings(guildId: string): Promise<AgentSettings> 
     reactImages: Boolean(row.react_images),
     busyMute: Boolean(row.busy_mute),
     cooldownSeconds: Number(row.cooldown_seconds),
+    // NULL = database lama sebelum kolom ini ada; anggap mati supaya
+    // pembaruan tidak diam-diam mengubah perilaku server yang sudah jalan.
+    quietHours: row.quiet_hours === null ? false : Boolean(row.quiet_hours),
     updatedAt: Number(row.updated_at),
   };
 }
@@ -656,8 +708,8 @@ export async function saveAgentSettings(
   const current = await getAgentSettings(guildId);
   const next = { ...current, ...patch };
   await run(
-    `INSERT INTO agent (guild_id, channel_id, gallery_channel_id, quiet_minutes, max_per_hour, react_emoji, react_images, busy_mute, cooldown_seconds, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO agent (guild_id, channel_id, gallery_channel_id, quiet_minutes, max_per_hour, react_emoji, react_images, busy_mute, cooldown_seconds, quiet_hours, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (guild_id) DO UPDATE SET
        channel_id = excluded.channel_id,
        gallery_channel_id = excluded.gallery_channel_id,
@@ -667,6 +719,7 @@ export async function saveAgentSettings(
        react_images = excluded.react_images,
        busy_mute = excluded.busy_mute,
        cooldown_seconds = excluded.cooldown_seconds,
+       quiet_hours = excluded.quiet_hours,
        updated_at = excluded.updated_at`,
     [
       guildId,
@@ -678,6 +731,7 @@ export async function saveAgentSettings(
       next.reactImages ? 1 : 0,
       next.busyMute ? 1 : 0,
       next.cooldownSeconds,
+      next.quietHours ? 1 : 0,
       Date.now(),
     ],
   );
@@ -728,6 +782,13 @@ export interface WelcomeSettings {
   includeAvatar: boolean;
   /** Nama file banner di data/banners (null = pakai latar bawaan). */
   bannerPath: string | null;
+  /**
+   * Salinan banner di database (base64). Dipakai untuk memulihkan file yang
+   * hilang — hosting panel sering me-reset folder kerja saat deploy.
+   * `null` = server ini belum pernah mengunggah banner, atau unggahan lama
+   * (sebelum kolom ini ada).
+   */
+  bannerData: { mime: string; base64: string } | null;
   updatedAt: number;
 }
 
@@ -743,6 +804,8 @@ interface WelcomeRow {
   example: string | null;
   include_avatar: number | boolean;
   banner_path: string | null;
+  banner_mime: string | null;
+  banner_bytes: string | null;
   updated_at: number;
 }
 
@@ -757,6 +820,7 @@ export const WELCOME_DEFAULTS = {
   example: null,
   includeAvatar: true,
   bannerPath: null,
+  bannerData: null,
 } as const;
 
 export async function getWelcomeSettings(guildId: string): Promise<WelcomeSettings> {
@@ -781,6 +845,10 @@ export async function getWelcomeSettings(guildId: string): Promise<WelcomeSettin
     example: row.example,
     includeAvatar: Boolean(row.include_avatar),
     bannerPath: row.banner_path ?? null,
+    bannerData:
+      row.banner_mime && row.banner_bytes
+        ? { mime: row.banner_mime, base64: row.banner_bytes }
+        : null,
     updatedAt: Number(row.updated_at),
   };
 }
@@ -792,8 +860,8 @@ export async function saveWelcomeSettings(
   const current = await getWelcomeSettings(guildId);
   const next = { ...current, ...patch };
   await run(
-    `INSERT INTO welcome (guild_id, channel_id, enabled, use_ai, template, display_mode, image_enabled, style, example, include_avatar, banner_path, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO welcome (guild_id, channel_id, enabled, use_ai, template, display_mode, image_enabled, style, example, include_avatar, banner_path, banner_mime, banner_bytes, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (guild_id) DO UPDATE SET
        channel_id = excluded.channel_id,
        enabled = excluded.enabled,
@@ -805,6 +873,8 @@ export async function saveWelcomeSettings(
        example = excluded.example,
        include_avatar = excluded.include_avatar,
        banner_path = excluded.banner_path,
+       banner_mime = excluded.banner_mime,
+       banner_bytes = excluded.banner_bytes,
        updated_at = excluded.updated_at`,
     [
       guildId,
@@ -818,6 +888,8 @@ export async function saveWelcomeSettings(
       next.example,
       next.includeAvatar ? 1 : 0,
       next.bannerPath,
+      next.bannerData?.mime ?? null,
+      next.bannerData?.base64 ?? null,
       Date.now(),
     ],
   );
@@ -840,6 +912,8 @@ export interface GoodbyeSettings {
   includeAvatar: boolean;
   /** Nama file banner di data/banners (null = pakai latar bawaan). */
   bannerPath: string | null;
+  /** Salinan banner di database — lihat catatan di `WelcomeSettings`. */
+  bannerData: { mime: string; base64: string } | null;
   updatedAt: number;
 }
 
@@ -855,6 +929,8 @@ interface GoodbyeRow {
   image_enabled: number | boolean;
   include_avatar: number | boolean;
   banner_path: string | null;
+  banner_mime: string | null;
+  banner_bytes: string | null;
   updated_at: number;
 }
 
@@ -869,6 +945,7 @@ export const GOODBYE_DEFAULTS = {
   imageEnabled: false,
   includeAvatar: true,
   bannerPath: null,
+  bannerData: null,
 } as const;
 
 export async function getGoodbyeSettings(guildId: string): Promise<GoodbyeSettings> {
@@ -889,6 +966,10 @@ export async function getGoodbyeSettings(guildId: string): Promise<GoodbyeSettin
     imageEnabled: Boolean(row.image_enabled),
     includeAvatar: Boolean(row.include_avatar),
     bannerPath: row.banner_path ?? null,
+    bannerData:
+      row.banner_mime && row.banner_bytes
+        ? { mime: row.banner_mime, base64: row.banner_bytes }
+        : null,
     updatedAt: Number(row.updated_at),
   };
 }
@@ -900,8 +981,8 @@ export async function saveGoodbyeSettings(
   const current = await getGoodbyeSettings(guildId);
   const next = { ...current, ...patch };
   await run(
-    `INSERT INTO goodbye (guild_id, channel_id, enabled, use_ai, template, display_mode, style, example, image_enabled, include_avatar, banner_path, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO goodbye (guild_id, channel_id, enabled, use_ai, template, display_mode, style, example, image_enabled, include_avatar, banner_path, banner_mime, banner_bytes, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (guild_id) DO UPDATE SET
        channel_id = excluded.channel_id,
        enabled = excluded.enabled,
@@ -913,6 +994,8 @@ export async function saveGoodbyeSettings(
        image_enabled = excluded.image_enabled,
        include_avatar = excluded.include_avatar,
        banner_path = excluded.banner_path,
+       banner_mime = excluded.banner_mime,
+       banner_bytes = excluded.banner_bytes,
        updated_at = excluded.updated_at`,
     [
       guildId,
@@ -926,6 +1009,8 @@ export async function saveGoodbyeSettings(
       next.imageEnabled ? 1 : 0,
       next.includeAvatar ? 1 : 0,
       next.bannerPath,
+      next.bannerData?.mime ?? null,
+      next.bannerData?.base64 ?? null,
       Date.now(),
     ],
   );

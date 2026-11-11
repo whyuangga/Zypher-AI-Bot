@@ -232,19 +232,52 @@ bisa mencoba gaya lain, melihat hasilnya, baru menekan Simpan.
 | Tombol | Yang terjadi |
 |---|---|
 | **Tes balasan** | Balasan untuk pesan contoh, bisa dipilih mode ngobrol atau mode galeri |
-| **Tes pemecah sepi** | Kalimat yang akan dipakai saat channel sepi — sekaligus memberi tahu kalau fitur itu tidak akan jalan (channel belum dipilih / ambang 0 menit) |
+| **Tes pemecah sepi** | Kalimat yang akan dipakai saat channel sepi — sekaligus memberi tahu kalau fitur itu tidak akan jalan (channel belum dipilih / ambang 0 menit / masih jam tenang) |
+| **Kirim tes ke channel** | Benar-benar mengirim **satu** pesan berisi kutipan pesan uji + balasan bot |
+| **Kirim pemecah sepi ke channel** | Benar-benar mengirim kalimat pemecah sepi ke channel ngobrol |
+| **Paksa tulis** (centang) | Menulis kalimat pemecah sepi walau timer belum waktunya |
 
 Di halaman agent, pengaturan yang dipakai adalah yang **sudah tersimpan**, karena
 hasilnya bergantung pada channel, jeda, dan batas per jam. Kalau channel yang
 diuji belum diatur, hasilnya diberi catatan supaya tidak bingung kenapa di server
 sungguhan bot diam.
 
-### Yang penting: tidak ada yang dikirim
+### Pratinjau vs kirim nyata
 
-Semua tombol tes hanya **mengembalikan teks** ke browser. Tidak ada pesan ke
+Tombol **Tes ...** hanya **mengembalikan teks** ke browser: tidak ada pesan ke
 channel, tidak ada DM, tidak ada mention. Ini dijaga test otomatis
 (`pratinjau: tidak ada modul pratinjau yang mengirim ke Discord`) yang membaca
 kode `src/features/preview.ts` dan menolak adanya `.send(`.
+
+Tombol **Kirim ... ke channel** melakukan kebalikannya: memakai `channel.send()`
+lewat `src/features/test-send.ts`, dengan penanda "pesan uji" dan
+`allowedMentions: { parse: [] }` supaya tidak ada yang ter-tag. Butuh bot online
+di proses yang sama — kalau dashboard berdiri sendiri, tombolnya dinonaktifkan.
+
+### Pemecah sepi: pratinjau = timer sungguhan
+
+`previewQuietBreak()` memakai `shouldBreakSilence()` dan `QUIET_SYSTEM_PROMPT`
+yang **sama** dengan timer di `handleQuietChannel()`. Kalau belum waktunya,
+dashboard menuliskan sisa waktunya (mis. "baru sunyi 5 menit, ambang 45 menit —
+sekitar 40 menit lagi") alih-alih menghasilkan sapaan palsu.
+
+Bot juga menyimpan kalimat sapaan terakhirnya di memori channel dan mengirimnya
+ke prompt sebagai larangan mengulang (`buildAntiRepeatBlock`), ditambah **sudut
+obrolan acak** (`QUIET_ANGLES`) supaya sapaan tidak selalu berbentuk
+"Sepi banget ya…". Keduanya juga berlaku di pratinjau.
+
+Prompt sapaan menyebut **jam setempat** ("Sekarang pukul 14:05 WITA") supaya
+model tidak salah menebak pagi/siang/malam saat server berada di WITA atau WIT.
+
+### Jam tenang malam
+
+Sapaan otomatis ditahan antara **23:00–06:00 zona server** (`isQuietHour()`,
+`quiet_hours` di tabel `agent`). Balasan ke mention/reply tetap jalan.
+
+Zonanya mengikuti **Pengaturan → Zona waktu server** (WIB/WITA/WIT), bukan
+dipaku ke Jakarta dan bukan zona mesin — hosting umumnya UTC. Server di
+Makassar (WITA) jadi berhenti menyapa satu jam lebih awal daripada WIB, sesuai
+jam dinding warganya. Lihat [dashboard.md](dashboard.md#zona-waktu-server-wib--wita--wit).
 
 Supaya hasil tes tidak pernah menyimpang dari perilaku bot, prompt sambutan,
 prompt perpisahan, aturan gaya agent, dan prompt pemecah sepi **hanya ada di satu
@@ -349,6 +382,38 @@ Alasan cadangan selalu ditulis ke log, mis.
 Salam perpisahan **tidak pernah** me-ping siapa pun, bahkan di mode Text atau
 Container: member-nya sudah keluar.
 
+### Banner
+
+Banner yang diunggah di dashboard dipakai di **semua mode kecuali Text**:
+
+| Mode | Cara banner dikirim |
+|---|---|
+| **Card** | jadi latar kartu PNG |
+| **Container** | Media Gallery di dalam komponen |
+| **Embed** | gambar embed |
+| **Text** | tidak bisa — teks murni |
+
+**Banner tahan deploy.** File tetap disimpan di `data/banners/`, tapi salinannya
+juga disimpan di database (`banner_mime` + `banner_bytes`). Kalau hosting
+me-reset folder kerja saat `git pull` dan file-nya hilang, bot memulihkannya
+otomatis dari database dan mencatatnya di log:
+
+```
+Banner "banner-abc.jpg" hilang dari disk — dipulihkan dari database (695313 B).
+```
+
+Kalau pemulihan tidak mungkin (salinan belum ada karena unggahan lama), log
+memberi tahu dengan jelas alih-alih diam:
+
+```
+Banner "banner-abc.jpg" tidak ada di disk dan tidak punya salinan di database — banner dilewati.
+```
+
+Unggah ulang sekali lewat dashboard untuk membuat salinannya.
+
+**Folder banner bisa dipindah** lewat `BANNER_DIR` — berguna kalau panel
+hosting-mu punya volume persisten terpisah.
+
 ### Bot lain juga disapa
 
 Bot yang ditambahkan ke server disambut dan diucapkan selamat jalan seperti
@@ -405,7 +470,7 @@ Tiga penyebab yang sudah diperbaiki:
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 263 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 289 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

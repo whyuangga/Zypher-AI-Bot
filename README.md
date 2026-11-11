@@ -65,7 +65,7 @@ platform Discord yang tidak bisa dilewati bot. Karena itu fitur room/thread diha
 | 🧠 **Memori jangka panjang** | AI otomatis menyimpan fakta penting lewat *tool calling*, plus perintah manual `/ingat`. Memori dipakai lagi di sesi berikutnya; `/konsolidasi` menggabungkan memori yang berulang. |
 | 👋 **Sambutan & perpisahan** | Sapaan yang **digenerate AI per orang** — pakai nama panggilan + waktu setempat, jadi kalimatnya beda tiap member (bukan template seragam). Bentuk pesannya bisa dipilih — **kartu PNG**, **Components V2**, **embed**, atau **teks biasa** (dua terakhir yang bisa me-ping) — dikirim lewat DM atau channel. Bot lain yang bergabung juga disapa. Saat member keluar, bot mengucapkan **salam perpisahan** dengan nada sopan. Lihat [docs/sambutan-agent.md](docs/sambutan-agent.md). |
 | 🗣️ **AI Agent di channel** | Di **dua** channel: bot ikut ngobrol seperti anggota komunitas di channel ngobrol (balas mention/reply, tanggapi emoji/sticker, menyapa saat sepi), dan **mengomentari gambar & video** di channel galeri. **Diam saat obrolan ramai**, dibatasi N balasan per jam, dan riwayat obrolannya **hanya di memori** — tidak ditulis ke database. |
-| 🖥️ **Dashboard web** | `/`, `/panel`, `/sambutan`, `/agent`, `/dokumen`, `/keyword`, `/moderasi`, `/pengaturan` (8 halaman) — gaya editorial gelap ([pratinjau](docs/screenshots/README.md)), **toggle fitur AI per server** (RAG, Auto Memory, tombol chat DM khusus admin, Suara balasan AI). Sidebar kiri, grafik aktivitas 7 hari, kartu statistik per server. Nama server tampil di topbar (bukan ID mentah), dan panel "Chat via DM" bisa dikirim, dipindah, atau dimatikan dari `/panel`. **Dashboard tidak menyimpan isi percakapan maupun memori member.** |
+| 🖥️ **Dashboard web** | `/`, `/panel`, `/sambutan`, `/agent`, `/dokumen`, `/keyword`, `/moderasi`, `/pengaturan` (8 halaman) — gaya editorial gelap ([pratinjau](docs/screenshots/README.md)), **toggle fitur AI per server** (RAG, Auto Memory, tombol chat DM khusus admin, Suara balasan AI). Sidebar kiri, grafik aktivitas 7 hari, **panel pemakaian server** (CPU/memori/jaringan/disk, sadar batas container Pterodactyl), kartu statistik per server. **Zona waktu WIB/WITA/WIT** bisa dipilih per server — memengaruhi jam di prompt, jam tenang malam agent, sapaan pagi/siang/sore, grafik harian, dan jam di transkrip. Nama server tampil di topbar (bukan ID mentah), dan panel "Chat via DM" bisa dikirim, dipindah, atau dimatikan dari `/panel`. **Dashboard tidak menyimpan isi percakapan maupun memori member.** |
 | 📚 **Dokumen RAG** | Upload `.txt`/`.md`/`.csv`/`.json`/`.pdf`/`.docx` (maks 8 MB) lewat `/dokumen tambah` atau dashboard. AI menjawab dari isi dokumen dan menyebut sumbernya (`📚 Sumber: faq.md — bagian 3`). Ada **uji pencarian** di halaman Dokumen (tombol Cari) untuk melihat potongan mana yang akan dipakai AI beserta skornya — sama seperti `/dokumen cari`. Pencarian BM25 bawaan — **tanpa API key tambahan**. |
 | 🔑 **Keyword kustom** | Admin menulis jawaban acuan; AI memakainya sebagai **fakta** dan menyusun ulang kalimatnya agar **bervariasi setiap kali** (bukan copy-paste). |
 | 🎭 **Persona per server** | Mis. "kamu guru bahasa Inggris yang sabar" — berlaku untuk semua chat yang memakai server itu sebagai konteks. |
@@ -209,6 +209,7 @@ Klik **Chat via DM** → bot mengirim DM ke kamu → mulai ngobrol di DM.
 | `SHARD_COUNT` / `SHARD_INDEX` | `1` / `0` | Multi-shard: bagi server ke beberapa instance yang berbagi satu database |
 | `AUTO_MEMORY` | `true` | Simpan memori otomatis lewat tool calling |
 | `RATE_LIMIT_PER_MINUTE` | `12` | Batas request AI per user/menit |
+| `TIMEZONE` | `Asia/Jakarta` | Zona bawaan: `Asia/Jakarta` (WIB) / `Asia/Makassar` (WITA) / `Asia/Jayapura` (WIT). Bisa diganti per server di dashboard |
 | `MAX_INPUT_CHARS` | `2000` | Panjang pesan user yang diproses |
 | `MODLOG_CHANNEL_ID` | kosong | Channel log moderasi (opsional). Transkrip tidak diarsipkan ke sini. |
 | `STAFF_ROLE_ID` | kosong | Role staff yang boleh melihat/menutup room member |
@@ -467,8 +468,8 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke          # 263 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
-npm run smoke:pg       # 14 test jalur Postgres (pg-mem, tanpa server database)
+npm run smoke          # 289 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
+npm run smoke:pg       # 16 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # 15 pemeriksaan rantai fallback provider (server tiruan)
 npm run test:ui        # 75 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
 npm run test:browser   # uji klik sungguhan di Chromium (butuh dashboard hidup)

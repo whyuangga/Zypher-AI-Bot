@@ -23,7 +23,19 @@ import { config } from '../config.js';
 import { chat, type ChatMessage } from '../lib/llm.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
-import { channelRole, MEMORY_TURNS, type MemoryTurn } from './agent-core.js';
+import { clockInZone, partOfDayInZone, timeZoneLabel } from '../lib/timezone.js';
+import {
+  MEMORY_TURNS,
+  QUIET_MAX_CHARS,
+  QUIET_SYSTEM_PROMPT,
+  buildAntiRepeatBlock,
+  channelRole,
+  isQuietHour,
+  pickQuietAngle,
+  shouldBreakSilence,
+  type AgentState,
+  type MemoryTurn,
+} from './agent-core.js';
 import { DEFAULT_GOODBYE_TEMPLATE, DEFAULT_WELCOME_TEMPLATE, fillText } from './greeting-text.js';
 
 /** Nama contoh kalau admin tidak mengetik nama apa pun. */
@@ -49,20 +61,14 @@ export interface PreviewResult {
   cardDataUri?: string;
 }
 
-/** Jam lokal server untuk menentukan pagi/siang/malam. */
-export function partOfDay(now = new Date()): string {
-  const hour = Number(
-    new Intl.DateTimeFormat('id-ID', {
-      timeZone: config.features.timeZone,
-      hour: 'numeric',
-      hour12: false,
-    }).format(now),
-  );
-  if (hour < 4) return 'dinihari';
-  if (hour < 11) return 'pagi';
-  if (hour < 15) return 'siang';
-  if (hour < 18) return 'sore';
-  return 'malam';
+/**
+ * Jam lokal server untuk menentukan pagi/siang/malam.
+ *
+ * `timeZone` = zona server (WIB/WITA/WIT). Tanpa argumen, memakai
+ * `TIMEZONE` dari .env (cadangan untuk pemanggil lama).
+ */
+export function partOfDay(now = new Date(), timeZone?: string | null): string {
+  return partOfDayInZone(now, timeZone ?? config.features.timeZone);
 }
 
 /* ------------------------------------------------------------------ */
@@ -196,6 +202,8 @@ export interface WelcomePreviewOptions {
   }) => Promise<Buffer | null>;
   /** Banner unggahan admin (data URI) untuk ikut dirender di kartu. */
   bannerDataUri?: string | null;
+  /** Zona waktu server (WIB/WITA/WIT) untuk menentukan pagi/siang/sore. */
+  timeZone?: string | null;
   /** Judul kecil di kartu: "SELAMAT DATANG" atau "SAMPAI JUMPA". */
   kicker?: string;
 }
@@ -211,7 +219,7 @@ export async function previewWelcome(options: WelcomePreviewOptions): Promise<Pr
   if (settings.useAi && !options.templateOnly) {
     const result = await askModel(
       'Kamu menulis satu sapaan singkat. Balas hanya teks sapaannya.',
-      buildWelcomePrompt(settings, { name, guildName }, partOfDay()),
+      buildWelcomePrompt(settings, { name, guildName }, partOfDay(new Date(), options.timeZone)),
       0.9,
       config.ai.brevityTokens,
       'sambutan',
@@ -334,14 +342,33 @@ export function agentRoleInstruction(role: 'chat' | 'gallery'): string {
  * Dipisah supaya dashboard bisa menunjukkan **kalimat apa yang akan dicoba**
  * dan pengujian memakai teks yang sama dengan timer sungguhan.
  */
-export function buildQuietPrompt(guildName: string): string {
-  return [
+export function buildQuietPrompt(
+  guildName: string,
+  options: {
+    angle?: string;
+    recent?: readonly string[];
+    /** "14:05 WITA" — supaya sapaan menyesuaikan jam setempat. */
+    clock?: string;
+  } = {},
+): string {
+  const lines = [
     `Kamu anggota komunitas di server "${guildName}".`,
     'Channel sedang sepi — tidak ada yang mengobrol cukup lama.',
+  ];
+  // Jam setempat: sapaan "pagi" jam 9 WIT akan terdengar aneh kalau model
+  // mengira masih subuh karena memakai WIB.
+  if (options.clock) lines.push(`Sekarang pukul ${options.clock}.`);
+  lines.push(
     'Buat satu kalimat pembuka ringan untuk mengajak ngobrol (bukan pengumuman, bukan promosi).',
     'Jangan menyebut dirimu bot atau AI. Maksimal 100 karakter.',
-    'Balas HANYA dengan kalimatnya.',
-  ].join('\n');
+  );
+  // Sudut acak supaya sapaan tidak selalu berpola sama.
+  if (options.angle) lines.push(`Ide sudut obrolan kali ini: ${options.angle}`);
+  // Larangan mengulang kalimat bot sebelumnya di channel yang sama.
+  const antiRepeat = buildAntiRepeatBlock(options.recent ?? []);
+  if (antiRepeat) lines.push(antiRepeat.trim());
+  lines.push('Balas HANYA dengan kalimatnya.');
+  return lines.join('\n');
 }
 
 export interface AgentReplyPreviewOptions {
@@ -403,18 +430,88 @@ export async function previewAgentReply(options: AgentReplyPreviewOptions): Prom
   }
 }
 
+/** Selisih menit yang enak dibaca: "2 jam 5 menit", "baru saja". */
+function humanMinutes(totalMinutes: number): string {
+  if (totalMinutes < 1) return 'baru saja';
+  if (totalMinutes < 60) return `${Math.round(totalMinutes)} menit`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = Math.round(totalMinutes % 60);
+  return minutes > 0 ? `${hours} jam ${minutes} menit` : `${hours} jam`;
+}
+
+/**
+ * Jelaskan kenapa timer belum akan menyapa — supaya admin tidak menduga fitur
+ * rusak padahal memang belum waktunya.
+ */
+function explainQuietSkip(
+  settings: AgentSettings,
+  state: AgentState,
+  now: number,
+  timeZone?: string | null,
+): string | null {
+  if (settings.quietHours && isQuietHour(now, timeZone)) {
+    return (
+      `Sekarang jam tenang malam (23:00–06:00 ${timeZoneLabel(timeZone)}) — bot tidak menyapa channel sendiri. ` +
+      'Balasan ke mention tetap jalan. Matikan "Jam tenang malam" kalau tidak ingin ditahan.'
+    );
+  }
+
+  const lastTrace = state.traces[state.traces.length - 1];
+  const lastActivity = Math.max(lastTrace?.at ?? 0, state.lastReplyAt);
+
+  if (lastActivity === 0) {
+    return (
+      'Belum ada obrolan tercatat di channel ini sejak bot hidup, dan bot tidak menyapa ' +
+      'ruangan yang belum pernah ramai. Pakai "Paksa tulis" untuk melihat kalimatnya.'
+    );
+  }
+
+  if (settings.cooldownSeconds > 0 && now - state.lastReplyAt < settings.cooldownSeconds * 1000) {
+    const sisa = Math.ceil((settings.cooldownSeconds * 1000 - (now - state.lastReplyAt)) / 1000);
+    return `Bot baru saja membalas — jeda minimum ${settings.cooldownSeconds} detik belum lewat (sisa ${sisa} detik).`;
+  }
+
+  const idleMinutes = (now - lastActivity) / 60_000;
+  if (idleMinutes < settings.quietMinutes) {
+    const sisa = Math.ceil(settings.quietMinutes - idleMinutes);
+    return (
+      `Channel baru sunyi ${humanMinutes(idleMinutes)}, sedangkan ambangnya ${settings.quietMinutes} menit. ` +
+      `Sekitar ${sisa} menit lagi bot akan menyapa.`
+    );
+  }
+
+  return null;
+}
+
 /**
  * Uji "pemecah sepi": apakah bot akan menyapa channel ini sekarang, dan
- * kalimat apa yang akan dikirim. Memakai `shouldBreakSilence` yang sama dengan
- * timer sungguhan, jadi hasil "tidak akan menyapa" juga informatif.
+ * kalimat apa yang akan dikirim.
+ *
+ * Memakai `shouldBreakSilence()` + `QUIET_SYSTEM_PROMPT` yang sama persis
+ * dengan timer di `handleQuietChannel()`, jadi yang tampil di dashboard benar
+ * kalimat yang akan dikirim — bukan prompt karangan terpisah.
+ *
+ * `state` adalah state in-memory channel dari bot yang sedang jalan. Bila tidak
+ * diberikan (dashboard berdiri sendiri tanpa bot), keputusan waktu tidak bisa
+ * dinilai; kalimatnya tetap dibuat sebagai contoh.
  */
 export async function previewQuietBreak(options: {
   settings: AgentSettings;
   guildName: string;
-  /** Minta model menulis kalimatnya walau saat ini belum waktunya. */
+  /** State channel dari bot yang berjalan. Tanpa ini, jam tidak bisa dinilai. */
+  state?: AgentState;
+  /** Acuan waktu; default sekarang. Dipakai test supaya hasilnya pasti. */
+  now?: number;
+  /**
+   * Zona waktu server (WIB/WITA/WIT). Dipakai untuk menilai jam tenang malam.
+   * Tanpa ini, jam tenang dihitung dengan WIB — bisa meleset 1–2 jam.
+   */
+  timeZone?: string | null;
+  /** Paksa menulis kalimatnya walau timer belum waktunya. */
   force?: boolean;
 }): Promise<PreviewResult & { wouldFire: boolean; reason: string }> {
-  const { settings, guildName } = options;
+  const { settings, guildName, state, force = false, timeZone } = options;
+  const now = options.now ?? Date.now();
 
   if (!settings.channelId) {
     return {
@@ -435,9 +532,42 @@ export async function previewQuietBreak(options: {
     };
   }
 
+  // Tanpa `force`, hormati keputusan timer yang sebenarnya.
+  let wouldFire = true;
+  let reason = `Kalau channel ngobrol sunyi selama ${settings.quietMinutes} menit, bot akan mengirim kalimat ini.`;
+
+  if (!force && state) {
+    wouldFire = shouldBreakSilence(settings, state, now, timeZone);
+    if (!wouldFire) {
+      const why = explainQuietSkip(settings, state, now, timeZone);
+      return {
+        text: '',
+        source: 'template',
+        note: null,
+        wouldFire: false,
+        reason: why ?? `Timer belum waktunya menyapa (ambang ${settings.quietMinutes} menit).`,
+      };
+    }
+    reason = `Channel sudah sunyi cukup lama (ambang ${settings.quietMinutes} menit) — timer akan menyapa sekarang.`;
+  } else if (force) {
+    reason = 'Dipaksa: kalimat ditulis walau timer belum waktunya.';
+  } else {
+    reason = `Tanpa data channel dari bot yang berjalan, waktu sapaan tidak bisa dinilai. Contoh kalimat untuk ambang ${settings.quietMinutes} menit:`;
+  }
+
+  // Sudut acak + larangan mengulang kalimat bot sebelumnya di channel ini.
+  // `state.turns` menyimpan beberapa giliran terakhir di memori bot.
+  const recentReplies = (state?.turns ?? [])
+    .filter((turn) => turn.role === 'bot')
+    .map((turn) => turn.text);
+
   const result = await askModel(
-    'Kamu anggota komunitas yang santai. Balas hanya satu kalimat pembuka.',
-    buildQuietPrompt(guildName),
+    QUIET_SYSTEM_PROMPT,
+    buildQuietPrompt(guildName, {
+      angle: pickQuietAngle(),
+      recent: recentReplies,
+      clock: clockInZone(now, timeZone),
+    }),
     0.9,
     config.ai.brevityTokens,
     'pemecah sepi',
@@ -448,17 +578,17 @@ export async function previewQuietBreak(options: {
       text: '',
       source: 'error',
       note: result.error,
-      wouldFire: true,
+      wouldFire,
       reason: 'Waktunya bisa tiba, tapi model gagal menulis kalimat.',
     };
   }
 
   return {
-    text: result.text,
+    text: truncate(result.text, QUIET_MAX_CHARS),
     source: 'ai',
     note: null,
-    wouldFire: true,
-    reason: `Kalau channel ngobrol sunyi selama ${settings.quietMinutes} menit, bot akan mengirim kalimat ini.`,
+    wouldFire,
+    reason,
   };
 }
 

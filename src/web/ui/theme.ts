@@ -310,6 +310,49 @@ code {
 .legend-key { display: inline-flex; align-items: center; gap: 7px; }
 .legend-swatch { width: 8px; height: 8px; border-radius: 0; background: var(--text); }
 
+/* ---------------- sumber daya server ---------------- */
+.res-list { display: grid; }
+.res-row { padding: 16px 24px; border-bottom: 1px solid var(--line); }
+.res-row:last-child { border-bottom: none; }
+.res-top {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-bottom: 10px;
+}
+.res-label {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--text-2);
+}
+.res-label svg { opacity: .7; }
+.res-value {
+  font-size: 20px; font-weight: 600; letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums; color: var(--text);
+}
+.res-bar {
+  height: 6px; border-radius: 0; overflow: hidden;
+  background: rgba(226, 209, 204, .1);
+}
+.res-bar > span {
+  display: block; height: 100%; border-radius: 0;
+  background: var(--text); transition: width .4s cubic-bezier(.2, .8, .2, 1);
+}
+.res-bar.warn > span { background: #d9b06a; }
+.res-bar.danger > span { background: #d9736a; }
+/* Tidak diketahui: garis putus-putus, bukan bar 0% yang terbaca "kosong". */
+.res-bar.unknown {
+  background-image: repeating-linear-gradient(90deg, rgba(226, 209, 204, .16) 0 6px, transparent 6px 12px);
+  background-color: transparent;
+}
+.res-sub { margin-top: 7px; font-size: 12px; color: var(--text-3); }
+.res-foot {
+  padding: 14px 24px 18px; font-size: 12px; color: var(--text-3);
+  border-top: 1px solid var(--line);
+}
+@media (max-width: 560px) {
+  .res-value { font-size: 17px; }
+  .res-row { padding-left: 16px; padding-right: 16px; }
+  .res-foot { padding-left: 16px; padding-right: 16px; }
+}
+
 /* ---------------- tables ---------------- */
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }

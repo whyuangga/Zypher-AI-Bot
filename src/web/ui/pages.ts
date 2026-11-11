@@ -4,6 +4,7 @@
  */
 import { icon } from './icons.js';
 import { DISPLAY_MODES, normalizeDisplayMode } from '../../features/display-mode.js';
+import { TIME_ZONES, normalizeTimeZone, timeZoneTitle } from '../../lib/timezone.js';
 import {
   activityChart,
   badge,
@@ -14,7 +15,9 @@ import {
   formatNumber,
   initials,
   relativeTime,
+  resourcePanel,
   statCard,
+  type ResourcePanelData,
 } from './base.js';
 import { appShell, pageHead, SHARED_JS, type PageKey } from './shell.js';
 import { STYLE } from './theme.js';
@@ -107,6 +110,13 @@ export interface DashboardData extends PageContext {
   model: string;
   /** Label engine database, mis. "SQLite" atau "PostgreSQL" */
   storage?: string;
+  /**
+   * Pemakaian CPU/memori/jaringan/disk proses ini.
+   *
+   * Opsional: kalau pembacaan gagal di hosting (cgroup aneh, /proc tidak ada),
+   * halaman tetap tampil tanpa panel ini alih-alih error 500.
+   */
+  resources?: ResourcePanelData | null;
 }
 
 export function ringkasanPage(data: DashboardData): string {
@@ -121,6 +131,17 @@ export function ringkasanPage(data: DashboardData): string {
     hint: 'pesan AI yang tersimpan',
     body: activityChart(data.series),
   });
+
+  // Panel sumber daya hanya dirender kalau datanya ada. Hosting yang tidak
+  // mengizinkan baca cgroup tetap mendapat halaman utuh, bukan kartu kosong.
+  const resourcesCard = data.resources
+    ? card({
+        title: 'Pemakaian server',
+        hint: 'proses ini & batas container',
+        body: resourcePanel(data.resources),
+        bodyClass: 'res-card',
+      })
+    : '';
 
   const statusCard = card({
     title: 'Status sistem',
@@ -205,11 +226,11 @@ export function ringkasanPage(data: DashboardData): string {
         ? `${esc(data.guildName)} · <span class="mono">${esc(data.guildId)}</span>`
         : `Server <span class="mono">${esc(data.guildId || '—')}</span>`
     } · data langsung dari ${esc(data.storage ?? 'SQLite')} bot`,
-    actions: `<a class="btn-primary" href="/dokumen">${icon('upload', 16)} Upload dokumen</a>`,
   })}
 ${stats}
-<div class="grid cols-2 mt">${chartCard}${statusCard}</div>
-<div class="grid cols-2 mt">${roomsCard}${docsCard}</div>`;
+<div class="grid cols-2 mt">${chartCard}${resourcesCard}</div>
+<div class="grid cols-2 mt">${statusCard}${docsCard}</div>
+<div class="mt">${roomsCard}</div>`;
 
   return appShell({ title: 'Ringkasan', guildId: data.guildId, guildName: data.guildName, active: 'ringkasan', body, counts: data.counts, status: data.status });
 }
@@ -730,7 +751,13 @@ async function removeKeyword(id, trigger) {
 
 export function pengaturanPage(
   options: PageContext & {
-    persona: string | null;
+    // Persona TIDAK lagi di sini — pindah ke halaman AI Agent (`agentPage`),
+    // karena di Pengaturan orang mengira itu pengaturan akun.
+    /** Zona waktu tersimpan; null = ikut default .env. */
+    timeZone: string | null;
+    /** Zona yang benar-benar dipakai (sudah termasuk fallback .env). */
+    effectiveTimeZone: string;
+    defaultTimeZone: string;
     model: string | null;
     defaultModel: string;
     embedModel: string | null;
@@ -748,18 +775,6 @@ export function pengaturanPage(
     stats: { messages: number; rooms: number; documents: number };
   },
 ): string {
-  const personaCard = card({
-    title: 'Persona AI',
-    hint: 'gaya bicara bot di server ini',
-    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:12px">
-  <textarea id="persona" placeholder="Contoh: Kamu asisten komunitas yang ramah, menjawab singkat, dan memakai bahasa Indonesia santai.">${esc(options.persona ?? '')}</textarea>
-  <p class="hint">Kosongkan untuk memakai persona bawaan. Persona berlaku untuk semua percakapan di server ini.</p>
-  <button class="btn-primary" type="button" id="savePersona" onclick="saveSettings({ persona: document.getElementById('persona').value })">
-    ${icon('check', 16)} Simpan persona
-  </button>
-</div>`,
-  });
-
   const modelCard = card({
     title: 'Model AI',
     hint: `bawaan: ${options.defaultModel}`,
@@ -772,6 +787,32 @@ export function pengaturanPage(
   <button class="btn-primary" type="button" id="saveModel" onclick="saveSettings({ model: document.getElementById('model').value })">
     ${icon('check', 16)} Simpan model
   </button>
+</div>`,
+  });
+
+  // Zona waktu Indonesia. WIB/WITA/WIT mempengaruhi jam di prompt, jam tenang
+  // malam, dan kata "pagi/siang/sore" di sambutan — bukan sekadar label.
+  const timeZoneCard = card({
+    title: 'Zona waktu server',
+    hint: `sekarang: ${timeZoneTitle(options.effectiveTimeZone)}`,
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:12px">
+  <div>
+    <label class="field" for="timeZone">Zona waktu</label>
+    <span class="select-shell" style="width:100%">
+      <select id="timeZone" style="width:100%">
+        ${TIME_ZONES.map(
+          (zone) =>
+            `<option value="${esc(zone.id)}" ${normalizeTimeZone(options.effectiveTimeZone) === zone.id ? 'selected' : ''}>${esc(zone.label)} — ${esc(zone.longName)} (UTC+${esc(zone.offset)})</option>`,
+        ).join('')}
+      </select>
+      ${icon('chevron', 15)}
+    </span>
+    <p class="hint">Mengatur jam di prompt AI, jam tenang malam (23:00–06:00), dan kata sapaan pagi/siang/sore. Server di Bali atau Sulawesi pakai <b>WITA</b>; Maluku &amp; Papua pakai <b>WIT</b>.</p>
+  </div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <button class="btn-primary" type="button" id="saveTimeZone" onclick="saveTimeZone()">${icon('check', 16)} Simpan zona waktu</button>
+    <span class="hint" style="margin:0">Berlaku untuk pesan berikutnya.</span>
+  </div>
 </div>`,
   });
 
@@ -858,11 +899,31 @@ export function pengaturanPage(
     title: 'Pengaturan',
     subtitle: 'Perilaku AI dan informasi server. Perubahan langsung berlaku untuk pesan berikutnya.',
   })}
-<div class="grid cols-2-even">${personaCard}${modelCard}</div>
+<div class="grid cols-2-even">${modelCard}${timeZoneCard}</div>
 <div class="mt">${voiceCard}</div>
 <div class="mt">${featureCard}</div>
 <div class="mt">${infoCard}</div>
 <script>
+/**
+ * Simpan zona waktu server (WIB/WITA/WIT).
+ *
+ * Endpoint sendiri, bukan menumpang saveSettings: nilainya bukan boolean, dan
+ * server menolak nilai di luar tiga zona resmi — jadi salah ketik tidak bisa
+ * diam-diam menggeser jam seluruh bot.
+ */
+async function saveTimeZone() {
+  var button = document.getElementById('saveTimeZone');
+  button.disabled = true;
+  try {
+    await postJson('/api/timezone', {
+      guild: ${JSON.stringify(options.guildId)},
+      timezone: document.getElementById('timeZone').value,
+    }, 'Zona waktu disimpan.');
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function saveSettings(payload) {
   payload.guild = ${JSON.stringify(options.guildId)};
   try {
@@ -1485,11 +1546,19 @@ async function runTest(kind, templateOnly) {
 /* ------------------------------------------------------------------ */
 
 export interface AgentPageOptions extends PageContext {
+  /**
+   * Persona = gaya bicara bot. Dipindah ke sini dari halaman Pengaturan:
+   * di sana orang mengira itu pengaturan akun, padahal ini yang menentukan
+   * nada bicara agent di obrolan.
+   */
+  persona: string | null;
   agent: {
     channelId: string | null;
     galleryChannelId: string | null;
     quietMinutes: number;
     maxPerHour: number;
+    /** Tahan sapaan otomatis 23:00–06:00 WIB. */
+    quietHours: boolean;
     reactEmoji: boolean;
     reactImages: boolean;
     busyMute: boolean;
@@ -1504,6 +1573,16 @@ export interface AgentPageOptions extends PageContext {
 export function agentPage(options: AgentPageOptions): string {
   const active = Boolean(options.agent.channelId || options.agent.galleryChannelId);
   const agentStatus = active ? badge('Aktif', 'ok') : badge('Nonaktif', 'warn');
+
+  const personaCard = card({
+    title: 'Persona AI',
+    hint: 'gaya bicara bot di server ini',
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:12px">
+  <textarea id="persona" rows="4" placeholder="Contoh: Kamu asisten komunitas yang ramah, menjawab singkat, dan memakai bahasa Indonesia santai.">${esc(options.persona ?? '')}</textarea>
+  <p class="hint">Menentukan nada bicara agent <b>dan</b> balasan chat/DM di server ini. Kosongkan untuk memakai persona bawaan. Maksimal 1500 karakter.</p>
+  <div><button class="btn-primary" type="button" id="savePersona" onclick="savePersona()">${icon('check', 16)} Simpan persona</button></div>
+</div>`,
+  });
 
   const channelsCard = card({
     title: 'Channel AI',
@@ -1565,6 +1644,10 @@ export function agentPage(options: AgentPageOptions): string {
     <input type="checkbox" id="agentImages" ${options.agent.reactImages ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
     <span>Komentari gambar &amp; video (butuh Vision aktif)</span>
   </label>
+  <label class="check-row" ${CHECK_ROW}>
+    <input type="checkbox" id="agentQuietHours" ${options.agent.quietHours ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Jam tenang malam (23:00&ndash;06:00 WIB) <span class="hint">— jangan menyapa channel kosong saat orang tidur; balasan ke mention tetap jalan</span></span>
+  </label>
 
   <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
     <button class="btn-primary" type="button" onclick="saveAgent()">${icon('check', 16)} Simpan agent</button>
@@ -1575,7 +1658,7 @@ export function agentPage(options: AgentPageOptions): string {
 
   const testCard = card({
     title: 'Tes percakapan',
-    hint: 'tanpa mengirim ke channel',
+    hint: 'pratinjau gratis, atau kirim satu pesan nyata',
     right: `<span id="testState" class="hint" style="margin:0">Siap diuji</span>`,
     body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
   <div>
@@ -1608,8 +1691,16 @@ export function agentPage(options: AgentPageOptions): string {
     <button class="btn-ghost" type="button" id="sendAgent" onclick="sendAgentTest()" ${options.botOnline ? '' : 'disabled'}>
       ${icon('external', 15)} Kirim tes ke channel
     </button>
+    <button class="btn-ghost" type="button" id="sendQuiet" onclick="sendQuietTest()" ${options.botOnline ? '' : 'disabled'}>
+      ${icon('external', 15)} Kirim pemecah sepi ke channel
+    </button>
     <span class="hint" style="margin:0">Mengirim <b>satu</b> pesan nyata berisi balasan bot — diberi penanda "pesan uji".${options.botOnline ? '' : ' <b>Bot offline</b>.'}</span>
   </div>
+
+  <label class="check-row">
+    <input type="checkbox" id="forceQuiet" style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Paksa tulis kalimat walau timer belum waktunya menyapa <span class="hint">— berguna kalau channel masih ramai dan kamu ingin lihat contohnya</span></span>
+  </label>
 
   <div class="preview-box" id="outAgent" hidden>
     <div class="preview-meta" id="metaAgent"></div>
@@ -1625,6 +1716,7 @@ export function agentPage(options: AgentPageOptions): string {
   <div class="kv"><span>Satu member ngobrol sendiri</span><b>Dibalas, dengan jeda</b></div>
   <div class="kv"><span>Beberapa member aktif bersamaan</span><b>Diam — tidak menyela</b></div>
   <div class="kv"><span>Channel ngobrol sepi</span><b>Menyapa sekali</b></div>
+  <div class="kv"><span>Channel ngobrol sepi, jam 23:00–06:00</span><b>${options.agent.quietHours ? 'Ditahan' : 'Tetap menyapa'}</b></div>
   <div class="kv"><span>Kiriman foto/video di galeri</span><b>Dikomentari</b></div>
   <div class="kv"><span>Teks biasa di galeri</span><b>Diabaikan</b></div>
   <div class="kv"><span>Pesan dari bot lain</span><b>Tidak pernah dibalas</b></div>
@@ -1637,10 +1729,31 @@ export function agentPage(options: AgentPageOptions): string {
     title: 'AI Agent',
     subtitle: 'Bot ikut menghidupkan channel ngobrol, dan mengomentari foto di channel galeri.',
   })}
+<div class="mb">${personaCard}</div>
 <div class="grid cols-2 mt">${channelsCard}${behaviourCard}</div>
 <div class="mt">${testCard}</div>
 
 <script>
+/**
+ * Simpan persona lewat endpoint sendiri.
+ *
+ * Dulu persona disimpan lewat /api/pengaturan milik halaman Pengaturan — kalau
+ * kartunya pindah tanpa endpoint baru, tombolnya akan memanggil fungsi yang
+ * tidak ada di halaman ini.
+ */
+async function savePersona() {
+  const button = document.getElementById('savePersona');
+  button.disabled = true;
+  try {
+    await postJson('/api/persona', {
+      guild: ${JSON.stringify(options.guildId)},
+      persona: document.getElementById('persona').value,
+    }, 'Persona disimpan.');
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function saveAgent() {
   await postJson('/api/agent', {
     channelId: document.getElementById('agentChannel').value || null,
@@ -1651,6 +1764,7 @@ async function saveAgent() {
     busyMute: document.getElementById('agentBusy').checked,
     reactEmoji: document.getElementById('agentEmoji').checked,
     reactImages: document.getElementById('agentImages').checked,
+    quietHours: document.getElementById('agentQuietHours').checked,
   }, 'Pengaturan agent disimpan.');
 }
 
@@ -1702,16 +1816,19 @@ async function runQuietTest() {
   button.textContent = 'Menguji…';
   document.getElementById('testState').textContent = 'Menghubungi model…';
 
+  var forceEl = document.getElementById('forceQuiet');
+  var force = Boolean(forceEl && forceEl.checked);
+
   try {
     var data = await api('/api/preview/quiet', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ force: force }),
     });
     if (!data.wouldFire) {
-      showAgentResult('⏸️ tidak akan menyapa', '(tidak ada kalimat)', data.reason);
+      showAgentResult('⏸️ tidak akan menyapa', '(belum waktunya)', data.reason);
     } else if (data.source === 'ai') {
-      showAgentResult('✍️ kalimat pemecah sepi', data.text, data.reason);
+      showAgentResult(force ? '✍️ kalimat pemecah sepi (dipaksa)' : '✍️ kalimat pemecah sepi', data.text, data.reason);
     } else {
       showAgentResult('⚠️ gagal membuat kalimat', '(kosong)', data.note || data.reason);
     }
@@ -1754,6 +1871,42 @@ async function sendAgentTest() {
   } catch (error) {
     toast('Gagal mengirim: ' + error.message, true);
     showAgentResult('⚠️ gagal mengirim', '(tidak terkirim)', error.message);
+    document.getElementById('testState').textContent = 'Gagal mengirim';
+  } finally {
+    button.disabled = false;
+    button.innerHTML = label;
+  }
+}
+
+/**
+ * Kirim tes pemecah sepi ke channel ngobrol sungguhan.
+ *
+ * Kalimatnya dibuat ulang di server lewat jalur pratinjau yang sama, jadi yang
+ * dikirim = yang tampil di kotak pratinjau. Tanpa ini admin hanya bisa melihat
+ * demo dan tidak pernah tahu apakah sapaan benar-benar sampai ke channel.
+ */
+async function sendQuietTest() {
+  var button = document.getElementById('sendQuiet');
+  var label = button.innerHTML;
+  button.disabled = true;
+  button.textContent = 'Mengirim…';
+  document.getElementById('testState').textContent = 'Mengirim pemecah sepi…';
+
+  var forceEl = document.getElementById('forceQuiet');
+  var force = Boolean(forceEl && forceEl.checked);
+
+  try {
+    var data = await api('/api/send-test/quiet', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ force: force }),
+    });
+    toast('✅ Pemecah sepi terkirim ke #' + data.channelName);
+    showAgentResult('📨 pemecah sepi terkirim ke #' + data.channelName, data.text || '(kosong)', data.note);
+    document.getElementById('testState').textContent = 'Terkirim';
+  } catch (error) {
+    toast('Gagal mengirim: ' + error.message, true);
+    showAgentResult('⚠️ gagal mengirim pemecah sepi', '(tidak terkirim)', error.message);
     document.getElementById('testState').textContent = 'Gagal mengirim';
   } finally {
     button.disabled = false;

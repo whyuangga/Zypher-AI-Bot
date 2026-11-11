@@ -5,7 +5,7 @@ import {
   type Message,
 } from 'discord.js';
 import { config } from '../config.js';
-import { getGuildSettings } from '../db/repo.js';
+import { getGuildSettings, resolveTimeZone } from '../db/repo.js';
 import { chat, streamChat, type ChatMessage, type ChatTool } from '../lib/llm.js';
 import { logger, errorMessage } from '../lib/logger.js';
 import { checkRateLimit } from '../lib/ratelimit.js';
@@ -67,6 +67,7 @@ export async function generateAnswer(
     keywords,
     knowledgeBlock: buildKnowledgeBlock(sources),
     language: detectLanguage(context.question),
+    timeZone: await resolveTimeZone(context.guildId),
   });
 
   // Model vision umumnya belum mendukung function calling, jadi tool dimatikan
