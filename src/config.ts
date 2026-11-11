@@ -152,6 +152,12 @@ const schema = z.object({
   PUBLIC_URL: optionalHost,
   WEB_PUBLIC_URL: optionalHost,
   DATABASE_PATH: z.string().default('./data/zypher.db'),
+  // Folder banner sambutan/perpisahan. Di hosting panel yang me-reset folder
+  // kerja saat deploy, arahkan ini ke volume persisten.
+  BANNER_DIR: z
+    .string()
+    .optional()
+    .transform((value) => (value && value.trim() ? value.trim() : undefined)),
   // Postgres opsional. Terisi = semua data disimpan di Postgres, bukan SQLite.
   // Contoh: postgres://user:pass@host:5432/db?sslmode=require
   DATABASE_URL: z
@@ -300,6 +306,8 @@ export const config = {
   })(),
   database: {
     path: env.DATABASE_PATH,
+    // null = pakai default `data/banners` relatif ke folder kerja.
+    bannerDir: env.BANNER_DIR ?? null,
     url: env.DATABASE_URL,
     shardIndex: env.SHARD_INDEX,
     shardCount: env.SHARD_COUNT,

@@ -1101,8 +1101,10 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     // Hapus banner.
     if (payload.remove === true) {
       await deleteBanner(current.bannerPath);
-      if (kind === 'welcome') await saveWelcomeSettings(guildId, { bannerPath: null });
-      else await saveGoodbyeSettings(guildId, { bannerPath: null });
+      // Salinan di database ikut dihapus — kalau tidak, banner yang sudah
+      // dihapus akan "hidup lagi" saat file-nya dipulihkan.
+      if (kind === 'welcome') await saveWelcomeSettings(guildId, { bannerPath: null, bannerData: null });
+      else await saveGoodbyeSettings(guildId, { bannerPath: null, bannerData: null });
       sendJson(response, 200, { ok: true, banner: null });
       return;
     }
@@ -1118,8 +1120,19 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       // File lama dihapus setelah file baru tersimpan — kalau penyimpanan gagal,
       // banner lama tetap dipakai (tidak ada kondisi "tidak punya banner").
       await deleteBanner(current.bannerPath);
-      if (kind === 'welcome') await saveWelcomeSettings(guildId, { bannerPath: saved.name });
-      else await saveGoodbyeSettings(guildId, { bannerPath: saved.name });
+
+      // Simpan SALINAN di database juga. Hosting panel sering me-reset folder
+      // kerja saat deploy (`git pull`), sehingga file di data/banners/ hilang
+      // padahal nama file-nya masih tersimpan di DB — dulu hasilnya banner
+      // hilang tanpa satu pun log. Salinan ini yang memulihkannya otomatis.
+      // MIME diambil dari data URI itu sendiri (browser sudah mengisinya),
+      // bukan ditebak dari ekstensi nama file.
+      const mimeMatch = /^data:([^;]+);base64,/.exec(dataUri);
+      const base64 = dataUri.replace(/^data:[^;]+;base64,/, '').replace(/\s/g, '');
+      const bannerData = { mime: mimeMatch?.[1] ?? 'image/png', base64 };
+
+      if (kind === 'welcome') await saveWelcomeSettings(guildId, { bannerPath: saved.name, bannerData });
+      else await saveGoodbyeSettings(guildId, { bannerPath: saved.name, bannerData });
 
       // Kembalikan URL (bukan data URI) supaya dashboard tinggal memasang <img src>.
       // Query `v` = nama file, jadi browser tidak menampilkan banner lama dari cache.

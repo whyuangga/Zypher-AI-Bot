@@ -728,6 +728,13 @@ export interface WelcomeSettings {
   includeAvatar: boolean;
   /** Nama file banner di data/banners (null = pakai latar bawaan). */
   bannerPath: string | null;
+  /**
+   * Salinan banner di database (base64). Dipakai untuk memulihkan file yang
+   * hilang — hosting panel sering me-reset folder kerja saat deploy.
+   * `null` = server ini belum pernah mengunggah banner, atau unggahan lama
+   * (sebelum kolom ini ada).
+   */
+  bannerData: { mime: string; base64: string } | null;
   updatedAt: number;
 }
 
@@ -743,6 +750,8 @@ interface WelcomeRow {
   example: string | null;
   include_avatar: number | boolean;
   banner_path: string | null;
+  banner_mime: string | null;
+  banner_bytes: string | null;
   updated_at: number;
 }
 
@@ -757,6 +766,7 @@ export const WELCOME_DEFAULTS = {
   example: null,
   includeAvatar: true,
   bannerPath: null,
+  bannerData: null,
 } as const;
 
 export async function getWelcomeSettings(guildId: string): Promise<WelcomeSettings> {
@@ -781,6 +791,10 @@ export async function getWelcomeSettings(guildId: string): Promise<WelcomeSettin
     example: row.example,
     includeAvatar: Boolean(row.include_avatar),
     bannerPath: row.banner_path ?? null,
+    bannerData:
+      row.banner_mime && row.banner_bytes
+        ? { mime: row.banner_mime, base64: row.banner_bytes }
+        : null,
     updatedAt: Number(row.updated_at),
   };
 }
@@ -792,8 +806,8 @@ export async function saveWelcomeSettings(
   const current = await getWelcomeSettings(guildId);
   const next = { ...current, ...patch };
   await run(
-    `INSERT INTO welcome (guild_id, channel_id, enabled, use_ai, template, display_mode, image_enabled, style, example, include_avatar, banner_path, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO welcome (guild_id, channel_id, enabled, use_ai, template, display_mode, image_enabled, style, example, include_avatar, banner_path, banner_mime, banner_bytes, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (guild_id) DO UPDATE SET
        channel_id = excluded.channel_id,
        enabled = excluded.enabled,
@@ -805,6 +819,8 @@ export async function saveWelcomeSettings(
        example = excluded.example,
        include_avatar = excluded.include_avatar,
        banner_path = excluded.banner_path,
+       banner_mime = excluded.banner_mime,
+       banner_bytes = excluded.banner_bytes,
        updated_at = excluded.updated_at`,
     [
       guildId,
@@ -818,6 +834,8 @@ export async function saveWelcomeSettings(
       next.example,
       next.includeAvatar ? 1 : 0,
       next.bannerPath,
+      next.bannerData?.mime ?? null,
+      next.bannerData?.base64 ?? null,
       Date.now(),
     ],
   );
@@ -840,6 +858,8 @@ export interface GoodbyeSettings {
   includeAvatar: boolean;
   /** Nama file banner di data/banners (null = pakai latar bawaan). */
   bannerPath: string | null;
+  /** Salinan banner di database — lihat catatan di `WelcomeSettings`. */
+  bannerData: { mime: string; base64: string } | null;
   updatedAt: number;
 }
 
@@ -855,6 +875,8 @@ interface GoodbyeRow {
   image_enabled: number | boolean;
   include_avatar: number | boolean;
   banner_path: string | null;
+  banner_mime: string | null;
+  banner_bytes: string | null;
   updated_at: number;
 }
 
@@ -869,6 +891,7 @@ export const GOODBYE_DEFAULTS = {
   imageEnabled: false,
   includeAvatar: true,
   bannerPath: null,
+  bannerData: null,
 } as const;
 
 export async function getGoodbyeSettings(guildId: string): Promise<GoodbyeSettings> {
@@ -889,6 +912,10 @@ export async function getGoodbyeSettings(guildId: string): Promise<GoodbyeSettin
     imageEnabled: Boolean(row.image_enabled),
     includeAvatar: Boolean(row.include_avatar),
     bannerPath: row.banner_path ?? null,
+    bannerData:
+      row.banner_mime && row.banner_bytes
+        ? { mime: row.banner_mime, base64: row.banner_bytes }
+        : null,
     updatedAt: Number(row.updated_at),
   };
 }
@@ -900,8 +927,8 @@ export async function saveGoodbyeSettings(
   const current = await getGoodbyeSettings(guildId);
   const next = { ...current, ...patch };
   await run(
-    `INSERT INTO goodbye (guild_id, channel_id, enabled, use_ai, template, display_mode, style, example, image_enabled, include_avatar, banner_path, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO goodbye (guild_id, channel_id, enabled, use_ai, template, display_mode, style, example, image_enabled, include_avatar, banner_path, banner_mime, banner_bytes, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (guild_id) DO UPDATE SET
        channel_id = excluded.channel_id,
        enabled = excluded.enabled,
@@ -913,6 +940,8 @@ export async function saveGoodbyeSettings(
        image_enabled = excluded.image_enabled,
        include_avatar = excluded.include_avatar,
        banner_path = excluded.banner_path,
+       banner_mime = excluded.banner_mime,
+       banner_bytes = excluded.banner_bytes,
        updated_at = excluded.updated_at`,
     [
       guildId,
@@ -926,6 +955,8 @@ export async function saveGoodbyeSettings(
       next.imageEnabled ? 1 : 0,
       next.includeAvatar ? 1 : 0,
       next.bannerPath,
+      next.bannerData?.mime ?? null,
+      next.bannerData?.base64 ?? null,
       Date.now(),
     ],
   );

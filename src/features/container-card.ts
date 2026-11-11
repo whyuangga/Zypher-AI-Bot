@@ -18,6 +18,8 @@
  */
 import {
   ContainerBuilder,
+  MediaGalleryBuilder,
+  MediaGalleryItemBuilder,
   SeparatorBuilder,
   TextDisplayBuilder,
   MessageFlags,
@@ -36,6 +38,14 @@ export interface ContainerCardOptions {
   memberCount?: number;
   /** Baris tambahan di bawah teks, mis. `dibuat dengan AI`. */
   extra?: string[];
+  /**
+   * Nama lampiran banner (mis. `banner-abc.png`). Ditampilkan lewat Media
+   * Gallery dengan rujukan `attachment://`.
+   *
+   * `files` tetap boleh dikirim bersama Components V2 — yang dilarang hanya
+   * `content`, `embeds`, `stickers`, dan `poll`.
+   */
+  bannerName?: string | null;
 }
 
 /**
@@ -59,6 +69,16 @@ export function buildContainerCard(options: ContainerCardOptions): ContainerBuil
     const container = new ContainerBuilder()
       .setAccentColor(ACCENT[options.kind])
       .addTextDisplayComponents(new TextDisplayBuilder().setContent(text));
+
+    // Banner sebagai gambar besar. Dulu mode ini mengabaikan banner sama
+    // sekali tanpa memberi tahu — padahal admin sudah mengunggahnya.
+    if (options.bannerName) {
+      container.addMediaGalleryComponents(
+        new MediaGalleryBuilder().addItems(
+          new MediaGalleryItemBuilder().setURL(`attachment://${options.bannerName}`),
+        ),
+      );
+    }
 
     const extra = (options.extra ?? []).map((line) => line.trim()).filter(Boolean);
     if (extra.length > 0) {

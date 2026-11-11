@@ -349,6 +349,38 @@ Alasan cadangan selalu ditulis ke log, mis.
 Salam perpisahan **tidak pernah** me-ping siapa pun, bahkan di mode Text atau
 Container: member-nya sudah keluar.
 
+### Banner
+
+Banner yang diunggah di dashboard dipakai di **semua mode kecuali Text**:
+
+| Mode | Cara banner dikirim |
+|---|---|
+| **Card** | jadi latar kartu PNG |
+| **Container** | Media Gallery di dalam komponen |
+| **Embed** | gambar embed |
+| **Text** | tidak bisa — teks murni |
+
+**Banner tahan deploy.** File tetap disimpan di `data/banners/`, tapi salinannya
+juga disimpan di database (`banner_mime` + `banner_bytes`). Kalau hosting
+me-reset folder kerja saat `git pull` dan file-nya hilang, bot memulihkannya
+otomatis dari database dan mencatatnya di log:
+
+```
+Banner "banner-abc.jpg" hilang dari disk — dipulihkan dari database (695313 B).
+```
+
+Kalau pemulihan tidak mungkin (salinan belum ada karena unggahan lama), log
+memberi tahu dengan jelas alih-alih diam:
+
+```
+Banner "banner-abc.jpg" tidak ada di disk dan tidak punya salinan di database — banner dilewati.
+```
+
+Unggah ulang sekali lewat dashboard untuk membuat salinannya.
+
+**Folder banner bisa dipindah** lewat `BANNER_DIR` — berguna kalau panel
+hosting-mu punya volume persisten terpisah.
+
 ### Bot lain juga disapa
 
 Bot yang ditambahkan ke server disambut dan diucapkan selamat jalan seperti
@@ -405,7 +437,7 @@ Tiga penyebab yang sudah diperbaiki:
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 263 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 267 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

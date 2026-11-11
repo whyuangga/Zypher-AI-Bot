@@ -142,6 +142,8 @@ CREATE TABLE IF NOT EXISTS goodbye (
   image_enabled   INTEGER NOT NULL DEFAULT 0,
   include_avatar  INTEGER NOT NULL DEFAULT 1,
   banner_path     TEXT,
+  banner_mime     TEXT,
+  banner_bytes    TEXT,
   updated_at      INTEGER NOT NULL
 );
 
@@ -159,6 +161,8 @@ CREATE TABLE IF NOT EXISTS welcome (
   example         TEXT,
   include_avatar  INTEGER NOT NULL DEFAULT 1,
   banner_path     TEXT,
+  banner_mime     TEXT,
+  banner_bytes    TEXT,
   updated_at      INTEGER NOT NULL
 );
 
@@ -311,6 +315,8 @@ CREATE TABLE IF NOT EXISTS goodbye (
   image_enabled   INTEGER NOT NULL DEFAULT 0,
   include_avatar  INTEGER NOT NULL DEFAULT 1,
   banner_path     TEXT,
+  banner_mime     TEXT,
+  banner_bytes    TEXT,
   updated_at      BIGINT NOT NULL
 );
 
@@ -326,6 +332,8 @@ CREATE TABLE IF NOT EXISTS welcome (
   example         TEXT,
   include_avatar  INTEGER NOT NULL DEFAULT 1,
   banner_path     TEXT,
+  banner_mime     TEXT,
+  banner_bytes    TEXT,
   updated_at      BIGINT NOT NULL
 );
 

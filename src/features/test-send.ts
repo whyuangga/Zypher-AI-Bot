@@ -203,6 +203,8 @@ export async function sendWelcomeTest(
   note.push(`Mode ${displayModeLabel(wanted)}.`);
 
   // Mode container: komponen V2 tidak boleh dicampur content/embeds.
+  const containerBanner =
+    modeNow === 'container' ? await readBannerAttachment(settings.bannerPath) : null;
   const container =
     modeNow === 'container'
       ? (() => {
@@ -211,6 +213,7 @@ export async function sendWelcomeTest(
             text: preview.text,
             guildName: guild.name,
             memberCount: guild.memberCount,
+            bannerName: containerBanner?.name ?? null,
           });
           return built ? containerPayload(built) : null;
         })()
@@ -220,7 +223,11 @@ export async function sendWelcomeTest(
   }
 
   const payload = container
-    ? { ...container, allowedMentions: { parse: [] as const } }
+    ? {
+        ...container,
+        files: containerBanner ? [containerBanner.attachment] : [],
+        allowedMentions: { parse: [] as const },
+      }
     : modeNow === 'text'
       ? { content: `${TEST_MARK}\n\n${preview.text}`, allowedMentions: { parse: [] as const } }
       : {
@@ -333,6 +340,8 @@ export async function sendGoodbyeTest(
   if (!channel) throw new SendTestError(reason ?? 'Channel salam perpisahan tidak bisa dipakai.');
 
   try {
+    const goodbyeBanner =
+      modeNow === 'container' ? await readBannerAttachment(settings.bannerPath) : null;
     const goodbyeContainer =
       modeNow === 'container'
         ? (() => {
@@ -341,6 +350,7 @@ export async function sendGoodbyeTest(
               text: preview.text,
               guildName: guild.name,
               memberCount: guild.memberCount,
+              bannerName: goodbyeBanner?.name ?? null,
             });
             return built ? containerPayload(built) : null;
           })()
@@ -351,7 +361,11 @@ export async function sendGoodbyeTest(
 
     await channel.send(
       goodbyeContainer
-        ? { ...goodbyeContainer, allowedMentions: { parse: [] as const } }
+        ? {
+            ...goodbyeContainer,
+            files: goodbyeBanner ? [goodbyeBanner.attachment] : [],
+            allowedMentions: { parse: [] as const },
+          }
         : modeNow === 'text'
           ? { content: `${TEST_MARK}\n\n${preview.text}`, allowedMentions: { parse: [] as const } }
           : {

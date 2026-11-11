@@ -53,6 +53,13 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
     // yang sudah berjalan tidak berubah karena pembaruan ini.
     'ALTER TABLE welcome ADD COLUMN display_mode TEXT',
     'ALTER TABLE goodbye ADD COLUMN display_mode TEXT',
+    // Salinan banner di database. Hosting panel sering me-reset folder kerja
+    // saat deploy, sehingga file di `data/banners/` hilang padahal path-nya
+    // masih tersimpan. Dengan salinan ini banner dipulihkan otomatis.
+    'ALTER TABLE welcome ADD COLUMN banner_mime TEXT',
+    'ALTER TABLE welcome ADD COLUMN banner_bytes TEXT',
+    'ALTER TABLE goodbye ADD COLUMN banner_mime TEXT',
+    'ALTER TABLE goodbye ADD COLUMN banner_bytes TEXT',
   ];
 
   for (const statement of statements) {

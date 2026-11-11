@@ -1628,6 +1628,7 @@ const welcomeSettings = (patch: Record<string, unknown> = {}) => ({
   displayMode: 'embed' as const, imageEnabled: false,
   includeAvatar: true,
   bannerPath: null,
+  bannerData: null,
   updatedAt: 0,
   ...patch,
 });
@@ -1643,6 +1644,7 @@ const goodbyeSettings = (patch: Record<string, unknown> = {}) => ({
   displayMode: 'embed' as const, imageEnabled: false,
   includeAvatar: true,
   bannerPath: null,
+  bannerData: null,
   updatedAt: 0,
   ...patch,
 });
@@ -2099,6 +2101,108 @@ await testAsync('dashboard: tombol Kelola tidak memakai panah dropdown', async (
   assert.ok(pages.includes("icon('chevron', 15)"), 'select masih memakai chevron');
 });
 
+/** PNG RGBA satu warna — cukup untuk menguji jalur baca/tulis banner. */
+async function buatPngMinimal(width: number, height: number): Promise<Buffer> {
+  const { deflateSync } = await import('node:zlib');
+  const crc32 = (buffer: Buffer): number => {
+    let crc = 0xffffffff;
+    for (const byte of buffer) {
+      crc ^= byte;
+      for (let i = 0; i < 8; i += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+    return (crc ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body));
+    return Buffer.concat([length, body, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 6; // RGBA
+  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(width * 4, 90)]);
+  const raw = Buffer.concat(Array.from({ length: height }, () => row));
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+await testAsync('banner: dipulihkan dari database saat file hilang', async () => {
+  // Hosting panel men-deploy ulang dengan `git pull` dan me-reset folder kerja,
+  // jadi data/banners/ bisa hilang padahal nama file masih tersimpan di DB.
+  // Dulu hasilnya banner hilang TANPA satu pun log — tidak mungkin didiagnosis.
+  const { rmSync, existsSync } = await import('node:fs');
+  const { BANNER_DIR } = await import('../src/features/banner.js');
+  const { join } = await import('node:path');
+
+  const name = 'banner-uji-pulih.png';
+  const target = join(BANNER_DIR, name);
+  // PNG minimal dibangun di sini, bukan dibaca dari file contoh — test harus
+  // mandiri supaya tidak rusak hanya karena berkas contohnya dihapus.
+  const png = await buatPngMinimal(400, 120);
+  rmSync(target, { force: true });
+
+  assert.equal(existsSync(target), false, 'file belum ada');
+
+  // Diuji lewat jalur yang benar-benar dipakai sambutan — memanggil
+  // ensureBannerFile() saja tidak cukup: dulu readBannerAttachment() bisa
+  // melewatinya dan tetap mengembalikan null tanpa log.
+  const { readBannerAttachment } = await import('../src/features/banner.js');
+  const att = await readBannerAttachment(name, { mime: 'image/png', base64: png.toString('base64') });
+  assert.ok(att, 'lampiran terbentuk dari salinan database');
+  assert.equal(att!.name, name, 'nama lampiran benar');
+  assert.equal(existsSync(target), true, 'file kembali ada di disk');
+  rmSync(target, { force: true });
+
+  // Tanpa salinan DAN tanpa file: menolak, tapi tidak melempar error.
+  const gagal = await readBannerAttachment(name, null);
+  assert.equal(gagal, null, 'tanpa salinan tidak bisa dipulihkan');
+});
+
+await testAsync('banner: unggahan menyimpan salinan ke database', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(/bannerData\s*=\s*\{\s*mime/.test(server), 'membentuk bannerData saat unggah');
+  assert.ok(
+    server.includes('saveWelcomeSettings(guildId, { bannerPath: saved.name, bannerData })'),
+    'salinan ikut disimpan (sambutan)',
+  );
+  assert.ok(
+    server.includes('{ bannerPath: null, bannerData: null }'),
+    'salinan ikut dihapus saat banner dihapus',
+  );
+});
+
+await testAsync('banner: dipakai di mode container lewat Media Gallery', async () => {
+  const { buildContainerCard } = await import('../src/features/container-card.js');
+
+  const dengan = buildContainerCard({
+    kind: 'welcome', text: 'Halo Sky', guildName: 'Z', memberCount: 5, bannerName: 'banner-x.png',
+  });
+  const json = JSON.stringify(dengan!.toJSON());
+  assert.ok(json.includes('attachment://banner-x.png'), 'banner dirujuk lewat attachment://');
+  assert.ok(json.includes('"type":12'), 'memakai Media Gallery (tipe 12)');
+
+  const tanpa = buildContainerCard({ kind: 'welcome', text: 'Halo Sky', guildName: 'Z' });
+  assert.ok(!JSON.stringify(tanpa!.toJSON()).includes('"type":12'), 'tanpa banner tidak ada galeri');
+});
+
+await testAsync('banner: files tetap boleh di Components V2', async () => {
+  // Yang dilarang hanya content, embeds, stickers, poll. `files` justru cara
+  // mengirim banner, jadi jangan sampai ada yang "merapikan" kode dengan
+  // membuang files dari payload container.
+  const source = await readFile('src/features/welcome.ts', 'utf8');
+  const blok = source.slice(source.indexOf('payload.components?.length'));
+  assert.ok(/components: payload\.components,\s*flags: payload\.flags,\s*files/.test(blok), 'files ikut terkirim');
+});
+
 await testAsync('mode container: komponen V2 dibentuk, tanpa embed', async () => {
   const { buildContainerCard, containerPayload } = await import('../src/features/container-card.js');
   const { MessageFlags } = await import('discord.js');
@@ -2173,7 +2277,9 @@ await testAsync('mode container: dikirim tanpa content/embeds (channel palsu)', 
   assert.ok(Array.isArray(kirim.components) && (kirim.components as unknown[]).length === 1, 'mengirim komponen');
   assert.equal(kirim.content, undefined, 'tanpa content (dilarang di V2)');
   assert.equal(kirim.embeds, undefined, 'tanpa embed (dilarang di V2)');
-  assert.equal(kirim.files, undefined, 'tanpa file (dilarang di V2)');
+  // `files` TIDAK dilarang di Components V2 — hanya content/embeds/stickers/poll.
+  // Ini yang dipakai mengirim banner, jadi harus tetap boleh ada.
+  assert.ok(Array.isArray(kirim.files), 'files boleh ada (untuk banner)');
   assert.ok(typeof kirim.flags === 'number', 'flag ikut terkirim');
 });
 
