@@ -54,6 +54,7 @@ import {
   previewWelcome,
   SAMPLE_MEMBER_NAME,
 } from '../features/preview.js';
+import { normalizeDisplayMode } from '../features/display-mode.js';
 import { cardRendererAvailable, chromiumPath, renderWelcomeCard } from '../features/welcome-card.js';
 import {
   BannerError,
@@ -508,6 +509,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
             useAi: welcome.useAi,
             channelId: welcome.channelId,
             template: welcome.template,
+            displayMode: welcome.displayMode,
             imageEnabled: welcome.imageEnabled,
             includeAvatar: welcome.includeAvatar,
             style: welcome.style,
@@ -525,6 +527,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
             example: goodbye.example,
             bannerPath: goodbye.bannerPath,
             hasBanner: bannerExists(goodbye.bannerPath),
+            displayMode: goodbye.displayMode,
             imageEnabled: goodbye.imageEnabled,
             includeAvatar: goodbye.includeAvatar,
           },
@@ -939,6 +942,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       template: 'template' in payload ? template || null : current.template,
       style: 'style' in payload ? style || null : current.style,
       example: 'example' in payload ? example || null : current.example,
+      displayMode: payload.displayMode === undefined
+        ? current.displayMode
+        : normalizeDisplayMode(payload.displayMode),
       imageEnabled: bool(payload.imageEnabled, current.imageEnabled),
       includeAvatar: bool(payload.includeAvatar, current.includeAvatar),
     });
@@ -980,6 +986,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       template: optionalText('template', current.template, 1000),
       style: optionalText('style', current.style),
       example: optionalText('example', current.example),
+      displayMode: payload.displayMode === undefined
+        ? current.displayMode
+        : normalizeDisplayMode(payload.displayMode),
       imageEnabled: bool(payload.imageEnabled, current.imageEnabled),
       includeAvatar: bool(payload.includeAvatar, current.includeAvatar),
     });
@@ -1174,6 +1183,12 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
             template: textField(payload, 'template', current.template, 1000),
             style: textField(payload, 'style', current.style),
             example: textField(payload, 'example', current.example),
+            // Mode dari form (belum tentu tersimpan) — supaya yang diuji sama
+            // persis dengan yang sedang dipilih admin.
+            displayMode:
+              payload.displayMode === undefined
+                ? current.displayMode
+                : normalizeDisplayMode(payload.displayMode),
             imageEnabled:
               payload.imageEnabled === undefined ? current.imageEnabled : Boolean(payload.imageEnabled),
             includeAvatar:
@@ -1196,6 +1211,10 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
             template: textField(payload, 'template', current.template, 1000),
             style: textField(payload, 'style', current.style),
             example: textField(payload, 'example', current.example),
+            displayMode:
+              payload.displayMode === undefined
+                ? current.displayMode
+                : normalizeDisplayMode(payload.displayMode),
             imageEnabled:
               payload.imageEnabled === undefined ? current.imageEnabled : Boolean(payload.imageEnabled),
             includeAvatar:

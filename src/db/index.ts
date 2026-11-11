@@ -48,6 +48,11 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
     'ALTER TABLE goodbye ADD COLUMN banner_path TEXT',
     'ALTER TABLE goodbye ADD COLUMN image_enabled INTEGER',
     'ALTER TABLE goodbye ADD COLUMN include_avatar INTEGER',
+    // Mode tampilan (card/embed/text). Baris lama dibiarkan NULL dan
+    // diterjemahkan dari `image_enabled` saat dibaca, jadi tampilan server
+    // yang sudah berjalan tidak berubah karena pembaruan ini.
+    'ALTER TABLE welcome ADD COLUMN display_mode TEXT',
+    'ALTER TABLE goodbye ADD COLUMN display_mode TEXT',
   ];
 
   for (const statement of statements) {

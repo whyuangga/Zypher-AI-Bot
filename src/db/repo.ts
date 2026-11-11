@@ -1,4 +1,9 @@
 import { all, get, insert, run } from './index.js';
+import {
+  modeFromLegacySettings,
+  normalizeDisplayMode,
+  type DisplayMode,
+} from '../features/display-mode.js';
 
 /*
  * Semua fungsi di sini `async` karena database bisa berupa SQLite (sinkron)
@@ -707,7 +712,14 @@ export interface WelcomeSettings {
   /** Kalau false, pakai `template` apa adanya tanpa memanggil AI. */
   useAi: boolean;
   template: string | null;
-  /** Kartu sambutan PNG (nama + avatar). */
+  /**
+   * Bentuk pesan: `card`, `embed`, atau `text`.
+   *
+   * Ini pengganti cara pandang lama `imageEnabled`. Keduanya tetap disimpan
+   * supaya dashboard dan kode lama tetap jalan; `displayMode` yang menentukan.
+   */
+  displayMode: DisplayMode;
+  /** Kartu sambutan PNG (nama + avatar) — dipakai mode `card`. */
   imageEnabled: boolean;
   /** Gaya sapaan, mis. "hangat dan santai". */
   style: string | null;
@@ -725,6 +737,7 @@ interface WelcomeRow {
   enabled: number | boolean;
   use_ai: number | boolean;
   template: string | null;
+  display_mode: string | null;
   image_enabled: number | boolean;
   style: string | null;
   example: string | null;
@@ -738,6 +751,7 @@ export const WELCOME_DEFAULTS = {
   enabled: false,
   useAi: true,
   template: null,
+  displayMode: 'embed' as const,
   imageEnabled: true,
   style: null,
   example: null,
@@ -757,6 +771,11 @@ export async function getWelcomeSettings(guildId: string): Promise<WelcomeSettin
     enabled: Boolean(row.enabled),
     useAi: Boolean(row.use_ai),
     template: row.template,
+    // Baris lama belum punya `display_mode`. Kalau kosong, terjemahkan dari
+    // `image_enabled` supaya tampilan server lama tidak berubah diam-diam.
+    displayMode: row.display_mode
+      ? normalizeDisplayMode(row.display_mode)
+      : modeFromLegacySettings(Boolean(row.image_enabled)),
     imageEnabled: Boolean(row.image_enabled),
     style: row.style,
     example: row.example,
@@ -773,13 +792,14 @@ export async function saveWelcomeSettings(
   const current = await getWelcomeSettings(guildId);
   const next = { ...current, ...patch };
   await run(
-    `INSERT INTO welcome (guild_id, channel_id, enabled, use_ai, template, image_enabled, style, example, include_avatar, banner_path, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO welcome (guild_id, channel_id, enabled, use_ai, template, display_mode, image_enabled, style, example, include_avatar, banner_path, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (guild_id) DO UPDATE SET
        channel_id = excluded.channel_id,
        enabled = excluded.enabled,
        use_ai = excluded.use_ai,
        template = excluded.template,
+       display_mode = excluded.display_mode,
        image_enabled = excluded.image_enabled,
        style = excluded.style,
        example = excluded.example,
@@ -792,6 +812,7 @@ export async function saveWelcomeSettings(
       next.enabled ? 1 : 0,
       next.useAi ? 1 : 0,
       next.template,
+      normalizeDisplayMode(next.displayMode),
       next.imageEnabled ? 1 : 0,
       next.style,
       next.example,
@@ -812,7 +833,9 @@ export interface GoodbyeSettings {
   template: string | null;
   style: string | null;
   example: string | null;
-  /** Kartu perpisahan PNG (opsional). */
+  /** Bentuk pesan: `card`, `embed`, atau `text`. Lihat `WelcomeSettings`. */
+  displayMode: DisplayMode;
+  /** Kartu perpisahan PNG (opsional) — dipakai mode `card`. */
   imageEnabled: boolean;
   includeAvatar: boolean;
   /** Nama file banner di data/banners (null = pakai latar bawaan). */
@@ -826,6 +849,7 @@ interface GoodbyeRow {
   enabled: number | boolean;
   use_ai: number | boolean;
   template: string | null;
+  display_mode: string | null;
   style: string | null;
   example: string | null;
   image_enabled: number | boolean;
@@ -839,6 +863,7 @@ export const GOODBYE_DEFAULTS = {
   enabled: false,
   useAi: true,
   template: null,
+  displayMode: 'embed' as const,
   style: null,
   example: null,
   imageEnabled: false,
@@ -856,6 +881,9 @@ export async function getGoodbyeSettings(guildId: string): Promise<GoodbyeSettin
     enabled: Boolean(row.enabled),
     useAi: Boolean(row.use_ai),
     template: row.template,
+    displayMode: row.display_mode
+      ? normalizeDisplayMode(row.display_mode)
+      : modeFromLegacySettings(Boolean(row.image_enabled)),
     style: row.style,
     example: row.example,
     imageEnabled: Boolean(row.image_enabled),
@@ -872,13 +900,14 @@ export async function saveGoodbyeSettings(
   const current = await getGoodbyeSettings(guildId);
   const next = { ...current, ...patch };
   await run(
-    `INSERT INTO goodbye (guild_id, channel_id, enabled, use_ai, template, style, example, image_enabled, include_avatar, banner_path, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO goodbye (guild_id, channel_id, enabled, use_ai, template, display_mode, style, example, image_enabled, include_avatar, banner_path, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (guild_id) DO UPDATE SET
        channel_id = excluded.channel_id,
        enabled = excluded.enabled,
        use_ai = excluded.use_ai,
        template = excluded.template,
+       display_mode = excluded.display_mode,
        style = excluded.style,
        example = excluded.example,
        image_enabled = excluded.image_enabled,
@@ -891,6 +920,7 @@ export async function saveGoodbyeSettings(
       next.enabled ? 1 : 0,
       next.useAi ? 1 : 0,
       next.template,
+      normalizeDisplayMode(next.displayMode),
       next.style,
       next.example,
       next.imageEnabled ? 1 : 0,

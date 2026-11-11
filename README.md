@@ -63,7 +63,7 @@ platform Discord yang tidak bisa dilewati bot. Karena itu fitur room/thread diha
 | ⚡ **Streaming jawaban** | Jawaban muncul bertahap (edit pesan tiap ±1,4 detik, menghormati rate limit Discord), bukan menunggu jeda panjang. Otomatis jatuh ke mode non-streaming kalau provider menolaknya. |
 | 💬 **Chat AI** | Konteks percakapan (20 pesan terakhir), jawaban panjang otomatis dipecah ke beberapa pesan. **Multilingual** — otomatis mengikuti bahasa user (Indonesia/Inggris). |
 | 🧠 **Memori jangka panjang** | AI otomatis menyimpan fakta penting lewat *tool calling*, plus perintah manual `/ingat`. Memori dipakai lagi di sesi berikutnya; `/konsolidasi` menggabungkan memori yang berulang. |
-| 👋 **Sambutan & perpisahan** | Sapaan yang **digenerate AI per orang** — pakai nama panggilan + waktu setempat, jadi kalimatnya beda tiap member (bukan template seragam). Bisa disertai **kartu PNG** berisi nama & sapaan, dikirim lewat DM atau channel. Saat member keluar, bot mengucapkan **salam perpisahan** dengan nada sopan. Lihat [docs/sambutan-agent.md](docs/sambutan-agent.md). |
+| 👋 **Sambutan & perpisahan** | Sapaan yang **digenerate AI per orang** — pakai nama panggilan + waktu setempat, jadi kalimatnya beda tiap member (bukan template seragam). Bentuk pesannya bisa dipilih — **kartu PNG**, **Components V2**, **embed**, atau **teks biasa** (dua terakhir yang bisa me-ping) — dikirim lewat DM atau channel. Bot lain yang bergabung juga disapa. Saat member keluar, bot mengucapkan **salam perpisahan** dengan nada sopan. Lihat [docs/sambutan-agent.md](docs/sambutan-agent.md). |
 | 🗣️ **AI Agent di channel** | Di **dua** channel: bot ikut ngobrol seperti anggota komunitas di channel ngobrol (balas mention/reply, tanggapi emoji/sticker, menyapa saat sepi), dan **mengomentari gambar & video** di channel galeri. **Diam saat obrolan ramai**, dibatasi N balasan per jam, dan riwayat obrolannya **hanya di memori** — tidak ditulis ke database. |
 | 🖥️ **Dashboard web** | `/`, `/panel`, `/sambutan`, `/agent`, `/dokumen`, `/keyword`, `/moderasi`, `/pengaturan` (8 halaman) — gaya editorial gelap ([pratinjau](docs/screenshots/README.md)), **toggle fitur AI per server** (RAG, Auto Memory, tombol chat DM khusus admin, Suara balasan AI). Sidebar kiri, grafik aktivitas 7 hari, kartu statistik per server. Nama server tampil di topbar (bukan ID mentah), dan panel "Chat via DM" bisa dikirim, dipindah, atau dimatikan dari `/panel`. **Dashboard tidak menyimpan isi percakapan maupun memori member.** |
 | 📚 **Dokumen RAG** | Upload `.txt`/`.md`/`.csv`/`.json`/`.pdf`/`.docx` (maks 8 MB) lewat `/dokumen tambah` atau dashboard. AI menjawab dari isi dokumen dan menyebut sumbernya (`📚 Sumber: faq.md — bagian 3`). Ada **uji pencarian** di halaman Dokumen (tombol Cari) untuk melihat potongan mana yang akan dipakai AI beserta skornya — sama seperti `/dokumen cari`. Pencarian BM25 bawaan — **tanpa API key tambahan**. |
@@ -328,8 +328,11 @@ Tidak ada channel/thread yang dibuat — tidak ada yang bisa dibaca admin.
 Fitur-fitur ini diatur **dari dashboard**, bukan lewat slash command:
 
 - **Sambutan** (`/sambutan`) — bot menyapa member baru (AI, template, atau
-  keduanya) dengan kartu PNG opsional.
-- **Salam perpisahan** (`/sambutan`, kartu kedua) — ucapan saat member keluar.
+  keduanya). Bentuk pesannya bisa dipilih: **Card** (kartu PNG), **Container**
+  (Components V2), **Embed**, atau **Text** — Text & Container yang bisa
+  me-ping member.
+- **Salam perpisahan** (`/sambutan`, kartu kedua) — ucapan saat member keluar,
+  dengan pilihan mode tampilan yang sama.
   Wajib memilih channel; tanpa channel salam tidak dikirim.
 - **AI Agent** (`/agent`) — bot ikut menghidupkan obrolan di **channel ngobrol**,
   dan mengomentari **gambar/video di channel galeri**. Bot diam saat obrolan
@@ -464,7 +467,7 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke          # 233 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
+npm run smoke          # 263 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
 npm run smoke:pg       # 14 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # 15 pemeriksaan rantai fallback provider (server tiruan)
 npm run test:ui        # 75 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
@@ -522,6 +525,8 @@ atau rantai fallback yang rusak ketahuan sebelum di-merge, bukan setelah bot dia
 | `ExperimentalWarning: SQLite is an experimental feature` | Normal di Node 22. Bisa diabaikan, atau jalankan dengan `NODE_OPTIONS=--disable-warning=ExperimentalWarning` (sudah di-set di Dockerfile). |
 | Slash command tidak muncul | Command didaftarkan global (bisa sampai 1 jam) saat pertama start. Pastikan undangan memakai scope `applications.commands`, dan bot berada di server `GUILD_ID`. |
 | Bot diam saja di room | **Message Content Intent** belum aktif di Developer Portal → Bot. |
+| Sambutan tidak muncul padahal sudah diatur | **Server Members Intent** belum aktif (atau bot belum di-restart setelah toggle). Cek log saat start: ada `✓ Intent Server Members aktif` atau `✗ … NONAKTIF`? Kalau event benar-benar sampai, log mencatat `Event member masuk: …` beserta alasan bila dilewati. Lihat [docs/sambutan-agent.md](docs/sambutan-agent.md). |
+| Kartu sambutan tidak muncul, hanya teks | Chromium tidak ada di hosting (umum di panel gratis). Sambutan **tetap terkirim** sebagai embed teks — log mencatat `Kartu sambutan tidak bisa dirender`. |
 | Tombol **Chat via DM** bilang DM tertutup | Member perlu mengaktifkan **Privasi & Keamanan → Izinkan pesan langsung dari server** untuk server itu. |
 | Transkrip tidak masuk DM | User menutup DM. Bot **tidak** mengarsipkan transkrip di mana pun — file dilampirkan di room, lalu channel dihapus **60 detik** kemudian agar member sempat mengunduh. |
 | `AI_API_KEY wajib diisi` padahal sudah diisi | Key Groq tertaruh di `GROQ_API_KEY`. Saat Groq utama, taruh di `AI_API_KEY` — lihat [docs/setup.md](docs/setup.md). |

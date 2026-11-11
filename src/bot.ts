@@ -58,6 +58,22 @@ client.once(Events.ClientReady, async (ready) => {
 
   markBotOnline(true);
 
+  // Diagnostik intent: tanpa GuildMembers (privileged), Discord tidak pernah
+  // mengirim event member join/leave — sambutan & perpisahan diam total tanpa
+  // satu pun error di log. Tanpa baris ini, penyebabnya mustahil ditebak dari
+  // log; dulu user hanya melihat "bot tidak bereaksi" padahal semuanya benar.
+  const hasMembersIntent = ready.options.intents.has(GatewayIntentBits.GuildMembers);
+  if (hasMembersIntent) {
+    logger.info('✓ Intent Server Members aktif — sambutan & perpisahan bisa menerima event.');
+  } else {
+    logger.warn(
+      '✗ Intent Server Members NONAKTIF — event member join/leave TIDAK akan pernah diterima, ' +
+        'sehingga sambutan & salam perpisahan tidak akan terkirim. ' +
+        'Nyalakan di Discord Developer Portal → Bot → Privileged Gateway Intents → Server Members Intent, ' +
+        'lalu RESTART bot.',
+    );
+  }
+
   ready.user.setPresence({
     activities: [{ name: '/panel • chat AI via DM', type: ActivityType.Listening }],
     status: 'online',

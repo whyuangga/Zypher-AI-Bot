@@ -21,7 +21,7 @@ Bot mengirim satu pesan setiap ada member baru bergabung.
 | **Sapa setiap member baru** | sakelar utama |
 | **Kirim ke** | `DM member` (disarankan) atau satu channel |
 | **Tulis sapaan dengan AI** | kalau mati, teks template dipakai apa adanya |
-| **Template** | `{user}` → nama panggilan, `{server}` → nama server |
+| **Template** | `{user}` → nama panggilan, `{server}` → nama server, `{user.mention}` → tag member, `{user.tag}` → username, `{memberCount}` → jumlah member |
 | **Gaya sapaan** | mis. `hangat, santai, sedikit bercanda` |
 | **Contoh nada** | satu kalimat contoh; AI meniru nadanya, bukan isinya |
 | **Kirim kartu sambutan** | gambar PNG berisi nama + sapaan (lihat di bawah) |
@@ -76,7 +76,7 @@ dengan sambutan, jadi pengaturannya ada di halaman yang sama.
 | **Kirim salam saat ada member keluar** | sakelar utama |
 | **Kirim ke** | channel — **wajib dipilih** |
 | **Tulis salam dengan AI** | kalau mati, template dipakai |
-| **Template** | `{user}` → nama panggilan, `{server}` → nama server |
+| **Template** | `{user}` → nama panggilan, `{server}` → nama server, `{user.mention}` → tag member, `{user.tag}` → username, `{memberCount}` → jumlah member |
 | **Gaya / contoh nada** | mis. `sopan, hangat, singkat` |
 
 ### Mencoba tanpa menunggu member
@@ -275,12 +275,137 @@ Privileged Gateway Intents):
 Tanpa Server Members Intent, bot tetap jalan tapi tidak pernah menerima event
 member baru, sehingga sambutan tidak terkirim.
 
+### Cara memastikan: baca log, jangan menebak
+
+Sejak versi ini, bot **melaporkan statusnya sendiri** karena kehilangan intent
+tidak pernah menghasilkan error — dulu sambutan diam total tanpa satu pun pesan.
+
+Saat start, cari salah satu baris ini:
+
+```
+✓ Intent Server Members aktif — sambutan & perpisahan bisa menerima event.
+✗ Intent Server Members NONAKTIF — event member join/leave TIDAK akan pernah diterima…
+```
+
+Saat ada member bergabung atau keluar, bot selalu mencatat **sebelum** penyaringan:
+
+```
+Event member masuk: bagas (bot) di Zypher Server
+  ↳ sambutan tidak terkirim: member yang bergabung adalah bot
+Event member masuk: rina di Zypher Server
+  ↳ sambutan tidak terkirim: bot tidak punya izin "Send Message" di #join-leave
+Sambutan untuk rina terkirim via channel (AI).
+```
+
+Artinya:
+
+| Yang terlihat di log | Artinya |
+|---|---|
+| **Tidak ada** baris `Event member masuk` | Event tidak sampai → intent belum aktif / bot belum di-restart setelah toggle |
+| `dilewati: member yang bergabung adalah bot` | Normal — bot lain memang tidak disambut |
+| `dilewati (bot tidak punya izin …)` | Beri bot izin **View Channel** + **Send Messages** + **Embed Links** di channel tujuan |
+| `Kartu sambutan tidak bisa dirender` | Chromium tidak ada di hosting; sambutan tetap terkirim sebagai embed teks |
+| `terkirim via dm` padahal channel diatur | Channel tujuan tidak lolos pemeriksaan izin, jadi jatuh ke DM |
+
+### Mode tampilan
+
+Bentuk pesan sambutan & perpisahan bisa dipilih per server di dashboard:
+
+| Mode | Bentuk pesan | Butuh Chromium? | Bisa me-ping? |
+|---|---|---|---|
+| **Card** | kartu PNG (banner + avatar + nama) sebagai lampiran | ya | tidak |
+| **Container** | kartu Components V2 (blok berwarna aksen, gaya panel baru Discord) | tidak | **ya** |
+| **Embed** | embed berwarna bertema server | tidak | tidak |
+| **Text** | teks polos di `content` | tidak | **ya** |
+
+Kenapa hanya **Text** & **Container** yang bisa me-ping: di Discord, mention di
+dalam embed tidak memicu notifikasi. Kalau kamu ingin member baru benar-benar
+mendapat notifikasi, pilih Text atau Container.
+
+**Container** (Components V2) butuh discord.js ≥ 14.19 — di proyek ini
+14.28.1. Kalau pustakanya lebih lama, bot otomatis mundur ke Embed dan
+mencatat alasannya di log. Pesan ber-flag Components V2 tidak boleh memuat
+`content`/`embeds`/`files` sama sekali; karena itu mention-nya ikut di dalam
+teks komponen.
+
+**Bawaan = Embed.** Server yang sudah berjalan tidak berubah tampilannya
+setelah pembaruan ini: baris database lama yang belum punya kolom
+`display_mode` diterjemahkan dari pengaturan lama (`imageEnabled` menyala →
+Card, mati → Embed).
+
+**Cadangan otomatis** kalau mode yang dipilih tidak bisa dipakai:
+
+| Keadaan | Yang dikirim |
+|---|---|
+| Card tapi Chromium tidak ada | Embed |
+| Card tapi bot tidak punya izin Attach Files | Embed |
+| Embed tapi bot tidak punya izin Embed Links | Text |
+| Container tapi pustaka tidak mendukung | Embed |
+| Text | selalu bisa |
+
+Alasan cadangan selalu ditulis ke log, mis.
+`Mode tampilan sambutan "Card" tidak bisa dipakai (kartu tidak bisa dirender) — memakai Embed.`
+
+Salam perpisahan **tidak pernah** me-ping siapa pun, bahkan di mode Text atau
+Container: member-nya sudah keluar.
+
+### Bot lain juga disapa
+
+Bot yang ditambahkan ke server disambut dan diucapkan selamat jalan seperti
+anggota biasa (mengikuti TitanBot). Dulu bot dilewati diam-diam. Kalau kamu
+ingin bot diabaikan lagi, tambahkan satu kondisi `if (member.user.bot)` di
+`welcomeMember()` dan `goodbyeMember()` — ada petunjuknya di komentar kode.
+
+### Token template
+
+Template teks (dipakai saat AI mati atau gagal) mengenal token berikut:
+
+| Token | Diganti menjadi | Catatan |
+|---|---|---|
+| `{user}` | nama panggilan member | perilaku lama, **bukan** mention |
+| `{user.mention}` | tag member (`@nama`) | hanya berpengaruh di teks biasa — mention di dalam embed tidak menjadi tag |
+| `{user.tag}` | username lengkap | mis. `sky#0001` |
+| `{server}` | nama server | |
+| `{memberCount}` | jumlah member saat ini | ikut berubah tiap ada yang masuk/keluar |
+
+Kalau sebuah token tidak punya nilai (mis. pratinjau lama), token itu diganti
+nama biasa — tidak pernah muncul `<@undefined>` di pesan.
+
+### Kalau bot kurang izin
+
+Bot tidak berhenti bekerja hanya karena izin channel kurang; bentuk pesannya
+yang menyesuaikan:
+
+| Izin yang kurang | Akibatnya | Yang dikirim |
+|---|---|---|
+| **View Channel** | channel dilewati | tidak ada, alasannya masuk log |
+| **Send Messages** | channel dilewati | tidak ada, alasannya masuk log |
+| **Embed Links** | embed tidak bisa dipakai | teks biasa berisi sambutan |
+| **Attach Files** | kartu/banner tidak bisa ditempel | embed teks, tanpa gambar |
+
+Cukup beri **View Channel + Send Messages**, sambutan tetap sampai; dua izin
+lain hanya memengaruhi tampilan.
+
+### Kenapa dulu bisa hilang tanpa jejak
+
+Tiga penyebab yang sudah diperbaiki:
+
+1. **Channel bermasalah → jatuh ke DM dalam senyap.** `fetchChannel()` dulu
+   mengembalikan `null` tanpa alasan, lalu pemanggil langsung beralih ke DM.
+   Kalau DM member tertutup, sambutan hilang total dari channel yang sudah diatur.
+2. **Kartu gagal dirender → pesan kosong.** Kalau "Kirim kartu sambutan"
+   dicentang tapi Chromium tidak ada (umum di hosting panel), bot mengirim
+   `embeds: []` + tanpa file. Discord menolak pesan kosong; sekarang otomatis
+   mundur ke embed teks.
+3. **Tidak ada log sama sekali.** Sekarang setiap event dan setiap alasan
+   dilewati tercatat.
+
 ---
 
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 233 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 263 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

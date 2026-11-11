@@ -32,6 +32,8 @@ import { errorMessage, logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
 import { previewGoodbye, previewWelcome } from './preview.js';
 import { readBannerDataUri, readBannerAttachment } from './banner.js';
+import { displayModeLabel, normalizeDisplayMode } from './display-mode.js';
+import { buildContainerCard, containerPayload } from './container-card.js';
 import { renderWelcomeCard } from './welcome-card.js';
 
 export class SendTestError extends Error {}
@@ -165,18 +167,22 @@ export async function sendWelcomeTest(
   const name = member.displayName || member.user.username;
   const preview = await previewWelcome({ settings, name, guildName: guild.name });
 
-  const card = settings.imageEnabled
-    ? await buildCard({
-        name,
-        guildName: guild.name,
-        text: preview.text,
-        bannerPath: settings.bannerPath,
-        includeAvatar: settings.includeAvatar,
-        avatarUrl: member.displayAvatarURL({ extension: 'png', size: 256 }),
-        kicker: 'SELAMAT DATANG',
-        filePrefix: 'selamat-datang',
-      })
-    : null;
+  // Tes wajib mengirim bentuk yang sama dengan pesan sungguhan — kalau tidak,
+  // admin menguji kartu padahal bot mengirim teks (atau sebaliknya).
+  const wanted = normalizeDisplayMode(settings.displayMode);
+  const card =
+    wanted === 'card'
+      ? await buildCard({
+          name,
+          guildName: guild.name,
+          text: preview.text,
+          bannerPath: settings.bannerPath,
+          includeAvatar: settings.includeAvatar,
+          avatarUrl: member.displayAvatarURL({ extension: 'png', size: 256 }),
+          kicker: 'SELAMAT DATANG',
+          filePrefix: 'selamat-datang',
+        })
+      : null;
 
   const embed = new EmbedBuilder()
     .setColor(0x6d8cff)
@@ -185,19 +191,45 @@ export async function sendWelcomeTest(
   // Discord menolak setImage() berisi data URI ("Received one or more
   // errors"), jadi banner dikirim sebagai lampiran dan dirujuk attachment://.
   // Ternyata ini juga alasan sambutan sungguhan gagal terkirim.
-  const bannerFile = card ? null : await readBannerAttachment(settings.bannerPath);
+  const bannerFile = wanted === 'card' || wanted === 'text'
+    ? null
+    : await readBannerAttachment(settings.bannerPath);
   if (bannerFile) embed.setImage(`attachment://${bannerFile.name}`);
 
   const note: string[] = [];
   if (preview.source !== 'ai') note.push(preview.note ?? 'AI tidak dipakai.');
-  if (settings.imageEnabled && !card) note.push('Kartu PNG tidak dibuat (Chromium tidak tersedia).');
+  if (wanted === 'card' && !card) note.push('Kartu PNG tidak dibuat (Chromium tidak tersedia) — dikirim sebagai embed.');
+  const modeNow = wanted === 'card' && !card ? 'embed' : wanted;
+  note.push(`Mode ${displayModeLabel(wanted)}.`);
 
-  const payload = {
-    content: TEST_MARK,
-    embeds: card ? [] : [embed],
-    files: card ? [card] : bannerFile ? [bannerFile.attachment] : [],
-    allowedMentions: { parse: [] as const },
-  };
+  // Mode container: komponen V2 tidak boleh dicampur content/embeds.
+  const container =
+    modeNow === 'container'
+      ? (() => {
+          const built = buildContainerCard({
+            kind: 'welcome',
+            text: preview.text,
+            guildName: guild.name,
+            memberCount: guild.memberCount,
+          });
+          return built ? containerPayload(built) : null;
+        })()
+      : null;
+  if (modeNow === 'container' && !container) {
+    note.push('Components V2 tidak didukung pustaka ini — dikirim sebagai embed.');
+  }
+
+  const payload = container
+    ? { ...container, allowedMentions: { parse: [] as const } }
+    : modeNow === 'text'
+      ? { content: `${TEST_MARK}\n\n${preview.text}`, allowedMentions: { parse: [] as const } }
+      : {
+          // Petunjuk uji tetap di content supaya pesan tes mudah dikenali.
+          content: TEST_MARK,
+          embeds: card ? [] : [embed],
+          files: card ? [card] : bannerFile ? [bannerFile.attachment] : [],
+          allowedMentions: { parse: [] as const },
+        };
 
   // Target DM: menguji jalur paling rawan (member menutup DM).
   if (options.target === 'dm' || !settings.channelId) {
@@ -268,40 +300,67 @@ export async function sendGoodbyeTest(
   const name = member.displayName || member.user.username;
   const preview = await previewGoodbye({ settings, name, guildName: guild.name });
 
-  const card = settings.imageEnabled
-    ? await buildCard({
-        name,
-        guildName: guild.name,
-        text: preview.text,
-        bannerPath: settings.bannerPath,
-        includeAvatar: settings.includeAvatar,
-        avatarUrl: member.displayAvatarURL({ extension: 'png', size: 256 }),
-        kicker: 'SAMPAI JUMPA',
-        filePrefix: 'sampai-jumpa',
-      })
-    : null;
+  const wanted = normalizeDisplayMode(settings.displayMode);
+  const card =
+    wanted === 'card'
+      ? await buildCard({
+          name,
+          guildName: guild.name,
+          text: preview.text,
+          bannerPath: settings.bannerPath,
+          includeAvatar: settings.includeAvatar,
+          avatarUrl: member.displayAvatarURL({ extension: 'png', size: 256 }),
+          kicker: 'SAMPAI JUMPA',
+          filePrefix: 'sampai-jumpa',
+        })
+      : null;
 
   const embed = new EmbedBuilder()
     .setColor(0x716c98)
     .setDescription(preview.text)
     .setFooter({ text: `Pesan uji · ${guild.name}` });
-  const bannerFile = card ? null : await readBannerAttachment(settings.bannerPath);
+  const bannerFile =
+    wanted === 'card' || wanted === 'text' ? null : await readBannerAttachment(settings.bannerPath);
   if (bannerFile) embed.setImage(`attachment://${bannerFile.name}`);
 
   const note: string[] = [];
   if (preview.source !== 'ai') note.push(preview.note ?? 'AI tidak dipakai.');
-  if (settings.imageEnabled && !card) note.push('Kartu PNG tidak dibuat (Chromium tidak tersedia).');
+  if (wanted === 'card' && !card) note.push('Kartu PNG tidak dibuat (Chromium tidak tersedia) — dikirim sebagai embed.');
+  const modeNow = wanted === 'card' && !card ? 'embed' : wanted;
+  note.push(`Mode ${displayModeLabel(wanted)}.`);
 
   const { channel, reason } = await resolveChannel(guild, settings.channelId);
   if (!channel) throw new SendTestError(reason ?? 'Channel salam perpisahan tidak bisa dipakai.');
 
   try {
-    await channel.send({
-      content: TEST_MARK,
-      embeds: card ? [] : [embed],
-      files: card ? [card] : bannerFile ? [bannerFile.attachment] : [],
-      allowedMentions: { parse: [] as const },
-    });
+    const goodbyeContainer =
+      modeNow === 'container'
+        ? (() => {
+            const built = buildContainerCard({
+              kind: 'goodbye',
+              text: preview.text,
+              guildName: guild.name,
+              memberCount: guild.memberCount,
+            });
+            return built ? containerPayload(built) : null;
+          })()
+        : null;
+    if (modeNow === 'container' && !goodbyeContainer) {
+      note.push('Components V2 tidak didukung pustaka ini — dikirim sebagai embed.');
+    }
+
+    await channel.send(
+      goodbyeContainer
+        ? { ...goodbyeContainer, allowedMentions: { parse: [] as const } }
+        : modeNow === 'text'
+          ? { content: `${TEST_MARK}\n\n${preview.text}`, allowedMentions: { parse: [] as const } }
+          : {
+              content: TEST_MARK,
+              embeds: card ? [] : [embed],
+              files: card ? [card] : bannerFile ? [bannerFile.attachment] : [],
+              allowedMentions: { parse: [] as const },
+            },
+    );
     logger.info(`Kirim tes salam perpisahan ke #${channel.name} berhasil.`);
     return {
       ok: true,

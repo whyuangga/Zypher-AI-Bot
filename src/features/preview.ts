@@ -223,7 +223,7 @@ export async function previewWelcome(options: WelcomePreviewOptions): Promise<Pr
   }
 
   const source: PreviewResult['source'] = text ? 'ai' : 'template';
-  const finalText = text ?? fillText(template, { user: name, server: guildName });
+  const finalText = text ?? fillText(template, previewValues(name, guildName));
 
   const result: PreviewResult = { text: finalText, source, note: text ? null : note };
 
@@ -281,9 +281,27 @@ export async function previewGoodbye(options: {
   }
 
   return {
-    text: text ?? fillText(template, { user: name, server: guildName }),
+    text: text ?? fillText(template, previewValues(name, guildName)),
     source: text ? 'ai' : 'template',
     note: text ? null : note,
+  };
+}
+
+/**
+ * Nilai token untuk pratinjau dashboard.
+ *
+ * Tidak ada member sungguhan di sini, jadi token member-specific diisi contoh
+ * yang jelas terlihat sebagai contoh: mention palsu akan tampil sebagai
+ * `@Sky` di kartu, dan jumlah member memakai angka contoh. Lebih baik
+ * menampilkan contoh daripada membiarkan `{user.mention}` tampil mentah.
+ */
+function previewValues(name: string, guildName: string): Parameters<typeof fillText>[1] {
+  return {
+    user: name,
+    server: guildName,
+    mention: `@${name}`,
+    tag: `${name.replace(/\s+/g, '').toLowerCase()}#0000`,
+    memberCount: 0,
   };
 }
 

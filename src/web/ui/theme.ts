@@ -743,6 +743,78 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   border: 1px solid var(--line);
 }
 
+/* Pemilih mode tampilan (Card / Embed / Text).
+   Radio, bukan dropdown: ketiga pilihan mengubah tampilan yang dilihat member,
+   jadi konsekuensinya (kartu butuh Chromium, teks bisa me-ping) ditampilkan
+   sekaligus. */
+/* Dua kolom untuk 4 mode: tiga kolom membuat catatan mode paling panjang
+   (Container) terpotong jadi banyak baris pendek. */
+.mode-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+@media (max-width: 640px) {
+  .mode-picker {
+    grid-template-columns: 1fr;
+  }
+}
+.mode-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  cursor: pointer;
+  background: rgba(109, 140, 255, 0.02);
+  transition: border-color 0.15s, background 0.15s;
+}
+.mode-option:hover {
+  border-color: var(--accent);
+}
+/* Baris terpilih ditandai jelas — mode yang aktif harus terbaca sekali lihat. */
+.mode-option:has(input:checked) {
+  border-color: var(--accent);
+  background: rgba(109, 140, 255, 0.08);
+}
+.mode-option input {
+  margin-top: 2px;
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  flex: 0 0 auto;
+}
+.mode-body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.mode-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.mode-tag {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--accent);
+  background: rgba(109, 140, 255, 0.14);
+}
+.mode-note {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
 /* Banner unggahan: kotak pratinjau di kiri, tombol di kanan.
    Ukurannya dibuat mirip kartu (900x320) tapi lebih pendek supaya tidak makan
    tempat di form. */
