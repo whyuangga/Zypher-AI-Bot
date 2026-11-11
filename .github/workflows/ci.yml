@@ -43,7 +43,11 @@ jobs:
         run: npm run typecheck:strict
 
       - name: Smoke test
-        run: npm run smoke 2>&1 | tee /tmp/smoke.log
+        # pipefail WAJIB: tanpa itu exit code diambil dari `tee` (selalu 0),
+        # sehingga smoke yang gagal akan terlihat hijau.
+        run: |
+          set -o pipefail
+          npm run smoke 2>&1 | tee /tmp/smoke.log
 
       # Sementara: unggah log supaya kegagalan bisa dibaca dari artefak.
       - name: Unggah log smoke
