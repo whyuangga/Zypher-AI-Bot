@@ -487,6 +487,20 @@ file di pratinjau, bukan ikon gambar rusak — di browser file itu memang tidak
 ada. Kalau bannernya ada di disk, server mengubahnya jadi data URI sehingga
 gambarnya benar-benar terlihat.
 
+**Kenapa pratinjau memakai penanda, bukan data URI langsung.** Discord
+**menolak** data URI di Media Gallery maupun Thumbnail ("Received one or more
+errors"), sama seperti `setImage()` embed. Karena itu komponen dibangun dengan
+penanda `attachment://preview-banner` / `attachment://preview-avatar`, lalu
+`preview.ts` menukarnya dengan gambar sungguhan **sebelum** dikirim ke browser.
+Nama file asli di jalur produksi tetap dipertahankan — Discord mencocokkan
+rujukan dengan lampiran yang ikut terkirim, jadi nama generik akan gagal.
+
+Blok pratinjau disimpan **berurutan** (`ContainerMock.blocks`), bukan dipisah
+antara "semua teks" dan "semua gambar". Sebelumnya pratinjau menggambar semua
+teks lebih dulu baru semua gambar, sehingga urutannya berbeda dari yang dikirim
+bot. Section juga satu blok (`{ kind: 'section', text, thumbnailUrl }`) supaya
+avatar tidak pernah jatuh ke baris sendiri di bawah teks.
+
 ### Dua sakelar avatar yang berdiri sendiri
 
 Di **Tampilan embed** ada dua centang, dan keduanya boleh menyala bersamaan:
@@ -496,10 +510,15 @@ Di **Tampilan embed** ada dua centang, dan keduanya boleh menyala bersamaan:
 | **Avatar + nama member di atas teks** | `setAuthor()`: avatar bulat + nama tebal di baris pertama |
 | **Avatar member sebagai thumbnail di kanan atas** | `setThumbnail()`: kotak kecil di sudut kanan |
 
-Di mode **Container**, keduanya diperlakukan sama: container tidak punya
-penulis/thumbnail sendiri, jadi avatar dikirim sebagai lampiran dan ditampilkan
-lewat Media Gallery di dalam kartu. Sakelar "di atas teks" saja sudah cukup
-untuk menyalakannya.
+Di mode **Container**, keduanya diperlakukan sama: avatar dikirim sebagai
+lampiran lalu ditampilkan lewat **Section + Thumbnail** (tipe 9 & 11) — avatar
+kecil **di kanan teks**, bukan kotak selebar kartu di tengah. Sakelar
+"di atas teks" saja sudah cukup untuk menyalakannya.
+
+Urutan blok container: **banner → teks (+ avatar kanan) → pemisah → baris kaki.**
+Banner ada di paling atas karena ia yang memperkenalkan pesan. Sebelumnya banner
+berada di bawah teks dan di bawah avatar, sehingga avatar tampil sebagai kotak
+lebar berisi gambar kecil di tengah — terlihat seperti ruang kosong besar.
 
 Catatan teknis: baris penulis **tidak** bergantung pada avatar. Kalau URL avatar
 kosong (akun tanpa avatar, CDN gagal), nama tetap ditampilkan — dulu seluruh
@@ -696,7 +715,7 @@ Banner yang diunggah di dashboard dipakai di **semua mode kecuali Text**:
 | Mode | Cara banner dikirim |
 |---|---|
 | **Card** | jadi latar kartu PNG |
-| **Container** | Media Gallery di dalam komponen |
+| **Container** | Media Gallery di **paling atas** komponen |
 | **Embed** | gambar embed |
 | **Text** | tidak bisa — teks murni |
 
@@ -776,7 +795,7 @@ Tiga penyebab yang sudah diperbaiki:
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke # 347 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke # 351 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

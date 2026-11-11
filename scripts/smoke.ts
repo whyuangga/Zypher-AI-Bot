@@ -2657,7 +2657,7 @@ await testAsync('banner: dipakai di mode container lewat Media Gallery', async (
   const { buildContainerCard } = await import('../src/features/container-card.js');
 
   const dengan = buildContainerCard({
-    kind: 'welcome', text: 'Halo Sky', guildName: 'Z', memberCount: 5, bannerName: 'banner-x.png',
+    kind: 'welcome', text: 'Halo Sky', guildName: 'Z', memberCount: 5, banner: { name: 'banner-x.png' },
   });
   const json = JSON.stringify(dengan!.toJSON());
   assert.ok(json.includes('attachment://banner-x.png'), 'banner dirujuk lewat attachment://');
@@ -5684,11 +5684,126 @@ await testAsync('embed-mock: container dibaca baris, aksen, dan teks kecilnya', 
 
   assert.ok(mock, 'container terbaca');
   assert.equal(mock!.accentColor, '#6d8cff', 'warna aksen terbaca');
-  assert.equal(mock!.lines.length, 2, 'dua baris teks');
-  assert.equal(mock!.lines[0]!.kind, 'text', 'baris pertama teks biasa');
-  assert.equal(mock!.lines[1]!.kind, 'small', 'baris -# jadi teks kecil');
-  assert.deepEqual(mock!.imageUrls, ['attachment://avatar.png'], 'rujukan lampiran terbaca');
-  assert.equal(mock!.separators, 1, 'pemisah terhitung');
+  // Blok disimpan BERURUTAN, jadi urutan gambar & teks tidak bisa tertukar.
+  assert.deepEqual(
+    mock!.blocks.map((b) => b.kind),
+    ['text', 'image', 'separator', 'small'],
+    'urutan blok sama dengan urutan komponen',
+  );
+  // Dulu ada jenis blok 'thumbnail' yang berdiri sendiri; sekarang thumbnail
+  // selalu menempel di dalam blok 'section'. Fixture ini punya galeri lepas
+  // (bukan Section), jadi yang diperiksa: tidak ada blok bernama 'thumbnail'.
+  assert.ok(
+    ['text', 'small', 'image', 'section', 'separator'].includes(mock!.blocks[0]!.kind),
+    'jenis blok hanya yang dikenal',
+  );
+  const teks = mock!.blocks[0];
+  assert.equal(teks!.kind === 'text' ? teks!.text : '', 'Halo Sky!', 'isi teks terbaca');
+  const kecil = mock!.blocks[3];
+  assert.equal(kecil!.kind === 'small' ? kecil!.text : '', '-# Member baru · Komunitas', 'teks kecil terbaca');
+  const gambar = mock!.blocks[1];
+  assert.equal(gambar!.kind === 'image' ? gambar!.url : '', 'attachment://avatar.png', 'rujukan lampiran terbaca');
+});
+
+await testAsync('container: banner di ATAS teks, avatar jadi thumbnail kanan', async () => {
+  const { buildContainerCard } = await import('../src/features/container-card.js');
+
+  const card = buildContainerCard({
+    kind: 'welcome',
+    text: 'Selamat datang Sky',
+    guildName: 'Komunitas Zypher',
+    memberCount: 7,
+    banner: { name: 'banner-abc.png' },
+    avatar: { name: 'avatar-abc.png' },
+  });
+  assert.ok(card, 'kartu terbentuk');
+
+  const json = card!.toJSON() as unknown as { components: Array<Record<string, unknown>> };
+  const types = json.components.map((c) => c.type);
+  // Urutan ini yang dilihat member: banner menyambut lebih dulu, lalu teks.
+  assert.equal(types[0], 12, 'blok pertama = MediaGallery (banner)');
+  assert.equal(types[1], 9, 'blok kedua = Section (teks + avatar)');
+
+  const banner = json.components[0] as { items: Array<{ media: { url: string } }> };
+  assert.equal(banner.items[0]!.media.url, 'attachment://banner-abc.png', 'banner dirujuk lampiran');
+
+  const section = json.components[1] as {
+    components: Array<{ type: number; content: string }>;
+    accessory: { type: number; media: { url: string } };
+  };
+  assert.equal(section.components[0]!.type, 10, 'di dalam Section ada TextDisplay');
+  // Thumbnail (11) = avatar kecil di KANAN teks. Dulu avatar jadi MediaGallery
+  // selebar penuh di tengah, sehingga tampak seperti kotak kosong besar.
+  assert.equal(section.accessory.type, 11, 'avatar memakai Thumbnail, bukan galeri penuh');
+  assert.equal(section.accessory.media.url, 'attachment://avatar-abc.png', 'avatar dirujuk lampiran');
+});
+
+await testAsync('container: tanpa avatar, teks dikirim tanpa Section', async () => {
+  const { buildContainerCard } = await import('../src/features/container-card.js');
+  const card = buildContainerCard({
+    kind: 'goodbye',
+    text: 'Sampai jumpa',
+    guildName: 'Z',
+    avatar: null,
+  });
+  const json = card!.toJSON() as unknown as { components: Array<Record<string, unknown>> };
+  assert.ok(
+    json.components.every((c) => c.type !== 9),
+    'tidak ada Section kosong saat avatar dimatikan',
+  );
+  assert.ok(json.components.some((c) => c.type === 10), 'teks tetap ada');
+});
+
+await testAsync('embed-mock: Section jadi SATU blok teks + thumbnail', async () => {
+  const { containerToMock } = await import('../src/features/embed-mock.js');
+
+  const mock = containerToMock({
+    toJSON: () => ({
+      type: 17,
+      components: [
+        { type: 12, items: [{ media: { url: 'attachment://banner' } }] },
+        {
+          type: 9,
+          components: [{ type: 10, content: 'Halo Sky!' }],
+          accessory: { type: 11, media: { url: 'attachment://avatar' } },
+        },
+        { type: 14 },
+      ],
+    }),
+  } as never);
+
+  assert.ok(mock, 'container terbaca');
+  assert.deepEqual(mock!.blocks.map((b) => b.kind), ['image', 'section', 'separator'], 'urutan blok');
+  const section = mock!.blocks[1];
+  assert.ok(section!.kind === 'section', 'blok kedua adalah section');
+  if (section!.kind === 'section') {
+    // Teks & thumbnail SATU blok: kalau dipisah, pratinjau menggambar avatar
+    // di baris sendiri di kanan bawah, padahal Discord menaruhnya di samping.
+    assert.equal(section!.text, 'Halo Sky!', 'teks section terbaca');
+    assert.equal(section!.thumbnailUrl, 'attachment://avatar', 'thumbnail section terbaca');
+  }
+});
+
+await testAsync('pratinjau: banner tidak digambar dua kali', async () => {
+  const { buildContainerCard } = await import('../src/features/container-card.js');
+  const { containerToMock } = await import('../src/features/embed-mock.js');
+
+  const card = buildContainerCard({
+    kind: 'welcome',
+    text: 'Halo',
+    guildName: 'Z',
+    banner: { name: 'banner-abc.png' },
+  });
+  const mock = containerToMock(card)!;
+  const gambar = mock.blocks.filter((b) => b.kind === 'image');
+  // Dulu banner dari disk ditambahkan lagi sebagai blok baru, sehingga
+  // pratinjau menampilkan dua banner sementara Discord menampilkan satu.
+  assert.equal(gambar.length, 1, 'tepat satu gambar banner');
+  assert.equal(
+    gambar[0]!.kind === 'image' ? gambar[0]!.url : '',
+    'attachment://banner-abc.png',
+    'rujukan lampiran, bukan URL tambahan',
+  );
 });
 
 await testAsync('embed-mock: colorToCss aman untuk nilai rusak', async () => {
@@ -5815,7 +5930,7 @@ await testAsync('pratinjau: mode container menghasilkan containerMock', async ()
     templateOnly: true,
   });
   assert.ok(result.containerMock, 'pratinjau container menghasilkan containerMock');
-  assert.ok(result.containerMock!.lines.length > 0, 'ada baris teks yang bisa digambar');
+  assert.ok(result.containerMock!.blocks.length > 0, 'ada blok yang bisa digambar');
   assert.equal(result.embedMock ?? null, null, 'mode container tidak memakai embed');
 });
 

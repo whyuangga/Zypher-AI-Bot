@@ -386,6 +386,14 @@ export async function composePayload(options: {
   /** URL avatar untuk Media Gallery container (dipakai pratinjau). */
   containerAvatarUrl?: string | null;
   /**
+   * Banner sebagai URL langsung untuk pratinjau.
+   *
+   * Pratinjau berjalan dengan `allowed.attach = false` (tidak ada file yang
+   * boleh dibaca), jadi `bannerFile` selalu null. Tanpa jalur ini banner hilang
+   * dari pratinjau container.
+   */
+  containerBannerUrl?: string | null;
+  /**
    * Boleh menulis `<@id>` di `content`? Sambutan: ya. Perpisahan: tidak —
    * member sudah keluar, mention tidak akan menyapa siapa pun dan hanya
    * memicu notifikasi ke orang yang sudah pergi.
@@ -448,7 +456,13 @@ export async function composePayload(options: {
       text: teks,
       guildName: member.guild.name,
       memberCount: member.guild.memberCount,
-      bannerName: bannerFile?.name ?? null,
+      // Produksi: banner sebagai lampiran. Pratinjau: URL langsung, karena tidak
+      // ada file yang bisa dirujuk lewat attachment://.
+      banner: options.containerBannerUrl
+        ? { url: options.containerBannerUrl }
+        : bannerFile
+          ? { name: bannerFile.name }
+          : null,
       lead: options.containerLead ?? null,
       avatar: options.containerAvatarUrl
         ? { url: options.containerAvatarUrl }

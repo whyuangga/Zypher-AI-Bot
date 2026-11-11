@@ -1092,13 +1092,20 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   object-fit: cover;
   border-radius: 4px;
 }
-/* Avatar di container tampil sebagai gambar bulat kecil di atas teks —
-   Media Gallery di Discord tidak membulatkan, tapi bentuk persegi besar untuk
-   avatar 128px hanya memakan ruang tanpa menambah informasi. */
-.preview-container .pc-avatar {
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
+/* Section = teks + thumbnail BERDAMPINGAN, seperti Discord menampilkannya.
+   Kalau thumbnail digambar sebagai blok terpisah, ia jatuh ke bawah teks. */
+.preview-container .pc-section {
+  display: grid;
+  gap: 12px;
+  align-items: start;
+}
+.preview-container .pc-section.pc-has-thumb {
+  grid-template-columns: minmax(0, 1fr) 88px;
+}
+.preview-container .pc-thumb {
+  width: 88px;
+  height: 88px;
+  border-radius: 8px;
   object-fit: cover;
 }
 /* Keterangan kecil saat gambar dirujuk sebagai lampiran: di browser tidak ada

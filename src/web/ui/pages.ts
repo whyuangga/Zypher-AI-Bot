@@ -2192,29 +2192,40 @@ async function runTest(kind, templateOnly) {
     wrap.className = 'preview-container';
     if (mock.accentColor) wrap.style.borderLeftColor = mock.accentColor;
 
-    (mock.lines || []).forEach(function (line) {
-      var text = String(line.text || '');
+    // Blok digambar DALAM URUTAN ASLINYA. Dulu semua teks digambar lebih dulu,
+    // baru semua gambar, sehingga pratinjau berbohong soal urutan sebenarnya.
+    (mock.blocks || []).forEach(function (block) {
+      if (block.kind === 'separator') {
+        var sep = document.createElement('div');
+        sep.className = 'pc-sep';
+        wrap.appendChild(sep);
+        return;
+      }
+      if (block.kind === 'image') {
+        wrap.appendChild(buildImage(block.url, 'pc-image'));
+        return;
+      }
+      if (block.kind === 'section') {
+        // Section: teks dan thumbnail berdampingan. Kalau thumbnail tidak ada,
+        // teks memakai lebar penuh — sama seperti Discord.
+        var row = document.createElement('div');
+        row.className = 'pc-section' + (block.thumbnailUrl ? ' pc-has-thumb' : '');
+        var body = document.createElement('div');
+        body.className = 'pc-line';
+        body.innerHTML = renderMentions(String(block.text || ''));
+        row.appendChild(body);
+        if (block.thumbnailUrl) row.appendChild(buildImage(block.thumbnailUrl, 'pc-thumb'));
+        wrap.appendChild(row);
+        return;
+      }
+      var text = String(block.text || '');
       // Baris -#  = teks kecil di Discord; penandanya dibuang di pratinjau.
-      if (line.kind === 'small') text = text.replace(/^\\s*-#\\s*/, '');
+      if (block.kind === 'small') text = text.replace(/^\\s*-#\\s*/, '');
       var el = document.createElement('div');
-      el.className = 'pc-line' + (line.kind === 'small' ? ' pc-small' : '');
+      el.className = 'pc-line' + (block.kind === 'small' ? ' pc-small' : '');
       el.innerHTML = renderMentions(text);
       wrap.appendChild(el);
     });
-
-    (mock.imageUrls || []).forEach(function (url, index) {
-      // Gambar pertama di container adalah avatar (kalau ada). Ditandai server
-      // lewat posisi: avatar selalu lebih dulu dari banner.
-      wrap.appendChild(buildImage(url, index === 0 ? 'pc-image pc-avatar' : 'pc-image'));
-    });
-
-    if (mock.separators) {
-      // Pemisah hanya digambar sekali di akhir: posisi persisnya tidak penting
-      // untuk menilai bentuk, dan menebaknya bisa salah.
-      var sep = document.createElement('div');
-      sep.className = 'pc-sep';
-      wrap.appendChild(sep);
-    }
     return wrap;
   }
 

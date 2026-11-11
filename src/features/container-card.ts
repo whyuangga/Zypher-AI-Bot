@@ -20,11 +20,29 @@ import {
   ContainerBuilder,
   MediaGalleryBuilder,
   MediaGalleryItemBuilder,
+  SectionBuilder,
   SeparatorBuilder,
   TextDisplayBuilder,
+  ThumbnailBuilder,
   MessageFlags,
 } from 'discord.js';
 import { cardDetail } from './welcome.js';
+
+/**
+ * Rujukan pengganti untuk pratinjau.
+ *
+ * Pratinjau mengirim gambar sebagai data URI, dan Discord MENOLAK data URI di
+ * Media Gallery/Thumbnail. Jadi komponen dibangun dengan penanda ini, lalu
+ * `preview.ts` menukarnya dengan gambar sungguhan. Nama sengaja tidak sama
+ * dengan nama file asli supaya tidak mungkin tertukar dengan lampiran produksi.
+ */
+const PREVIEW_BANNER_REF = 'attachment://preview-banner';
+const PREVIEW_AVATAR_REF = 'attachment://preview-avatar';
+
+/** URL yang boleh dipakai apa adanya: http(s) saja, bukan data URI. */
+function isPublicUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url);
+}
 
 /** Warna aksen per jenis pesan — sama dengan warna embed yang sudah dipakai. */
 const ACCENT = { welcome: 0x6d8cff, goodbye: 0x716c98 } as const;
@@ -40,13 +58,17 @@ export interface ContainerCardOptions {
   /** Baris tambahan di bawah teks, mis. `dibuat dengan AI`. */
   extra?: string[];
   /**
-   * Nama lampiran banner (mis. `banner-abc.png`). Ditampilkan lewat Media
-   * Gallery dengan rujukan `attachment://`.
+   * Banner di paling atas kartu.
+   *
+   * Dua bentuk, sama seperti `avatar`: produksi mengirim lampiran (`name`),
+   * pratinjau mengirim URL langsung (`url`). Tanpa bentuk `url`, pratinjau
+   * tidak punya file untuk dirujuk — dan dulu itu ditambal dengan menyuntik
+   * gambar ekstra di akhir, yang membuat banner tampil DUA kali.
    *
    * `files` tetap boleh dikirim bersama Components V2 — yang dilarang hanya
    * `content`, `embeds`, `stickers`, dan `poll`.
    */
-  bannerName?: string | null;
+  banner?: { name: string } | { url: string } | null;
   /**
    * Teks yang ditaruh di PALING ATAS kartu, sebelum teks utama.
    *
@@ -94,27 +116,64 @@ export function buildContainerCard(options: ContainerCardOptions): ContainerBuil
       container.addTextDisplayComponents(new TextDisplayBuilder().setContent(lead.slice(0, 500)));
     }
 
-    container.addTextDisplayComponents(new TextDisplayBuilder().setContent(text));
+    // Urutan blok: banner -> teks (+ avatar di kanan) -> pemisah -> kaki.
+    //
+    // Banner ditaruh PALING ATAS: ia yang memperkenalkan pesan, seperti sampul.
+    // Sebelumnya banner berada di bawah teks DAN di bawah avatar, sehingga
+    // avatar tampil sebagai kotak lebar berisi gambar kecil di tengah —
+    // terlihat seperti kotak kosong besar, bukan foto profil.
+    //
+    // Banner sebagai gambar besar. Dulu mode ini mengabaikan banner sama
+    // sekali tanpa memberi tahu — padahal admin sudah mengunggahnya.
+    // Data URI DITOLAK Discord di Media Gallery ("Received one or more
+    // errors"), sama seperti setImage di embed. Pratinjau mengirim gambar
+    // sebagai data URI, jadi yang dipakai adalah rujukan lampiran bertanda —
+    // bentuknya tetap benar (satu banner di paling atas), dan pratinjau
+    // menggantinya dengan gambar sungguhan lewat `attachmentName()`.
+    const bannerUrl = options.banner
+      ? 'name' in options.banner
+        ? // Produksi: nama file ASLI wajib dipertahankan — Discord mencocokkan
+          // rujukan ini dengan lampiran yang ikut dikirim. Nama generik akan
+          // menunjuk lampiran yang tidak ada, dan banner gagal tampil.
+          `attachment://${options.banner.name}`
+        : isPublicUrl(options.banner.url)
+          ? options.banner.url
+          : PREVIEW_BANNER_REF
+      : null;
 
-    // Avatar member di ATAS teks: bentuk yang sama dengan baris penulis di
-    // embed, karena Components V2 tidak punya penulis/thumbnail sendiri.
-    if (options.avatar) {
-      const url = 'url' in options.avatar ? options.avatar.url : `attachment://${options.avatar.name}`;
+    if (bannerUrl) {
       container.addMediaGalleryComponents(
-        new MediaGalleryBuilder().addItems(
-          new MediaGalleryItemBuilder().setURL(url).setDescription('avatar'),
-        ),
+        new MediaGalleryBuilder().addItems(new MediaGalleryItemBuilder().setURL(bannerUrl)),
       );
     }
 
-    // Banner sebagai gambar besar. Dulu mode ini mengabaikan banner sama
-    // sekali tanpa memberi tahu — padahal admin sudah mengunggahnya.
-    if (options.bannerName) {
-      container.addMediaGalleryComponents(
-        new MediaGalleryBuilder().addItems(
-          new MediaGalleryItemBuilder().setURL(`attachment://${options.bannerName}`),
-        ),
+    // Teks utama. Kalau ada avatar, teks dibungkus Section sehingga avatar
+    // menjadi Thumbnail KECIL DI KANAN teks — bentuk yang sama dengan embed.
+    //
+    // Section (tipe 9) + Thumbnail (tipe 11) tersedia sejak discord.js 14.19;
+    // pustaka lama membuat blok ini gagal dan ditangkap catch di bawah, jadi
+    // pemanggil mundur ke embed. Tidak ada jalur yang menghasilkan pesan kosong.
+    // Aturan sama seperti banner: data URI ditolak Discord, jadi pratinjau
+    // memakai rujukan bertanda yang diganti gambarnya oleh `preview.ts`.
+    const avatarUrl = options.avatar
+      ? 'name' in options.avatar
+        ? `attachment://${options.avatar.name}`
+        : isPublicUrl(options.avatar.url)
+          ? options.avatar.url
+          : PREVIEW_AVATAR_REF
+      : null;
+
+    if (avatarUrl) {
+      const section = new SectionBuilder().addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(text),
       );
+      // `true` = thumbnail; `false` = tombol. Avatar selalu thumbnail.
+      section.setThumbnailAccessory(
+        new ThumbnailBuilder().setURL(avatarUrl).setDescription('avatar'),
+      );
+      container.addSectionComponents(section);
+    } else {
+      container.addTextDisplayComponents(new TextDisplayBuilder().setContent(text));
     }
 
     const extra = (options.extra ?? []).map((line) => line.trim()).filter(Boolean);
