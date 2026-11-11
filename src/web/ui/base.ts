@@ -277,8 +277,13 @@ export function resourcePanel(data: ResourcePanelData): string {
       ? 'statistik jaringan tidak tersedia di sistem ini'
       : `↓ ${netRateIn} · ↑ ${netRateOut} sekarang — total ${formatBytes(data.networkIn)} masuk / ${formatBytes(data.networkOut)} keluar`;
 
+  // `diskUsed === null` = pemindaian masih berjalan di latar belakang (render
+  // halaman tidak menunggunya). Menulis "— terpakai" akan terdengar rusak, jadi
+  // kalimatnya diganti dan polling mengisi angkanya beberapa detik kemudian.
   const diskSub = !data.diskTotal
-    ? `kuota container belum diatur · ${formatBytes(data.diskUsed)} terpakai${data.partitionTotal ? ` (partisi mesin ${formatBytes(data.partitionTotal)})` : ''}`
+    ? data.diskUsed === null
+      ? 'menghitung ukuran folder\u2026 angka muncul beberapa detik lagi'
+      : `kuota container belum diatur · ${formatBytes(data.diskUsed)} terpakai${data.partitionTotal ? ` (partisi mesin ${formatBytes(data.partitionTotal)})` : ''}`
     : `${formatNumber(decimals(diskPercent))}% dari ${formatBytes(data.diskTotal)}${data.diskTotalSource === 'env' ? ' (dari .env)' : data.diskTotalSource === 'setting' ? ' (dari Pengaturan)' : ''}`;
 
   // Kecepatan disk hanya kalau sampelnya ada; jangan tampilkan baris kosong.

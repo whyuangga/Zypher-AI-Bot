@@ -5996,6 +5996,89 @@ await testAsync('disk: readResourceUsage memakai jalur ber-cache', async () => {
   );
 });
 
+await testAsync('ringkasan: render halaman TIDAK menunggu pemindaian folder', async () => {
+  // Keluhan nyata: "buka dashboard jadi lemot saat masuk Ringkasan, halaman
+  // lain aman". Penyebabnya render halaman menunggu pemindaian folder (~580 ms).
+  const { readResourceUsage, resetFolderCache } = await import('../src/web/resources.js');
+  resetFolderCache();
+
+  const t0 = Date.now();
+  const hasil = await readResourceUsage({ workDir: process.cwd(), backgroundFolder: true });
+  const ms = Date.now() - t0;
+
+  assert.ok(ms < 150, `render halaman tidak menunggu pemindaian (dapat ${ms} ms)`);
+  assert.equal(hasil.diskUsed, null, 'angka disk boleh kosong dulu');
+  assert.equal(hasil.diskUsedAt, null, 'belum ada waktu ukur');
+
+  // Pemindaian berjalan di latar belakang: panggilan berikutnya mendapat angka.
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  const berikutnya = await readResourceUsage({ workDir: process.cwd() });
+  assert.ok(berikutnya.diskUsed !== null, 'panggilan berikutnya sudah punya angka disk');
+  resetFolderCache();
+});
+
+await testAsync('ringkasan: halaman & polling memakai jalur yang benar', async () => {
+  // Dua jalur berbeda dan keduanya penting:
+  //   render halaman -> backgroundFolder: true   (jangan tahan HTML)
+  //   polling        -> tanpa opsi itu           (angka harus ada)
+  // Mutasi yang menghapus `backgroundFolder: true` dari server.ts TIDAK
+  // tertangkap test perilaku di atas (fungsi tetap benar), jadi pemanggilnya
+  // dikunci di sini.
+  const server = await readFile('src/web/server.ts', 'utf8');
+  const blokHalaman = server.slice(server.indexOf('resources: await readResourceUsage'));
+  assert.ok(
+    blokHalaman.slice(0, 900).includes('backgroundFolder: true'),
+    'render halaman Ringkasan memakai backgroundFolder',
+  );
+
+  const blokApi = server.slice(server.indexOf("path === '/api/resources' && method === 'GET'"));
+  assert.ok(
+    !blokApi.slice(0, 900).includes('backgroundFolder'),
+    'polling /api/resources TIDAK memakai background (angka harus ada)',
+  );
+});
+
+await testAsync('ringkasan: pemindaian latar belakang tidak menumpuk', async () => {
+  const resources = await readFile('src/web/resources.ts', 'utf8');
+  // Tanpa penjaga `folderScan`, satu halaman yang di-refresh berulang kali bisa
+  // memicu banyak pemindaian bersamaan — persis beban yang ingin dihindari.
+  assert.ok(resources.includes('let folderScan'), 'ada penanda pemindaian berjalan');
+  assert.ok(
+    /if \(!folderScan\)/.test(resources),
+    'pemindaian baru hanya dimulai kalau belum ada yang berjalan',
+  );
+});
+
+await testAsync('ringkasan: panel jujur saat angka disk belum ada', async () => {
+  const base = await readFile('src/web/ui/base.ts', 'utf8');
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  // "— terpakai" akan terbaca seperti kerusakan; ganti dengan penjelasan.
+  assert.ok(
+    base.includes('menghitung ukuran folder'),
+    'render server menjelaskan angka disk belum siap',
+  );
+  assert.ok(
+    pages.includes('menghitung ukuran folder'),
+    'polling di browser memakai kalimat yang sama',
+  );
+});
+
+await testAsync('disk: pemindaian folder paralel per folder, bukan per berkas', async () => {
+  // 7.331 berkas dengan `await` berurutan = ~580 ms. Mengelompokkan stat per
+  // folder memangkasnya jadi ~240 ms tanpa mengubah hasil.
+  const resources = await readFile('src/web/resources.ts', 'utf8');
+  const blok = resources.slice(
+    resources.indexOf('async function folderBytes('),
+    resources.indexOf('async function folderBytes(') + 3000,
+  );
+  assert.ok(blok.includes('statJobs.push('), 'ukuran berkas dikumpulkan dulu');
+  assert.ok(blok.includes('await Promise.all(statJobs)'), 'lalu dijalankan bersamaan');
+  assert.ok(
+    !/bytes \+= \(await stat\(full\)\)\.size/.test(blok),
+    'tidak lagi meng-await stat satu per satu',
+  );
+});
+
 /*
  * Pemeriksaan terakhir: angka test di dokumentasi harus sama dengan jumlah test
  * yang benar-benar dijalankan.

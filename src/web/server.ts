@@ -493,6 +493,13 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
           // kemudian menampilkannya — angka yang berubah sendiri membingungkan.
           diskLimitEnv: config.features.diskLimitBytes || null,
           diskLimitSetting: guildRow?.diskQuotaMb ? guildRow.diskQuotaMb * 1024 * 1024 : null,
+          // JANGAN tunggu pemindaian folder saat merender halaman.
+          //
+          // Pemindaian butuh ~240 ms di mesin ini (di disk jaringan panel
+          // hosting bisa jauh lebih lama), dan dulu HTML Ringkasan menunggu
+          // angka itu — akibatnya halaman ini terasa lemot padahal halaman
+          // lain cepat. Panel menampilkan "—" dulu, lalu polling mengisinya.
+          backgroundFolder: true,
         }).catch((error: unknown) => {
           logger.warn(`Gagal membaca pemakaian sumber daya — ${errorMessage(error)}`);
           return null;

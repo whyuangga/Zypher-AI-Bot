@@ -250,6 +250,33 @@ murni, dan satu test memastikan `readResourceUsage()` **tidak** memanggil
 `folderBytes()` langsung — kalau seseorang mengembalikannya, beban 11% kembali
 tanpa gejala lain.
 
+### Ringkasan tidak menunggu pemindaian folder
+
+Keluhan lanjutan: *"aku buka dashboard sekarang jadi lemot saat memasuki
+Ringkasan. Untuk perpindahan halaman selain Ringkasan aman."*
+
+Itu benar, dan penyebabnya berbeda dari beban CPU. Halaman Ringkasan merender
+panel sumber daya saat **HTML-nya dibuat**, jadi ia menunggu pemindaian folder
+selesai — ~580 ms sebelum optimasi. Halaman lain tidak menyentuh disk sama
+sekali, karena itu terasa cepat.
+
+Dua perbaikan:
+
+1. **Pemindaian folder jadi paralel per folder.** Dulu ukuran tiap berkas
+   diambil berurutan (`await` satu per satu) — 7.331 berkas = 7.331 giliran.
+   Sekarang semua `stat()` dalam satu folder dijalankan bersamaan:
+   **580 ms → 238 ms**, hasil angkanya identik.
+2. **Render halaman tidak menunggu sama sekali** (`backgroundFolder: true`).
+   Kalau cache kosong, pemindaian dimulai di latar belakang dan halaman
+   langsung dikirim: **580 ms → 9 ms** untuk bagian itu, dan Ringkasan terukur
+   **52 ms** saat pertama dibuka (halaman lain 12–19 ms).
+
+Saat angka disk belum siap, panel menulis *"menghitung ukuran folder… angka
+muncul beberapa detik lagi"* — bukan `— terpakai` yang terbaca seperti
+kerusakan. Panel tetap terisi lewat polling 3 detik berikutnya, dan tidak ada
+pemindaian ganda: penanda `folderScan` memastikan hanya satu yang berjalan
+walau halaman di-refresh berkali-kali.
+
 ### CPU: dari `cpu.stat`, tanpa jeda
 
 CPU dihitung dari delta `usage_usec` di `cpu.stat` cgroup terhadap sampel
@@ -749,7 +776,7 @@ Tiga penyebab yang sudah diperbaiki:
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke # 341 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke # 346 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

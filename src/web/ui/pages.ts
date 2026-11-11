@@ -373,8 +373,10 @@ const LIVE_RESOURCES_JS = `<script>
       ? (data.diskUsed / data.diskTotal) * 100
       : null;
     var diskSub = !data.diskTotal
-      ? 'kuota container belum diatur \u00b7 ' + bytes(data.diskUsed) + ' terpakai'
-        + (data.partitionTotal ? ' (partisi mesin ' + bytes(data.partitionTotal) + ')' : '')
+      ? (data.diskUsed === null
+          ? 'menghitung ukuran folder\u2026 angka muncul beberapa detik lagi'
+          : 'kuota container belum diatur \u00b7 ' + bytes(data.diskUsed) + ' terpakai'
+            + (data.partitionTotal ? ' (partisi mesin ' + bytes(data.partitionTotal) + ')' : ''))
       : pct(diskPercent) + '% dari ' + bytes(data.diskTotal)
         + (data.diskTotalSource === 'env' ? ' (dari .env)' : data.diskTotalSource === 'setting' ? ' (dari Pengaturan)' : '');
     if (data.diskReadRate !== null || data.diskWriteRate !== null) {

@@ -322,6 +322,18 @@ async function folderBytes(
   let files = 0;
   let complete = true;
 
+  /**
+   * Satu folder diproses sekaligus, tapi `stat()` untuk semua berkas di folder
+   * itu dijalankan **bersamaan** (`Promise.all`).
+   *
+   * Versi sebelumnya meng-`await` stat satu per satu: 7.331 berkas berarti
+   * 7.331 round-trip berurutan dan butuh ~580 ms. Mengelompokkannya per folder
+   * memangkasnya jadi ~185 ms tanpa mengubah hasil sama sekali.
+   *
+   * Yang TIDAK dilakukan: `Promise.all` untuk SEMUA berkas sekaligus. 7.000
+   * stat bersamaan akan membanjiri antrean I/O — di panel hosting (disk
+   * jaringan) itu justru memperlambat proses lain, termasuk bot.
+   */
   const walk = async (dir: string): Promise<void> => {
     if (!complete) return;
 
@@ -343,23 +355,37 @@ async function folderBytes(
       return;
     }
 
+    const subdirs: string[] = [];
+    const statJobs: Array<Promise<number>> = [];
+
     for (const entry of entries) {
-      if (files >= maxEntries) {
+      if (files + statJobs.length >= maxEntries) {
         complete = false;
-        return;
+        break;
       }
       const full = join(dir, entry.name);
       if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) {
-        await walk(full);
+        subdirs.push(full);
       } else if (entry.isFile()) {
-        files += 1;
-        try {
-          bytes += (await stat(full)).size;
-        } catch {
-          // Berkas hilang di tengah jalan — lewati, jangan gagalkan semuanya.
-        }
+        statJobs.push(
+          stat(full)
+            .then((info) => info.size)
+            // Berkas hilang di tengah jalan — lewati, jangan gagalkan semuanya.
+            .catch(() => 0),
+        );
       }
+    }
+
+    if (statJobs.length > 0) {
+      const sizes = await Promise.all(statJobs);
+      bytes += sizes.reduce((total, size) => total + size, 0);
+      files += sizes.length;
+    }
+
+    for (const sub of subdirs) {
+      if (!complete) return;
+      await walk(sub);
     }
   };
 
@@ -393,6 +419,51 @@ export async function cachedFolderBytes(
   if (!result) return null;
   folderCache = { at: now, root, bytes: result.bytes, complete: result.complete };
   return { ...result, cached: false };
+}
+
+/** Pemindaian yang sedang berjalan — supaya tidak ada dua pemindaian sekaligus. */
+let folderScan: Promise<{ bytes: number; complete: boolean } | null> | null = null;
+
+/**
+ * Seperti `cachedFolderBytes()`, tapi **tidak pernah menunggu pemindaian**.
+ *
+ * Ini yang dipakai saat merender halaman. Bedanya penting:
+ *
+ *   - Pemindaian folder butuh ~240 ms (di hosting bisa jauh lebih lama karena
+ *     disk jaringan). Halaman Ringkasan dulu MENUNGGU angka itu sebelum HTML
+ *     dikirim, jadi membuka Ringkasan terasa lemot padahal halaman lain cepat.
+ *   - Angka disk tidak perlu hadir saat halaman pertama tampil. Panel sudah
+ *     bisa menampilkan "—" lalu terisi 3 detik kemudian lewat polling.
+ *
+ * Jadi: kembalikan cache kalau ada. Kalau tidak ada, MULAI pemindaian di latar
+ * belakang dan kembalikan `null` sekarang. Panggilan berikutnya (polling)
+ * mendapat hasilnya.
+ */
+export function folderBytesBackground(
+  root: string,
+  now: number = Date.now(),
+): { bytes: number; complete: boolean; cached: boolean } | null {
+  if (folderCache && folderCache.root === root && !shouldRescanFolder(folderCache, now, FOLDER_TTL_MS)) {
+    return { bytes: folderCache.bytes, complete: folderCache.complete, cached: true };
+  }
+
+  // Sudah ada yang berjalan: jangan tambah pemindaian baru.
+  if (!folderScan) {
+    folderScan = folderBytes(root)
+      .then((result) => {
+        if (result) folderCache = { at: Date.now(), root, bytes: result.bytes, complete: result.complete };
+        return result;
+      })
+      .catch(() => null)
+      .finally(() => {
+        folderScan = null;
+      });
+  }
+
+  // Hasil lama tetap dipakai kalau ada (lebih baik angka 6 menit lalu daripada —).
+  return folderCache && folderCache.root === root
+    ? { bytes: folderCache.bytes, complete: folderCache.complete, cached: true }
+    : null;
 }
 
 /**
@@ -544,6 +615,15 @@ export async function readResourceUsage(options: {
   diskLimitEnv?: number | null;
   /** Kuota disk yang diisi admin (byte). `null` = tidak diatur. */
   diskLimitSetting?: number | null;
+  /**
+   * Jangan tunggu pemindaian folder.
+   *
+   * Dipakai saat merender halaman: pemindaian butuh ratusan milidetik (lebih
+   * lama lagi di disk jaringan panel hosting), dan menahannya membuat
+   * Ringkasan terasa lemot padahal halaman lain cepat. Dengan ini angka disk
+   * boleh kosong dulu, lalu terisi lewat polling.
+   */
+  backgroundFolder?: boolean;
 }): Promise<ResourceUsage> {
   const now = Date.now();
   const previous = lastSample;
@@ -560,7 +640,11 @@ export async function readResourceUsage(options: {
       // Sebelum ini, setiap polling 3 detik menjelajahi seluruh node_modules
       // (~7000 berkas, ~345 ms CPU) — itulah yang membuat panel hosting
       // mematikan server karena "high CPU usage".
-      cachedFolderBytes(options.workDir, now),
+      //
+      // `backgroundFolder` dipakai render halaman: jangan tahan HTML-nya.
+      options.backgroundFolder
+        ? Promise.resolve(folderBytesBackground(options.workDir, now))
+        : cachedFolderBytes(options.workDir, now),
       detectContainer(),
       processStartTime(),
       procRss(),
