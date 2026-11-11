@@ -819,6 +819,14 @@ export interface WelcomeSettings {
   cardText: boolean;
   /** Tampilkan avatar member di dalam embed (mode `embed`). */
   embedAvatar: boolean;
+  /**
+   * Pasang baris penulis embed: avatar + nama member di ATAS teks embed.
+   *
+   * Beda dari `embedAvatar` yang menaruh thumbnail kecil di kanan atas. Yang
+   * ini meniru bentuk bot besar: avatar bulat + nama tebal di baris pertama,
+   * lalu teks sapaan di bawahnya. Keduanya bisa dinyalakan bersamaan.
+   */
+  embedAuthor: boolean;
   /** Nama file banner di data/banners (null = pakai latar bawaan). */
   bannerPath: string | null;
   /**
@@ -846,6 +854,8 @@ interface WelcomeRow {
   card_text: number | boolean | null;
   /** NULL pada baris lama = mati. */
   embed_avatar: number | boolean | null;
+  /** NULL pada baris lama = mati (lihat migrasi di db/index.ts). */
+  embed_author: number | boolean | null;
   banner_path: string | null;
   banner_mime: string | null;
   banner_bytes: string | null;
@@ -867,6 +877,7 @@ export const WELCOME_DEFAULTS = {
   // Embed lama tidak pernah punya avatar; menyalakannya otomatis akan
   // mengubah tampilan server yang sudah berjalan.
   embedAvatar: false,
+  embedAuthor: false,
   bannerPath: null,
   bannerData: null,
 } as const;
@@ -898,6 +909,7 @@ export async function getWelcomeSettings(guildId: string): Promise<WelcomeSettin
       : Boolean(row.include_avatar),
     cardText: row.card_text === null || row.card_text === undefined ? true : Boolean(row.card_text),
     embedAvatar: Boolean(row.embed_avatar),
+    embedAuthor: Boolean(row.embed_author),
     bannerPath: row.banner_path ?? null,
     bannerData:
       row.banner_mime && row.banner_bytes
@@ -914,8 +926,8 @@ export async function saveWelcomeSettings(
   const current = await getWelcomeSettings(guildId);
   const next = { ...current, ...patch };
   await run(
-    `INSERT INTO welcome (guild_id, channel_id, enabled, use_ai, template, display_mode, image_enabled, style, example, include_avatar, card_text, embed_avatar, banner_path, banner_mime, banner_bytes, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO welcome (guild_id, channel_id, enabled, use_ai, template, display_mode, image_enabled, style, example, include_avatar, card_text, embed_avatar, embed_author, banner_path, banner_mime, banner_bytes, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (guild_id) DO UPDATE SET
        channel_id = excluded.channel_id,
        enabled = excluded.enabled,
@@ -928,6 +940,7 @@ export async function saveWelcomeSettings(
        include_avatar = excluded.include_avatar,
        card_text = excluded.card_text,
        embed_avatar = excluded.embed_avatar,
+       embed_author = excluded.embed_author,
        banner_path = excluded.banner_path,
        banner_mime = excluded.banner_mime,
        banner_bytes = excluded.banner_bytes,
@@ -945,6 +958,7 @@ export async function saveWelcomeSettings(
       next.includeAvatar ? 1 : 0,
       next.cardText ? 1 : 0,
       next.embedAvatar ? 1 : 0,
+      next.embedAuthor ? 1 : 0,
       next.bannerPath,
       next.bannerData?.mime ?? null,
       next.bannerData?.base64 ?? null,
@@ -974,6 +988,8 @@ export interface GoodbyeSettings {
   cardText: boolean;
   /** Tampilkan avatar member di dalam embed. */
   embedAvatar: boolean;
+  /** Baris penulis embed (avatar + nama member di atas teks) — lihat `WelcomeSettings`. */
+  embedAuthor: boolean;
   /** Nama file banner di data/banners (null = pakai latar bawaan). */
   bannerPath: string | null;
   /** Salinan banner di database — lihat catatan di `WelcomeSettings`. */
@@ -996,6 +1012,8 @@ interface GoodbyeRow {
   card_text: number | boolean | null;
   /** NULL pada baris lama = mati. */
   embed_avatar: number | boolean | null;
+  /** NULL pada baris lama = mati (lihat migrasi di db/index.ts). */
+  embed_author: number | boolean | null;
   banner_path: string | null;
   banner_mime: string | null;
   banner_bytes: string | null;
@@ -1015,6 +1033,7 @@ export const GOODBYE_DEFAULTS = {
   cardAvatar: true,
   cardText: true,
   embedAvatar: false,
+  embedAuthor: false,
   bannerPath: null,
   bannerData: null,
 } as const;
@@ -1041,6 +1060,7 @@ export async function getGoodbyeSettings(guildId: string): Promise<GoodbyeSettin
       : Boolean(row.include_avatar),
     cardText: row.card_text === null || row.card_text === undefined ? true : Boolean(row.card_text),
     embedAvatar: Boolean(row.embed_avatar),
+    embedAuthor: Boolean(row.embed_author),
     bannerPath: row.banner_path ?? null,
     bannerData:
       row.banner_mime && row.banner_bytes
@@ -1057,8 +1077,8 @@ export async function saveGoodbyeSettings(
   const current = await getGoodbyeSettings(guildId);
   const next = { ...current, ...patch };
   await run(
-    `INSERT INTO goodbye (guild_id, channel_id, enabled, use_ai, template, display_mode, style, example, image_enabled, include_avatar, card_text, embed_avatar, banner_path, banner_mime, banner_bytes, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO goodbye (guild_id, channel_id, enabled, use_ai, template, display_mode, style, example, image_enabled, include_avatar, card_text, embed_avatar, embed_author, banner_path, banner_mime, banner_bytes, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (guild_id) DO UPDATE SET
        channel_id = excluded.channel_id,
        enabled = excluded.enabled,
@@ -1071,6 +1091,7 @@ export async function saveGoodbyeSettings(
        include_avatar = excluded.include_avatar,
        card_text = excluded.card_text,
        embed_avatar = excluded.embed_avatar,
+       embed_author = excluded.embed_author,
        banner_path = excluded.banner_path,
        banner_mime = excluded.banner_mime,
        banner_bytes = excluded.banner_bytes,
@@ -1088,6 +1109,7 @@ export async function saveGoodbyeSettings(
       next.includeAvatar ? 1 : 0,
       next.cardText ? 1 : 0,
       next.embedAvatar ? 1 : 0,
+      next.embedAuthor ? 1 : 0,
       next.bannerPath,
       next.bannerData?.mime ?? null,
       next.bannerData?.base64 ?? null,

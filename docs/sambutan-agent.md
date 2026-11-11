@@ -394,6 +394,52 @@ Hasilnya menampilkan **sumber teksnya**: `ditulis AI`, `dari template`, atau
 `gagal` beserta alasannya. Kalau opsi kartu dicentang, kartu PNG ikut dirender
 dan ditampilkan — sekaligus membuktikan mesin gambar di server benar-benar jalan.
 
+### Pratinjau menggambar bentuk pesannya, bukan hanya teksnya
+
+Kotak pratinjau menampilkan **mock pesan Discord**: garis aksen berwarna, baris
+penulis (avatar + nama), thumbnail di kanan atas, banner, dan footer — sesuai
+mode yang dipilih (Embed, Container, Card, atau Text). Mention ditampilkan
+sebagai pil biru **di luar** embed, karena begitulah Discord menampilkannya.
+
+Yang penting: mock itu dibangun dari **payload yang sama dengan produksi**.
+`previewWelcome()`/`previewGoodbye()` memanggil `composePayload()` — fungsi yang
+juga dipakai sambutan sungguhan — lalu `src/features/embed-mock.ts` membaca
+hasilnya menjadi data mentah untuk digambar browser. Tidak ada aturan Discord
+yang ditulis ulang di sisi pratinjau, jadi pratinjau tidak mungkin menjanjikan
+tampilan yang tidak dikirim bot.
+
+| Bagian mock | Sumbernya |
+|---|---|
+| Warna aksen | `setColor()` embed / `setAccentColor()` container |
+| Baris penulis (avatar + nama) | `setAuthor()` — sakelar **Avatar + nama di atas teks** |
+| Thumbnail kanan atas | `setThumbnail()` — sakelar **Avatar sebagai thumbnail** |
+| Banner | `setImage()` / Media Gallery, dirujuk `attachment://` → diganti data URI |
+| Teks kecil (`-#`) | footer container, digambar lebih kecil |
+
+Banner yang dirujuk sebagai `attachment://nama.png` tampil sebagai label nama
+file di pratinjau, bukan ikon gambar rusak — di browser file itu memang tidak
+ada. Kalau bannernya ada di disk, server mengubahnya jadi data URI sehingga
+gambarnya benar-benar terlihat.
+
+### Dua sakelar avatar yang berdiri sendiri
+
+Di **Tampilan embed** ada dua centang, dan keduanya boleh menyala bersamaan:
+
+| Sakelar | Hasil di Discord |
+|---|---|
+| **Avatar + nama member di atas teks** | `setAuthor()`: avatar bulat + nama tebal di baris pertama |
+| **Avatar member sebagai thumbnail di kanan atas** | `setThumbnail()`: kotak kecil di sudut kanan |
+
+Di mode **Container**, keduanya diperlakukan sama: container tidak punya
+penulis/thumbnail sendiri, jadi avatar dikirim sebagai lampiran dan ditampilkan
+lewat Media Gallery di dalam kartu. Sakelar "di atas teks" saja sudah cukup
+untuk menyalakannya.
+
+Catatan teknis: baris penulis **tidak** bergantung pada avatar. Kalau URL avatar
+kosong (akun tanpa avatar, CDN gagal), nama tetap ditampilkan — dulu seluruh
+baris hilang dan hasilnya dilaporkan sebagai "avatar tidak muncul" padahal
+sakelarnya sudah benar.
+
 Panel ini memakai **isi form saat itu**, bukan pengaturan tersimpan. Jadi kamu
 bisa mencoba gaya lain, melihat hasilnya, baru menekan Simpan.
 
@@ -423,6 +469,14 @@ Tombol **Kirim ... ke channel** melakukan kebalikannya: memakai `channel.send()`
 lewat `src/features/test-send.ts`, dengan penanda "pesan uji" dan
 `allowedMentions: { parse: [] }` supaya tidak ada yang ter-tag. Butuh bot online
 di proses yang sama — kalau dashboard berdiri sendiri, tombolnya dinonaktifkan.
+
+**Pesan uji memakai `composePayload()` yang sama dengan produksi.** Dulu
+`test-send.ts` menyusun `EmbedBuilder`-nya sendiri dan akibatnya kehilangan
+fitur diam-diam: avatar thumbnail, baris penulis, warna, footer, dan gambar
+banner tidak pernah ikut terkirim. Yang paling menipu, pesan uji tetap terlihat
+normal — jadi admin mengira embed sungguhan memang begitu. Sekarang satu-satunya
+perbedaan pesan uji dari pesan asli adalah penandanya. Test
+`kirim tes: memakai composePayload, bukan embed buatan sendiri` menjaga ini.
 
 ### Pemecah sepi: pratinjau = timer sungguhan
 
@@ -656,7 +710,7 @@ Tiga penyebab yang sudah diperbaiki:
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 322 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke # 334 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

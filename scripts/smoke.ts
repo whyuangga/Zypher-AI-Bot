@@ -1847,6 +1847,7 @@ const welcomeSettings = (patch: Record<string, unknown> = {}) => ({
   cardAvatar: true,
   cardText: true,
   embedAvatar: false,
+  embedAuthor: false,
   bannerPath: null,
   bannerData: null,
   updatedAt: 0,
@@ -1866,6 +1867,7 @@ const goodbyeSettings = (patch: Record<string, unknown> = {}) => ({
   cardAvatar: true,
   cardText: true,
   embedAvatar: false,
+  embedAuthor: false,
   bannerPath: null,
   bannerData: null,
   updatedAt: 0,
@@ -2308,7 +2310,11 @@ await testAsync('mode tampilan: tiap mode mengirim bentuk berbeda (channel palsu
   assert.equal(kartuFiles.length, 1, 'mode card mengirim tepat satu lampiran');
   assert.match(String(kartuFiles[0]?.name), /^sampai-jumpa-.*\.png$/, 'lampirannya PNG kartu');
 
-  assert.deepEqual(cardKirim.embeds, [], 'kartu TIDAK dibungkus embed');
+  // Maksud test: kartu tidak dibungkus embed. Payload mode kartu sekarang
+  // tidak mengirim kunci `embeds` sama sekali (undefined), bukan array kosong —
+  // jadi yang diperiksa adalah tidak adanya embed BERISI.
+  const kartuEmbeds = (cardKirim.embeds ?? []) as unknown[];
+  assert.equal(kartuEmbeds.length, 0, 'kartu TIDAK dibungkus embed');
   assert.ok(
     String(cardKirim.content).includes('<@222222222222222222>'),
     'member di-mention di content, bukan hanya namanya',
@@ -5627,6 +5633,248 @@ await testAsync('dashboard: peringatan tampil kalau mesin gambar kartu gagal dim
   assert.ok(card.includes('export function cardRendererAvailable'), 'status bisa dicek');
 });
 
+
+/* ------------------------------------------------------------------ */
+/*  Pratinjau bentuk pesan + avatar embed/container                    */
+/* ------------------------------------------------------------------ */
+
+await testAsync('embed-mock: baris penulis & thumbnail dibaca dari embed jadi', async () => {
+  const { embedToMock } = await import('../src/features/embed-mock.js');
+  const { EmbedBuilder } = await import('discord.js');
+
+  const embed = new EmbedBuilder()
+    .setColor(0x6d8cff)
+    .setDescription('Halo Sky!')
+    .setAuthor({ name: 'Sky', iconURL: 'https://cdn/avatar.png' })
+    .setThumbnail('https://cdn/thumb.png')
+    .setFooter({ text: 'Member baru · Komunitas Zypher' });
+
+  const mock = embedToMock(embed);
+  assert.ok(mock, 'embed terbaca');
+  assert.equal(mock!.color, '#6d8cff', 'warna aksen jadi CSS');
+  assert.equal(mock!.author?.name, 'Sky', 'nama penulis terbaca');
+  assert.equal(mock!.author?.iconUrl, 'https://cdn/avatar.png', 'avatar penulis terbaca');
+  assert.equal(mock!.thumbnailUrl, 'https://cdn/thumb.png', 'thumbnail terbaca');
+  assert.equal(mock!.description, 'Halo Sky!', 'deskripsi terbaca');
+  assert.match(String(mock!.footer?.text), /Member baru/, 'footer terbaca');
+});
+
+await testAsync('embed-mock: embed kosong tidak dipratinjaukan', async () => {
+  const { embedToMock } = await import('../src/features/embed-mock.js');
+  // Embed tanpa judul/deskripsi/field tidak bisa ditampilkan — Discord pun
+  // menolaknya. Pratinjau harus mengembalikan null, bukan kotak kosong.
+  assert.equal(embedToMock({ toJSON: () => ({ color: 1 }) } as never), null, 'embed kosong = null');
+});
+
+await testAsync('embed-mock: container dibaca baris, aksen, dan teks kecilnya', async () => {
+  const { containerToMock } = await import('../src/features/embed-mock.js');
+
+  const mock = containerToMock({
+    toJSON: () => ({
+      type: 17,
+      accent_color: 0x6d8cff,
+      components: [
+        { type: 10, content: 'Halo Sky!' },
+        { type: 12, items: [{ media: { url: 'attachment://avatar.png' } }] },
+        { type: 14 },
+        { type: 10, content: '-# Member baru · Komunitas' },
+      ],
+    }),
+  } as never);
+
+  assert.ok(mock, 'container terbaca');
+  assert.equal(mock!.accentColor, '#6d8cff', 'warna aksen terbaca');
+  assert.equal(mock!.lines.length, 2, 'dua baris teks');
+  assert.equal(mock!.lines[0]!.kind, 'text', 'baris pertama teks biasa');
+  assert.equal(mock!.lines[1]!.kind, 'small', 'baris -# jadi teks kecil');
+  assert.deepEqual(mock!.imageUrls, ['attachment://avatar.png'], 'rujukan lampiran terbaca');
+  assert.equal(mock!.separators, 1, 'pemisah terhitung');
+});
+
+await testAsync('embed-mock: colorToCss aman untuk nilai rusak', async () => {
+  const { colorToCss } = await import('../src/features/embed-mock.js');
+  assert.equal(colorToCss(0), '#000000', 'nol = hitam');
+  assert.equal(colorToCss(0xffffff), '#ffffff', 'putih');
+  assert.equal(colorToCss('bukan angka'), null, 'string = null, bukan #NaN');
+  assert.equal(colorToCss(-5), '#000000', 'negatif dijepit');
+});
+
+await testAsync('sambutan: embed produksi memasang baris penulis & thumbnail', async () => {
+  const { composePayload } = await import('../src/features/welcome.js');
+  const member = {
+    id: '222222222222222222',
+    displayName: 'Sky',
+    guild: { name: 'Komunitas Zypher' },
+    displayAvatarURL: () => 'https://cdn/avatar.png',
+  } as never;
+
+  const dasar = {
+    mode: 'embed' as const,
+    text: 'Halo!',
+    member,
+    kind: 'welcome' as const,
+    channelName: null,
+    attachment: null,
+    includeAvatar: false,
+    bannerPath: null,
+    allowed: { embed: true, attach: false },
+    mentionUser: true,
+  };
+
+  const denganAuthor = await composePayload({ ...dasar, embedAuthor: true });
+  const author = denganAuthor.embeds[0]!.data.author;
+  assert.equal(author?.name, 'Sky', 'nama member jadi nama penulis');
+  assert.equal(author?.icon_url, 'https://cdn/avatar.png', 'avatar member jadi ikon penulis');
+
+  const denganThumb = await composePayload({ ...dasar, embedAvatar: true });
+  assert.equal(
+    denganThumb.embeds[0]!.data.thumbnail?.url,
+    'https://cdn/avatar.png',
+    'thumbnail terpasang',
+  );
+
+  // Dua sakelar berdiri sendiri: tanpa keduanya, tidak ada avatar sama sekali.
+  const tanpaAvatar = await composePayload(dasar);
+  assert.equal(tanpaAvatar.embeds[0]!.data.author, undefined, 'tanpa sakelar = tanpa penulis');
+  assert.equal(tanpaAvatar.embeds[0]!.data.thumbnail, undefined, 'tanpa sakelar = tanpa thumbnail');
+});
+
+await testAsync('sambutan: mention tetap di content, bukan di dalam embed', async () => {
+  const { composePayload } = await import('../src/features/welcome.js');
+  const member = {
+    id: '222222222222222222',
+    displayName: 'Sky',
+    guild: { name: 'Komunitas Zypher' },
+    displayAvatarURL: () => 'https://cdn/avatar.png',
+  } as never;
+
+  const payload = await composePayload({
+    mode: 'embed',
+    text: 'Halo Sky!',
+    member,
+    kind: 'welcome',
+    channelName: null,
+    attachment: null,
+    includeAvatar: false,
+    embedAuthor: true,
+    embedAvatar: true,
+    bannerPath: null,
+    allowed: { embed: true, attach: false },
+    mentionUser: true,
+  });
+
+  assert.match(payload.content, /<@222222222222222222>/, 'mention ada di content');
+  assert.ok(
+    !String(payload.embeds[0]!.data.description).includes('<@'),
+    'mention TIDAK ditulis di deskripsi embed (di sana ia tidak memicu notifikasi)',
+  );
+});
+
+await testAsync('pratinjau: membawa bentuk embed untuk dashboard, bukan hanya teks', async () => {
+  const { previewWelcome } = await import('../src/features/preview.js');
+  const result = await previewWelcome({
+    settings: {
+      ...welcomeSettings({ displayMode: 'embed', embedAuthor: true, embedAvatar: true }),
+    } as never,
+    name: 'Rani',
+    guildName: 'Komunitas Zypher',
+    templateOnly: true,
+  });
+
+  assert.ok(result.embedMock, 'pratinjau embed menghasilkan embedMock');
+  // Tanpa data member dari server, pratinjau memakai member tiruan bawaan —
+  // nama yang diketik admin tetap harus muncul sebagai nama penulis.
+  assert.ok(
+    String(result.embedMock!.author?.name ?? '').includes('Rani'),
+    `baris penulis memakai nama contoh (dapat: ${result.embedMock!.author?.name})`,
+  );
+  assert.ok(result.embedMock!.color, 'warna aksen ikut');
+  assert.equal(result.mode, 'embed', 'mode yang dipakai dilaporkan');
+  assert.match(String(result.contentText), /<@/, 'mention contoh ada di content');
+});
+
+await testAsync('pratinjau: perpisahan juga mendapat mock, dengan warna sendiri', async () => {
+  const { previewGoodbye } = await import('../src/features/preview.js');
+  const result = await previewGoodbye({
+    settings: { ...goodbyeSettings({ displayMode: 'embed', embedAuthor: true }) } as never,
+    name: 'Budi',
+    guildName: 'Komunitas Zypher',
+    templateOnly: true,
+  });
+  assert.ok(result.embedMock, 'perpisahan punya embedMock');
+  // Warna perpisahan (0x716c98) sengaja beda dari sambutan (0x6d8cff).
+  assert.equal(result.embedMock!.color, '#716c98', 'warna perpisahan, bukan sambutan');
+});
+
+await testAsync('pratinjau: mode container menghasilkan containerMock', async () => {
+  const { previewWelcome } = await import('../src/features/preview.js');
+  const result = await previewWelcome({
+    settings: { ...welcomeSettings({ displayMode: 'container' }) } as never,
+    name: 'Rani',
+    guildName: 'Komunitas Zypher',
+    templateOnly: true,
+  });
+  assert.ok(result.containerMock, 'pratinjau container menghasilkan containerMock');
+  assert.ok(result.containerMock!.lines.length > 0, 'ada baris teks yang bisa digambar');
+  assert.equal(result.embedMock ?? null, null, 'mode container tidak memakai embed');
+});
+
+await testAsync('kirim tes: memakai composePayload, bukan embed buatan sendiri', async () => {
+  // Akar bug "avatar tidak muncul di pesan uji": test-send.ts menyusun
+  // EmbedBuilder sendiri lalu lupa setThumbnail/setAuthor. Test ini mengunci
+  // bahwa jalur itu TIDAK kembali lagi.
+  const source = await readFile('src/features/test-send.ts', 'utf8');
+  assert.ok(source.includes('composePayload('), 'pesan uji memakai composePayload');
+  assert.ok(
+    source.includes('embedAuthor: settings.embedAuthor'),
+    'sakelar baris penulis diteruskan ke pesan uji',
+  );
+  assert.ok(
+    source.includes('embedAvatar: settings.embedAvatar'),
+    'sakelar thumbnail diteruskan ke pesan uji',
+  );
+  // Tidak boleh ada lagi embed yang disusun manual dari deskripsi + footer.
+  assert.ok(
+    !/new EmbedBuilder\(\)\s*\n\s*\.setDescription\(preview\.text\)/.test(source),
+    'tidak ada embed rakitan sendiri di jalur pesan uji',
+  );
+});
+
+await testAsync('sakelar: embedAuthor tersimpan & terbaca dari database', async () => {
+  const { getWelcomeSettings, saveWelcomeSettings, getGoodbyeSettings, saveGoodbyeSettings } =
+    await import('../src/db/repo.js');
+
+  await saveWelcomeSettings(GUILD, { embedAuthor: true });
+  assert.equal((await getWelcomeSettings(GUILD)).embedAuthor, true, 'setelan sambutan tersimpan');
+
+  await saveWelcomeSettings(GUILD, { embedAuthor: false });
+  assert.equal((await getWelcomeSettings(GUILD)).embedAuthor, false, 'bisa dimatikan lagi');
+
+  await saveGoodbyeSettings(GUILD, { embedAuthor: true });
+  assert.equal((await getGoodbyeSettings(GUILD)).embedAuthor, true, 'setelan perpisahan tersimpan');
+});
+
+await testAsync('dashboard: dua sakelar avatar ada di dua tab & terkirim ke server', async () => {
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  for (const kind of ['welcome', 'goodbye']) {
+    assert.ok(
+      pages.includes(`id="${kind}EmbedAuthor"`),
+      `tab ${kind} punya sakelar baris penulis`,
+    );
+    assert.ok(
+      pages.includes(`id="${kind}EmbedAvatar"`),
+      `tab ${kind} punya sakelar thumbnail`,
+    );
+    assert.ok(
+      pages.includes(`embedAuthor: document.getElementById('${kind}EmbedAuthor').checked`),
+      `sakelar ${kind} ikut dikirim saat menyimpan`,
+    );
+  }
+  // Pratinjau harus punya wadah untuk mock bentuk pesan.
+  assert.ok(pages.includes('id="shapeWelcome"'), 'wadah pratinjau sambutan ada');
+  assert.ok(pages.includes('id="shapeGoodbye"'), 'wadah pratinjau perpisahan ada');
+  assert.ok(pages.includes('embedMock'), 'halaman membaca embedMock dari server');
+});
 
 /*
  * Pemeriksaan terakhir: angka test di dokumentasi harus sama dengan jumlah test

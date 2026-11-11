@@ -895,6 +895,216 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* ------------------------------------------------------------------ */
+/*  Pratinjau bentuk pesan (embed & container)                         */
+/* ------------------------------------------------------------------ */
+/*
+   Meniru tampilan Discord, bukan menyalin persis. Tujuannya supaya admin bisa
+   menilai bentuk pesan sebelum menyimpan: warna aksen, avatar, footer, dan
+   posisi banner. Kalau tiap detail ditiru 1:1, CSS ini harus diperbarui setiap
+   kali Discord mengubah tema — dan itu pekerjaan yang tidak pernah selesai.
+
+   Yang PENTING ditiru: embed punya garis aksen di kiri + latar gelap, container
+   punya garis aksen yang sama tanpa footer abu-abu, dan mention tampil sebagai
+   chip biru di ATAS embed (bukan di dalamnya).
+*/
+.preview-shape {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+/* Teks content yang menyertai pesan: mention + kalimat pada mode kartu/teks.
+   Ditaruh di atas karena begitulah Discord menampilkannya. */
+.preview-content {
+  font-size: 14.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+/* Chip mention. Discord menampilkannya sebagai pil biru, dan itu yang membuat
+   admin langsung paham mention-nya benar-benar di luar embed. */
+.preview-mention {
+  display: inline-block;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: rgba(88, 101, 242, 0.3);
+  color: #c9cdfb;
+  font-weight: 500;
+}
+
+/* --- Embed --- */
+.preview-embed {
+  position: relative;
+  border-radius: 4px;
+  background: #2b2d31;
+  border-left: 4px solid var(--line-strong);
+  padding: 12px 16px 12px 12px;
+  max-width: 520px;
+  overflow: hidden;
+}
+.preview-embed .pe-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: start;
+}
+.preview-embed .pe-author {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #f2f3f5;
+}
+.preview-embed .pe-author img,
+.preview-embed .pe-footer img {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: none;
+}
+.preview-embed .pe-author .pe-initial {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--accent);
+  color: #0d0d0f;
+}
+.preview-embed .pe-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #f2f3f5;
+}
+.preview-embed .pe-desc {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: #dbdee1;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.preview-embed .pe-thumb {
+  width: 72px;
+  height: 72px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex: none;
+}
+.preview-embed .pe-thumb.pe-initial {
+  display: grid;
+  place-items: center;
+  font-size: 26px;
+  font-weight: 700;
+  background: var(--accent);
+  color: #0d0d0f;
+}
+.preview-embed .pe-image {
+  display: block;
+  width: 100%;
+  max-height: 300px;
+  object-fit: cover;
+  border-radius: 4px;
+  margin-top: 12px;
+}
+.preview-embed .pe-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.preview-embed .pe-field {
+  font-size: 13px;
+  color: #dbdee1;
+  flex: 1 1 160px;
+}
+.preview-embed .pe-field b {
+  display: block;
+  font-size: 12.5px;
+  color: #f2f3f5;
+  margin-bottom: 2px;
+}
+.preview-embed .pe-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: #b5bac1;
+}
+.preview-embed .pe-footer img {
+  width: 20px;
+  height: 20px;
+}
+
+/* --- Container (Components V2) --- */
+.preview-container {
+  border-radius: 4px;
+  background: #2b2d31;
+  border-left: 4px solid var(--line-strong);
+  padding: 12px 16px;
+  max-width: 520px;
+  display: grid;
+  gap: 8px;
+}
+.preview-container .pc-line {
+  font-size: 14px;
+  line-height: 1.55;
+  color: #dbdee1;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+/* Baris -# = teks kecil di Discord. Ditiru supaya footer container terlihat
+   berbeda dari isi pesan. */
+.preview-container .pc-line.pc-small {
+  font-size: 12px;
+  color: #b5bac1;
+}
+.preview-container .pc-sep {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.07);
+  margin: 2px 0;
+}
+.preview-container .pc-image {
+  display: block;
+  width: 100%;
+  max-height: 300px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+/* Avatar di container tampil sebagai gambar bulat kecil di atas teks —
+   Media Gallery di Discord tidak membulatkan, tapi bentuk persegi besar untuk
+   avatar 128px hanya memakan ruang tanpa menambah informasi. */
+.preview-container .pc-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+/* Keterangan kecil saat gambar dirujuk sebagai lampiran: di browser tidak ada
+   file untuk dimuat, jadi yang tampil kotak berlabel nama file — bukan ikon
+   gambar rusak. */
+.preview-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px dashed var(--line-strong);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
 .preview-img {
   display: block;
   width: 100%;

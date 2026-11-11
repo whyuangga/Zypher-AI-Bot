@@ -20,6 +20,7 @@
  */
 import type { AgentSettings, GoodbyeSettings, WelcomeSettings } from '../db/repo.js';
 import { config } from '../config.js';
+import type { ContainerMock, EmbedMock } from './embed-mock.js';
 import { chat, type ChatMessage } from '../lib/llm.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
@@ -37,6 +38,9 @@ import {
   type MemoryTurn,
 } from './agent-core.js';
 import { DEFAULT_GOODBYE_TEMPLATE, DEFAULT_WELCOME_TEMPLATE, fillText } from './greeting-text.js';
+import { composePayload } from './welcome.js';
+import { containerToMock, embedToMock } from './embed-mock.js';
+import { normalizeDisplayMode, type DisplayMode } from './display-mode.js';
 
 /** Nama contoh kalau admin tidak mengetik nama apa pun. */
 export const SAMPLE_MEMBER_NAME = 'Sky';
@@ -59,6 +63,24 @@ export interface PreviewResult {
   cardBytes?: number;
   /** Kartu siap ditampilkan di <img> — hanya diisi saat pratinjau dashboard. */
   cardDataUri?: string;
+  /**
+   * Bentuk embed yang akan dikirim — supaya dashboard bisa menggambar
+   * pratinjaunya, bukan hanya menampilkan kalimat sapaan.
+   *
+   * `null` = mode ini tidak memakai embed (card/text/container), atau embed
+   * tidak bisa dibangun.
+   */
+  embedMock?: EmbedMock | null;
+  /** Bentuk kartu Components V2, kalau mode yang dipakai `container`. */
+  containerMock?: ContainerMock | null;
+  /**
+   * Teks `content` yang menyertai pesan (mention + teks pada mode card/text).
+   * Ditampilkan terpisah di pratinjau karena di Discord ia muncul DI ATAS
+   * embed — dan itu satu-satunya alasan mention bisa memicu notifikasi.
+   */
+  contentText?: string | null;
+  /** Mode yang benar-benar dipakai (bisa berbeda dari setelan karena fallback). */
+  mode?: string | null;
 }
 
 /**
@@ -206,6 +228,128 @@ export interface WelcomePreviewOptions {
   timeZone?: string | null;
   /** Judul kecil di kartu: "SELAMAT DATANG" atau "SAMPAI JUMPA". */
   kicker?: string;
+  /**
+   * Data member tiruan untuk membangun bentuk pesan.
+   *
+   * Tidak wajib: tanpa ini pratinjau tetap menghasilkan teks & kartu seperti
+   * dulu, hanya tanpa mock embed/container. Dashboard selalu mengirimnya.
+   */
+  member?: PreviewMemberLike;
+}
+
+/**
+ * Bagian dari `GuildMember` yang dipakai `composePayload()`.
+ *
+ * Ditulis sebagai tipe minimal, bukan `GuildMember`, supaya modul pratinjau
+ * tidak butuh Discord client — dan supaya test bisa memakai objek biasa.
+ */
+export interface PreviewMemberLike {
+  id: string;
+  displayName?: string;
+  /**
+   * `displayName` ikut ditulis di sini karena discord.js punya keduanya, dan
+   * objek tiruan dari server mengisi keduanya. `composePayload()` memakai
+   * guild.members.me untuk displayName hanya pada objek asli; pada objek
+   * tiruan ia jatuh ke `user.displayName`.
+   */
+  user?: { username?: string; displayName?: string; tag?: string };
+  guild?: { name?: string; memberCount?: number };
+  displayAvatarURL?: (options?: { extension?: string; size?: number }) => string;
+}
+
+/**
+ * Member tiruan untuk pratinjau.
+ *
+ * Dipakai kalau pemanggil tidak mengirim `member` (mis. test lama). Bentuknya
+ * sengaja minimal: yang dibutuhkan `composePayload()` hanya id, nama, jumlah
+ * member, dan URL avatar.
+ *
+ * `displayAvatarURL` mengembalikan string kosong, BUKAN avatar contoh dari
+ * internet: pratinjau tidak boleh bergantung pada jaringan, dan gambar yang
+ * gagal dimuat hanya tampil sebagai kotak rusak di halaman.
+ */
+export function previewMember(name: string, guildName: string): PreviewMemberLike {
+  return {
+    id: '0',
+    displayName: name,
+    user: { username: name },
+    guild: { name: guildName, memberCount: 0 },
+    displayAvatarURL: () => '',
+  };
+}
+
+/**
+ * Bangun bentuk pesan (embed/container/content) untuk pratinjau.
+ *
+ * Memakai `composePayload()` — fungsi yang SAMA dengan sambutan sungguhan.
+ * Itu inti perbaikannya: pratinjau tidak boleh punya aturan sendiri, karena
+ * setiap aturan yang ditulis ulang di sini akan melenceng dari produksi
+ * (persis seperti pesan uji yang dulu kehilangan avatar).
+ *
+ * Tidak ada pengiriman: `member` di sini objek tiruan tanpa channel, dan
+ * `allowed.attach` false supaya tidak ada file yang dibaca dari disk.
+ */
+async function shapePreview(options: {
+  mode: DisplayMode;
+  text: string;
+  member: PreviewMemberLike;
+  kind: 'welcome' | 'goodbye';
+  settings: { bannerPath: string | null; bannerData: { mime: string; base64: string } | null; embedAvatar: boolean; embedAuthor: boolean; cardAvatar: boolean };
+  /** Data URI banner: hanya untuk mock, tidak pernah dikirim. */
+  bannerDataUri?: string | null;
+  /** Nama member yang dipakai kalau objek member tidak punya displayName. */
+  name: string;
+}): Promise<{ contentText: string; embedMock: EmbedMock | null; containerMock: ContainerMock | null }> {
+  // Avatar: pratinjau memakai URL apa adanya (tidak ada file untuk diunggah).
+  const avatarUrl =
+    options.settings.embedAvatar || options.settings.embedAuthor
+      ? options.member.displayAvatarURL?.({ extension: 'png', size: 256 }) ?? null
+      : null;
+
+  try {
+    const payload = await composePayload({
+      mode: options.mode,
+      text: options.text,
+      member: options.member as never,
+      kind: options.kind,
+      channelName: null,
+      attachment: null,
+      includeAvatar: options.settings.cardAvatar,
+      embedAvatar: options.settings.embedAvatar,
+      embedAuthor: options.settings.embedAuthor,
+      // Banner tidak dibaca dari disk di sini: `allowed.attach` false membuat
+      // readBannerAttachment() tidak dipanggil sama sekali.
+      bannerPath: null,
+      bannerData: options.settings.bannerData,
+      allowed: { embed: true, attach: false },
+      // Mention di pratinjau selalu ditampilkan: admin perlu melihat bahwa
+      // mention memang ikut di `content`, di luar embed.
+      mentionUser: true,
+      // Avatar di container: pratinjau memakai URL, bukan lampiran.
+      containerAvatarUrl: options.mode === 'container' ? avatarUrl : null,
+    });
+
+    const embedMock = payload.embeds[0] ? embedToMock(payload.embeds[0]) : null;
+    const containerMock = payload.components?.[0] ? containerToMock(payload.components[0]) : null;
+
+    // Banner disuntikkan sesudah bentuknya dibaca: `attachment://x.png` diganti
+    // data URI banner supaya gambar benar-benar terlihat di browser.
+    if (embedMock && options.bannerDataUri) {
+      embedMock.imageUrl = options.bannerDataUri;
+    }
+    if (containerMock && options.bannerDataUri) {
+      // Media Gallery kontainer hanya berisi avatar (kalau ada); banner asli
+      // masuk ke daftar gambar supaya terlihat di bawah teks.
+      containerMock.imageUrls.push(options.bannerDataUri);
+    }
+
+    return { contentText: payload.content, embedMock, containerMock };
+  } catch (error) {
+    // Pratinjau tidak boleh gagal total hanya karena mock-nya bermasalah:
+    // teks sapaan sudah dihitung dan tetap berguna.
+    logger.warn('Gagal membangun bentuk pratinjau', errorMessage(error));
+    return { contentText: '', embedMock: null, containerMock: null };
+  }
 }
 
 /** Hasil sambutan seperti yang akan diterima member — tanpa mengirim apa pun. */
@@ -260,6 +404,24 @@ export async function previewWelcome(options: WelcomePreviewOptions): Promise<Pr
     }
   }
 
+  // Bentuk pesan dibangun SESUDAH teksnya pasti, memakai `composePayload()` —
+  // fungsi yang sama dengan sambutan sungguhan. Jadi pratinjau tidak bisa
+  // "lebih rapi" atau "lebih lengkap" daripada yang benar-benar dikirim bot.
+  const previewMode = normalizeDisplayMode(settings.displayMode);
+  result.mode = previewMode;
+  const shaped = await shapePreview({
+    mode: previewMode,
+    text: finalText,
+    member: options.member ?? previewMember(name, guildName),
+    kind: 'welcome',
+    settings,
+    bannerDataUri: options.bannerDataUri ?? null,
+    name,
+  });
+  result.contentText = shaped.contentText;
+  result.embedMock = shaped.embedMock;
+  result.containerMock = shaped.containerMock;
+
   return result;
 }
 
@@ -283,6 +445,8 @@ export interface PreviewGoodbyeOptions {
   bannerDataUri?: string | null;
   /** Judul kecil di kartu. */
   kicker?: string;
+  /** Data member tiruan untuk membangun bentuk pesan — lihat `WelcomePreviewOptions`. */
+  member?: PreviewMemberLike;
 }
 
 /** Hasil salam perpisahan seperti yang akan diposting ke channel. */
@@ -335,6 +499,24 @@ export async function previewGoodbye(options: PreviewGoodbyeOptions): Promise<Pr
       result.note = mergeNote(result.note, `Kartu gagal dirender: ${errorMessage(error)}`);
     }
   }
+
+  // Sama seperti sambutan: bentuk pesan dari `composePayload()`, bukan disusun
+  // ulang di sini. Perpisahan punya warna, footer, dan aturan mention sendiri —
+  // semuanya harus terlihat di pratinjau sebelum admin menyimpan.
+  const previewMode = normalizeDisplayMode(settings.displayMode);
+  result.mode = previewMode;
+  const shaped = await shapePreview({
+    mode: previewMode,
+    text: finalText,
+    member: options.member ?? previewMember(name, guildName),
+    kind: 'goodbye',
+    settings,
+    bannerDataUri: options.bannerDataUri ?? null,
+    name,
+  });
+  result.contentText = shaped.contentText;
+  result.embedMock = shaped.embedMock;
+  result.containerMock = shaped.containerMock;
 
   return result;
 }

@@ -303,6 +303,46 @@ export async function readBannerAttachment(
   }
 }
 
+/**
+ * Unduh avatar member sebagai lampiran Discord.
+ *
+ * Kenapa perlu diunduh, padahal embed cukup memakai URL CDN apa adanya:
+ * **Components V2 tidak punya `setThumbnail()`/`setAuthor()`**. Satu-satunya
+ * cara menaruh gambar di dalam kartu adalah Media Gallery, dan Media Gallery
+ * merujuk `attachment://<nama file>` — jadi gambarnya harus benar-benar ikut
+ * terkirim. Untuk embed, helper ini tidak dipakai sama sekali.
+ *
+ * Ukuran dibatasi: avatar Discord paling besar 1024px (~1 MB); batas 4 MB di
+ * sini hanya jaring pengaman kalau URL-nya tidak seperti yang diperkirakan.
+ * Gagal mengunduh = `null` dan kartu tampil tanpa avatar — bukan sambutan yang
+ * batal terkirim hanya karena avatar tidak bisa diambil.
+ */
+export async function fetchAvatarAttachment(
+  url: string | null | undefined,
+): Promise<{ attachment: AttachmentBuilder; name: string } | null> {
+  if (!url || !/^https?:\/\//i.test(url)) return null;
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!response.ok) {
+      logger.warn(`Avatar tidak bisa diunduh (HTTP ${response.status}) — kartu tanpa avatar.`);
+      return null;
+    }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.byteLength === 0 || buffer.byteLength > 4 * 1024 * 1024) {
+      logger.warn('Avatar kosong atau terlalu besar — kartu tanpa avatar.');
+      return null;
+    }
+    const meta = detectImage(buffer);
+    if (!meta) return null;
+    // Nama file wajib aman: dipakai di `attachment://` dan di Content-Disposition.
+    const name = `avatar.${meta.ext}`;
+    return { attachment: new AttachmentBuilder(buffer, { name }), name };
+  } catch (error) {
+    logger.warn('Gagal mengunduh avatar member', errorMessage(error));
+    return null;
+  }
+}
+
 /** Baca banner sebagai data URI — hanya untuk `<img>` di dashboard/SVG kartu. */
 export async function readBannerDataUri(name: string | null): Promise<string | null> {
   if (!isSafeBannerName(name)) return null;

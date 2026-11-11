@@ -47,6 +47,24 @@ export interface ContainerCardOptions {
    * `content`, `embeds`, `stickers`, dan `poll`.
    */
   bannerName?: string | null;
+  /**
+   * Teks yang ditaruh di PALING ATAS kartu, sebelum teks utama.
+   *
+   * Dipakai pesan uji untuk menempelkan penanda "ini pesan uji" + mention:
+   * pesan Components V2 dilarang punya `content`, jadi penanda tidak bisa
+   * dikirim sebagai teks pesan biasa seperti mode lain. Dibiarkan kosong oleh
+   * produksi, jadi bentuk sambutan sungguhan tidak berubah.
+   */
+  lead?: string | null;
+  /**
+   * Avatar member di dalam kartu.
+   *
+   * Components V2 tidak punya `setThumbnail()`; satu-satunya cara menampilkan
+   * gambar adalah Media Gallery yang butuh URL. Di produksi avatar dikirim
+   * sebagai lampiran (`name`, dirujuk lewat attachment://), sedangkan pratinjau
+   * memakai URL biasa (`url`). Tanpa keduanya, tidak ada avatar sama sekali.
+   */
+  avatar?: { name: string } | { url: string } | null;
 }
 
 /**
@@ -68,8 +86,26 @@ export function buildContainerCard(options: ContainerCardOptions): ContainerBuil
     if (!text) return null;
 
     const container = new ContainerBuilder()
-      .setAccentColor(ACCENT[options.kind])
-      .addTextDisplayComponents(new TextDisplayBuilder().setContent(text));
+      .setAccentColor(ACCENT[options.kind]);
+
+    // Penanda uji lebih dulu, supaya terbaca sebelum isi kartu.
+    const lead = options.lead?.trim();
+    if (lead) {
+      container.addTextDisplayComponents(new TextDisplayBuilder().setContent(lead.slice(0, 500)));
+    }
+
+    container.addTextDisplayComponents(new TextDisplayBuilder().setContent(text));
+
+    // Avatar member di ATAS teks: bentuk yang sama dengan baris penulis di
+    // embed, karena Components V2 tidak punya penulis/thumbnail sendiri.
+    if (options.avatar) {
+      const url = 'url' in options.avatar ? options.avatar.url : `attachment://${options.avatar.name}`;
+      container.addMediaGalleryComponents(
+        new MediaGalleryBuilder().addItems(
+          new MediaGalleryItemBuilder().setURL(url).setDescription('avatar'),
+        ),
+      );
+    }
 
     // Banner sebagai gambar besar. Dulu mode ini mengabaikan banner sama
     // sekali tanpa memberi tahu — padahal admin sudah mengunggahnya.

@@ -1254,6 +1254,7 @@ export interface WelcomePageOptions extends PageContext {
     cardText: boolean;
     /** Avatar sebagai thumbnail di embed. */
     embedAvatar: boolean;
+    embedAuthor: boolean;
     style: string | null;
     example: string | null;
     /** Nama file banner (null = latar bawaan). */
@@ -1276,6 +1277,7 @@ export interface WelcomePageOptions extends PageContext {
     cardAvatar: boolean;
     cardText: boolean;
     embedAvatar: boolean;
+    embedAuthor: boolean;
   };
   channels: Array<{ id: string; name: string }>;
   botOnline: boolean;
@@ -1523,9 +1525,14 @@ export function welcomePage(options: WelcomePageOptions): string {
   <div class="check-group">
     <p class="field" style="margin:0 0 6px">Tampilan embed</p>
     <label class="check-row" ${CHECK_ROW}>
-      <input type="checkbox" id="welcomeEmbedAvatar" ${options.welcome.embedAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
-      <span>Avatar member sebagai thumbnail di embed</span>
+      <input type="checkbox" id="welcomeEmbedAuthor" ${options.welcome.embedAuthor ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+      <span>Avatar + nama member di atas teks (baris penulis)</span>
     </label>
+    <label class="check-row" ${CHECK_ROW}>
+      <input type="checkbox" id="welcomeEmbedAvatar" ${options.welcome.embedAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+      <span>Avatar member sebagai thumbnail di kanan atas</span>
+    </label>
+    <p class="hint">Dua-duanya boleh dicentang sekaligus; hasilnya terlihat di Pratinjau. Mode Container memakai avatar yang sama, ditampilkan di dalam kartu.</p>
   </div>
 
   ${bannerBlock('welcome', options.welcome.bannerPath, options.welcome.hasBanner)}
@@ -1592,9 +1599,14 @@ export function welcomePage(options: WelcomePageOptions): string {
   <div class="check-group">
     <p class="field" style="margin:0 0 6px">Tampilan embed</p>
     <label class="check-row" ${CHECK_ROW}>
-      <input type="checkbox" id="goodbyeEmbedAvatar" ${options.goodbye.embedAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
-      <span>Avatar member sebagai thumbnail di embed</span>
+      <input type="checkbox" id="goodbyeEmbedAuthor" ${options.goodbye.embedAuthor ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+      <span>Avatar + nama member di atas teks (baris penulis)</span>
     </label>
+    <label class="check-row" ${CHECK_ROW}>
+      <input type="checkbox" id="goodbyeEmbedAvatar" ${options.goodbye.embedAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+      <span>Avatar member sebagai thumbnail di kanan atas</span>
+    </label>
+    <p class="hint">Dua-duanya boleh dicentang sekaligus; hasilnya terlihat di Pratinjau. Mode Container memakai avatar yang sama, ditampilkan di dalam kartu.</p>
   </div>
 
   ${bannerBlock('goodbye', options.goodbye.bannerPath, options.goodbye.hasBanner)}
@@ -1628,6 +1640,9 @@ export function welcomePage(options: WelcomePageOptions): string {
       <div class="preview-box" id="outWelcome" hidden>
         <div class="preview-meta" id="metaWelcome"></div>
         <div class="preview-text" id="textWelcome"></div>
+        <!-- Mock bentuk pesan Discord: embed/container + mention di luar embed.
+             Diisi renderShape() dari payload yang sama dengan produksi. -->
+        <div id="shapeWelcome"></div>
         <img id="cardWelcome" class="preview-img" alt="Kartu sambutan" hidden>
       </div>
 
@@ -1664,6 +1679,9 @@ export function welcomePage(options: WelcomePageOptions): string {
       <div class="preview-box" id="outGoodbye" hidden>
         <div class="preview-meta" id="metaGoodbye"></div>
         <div class="preview-text" id="textGoodbye"></div>
+        <!-- Mock bentuk pesan Discord: embed/container + mention di luar embed.
+             Diisi renderShape() dari payload yang sama dengan produksi. -->
+        <div id="shapeGoodbye"></div>
         <img id="cardGoodbye" class="preview-img" alt="Kartu perpisahan" hidden>
       </div>
 
@@ -1777,6 +1795,7 @@ async function saveWelcome() {
     includeAvatar: document.getElementById('welcomeCardAvatar').checked,
     cardAvatar: document.getElementById('welcomeCardAvatar').checked,
     cardText: document.getElementById('welcomeCardText').checked,
+    embedAuthor: document.getElementById('welcomeEmbedAuthor').checked,
     embedAvatar: document.getElementById('welcomeEmbedAvatar').checked,
   }, 'Sambutan disimpan.');
 }
@@ -1881,7 +1900,8 @@ async function sendTest(kind) {
         includeAvatar: document.getElementById('welcomeCardAvatar').checked,
         cardAvatar: document.getElementById('welcomeCardAvatar').checked,
         cardText: document.getElementById('welcomeCardText').checked,
-        embedAvatar: document.getElementById('welcomeEmbedAvatar').checked,
+        embedAuthor: document.getElementById('welcomeEmbedAuthor').checked,
+    embedAvatar: document.getElementById('welcomeEmbedAvatar').checked,
       }
     : {
         useAi: document.getElementById('goodbyeUseAi').checked,
@@ -1893,7 +1913,8 @@ async function sendTest(kind) {
         includeAvatar: document.getElementById('goodbyeCardAvatar').checked,
         cardAvatar: document.getElementById('goodbyeCardAvatar').checked,
         cardText: document.getElementById('goodbyeCardText').checked,
-        embedAvatar: document.getElementById('goodbyeEmbedAvatar').checked,
+        embedAuthor: document.getElementById('goodbyeEmbedAuthor').checked,
+    embedAvatar: document.getElementById('goodbyeEmbedAvatar').checked,
       };
 
   try {
@@ -1945,6 +1966,7 @@ async function saveGoodbye() {
     includeAvatar: document.getElementById('goodbyeCardAvatar').checked,
     cardAvatar: document.getElementById('goodbyeCardAvatar').checked,
     cardText: document.getElementById('goodbyeCardText').checked,
+    embedAuthor: document.getElementById('goodbyeEmbedAuthor').checked,
     embedAvatar: document.getElementById('goodbyeEmbedAvatar').checked,
   }, 'Salam perpisahan disimpan.');
 }
@@ -1983,6 +2005,201 @@ async function runTest(kind, templateOnly) {
         templateOnly: !!templateOnly,
       };
 
+  /**
+   * Gambar mock bentuk pesan Discord dari data pratinjau.
+   *
+   * Semua nilai di sini berasal dari database (nama channel, nama member, teks
+   * AI), jadi WAJIB di-escape sebelum masuk innerHTML — nama member bisa berisi
+   * HTML. Satu-satunya HTML yang sengaja dibangun di sini adalah pembungkusnya
+   * sendiri.
+   */
+  function renderShape(box, data) {
+    if (!box) return;
+    box.textContent = '';
+    var shape = document.createElement('div');
+    shape.className = 'preview-shape';
+
+    // 1. Teks content: mention + kalimat pada mode kartu/teks. Ditaruh di
+    //    atas karena begitulah Discord menampilkannya — dan itu bukti bahwa
+    //    mention memang di luar embed.
+    var content = String(data.contentText || '');
+    if (content.trim()) {
+      var contentEl = document.createElement('div');
+      contentEl.className = 'preview-content';
+      contentEl.innerHTML = renderMentions(content);
+      shape.appendChild(contentEl);
+    }
+
+    // 2. Embed.
+    if (data.embedMock) shape.appendChild(buildEmbed(data.embedMock));
+
+    // 3. Container.
+    if (data.containerMock) shape.appendChild(buildContainer(data.containerMock));
+
+    // 4. Kartu PNG ditangani elemen <img> yang sudah ada.
+    box.appendChild(shape);
+  }
+
+  /** Ubah <@123> jadi chip mention. Escape dulu, baru sisipkan penanda. */
+  function renderMentions(text) {
+    return escapeHtml(text).replace(/&lt;@!?(\\d+)&gt;/g, function (_, id) {
+      // Nama contoh tidak diketahui di klien; tampilkan id sebagai teks chip.
+      return '<span class="preview-mention">@' + escapeHtml(id) + '</span>';
+    });
+  }
+
+  function escapeHtml(text) {
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  /** Gambar avatar: pakai URL kalau ada, kalau tidak pakai inisial nama. */
+  function avatarEl(url, name, className) {
+    if (url) {
+      var img = document.createElement('img');
+      img.src = url;
+      img.alt = '';
+      if (className) img.className = className;
+      // URL mati (CDN berubah) tidak boleh menyisakan ikon gambar rusak.
+      img.onerror = function () {
+        var initial = initialEl(name, className);
+        if (img.parentNode) img.parentNode.replaceChild(initial, img);
+      };
+      return img;
+    }
+    return initialEl(name, className);
+  }
+
+  function initialEl(name, className) {
+    var el = document.createElement('span');
+    el.className = (className || '') + ' pe-initial';
+    el.textContent = (name || '?').trim().charAt(0).toUpperCase() || '?';
+    return el;
+  }
+
+  function buildEmbed(mock) {
+    var wrap = document.createElement('div');
+    wrap.className = 'preview-embed';
+    if (mock.color) wrap.style.borderLeftColor = mock.color;
+
+    if (mock.author) {
+      var author = document.createElement('div');
+      author.className = 'pe-author';
+      author.appendChild(avatarEl(mock.author.iconUrl, mock.author.name, ''));
+      var authorName = document.createElement('span');
+      authorName.textContent = mock.author.name;
+      author.appendChild(authorName);
+      wrap.appendChild(author);
+    }
+
+    var grid = document.createElement('div');
+    grid.className = 'pe-grid';
+    var main = document.createElement('div');
+
+    if (mock.title) {
+      var title = document.createElement('div');
+      title.className = 'pe-title';
+      title.textContent = mock.title;
+      main.appendChild(title);
+    }
+    if (mock.description) {
+      var desc = document.createElement('div');
+      desc.className = 'pe-desc';
+      desc.innerHTML = renderMentions(mock.description);
+      main.appendChild(desc);
+    }
+    if (mock.fields && mock.fields.length) {
+      var fields = document.createElement('div');
+      fields.className = 'pe-fields';
+      mock.fields.forEach(function (field) {
+        var el = document.createElement('div');
+        el.className = 'pe-field';
+        var name = document.createElement('b');
+        name.textContent = field.name;
+        el.appendChild(name);
+        el.appendChild(document.createTextNode(field.value));
+        fields.appendChild(el);
+      });
+      main.appendChild(fields);
+    }
+    grid.appendChild(main);
+
+    // Thumbnail: kanan atas, di luar teks.
+    if (mock.thumbnailUrl) {
+      grid.appendChild(avatarEl(mock.thumbnailUrl, mock.author ? mock.author.name : '?', 'pe-thumb'));
+    }
+    wrap.appendChild(grid);
+
+    if (mock.imageUrl) wrap.appendChild(buildImage(mock.imageUrl, 'pe-image'));
+
+    if (mock.footer) {
+      var footer = document.createElement('div');
+      footer.className = 'pe-footer';
+      if (mock.footer.iconUrl) footer.appendChild(avatarEl(mock.footer.iconUrl, mock.footer.text, ''));
+      var footerText = document.createElement('span');
+      footerText.innerHTML = renderMentions(mock.footer.text);
+      footer.appendChild(footerText);
+      wrap.appendChild(footer);
+    }
+    return wrap;
+  }
+
+  function buildContainer(mock) {
+    var wrap = document.createElement('div');
+    wrap.className = 'preview-container';
+    if (mock.accentColor) wrap.style.borderLeftColor = mock.accentColor;
+
+    (mock.lines || []).forEach(function (line) {
+      var text = String(line.text || '');
+      // Baris -#  = teks kecil di Discord; penandanya dibuang di pratinjau.
+      if (line.kind === 'small') text = text.replace(/^\\s*-#\\s*/, '');
+      var el = document.createElement('div');
+      el.className = 'pc-line' + (line.kind === 'small' ? ' pc-small' : '');
+      el.innerHTML = renderMentions(text);
+      wrap.appendChild(el);
+    });
+
+    (mock.imageUrls || []).forEach(function (url, index) {
+      // Gambar pertama di container adalah avatar (kalau ada). Ditandai server
+      // lewat posisi: avatar selalu lebih dulu dari banner.
+      wrap.appendChild(buildImage(url, index === 0 ? 'pc-image pc-avatar' : 'pc-image'));
+    });
+
+    if (mock.separators) {
+      // Pemisah hanya digambar sekali di akhir: posisi persisnya tidak penting
+      // untuk menilai bentuk, dan menebaknya bisa salah.
+      var sep = document.createElement('div');
+      sep.className = 'pc-sep';
+      wrap.appendChild(sep);
+    }
+    return wrap;
+  }
+
+  /**
+   * Gambar, atau kotak berlabel kalau URL-nya rujukan lampiran.
+   *
+   * attachment://nama.png berarti "file yang ikut di pesan". Di browser tidak
+   * ada file itu, jadi yang tampil label nama — lebih jujur daripada ikon
+   * gambar rusak yang membuat admin mengira fiturnya bermasalah.
+   */
+  function buildImage(url, className) {
+    var attachment = /^attachment:\\/\\/(.+)$/.exec(url || '');
+    if (attachment) {
+      var box = document.createElement('span');
+      box.className = 'preview-attachment';
+      box.textContent = '🖼 ' + attachment[1];
+      return box;
+    }
+    var img = document.createElement('img');
+    img.className = className;
+    img.src = url;
+    img.alt = '';
+    return img;
+  }
+
   try {
     var data = await api('/api/preview/' + kind, {
       method: 'POST',
@@ -1997,6 +2214,18 @@ async function runTest(kind, templateOnly) {
       (data.source === 'ai' ? '✍️ ditulis AI' : data.source === 'template' ? '📄 dari template' : '⚠️ gagal')
       + (data.card ? ' · kartu ' + Math.round((data.cardBytes || 0) / 1024) + ' KB' : '')
       + (data.note ? ' — ' + data.note : '');
+
+    // Bentuk pesan: embed/container digambar sebagai mock Discord.
+    //
+    // Sebelum ini kotak pratinjau hanya berisi kalimat sapaan, jadi admin yang
+    // memilih mode Embed atau Container tidak bisa melihat apa pun tentang
+    // bentuk pesannya. Sekarang yang digambar berasal dari payload yang SAMA
+    // dengan produksi (server memakai composePayload), jadi pratinjau tidak
+    // mungkin menjanjikan tampilan yang tidak dikirim bot.
+    renderShape(
+      document.getElementById(kind === 'welcome' ? 'shapeWelcome' : 'shapeGoodbye'),
+      data,
+    );
 
     // Kartu dikirim sebagai data URI di respons yang sama — tidak perlu
     // endpoint gambar tambahan dan tidak ada yang disimpan ke disk.

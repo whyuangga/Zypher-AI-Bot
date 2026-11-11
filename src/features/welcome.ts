@@ -34,7 +34,7 @@ import { errorMessage, logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
 import { renderWelcomeCard } from './welcome-card.js';
 import { previewGoodbye, previewWelcome } from './preview.js';
-import { readBannerDataUri, readBannerAttachment } from './banner.js';
+import { fetchAvatarAttachment, readBannerDataUri, readBannerAttachment } from './banner.js';
 import { DEFAULT_GOODBYE_TEMPLATE, DEFAULT_WELCOME_TEMPLATE, fillText } from './greeting-text.js';
 import {
   displayModeLabel,
@@ -205,6 +205,7 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
     attachment,
     includeAvatar: settings.includeAvatar,
     embedAvatar: settings.embedAvatar,
+    embedAuthor: settings.embedAuthor,
     bannerPath: settings.bannerPath,
     bannerData: settings.bannerData,
     allowed,
@@ -315,7 +316,7 @@ async function resolveWelcomeChannel(
  * biasa saja, bukan gagal. Tanpa ini, embed yang tidak diizinkan membuat
  * pengiriman gagal walau `SendMessages` sudah ada.
  */
-function channelPermissions(
+export function channelPermissions(
   channel: TextChannel | AnyThreadChannel,
   member: GuildMember,
 ): { embed: boolean; attach: boolean } {
@@ -339,7 +340,15 @@ function channelPermissions(
  * `content` sengaja hanya diisi pada mode `text`; mode lain mengembalikan
  * string kosong supaya pemanggil tidak mengirim teks dua kali.
  */
-async function composePayload(options: {
+/**
+ * Ekspor dipakai `test-send.ts` dan `preview.ts`.
+ *
+ * Alasannya bukan kerapian: dulu pesan uji membangun embed-nya sendiri dan
+ * akibatnya kehilangan avatar yang sudah diatur admin — jalur yang menyusun
+ * ulang bentuk pesan selalu melenceng dari produksi. Sekarang hanya ada SATU
+ * tempat yang tahu aturan mention/banner/embed, dan semua jalur memakainya.
+ */
+export async function composePayload(options: {
   mode: DisplayMode;
   text: string;
   member: GuildMember;
@@ -349,10 +358,33 @@ async function composePayload(options: {
   includeAvatar: boolean;
   /** Tampilkan avatar member sebagai thumbnail di embed. */
   embedAvatar?: boolean;
+  /**
+   * Pasang baris penulis embed: avatar + nama member di ATAS teks embed.
+   *
+   * Ini melengkapi `embedAvatar` (thumbnail kanan atas), bukan menggantikannya
+   * — keduanya boleh menyala bersamaan. Yang ini meniru bentuk bot besar:
+   * avatar bulat kecil + nama tebal, lalu teks sapaan di bawahnya.
+   */
+  embedAuthor?: boolean;
   bannerPath: string | null;
   /** Salinan banner di database — untuk memulihkan file yang hilang saat deploy. */
   bannerData?: { mime: string; base64: string } | null;
   allowed: { embed: boolean; attach: boolean };
+  /** Teks tambahan di paling atas kartu container (dipakai pesan uji). */
+  containerLead?: string | null;
+  /**
+   * Nama file avatar member yang ikut sebagai lampiran, untuk ditampilkan di
+   * dalam kartu container.
+   *
+   * Components V2 tidak bisa memakai `setThumbnail()` seperti embed — gambar
+   * di dalam kartu hanya lewat Media Gallery yang merujuk `attachment://`.
+   * Karena itu avatar harus benar-benar dikirim sebagai file; di pratinjau
+   * tidak ada file, jadi pemanggil mengirim `null` dan kartu menampilkan
+   * inisial nama sebagai gantinya.
+   */
+  containerAvatarName?: string | null;
+  /** URL avatar untuk Media Gallery container (dipakai pratinjau). */
+  containerAvatarUrl?: string | null;
   /**
    * Boleh menulis `<@id>` di `content`? Sambutan: ya. Perpisahan: tidak —
    * member sudah keluar, mention tidak akan menyapa siapa pun dan hanya
@@ -368,8 +400,13 @@ async function composePayload(options: {
   flags?: number;
 }> {
   const { mode, text, member, kind, attachment, allowed, mentionUser } = options;
-  const footer =
-    kind === 'welcome' ? `Member baru · ${member.guild.name}` : `Member keluar · ${member.guild.name}`;
+  // `member.guild` selalu ada di produksi, tapi fungsi ini juga dipakai jalur
+  // pratinjau dan pesan uji yang member-nya objek tiruan. Dulu pembacaan tanpa
+  // penjaga membuat satu objek uji yang tidak lengkap menggagalkan seluruh
+  // pengiriman dengan pesan "Cannot read properties of undefined" — bukan
+  // alasan yang bisa dipahami admin.
+  const guildName = member.guild?.name ?? 'Server ini';
+  const footer = kind === 'welcome' ? `Member baru · ${guildName}` : `Member keluar · ${guildName}`;
   const color = kind === 'welcome' ? 0x6d8cff : 0x716c98;
 
   // Mode teks: me-ping member lewat `content` (mode lain memakai embed, yang
@@ -387,18 +424,46 @@ async function composePayload(options: {
     const bannerFile = allowed.attach
       ? await readBannerAttachment(options.bannerPath, options.bannerData)
       : null;
+
+    // Avatar di container HARUS ikut sebagai lampiran: Components V2 tidak
+    // punya setThumbnail()/setAuthor(), jadi satu-satunya tempat gambar adalah
+    // Media Gallery yang merujuk attachment://. Tanpa ini, centang "avatar di
+    // embed" tidak berpengaruh apa pun di mode container — dan itulah yang
+    // dilaporkan pemilik server: avatarnya tidak muncul.
+    //
+    // `containerAvatarUrl` dipakai pratinjau (tidak ada file untuk dikirim).
+    // Dua sakelar avatar (penulis & thumbnail) diperlakukan sama di container:
+    // di sana tidak ada "penulis" maupun "thumbnail" terpisah, hanya satu
+    // gambar avatar. Memakai salah satunya saja membuat centang "avatar di
+    // atas teks" tidak berpengaruh apa pun di mode Container.
+    const avatarFile =
+      !options.containerAvatarUrl && (options.embedAvatar || options.embedAuthor) && allowed.attach
+        ? await fetchAvatarAttachment(
+            member.displayAvatarURL({ extension: 'png', size: 256 }),
+          )
+        : null;
+
     const card = buildContainerCard({
       kind,
       text: teks,
       guildName: member.guild.name,
       memberCount: member.guild.memberCount,
       bannerName: bannerFile?.name ?? null,
+      lead: options.containerLead ?? null,
+      avatar: options.containerAvatarUrl
+        ? { url: options.containerAvatarUrl }
+        : avatarFile
+          ? { name: avatarFile.name }
+          : null,
     });
     if (card) {
+      const files = [bannerFile?.attachment, avatarFile?.attachment].filter(
+        (file): file is AttachmentBuilder => Boolean(file),
+      );
       return {
         content: '',
         embeds: [],
-        files: bannerFile ? [bannerFile.attachment] : [],
+        files,
         ...containerPayload(card),
       };
     }
@@ -410,12 +475,29 @@ async function composePayload(options: {
     .setDescription(text)
     .setFooter({ text: footer });
 
-  // Avatar di embed: thumbnail kecil di kanan atas. Dipakai HANYA di mode
-  // embed (kartu punya avatarnya sendiri di dalam gambar, container di
-  // headernya). URL Discord CDN dipakai apa adanya — tidak perlu unduh.
-  if (options.embedAvatar && mode === 'embed') {
-    const url = member.displayAvatarURL({ extension: 'png', size: 256 });
-    if (url) embed.setThumbnail(url);
+  // Avatar di embed, dua bentuk yang berdiri sendiri:
+  //
+  //   1. embedAuthor  -> baris penulis (avatar bulat + nama tebal) di ATAS teks
+  //   2. embedAvatar  -> thumbnail kecil di kanan atas
+  //
+  // Keduanya bisa menyala bersamaan; Discord menampilkan penulis di atas dan
+  // thumbnail di kanan, tidak saling menutupi. Hanya berlaku di mode embed:
+  // kartu punya avatarnya sendiri di dalam gambar, container di headernya.
+  // URL Discord CDN dipakai apa adanya — tidak perlu unduh.
+  // Baris penulis TIDAK bergantung pada avatar: nama tetap berguna walau
+  // avatarnya tidak bisa diambil (akun tanpa avatar, CDN gagal). Dulu seluruh
+  // baris hilang kalau URL-nya kosong — termasuk di pratinjau dashboard, yang
+  // akibatnya melaporkan "avatar tidak muncul" padahal sakelarnya sudah benar.
+  const avatarUrl = member.displayAvatarURL({ extension: 'png', size: 256 });
+  if (options.embedAuthor && mode === 'embed') {
+    const authorName = member.displayName || member.user.username;
+    if (authorName) {
+      embed.setAuthor({ name: authorName, ...(avatarUrl ? { iconURL: avatarUrl } : {}) });
+    }
+  }
+  // Thumbnail memang butuh URL: tanpa gambar, tidak ada yang bisa ditampilkan.
+  if (options.embedAvatar && mode === 'embed' && avatarUrl) {
+    embed.setThumbnail(avatarUrl);
   }
 
   // Mode kartu: kartu PNG sebagai lampiran, TANPA embed.
@@ -614,6 +696,7 @@ export async function goodbyeMember(member: GuildMember): Promise<boolean> {
     attachment,
     includeAvatar: settings.includeAvatar,
     embedAvatar: settings.embedAvatar,
+    embedAuthor: settings.embedAuthor,
     bannerPath: settings.bannerPath,
     bannerData: settings.bannerData,
     allowed,
