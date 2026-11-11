@@ -56,6 +56,7 @@ import {
   previewQuietBreak,
   previewWelcome,
   SAMPLE_MEMBER_NAME,
+  type PreviewMemberLike,
 } from '../features/preview.js';
 import { channelState } from '../features/agent.js';
 import { readResourceUsage, readPartitionCapacity } from './resources.js';
@@ -542,6 +543,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
             cardAvatar: welcome.cardAvatar,
             cardText: welcome.cardText,
             embedAvatar: welcome.embedAvatar,
+            embedAuthor: welcome.embedAuthor,
             style: welcome.style,
             example: welcome.example,
             bannerPath: welcome.bannerPath,
@@ -563,6 +565,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
             cardAvatar: goodbye.cardAvatar,
             cardText: goodbye.cardText,
             embedAvatar: goodbye.embedAvatar,
+            embedAuthor: goodbye.embedAuthor,
           },
           channels,
           botOnline: status.online,
@@ -1131,6 +1134,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       cardAvatar: bool(payload.cardAvatar, current.cardAvatar),
       cardText: bool(payload.cardText, current.cardText),
       embedAvatar: bool(payload.embedAvatar, current.embedAvatar),
+      embedAuthor: bool(payload.embedAuthor, current.embedAuthor),
     });
 
     sendJson(response, 200, { ok: true, welcome: await getWelcomeSettings(guildId) });
@@ -1178,6 +1182,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       cardAvatar: bool(payload.cardAvatar, current.cardAvatar),
       cardText: bool(payload.cardText, current.cardText),
       embedAvatar: bool(payload.embedAvatar, current.embedAvatar),
+      embedAuthor: bool(payload.embedAuthor, current.embedAuthor),
     });
 
     sendJson(response, 200, { ok: true, goodbye: await getGoodbyeSettings(guildId) });
@@ -1561,6 +1566,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       // Banner unggahan ikut dirender supaya admin melihat hasil akhirnya.
       bannerDataUri: await readBannerDataUri(settings.bannerPath),
       kicker: 'SAMPAI JUMPA',
+      // Sama seperti sambutan: tanpa member tiruan, pratinjau kehilangan
+      // warna, footer, avatar, dan mention yang membentuk pesannya.
+      member: await previewMemberFor(guildId, name),
       // Renderer disuntikkan supaya modul pratinjau tidak bergantung paket gambar.
       renderCard: withCard
         ? (input) =>
@@ -1611,6 +1619,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       // Banner unggahan ikut dirender supaya admin melihat hasil akhirnya.
       bannerDataUri: await readBannerDataUri(settings.bannerPath),
       kicker: 'SELAMAT DATANG',
+      // Member tiruan supaya pratinjau bisa menggambar bentuk pesannya (embed,
+      // container, mention di luar embed). Tanpa ini dashboard hanya punya teks.
+      member: await previewMemberFor(guildId, name),
       // Renderer disuntikkan supaya modul pratinjau tidak bergantung paket gambar.
       renderCard: withCard
         ? (input) =>
@@ -1944,4 +1955,27 @@ function textField(
 function previewName(payload: Record<string, unknown>, fallback: string): string {
   const value = typeof payload.name === 'string' ? payload.name.trim() : '';
   return (value || fallback).slice(0, 60);
+}
+
+/**
+ * Member tiruan untuk pratinjau.
+ *
+ * Avatar memakai URL CDN milik bot sendiri, BUKAN gambar contoh dari internet:
+ * URL-nya sudah pasti bisa dimuat browser (Discord CDN), tidak menambah
+ * ketergantungan jaringan luar, dan tidak ada data member asli yang bocor ke
+ * halaman. Kalau bot offline, avatar jatuh ke URL kosong dan UI menggambar
+ * inisial nama.
+ */
+async function previewMemberFor(guildId: string, name: string): Promise<PreviewMemberLike> {
+  const guild = botClient?.guilds.cache.get(guildId);
+  const guildName = (await getGuildName(guildId)) ?? 'Server ini';
+  const avatar = botClient?.user?.displayAvatarURL({ extension: 'png', size: 256 }) ?? '';
+  return {
+    id: botClient?.user?.id ?? '0',
+    // `displayName` yang dipakai baris penulis embed; `username` cadangan.
+    displayName: name,
+    user: { username: name, displayName: name },
+    guild: { name: guildName, memberCount: guild?.memberCount ?? 0 },
+    displayAvatarURL: () => avatar,
+  };
 }

@@ -38,9 +38,8 @@ import { truncate } from '../lib/text.js';
 import { previewGoodbye, previewWelcome } from './preview.js';
 import { readBannerDataUri, readBannerAttachment } from './banner.js';
 import { displayModeLabel, normalizeDisplayMode } from './display-mode.js';
-import { buildContainerCard, containerPayload } from './container-card.js';
 import { renderWelcomeCard } from './welcome-card.js';
-import { cardDetail } from './welcome.js';
+import { cardDetail, composePayload } from './welcome.js';
 
 export class SendTestError extends Error {}
 
@@ -252,71 +251,86 @@ export async function sendWelcomeTest(
       ? await readBannerAttachment(settings.bannerPath)
       : null;
 
-  const embed = new EmbedBuilder()
-    .setColor(0x6d8cff)
-    .setDescription(preview.text)
-    .setFooter({ text: `Pesan uji · ${guild.name}` });
-  // Discord menolak setImage() berisi data URI ("Received one or more
-  // errors"), jadi banner dikirim sebagai lampiran dan dirujuk attachment://.
-  // Ternyata ini juga alasan sambutan sungguhan gagal terkirim.
-  if (bannerFile && modeNow === 'embed') embed.setImage(`attachment://${bannerFile.name}`);
+  // Bentuk pesan diambil dari `composePayload()` — jalur yang SAMA dengan
+  // sambutan sungguhan.
+  //
+  // Dulu fungsi ini membangun EmbedBuilder-nya sendiri, dan akibatnya pesan uji
+  // diam-diam kehilangan fitur: avatar thumbnail, baris penulis, warna, footer,
+  // dan gambar banner tidak pernah ikut. Yang paling menipu, pesan uji terlihat
+  // normal — jadi admin mengira embed sungguhan memang begitu. Setiap kali
+  // fitur baru ditambahkan ke produksi, jalur ini tertinggal.
+  //
+  // Karena sekarang satu sumber, bentuk pesan uji TIDAK BISA berbeda dari
+  // produksi. Yang membedakannya hanya penanda uji di teks.
+  const shaped = await composePayload({
+    mode: modeNow,
+    text: preview.text,
+    member,
+    kind: 'welcome',
+    channelName: null,
+    attachment: card,
+    // Sakelar avatar: `cardAvatar` untuk kartu PNG, `embedAvatar` +
+    // `embedAuthor` untuk embed. Semuanya dibaca dari setelan yang sama.
+    includeAvatar: settings.cardAvatar,
+    embedAvatar: settings.embedAvatar,
+    embedAuthor: settings.embedAuthor,
+    bannerPath: settings.bannerPath,
+    bannerData: settings.bannerData,
+    allowed: { embed: true, attach: true },
+    // Container tidak boleh punya `content`, jadi penanda uji ikut sebagai teks
+    // paling atas di dalam kartu — bukan ditambal setelah kartu selesai.
+    containerLead: modeNow === 'container' ? `${TEST_MARK}\n\n<@${member.id}>` : null,
+    mentionUser: true,
+  });
 
-  // Mode container: komponen V2 tidak boleh dicampur content/embeds.
-  // `bannerFile` di atas sudah dibaca untuk mode ini — jangan baca ulang.
-  const containerBanner = modeNow === 'container' ? bannerFile : null;
-  const container =
-    modeNow === 'container'
-      ? (() => {
-          const built = buildContainerCard({
-            kind: 'welcome',
-            // Components V2 melarang `content`, jadi mention hidup di dalam
-            // teks komponen — sama seperti sambutan sungguhan.
-            //
-            // Penanda uji WAJIB ikut: dulu mode container mengirim bentuk yang
-            // identik dengan sambutan asli, sehingga member di channel tidak
-            // bisa membedakan mana pesan uji.
-            text: `${TEST_MARK}\n\n<@${member.id}> ${preview.text}`,
-            guildName: guild.name,
-            memberCount: guild.memberCount,
-            bannerName: containerBanner?.name ?? null,
-          });
-          return built ? containerPayload(built) : null;
-        })()
-      : null;
+  const container = shaped.components?.length
+    ? { components: shaped.components, flags: shaped.flags }
+    : null;
   if (modeNow === 'container' && !container) {
     note.push('Components V2 tidak didukung pustaka ini — dikirim sebagai embed.');
   }
+  const embed = shaped.embeds[0] ? EmbedBuilder.from(shaped.embeds[0]) : null;
+  if (embed) {
+    // Banner & footer produksi sudah dipasang `composePayload()`. Yang diganti
+    // hanya footer-nya: pesan uji WAJIB bisa dibedakan dari sambutan asli.
+    if (bannerFile && modeNow === 'embed' && !embed.data.image) {
+      embed.setImage(`attachment://${bannerFile.name}`);
+    }
+    embed.setFooter({ text: `Pesan uji · ${guild.name}` });
+  }
 
+  // Penanda uji disisipkan sesuai kemampuan mode:
+  //   - container: TIDAK boleh punya `content`, jadi penanda masuk ke teks
+  //     komponen lewat TextDisplay tambahan.
+  //   - mode lain: penanda di `content`, di ATAS mention.
   const payload = container
     ? {
         ...container,
-        files: containerBanner ? [containerBanner.attachment] : [],
+        files: bannerFile ? [bannerFile.attachment] : [],
         // Mention ada di dalam komponen; tanpa ini ia tampil sebagai teks mentah.
         allowedMentions: { users: [member.id] },
       }
-    : modeNow === 'text'
+    : modeNow === 'text' || card || !embed
       ? {
-          content: `${TEST_MARK}\n\n<@${member.id}> ${preview.text}`,
+          // Teks polos & kartu: `composePayload()` sudah menaruh mention dan
+          // teks sapaan di `content` dengan aturan yang benar. Kita hanya
+          // menambahkan penanda uji di depannya.
+          //
+          // `embeds` TIDAK dikirim sama sekali (bukan array kosong): inilah
+          // pembeda bentuk mode teks/kartu dari mode embed, dan dulu array
+          // kosong membuat Discord menolak pesan tanpa isi lebih cepat.
+          content: `${TEST_MARK}\n\n${shaped.content}`,
+          files: card ? [card] : [],
           allowedMentions: { users: [member.id] },
         }
-      : card
-        ? {
-            // Sama seperti sambutan sungguhan: teks sapaan + mention + kartu,
-            // TANPA embed. Pesan uji harus memperlihatkan bentuk akhirnya,
-            // bukan bentuk lain yang kebetulan mirip.
-            content: `${TEST_MARK}\n\n<@${member.id}> ${preview.text}`,
-            embeds: [],
-            files: [card],
-            allowedMentions: { users: [member.id] },
-          }
-        : {
-            // Mode embed sama seperti produksi: mention dikirim lewat content,
-            // bukan lewat deskripsi embed (mention di dalam embed mati).
-            content: `${TEST_MARK}\n\n<@${member.id}>`,
-            embeds: [embed],
-            files: bannerFile ? [bannerFile.attachment] : [],
-            allowedMentions: { users: [member.id] },
-          };
+      : {
+          // Mode embed: mention produksi ada di `content` (mention di dalam
+          // embed tidak pernah memicu notifikasi), teks sapaan di deskripsi.
+          content: `${TEST_MARK}\n\n${shaped.content}`.trim(),
+          embeds: [embed],
+          files: bannerFile ? [bannerFile.attachment] : [],
+          allowedMentions: { users: [member.id] },
+        };
 
   // Target DM: menguji jalur paling rawan (member menutup DM).
   if (options.target === 'dm' || !settings.channelId) {
@@ -424,65 +438,71 @@ export async function sendGoodbyeTest(
       ? await readBannerAttachment(settings.bannerPath)
       : null;
 
-  const embed = new EmbedBuilder()
-    .setColor(0x716c98)
-    .setDescription(preview.text)
-    .setFooter({ text: `Pesan uji · ${guild.name}` });
-  if (bannerFile && modeNow === 'embed') embed.setImage(`attachment://${bannerFile.name}`);
+  // Sama seperti jalur sambutan: bentuk pesan diambil dari `composePayload()`,
+  // bukan disusun ulang di sini. Dulu embed perpisahan uji juga kehilangan
+  // avatar thumbnail & baris penulis karena alasan yang persis sama.
+  const shaped = await composePayload({
+    mode: modeNow,
+    text: preview.text,
+    member,
+    kind: 'goodbye',
+    channelName: null,
+    attachment: card,
+    includeAvatar: settings.cardAvatar,
+    embedAvatar: settings.embedAvatar,
+    embedAuthor: settings.embedAuthor,
+    bannerPath: settings.bannerPath,
+    bannerData: settings.bannerData,
+    allowed: { embed: true, attach: true },
+    containerLead: modeNow === 'container' ? `${TEST_MARK}\n\n<@${member.id}>` : null,
+    // Sama dengan produksi: perpisahan menyapa dengan mention. Catatan jujur:
+    // member sudah keluar, jadi Discord tidak memicu notifikasi — yang tampil
+    // hanya nama yang bisa diklik.
+    mentionUser: true,
+  });
+
+  const goodbyeContainer = shaped.components?.length
+    ? { components: shaped.components, flags: shaped.flags }
+    : null;
+  if (modeNow === 'container' && !goodbyeContainer) {
+    note.push('Components V2 tidak didukung pustaka ini — dikirim sebagai embed.');
+  }
+
+  const embed = shaped.embeds[0] ? EmbedBuilder.from(shaped.embeds[0]) : null;
+  if (embed) {
+    if (bannerFile && modeNow === 'embed' && !embed.data.image) {
+      embed.setImage(`attachment://${bannerFile.name}`);
+    }
+    // Pesan uji wajib bisa dibedakan dari salam perpisahan asli.
+    embed.setFooter({ text: `Pesan uji · ${guild.name}` });
+  }
 
   const { channel, reason, warnings = [] } = await resolveChannel(guild, settings.channelId);
   if (!channel) throw new SendTestError(reason ?? 'Channel salam perpisahan tidak bisa dipakai.');
   note.push(...warnings);
 
   try {
-    const goodbyeBanner = modeNow === 'container' ? bannerFile : null;
-    const goodbyeContainer =
-      modeNow === 'container'
-        ? (() => {
-            const built = buildContainerCard({
-              kind: 'goodbye',
-              // Penanda uji ikut, sama seperti jalur sambutan.
-              text: `${TEST_MARK}\n\n<@${member.id}> ${preview.text}`,
-              guildName: guild.name,
-              memberCount: guild.memberCount,
-              bannerName: goodbyeBanner?.name ?? null,
-            });
-            return built ? containerPayload(built) : null;
-          })()
-        : null;
-    if (modeNow === 'container' && !goodbyeContainer) {
-      note.push('Components V2 tidak didukung pustaka ini — dikirim sebagai embed.');
-    }
-
     await channel.send(
       goodbyeContainer
         ? {
             ...goodbyeContainer,
-            files: goodbyeBanner ? [goodbyeBanner.attachment] : [],
+            files: bannerFile ? [bannerFile.attachment] : [],
             // Mention ada di dalam komponen, bukan di `content`.
             allowedMentions: { users: [member.id] },
           }
-        : modeNow === 'text'
+        : modeNow === 'text' || card || !embed
           ? {
-              content: `${TEST_MARK}\n\n<@${member.id}> ${preview.text}`,
+              // `composePayload()` sudah menaruh mention + teks di `content`.
+              content: `${TEST_MARK}\n\n${shaped.content}`,
+              files: card ? [card] : [],
               allowedMentions: { users: [member.id] },
             }
-          : card
-            ? {
-                // Sama seperti sambutan sungguhan: teks + mention + kartu,
-                // tanpa embed.
-                content: `${TEST_MARK}\n\n<@${member.id}> ${preview.text}`,
-                embeds: [],
-                files: [card],
-                allowedMentions: { users: [member.id] },
-              }
-            : {
-                // Sama seperti jalur sambutan: mention lewat content.
-                content: `${TEST_MARK}\n\n<@${member.id}>`,
-                embeds: [embed],
-                files: bannerFile ? [bannerFile.attachment] : [],
-                allowedMentions: { users: [member.id] },
-              },
+          : {
+              content: `${TEST_MARK}\n\n${shaped.content}`.trim(),
+              embeds: [embed],
+              files: bannerFile ? [bannerFile.attachment] : [],
+              allowedMentions: { users: [member.id] },
+            },
     );
     logger.info(`Kirim tes salam perpisahan ke #${channel.name} berhasil.`);
     return {

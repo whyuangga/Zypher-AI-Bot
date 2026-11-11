@@ -70,6 +70,12 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
     // tampilan server yang sudah berjalan.
     'ALTER TABLE welcome ADD COLUMN embed_avatar INTEGER',
     'ALTER TABLE goodbye ADD COLUMN embed_avatar INTEGER',
+    // Baris penulis embed (avatar + nama member di atas teks). Terpisah dari
+    // embed_avatar yang hanya memasang thumbnail di kanan atas. NULL pada baris
+    // lama dibaca sebagai mati, jadi tampilan server yang sudah berjalan tidak
+    // berubah hanya karena pembaruan ini.
+    'ALTER TABLE welcome ADD COLUMN embed_author INTEGER',
+    'ALTER TABLE goodbye ADD COLUMN embed_author INTEGER',
     // Jam tenang malam: jangan menyapa channel otomatis saat orang tidur.
     // Default 1 (aktif) mengikuti referensi, tapi baris lama ikut jadi aktif
     // hanya setelah kolom ini ditambahkan — perilaku lama tidak berubah

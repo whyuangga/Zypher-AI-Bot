@@ -152,6 +152,9 @@ CREATE TABLE IF NOT EXISTS goodbye (
   include_avatar  INTEGER NOT NULL DEFAULT 1,
   card_text       INTEGER NOT NULL DEFAULT 1,
   embed_avatar    INTEGER NOT NULL DEFAULT 0,
+  -- Baris penulis embed: avatar + nama member di ATAS teks embed.
+  -- Beda dari embed_avatar yang memasang thumbnail kecil di kanan atas.
+  embed_author    INTEGER NOT NULL DEFAULT 0,
   banner_path     TEXT,
   banner_mime     TEXT,
   banner_bytes    TEXT,
@@ -173,6 +176,9 @@ CREATE TABLE IF NOT EXISTS welcome (
   include_avatar  INTEGER NOT NULL DEFAULT 1,
   card_text       INTEGER NOT NULL DEFAULT 1,
   embed_avatar    INTEGER NOT NULL DEFAULT 0,
+  -- Baris penulis embed: avatar + nama member di ATAS teks embed.
+  -- Beda dari embed_avatar yang memasang thumbnail kecil di kanan atas.
+  embed_author    INTEGER NOT NULL DEFAULT 0,
   banner_path     TEXT,
   banner_mime     TEXT,
   banner_bytes    TEXT,
@@ -332,6 +338,9 @@ CREATE TABLE IF NOT EXISTS goodbye (
   include_avatar  INTEGER NOT NULL DEFAULT 1,
   card_text       INTEGER NOT NULL DEFAULT 1,
   embed_avatar    INTEGER NOT NULL DEFAULT 0,
+  -- Baris penulis embed: avatar + nama member di ATAS teks embed.
+  -- Beda dari embed_avatar yang memasang thumbnail kecil di kanan atas.
+  embed_author    INTEGER NOT NULL DEFAULT 0,
   banner_path     TEXT,
   banner_mime     TEXT,
   banner_bytes    TEXT,
@@ -351,6 +360,9 @@ CREATE TABLE IF NOT EXISTS welcome (
   include_avatar  INTEGER NOT NULL DEFAULT 1,
   card_text       INTEGER NOT NULL DEFAULT 1,
   embed_avatar    INTEGER NOT NULL DEFAULT 0,
+  -- Baris penulis embed: avatar + nama member di ATAS teks embed.
+  -- Beda dari embed_avatar yang memasang thumbnail kecil di kanan atas.
+  embed_author    INTEGER NOT NULL DEFAULT 0,
   banner_path     TEXT,
   banner_mime     TEXT,
   banner_bytes    TEXT,
