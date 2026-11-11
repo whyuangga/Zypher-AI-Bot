@@ -468,19 +468,27 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke # 346 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
+npm run smoke # 347 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
 npm run smoke:pg       # 16 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # 15 pemeriksaan rantai fallback provider (server tiruan)
 npm run test:ui        # 75 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
 npm run test:browser   # uji klik sungguhan di Chromium (butuh dashboard hidup)
 npm run verify         # semuanya sekaligus: typecheck ketat + smoke + fallback + UI
-npm run dashboard      # nyalakan dashboard web saja, tanpa bot Discord
+npm run dashboard      # nyalakan dashboard web saja (node dist/web/standalone.js)
 npm run migrate:pg     # pindahkan data SQLite → Postgres
 npm run bundle         # bikin zypher-deploy.zip untuk panel hosting
 npm run token -- --write   # bikin & pasang DASHBOARD_TOKEN acak di .env
 ```
 
 > `npm install` juga menjalankan `tsc` (hook `prepare`), jadi `dist/` selalu siap setelah install.
+
+> **Kenapa `dashboard` dan `start` memakai `node dist/...`, bukan `tsx`:**
+> `tsx` memuat transpiler TypeScript ke dalam proses, dan itu berharga ~169 MB
+> RAM. Diukur di mesin nyata: `tsx` = **276,7 MB / 4 proses**, `node dist` =
+> **108,1 MB / 1 proses**. Di container 589 MB itu sepertiga RAM. `tsx` tetap
+> dipakai untuk `npm run dev` (perlu watch + muat ulang otomatis) dan untuk
+> skrip `smoke`/`test:fallback`, karena keduanya memang menjalankan TypeScript
+> langsung, bukan kode hasil build.
 
 `npm run doctor` adalah langkah pertama saat ada masalah AI: ia mengirim request sungguhan ke provider
 utama dan setiap fallback, lalu menampilkan latensi, isi balasan, dan dukungan streaming per provider.

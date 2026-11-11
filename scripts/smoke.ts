@@ -6079,6 +6079,28 @@ await testAsync('disk: pemindaian folder paralel per folder, bukan per berkas', 
   );
 });
 
+await testAsync('perintah produksi memakai dist, bukan tsx', async () => {
+  // tsx memuat transpiler TypeScript ke dalam proses: diukur 276,7 MB / 4
+  // proses vs 108,1 MB / 1 proses untuk `node dist`. Di container 589 MB itu
+  // sepertiga RAM — terlalu mahal untuk sekadar menjalankan kode yang sudah
+  // dikompilasi.
+  const pkg = JSON.parse(await readFile('package.json', 'utf8')) as {
+    scripts: Record<string, string>;
+  };
+
+  assert.match(pkg.scripts.start, /^node dist\//, 'start memakai node dist');
+  assert.match(pkg.scripts.dashboard, /^node dist\//, 'dashboard memakai node dist');
+
+  // Yang MEMANG butuh tsx: watch mode dan skrip uji yang menjalankan .ts.
+  assert.match(pkg.scripts.dev, /tsx/, 'dev tetap tsx (perlu watch)');
+  assert.match(pkg.scripts.smoke, /tsx/, 'smoke tetap tsx (menjalankan .ts)');
+
+  // Berkas yang dirujuk harus benar-benar ada setelah build.
+  const { existsSync } = await import('node:fs');
+  assert.ok(existsSync('dist/index.js'), 'dist/index.js ada');
+  assert.ok(existsSync('dist/web/standalone.js'), 'dist/web/standalone.js ada');
+});
+
 /*
  * Pemeriksaan terakhir: angka test di dokumentasi harus sama dengan jumlah test
  * yang benar-benar dijalankan.
