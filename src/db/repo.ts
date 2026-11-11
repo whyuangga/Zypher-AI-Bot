@@ -1,4 +1,6 @@
 import { all, get, insert, run } from './index.js';
+import { config } from '../config.js';
+import { normalizeTimeZone } from '../lib/timezone.js';
 import {
   modeFromLegacySettings,
   normalizeDisplayMode,
@@ -29,6 +31,13 @@ export interface GuildSettings {
   autoMemory: boolean | null;
   /** Hanya admin yang boleh memulai chat AI. `null` = memakai ADMIN_ONLY_ROOMS dari .env. */
   adminOnlyRooms: boolean | null;
+  /**
+   * Zona waktu server: `Asia/Jakarta` (WIB), `Asia/Makassar` (WITA), atau
+   * `Asia/Jayapura` (WIT).
+   *
+   * `null` = memakai `TIMEZONE` dari .env; kalau itu juga kosong, WIB.
+   */
+  timezone: string | null;
   createdAt: number;
 }
 
@@ -108,6 +117,7 @@ interface GuildRow {
   name: string | null;
   persona: string | null;
   model: string | null;
+  timezone: string | null;
   tts_reply_in_room: number | boolean | null;
   rag_enabled: number | boolean | null;
   auto_memory: number | boolean | null;
@@ -161,6 +171,7 @@ const toGuild = (row: GuildRow): GuildSettings => ({
   name: row.name ?? null,
   persona: row.persona,
   model: row.model,
+  timezone: row.timezone ?? null,
   ttsReplyInRoom:
     row.tts_reply_in_room === null || row.tts_reply_in_room === undefined
       ? null
@@ -244,6 +255,34 @@ export async function setPersona(guildId: string, persona: string | null): Promi
 export async function setGuildModel(guildId: string, model: string | null): Promise<void> {
   await ensureGuild(guildId);
   await run('UPDATE guilds SET model = ? WHERE guild_id = ?', [model, guildId]);
+}
+
+/**
+ * Simpan zona waktu server (WIB/WITA/WIT).
+ *
+ * Nilai dinormalisasi di sini, bukan hanya di UI: endpoint JSON bisa dipanggil
+ * langsung, dan satu nilai ngawur di DB akan membuat semua jam meleset tanpa
+ * error. `null` dikembalikan sebagai "ikuti default .env".
+ */
+export async function setGuildTimeZone(guildId: string, timeZone: string | null): Promise<void> {
+  await ensureGuild(guildId);
+  const clean = timeZone === null ? null : normalizeTimeZone(timeZone);
+  await run('UPDATE guilds SET timezone = ? WHERE guild_id = ?', [clean, guildId]);
+}
+
+/**
+ * Zona waktu yang **benar-benar dipakai** untuk server ini.
+ *
+ * Urutan: kolom `guilds.timezone` → `TIMEZONE` dari .env → WIB. Semua pemanggil
+ * (prompt, jam tenang, dashboard) harus lewat fungsi ini supaya tidak ada
+ * tempat yang masih memakai WIB saat server disetel WITA.
+ */
+export async function resolveTimeZone(guildId: string | null | undefined): Promise<string> {
+  if (guildId) {
+    const row = await get<{ timezone: string | null }>('SELECT timezone FROM guilds WHERE guild_id = ?', [guildId]);
+    if (row?.timezone) return normalizeTimeZone(row.timezone);
+  }
+  return normalizeTimeZone(config.features.timeZone);
 }
 
 /**

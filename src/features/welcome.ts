@@ -23,7 +23,13 @@ import {
   type TextChannel,
   type AnyThreadChannel,
 } from 'discord.js';
-import { getGoodbyeSettings, getWelcomeSettings, type GoodbyeSettings, type WelcomeSettings } from '../db/repo.js';
+import {
+  getGoodbyeSettings,
+  getWelcomeSettings,
+  resolveTimeZone,
+  type GoodbyeSettings,
+  type WelcomeSettings,
+} from '../db/repo.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
 import { renderWelcomeCard } from './welcome-card.js';
@@ -80,7 +86,11 @@ async function generateGreeting(
   settings: WelcomeSettings,
   member: GuildMember,
 ): Promise<string | null> {
-  const result = await previewWelcome({ settings, ...memberShape(member) });
+  const result = await previewWelcome({
+    settings,
+    ...memberShape(member),
+    timeZone: await resolveTimeZone(member.guild.id),
+  });
   return result.source === 'ai' ? result.text : null;
 }
 

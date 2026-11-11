@@ -65,6 +65,9 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
     // hanya setelah kolom ini ditambahkan — perilaku lama tidak berubah
     // sampai admin menyimpan pengaturan agent lagi.
     'ALTER TABLE agent ADD COLUMN quiet_hours INTEGER',
+    // Zona waktu per server (WIB/WITA/WIT). NULL = WIB, jadi database lama
+    // tidak berubah perilaku sampai admin memilih zona lain.
+    'ALTER TABLE guilds ADD COLUMN timezone TEXT',
   ];
 
   for (const statement of statements) {

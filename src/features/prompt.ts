@@ -1,5 +1,6 @@
 import type { Keyword, Memory } from '../db/repo.js';
 import type { LanguageCode } from '../lib/language.js';
+import { normalizeTimeZone, timeZoneLabel } from '../lib/timezone.js';
 import { formatMemoriesForPrompt } from './memory.js';
 
 export interface PromptContext {
@@ -14,14 +15,22 @@ export interface PromptContext {
   now?: Date;
   /** Bahasa user (deteksi otomatis). Kosong = default bahasa Indonesia. */
   language?: LanguageCode;
+  /**
+   * Zona waktu server (WIB/WITA/WIT). Kalau kosong, memakai `TIMEZONE` dari
+   * .env lalu WIB — supaya pemanggil lama tetap jalan.
+   */
+  timeZone?: string | null;
 }
 
-function formatDate(date: Date): string {
-  return new Intl.DateTimeFormat('id-ID', {
+/** "Senin, 9 November 2026 pukul 14.05 WITA" — label zona ikut ditulis. */
+function formatDate(date: Date, timeZone?: string | null): string {
+  const zone = normalizeTimeZone(timeZone);
+  const formatted = new Intl.DateTimeFormat('id-ID', {
     dateStyle: 'full',
     timeStyle: 'short',
-    timeZone: 'Asia/Jakarta',
+    timeZone: zone,
   }).format(date);
+  return `${formatted} ${timeZoneLabel(zone)}`;
 }
 
 function buildKnowledgeBlock(keywords: Keyword[]): string {
@@ -78,7 +87,7 @@ export function buildSystemPrompt(context: PromptContext): string {
 
   const sections = [
     `Kamu adalah ${context.botName}, asisten AI di server Discord "${context.guildName}".`,
-    `Kamu sedang mengobrol berdua dengan ${context.userName} di ruang privat. Waktu sekarang: ${formatDate(now)}.`,
+    `Kamu sedang mengobrol berdua dengan ${context.userName} di ruang privat. Waktu sekarang: ${formatDate(now, context.timeZone)}.`,
     '',
     '[GAYA MENJAWAB]',
     ...languageInstruction(language),

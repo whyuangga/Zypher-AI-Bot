@@ -10,7 +10,13 @@ import {
   type TextChannel,
 } from 'discord.js';
 import { config } from '../config.js';
-import { getAgentSettings, getGuildSettings, hasAgentReaction, type AgentSettings } from '../db/repo.js';
+import {
+  getAgentSettings,
+  getGuildSettings,
+  hasAgentReaction,
+  resolveTimeZone,
+  type AgentSettings,
+} from '../db/repo.js';
 import { chat, type ChatMessage, type ChatTool } from '../lib/llm.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { chunkMessage, truncate } from '../lib/text.js';
@@ -31,6 +37,7 @@ import {
   shouldReply,
   type AgentState,
 } from './agent-core.js';
+import { clockInZone } from '../lib/timezone.js';
 import { agentRoleInstruction, buildQuietPrompt } from './preview.js';
 
 const MAX_TOOL_ROUNDS = 2;
@@ -151,6 +158,7 @@ async function composeReply(
       keywords: [],
       knowledgeBlock,
       language: 'id',
+      timeZone: await resolveTimeZone(guildId),
     }),
     '',
     '## Mode nimbrung di channel publik',
@@ -333,9 +341,12 @@ export async function handleQuietChannel(
   const settings = await getAgentSettings(guildId);
   if (!settings.channelId || settings.quietMinutes <= 0) return false;
 
+  // Zona waktu server menentukan jam tenang (WIB/WITA/WIT).
+  const timeZone = await resolveTimeZone(guildId);
+
   const entry = memoryFor(settings.channelId);
   const now = Date.now();
-  if (!shouldBreakSilence(settings, entry.state, now)) return false;
+  if (!shouldBreakSilence(settings, entry.state, now, timeZone)) return false;
 
   const channel = (await client.channels.fetch(settings.channelId).catch(() => null)) as GuildChannel | null;
   // Hanya channel teks di server yang boleh disapa — DM tidak punya "channel sepi".
@@ -348,7 +359,14 @@ export async function handleQuietChannel(
     const result = await chat({
       messages: [
         { role: 'system', content: QUIET_SYSTEM_PROMPT },
-        { role: 'user', content: buildQuietPrompt(channel.guild.name, { angle: pickQuietAngle(), recent }) },
+        {
+          role: 'user',
+          content: buildQuietPrompt(channel.guild.name, {
+            angle: pickQuietAngle(),
+            recent,
+            clock: clockInZone(now, timeZone),
+          }),
+        },
       ],
       maxTokens: config.ai.brevityTokens,
       temperature: 0.9,

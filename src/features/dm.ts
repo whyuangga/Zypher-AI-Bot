@@ -37,6 +37,7 @@ import {
   getHistory,
   listMemories,
   appendMessage,
+  resolveTimeZone,
   setDmSession,
   touchDmSession,
   type DmSession,
@@ -452,6 +453,8 @@ export async function endDmSession(user: User, botName: string): Promise<{ messa
   }
 
   const html = buildTranscriptHtml({
+    // Jam di transkrip = jam member, bukan jam Jakarta.
+    timeZone: guild ? await resolveTimeZone(guild.id) : null,
     guildName: guild?.name ?? 'DM',
     guildIconUrl: guild?.iconURL({ size: 128 }) ?? null,
     userName: user.username,

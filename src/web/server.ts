@@ -40,6 +40,8 @@ import {
   setGuildRagEnabled,
   setGuildAutoMemory,
   setGuildAdminOnlyRooms,
+  setGuildTimeZone,
+  resolveTimeZone,
   setModerationSettings,
   setPanelEnabled,
   setPersona,
@@ -56,6 +58,7 @@ import {
 } from '../features/preview.js';
 import { channelState } from '../features/agent.js';
 import { readResourceUsage } from './resources.js';
+import { TIME_ZONES } from '../lib/timezone.js';
 import { normalizeDisplayMode } from '../features/display-mode.js';
 import { cardRendererAvailable, chromiumPath, renderWelcomeCard } from '../features/welcome-card.js';
 import {
@@ -471,7 +474,11 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         embedModel: embeddingModelName(),
         model: config.ai.model,
         storage: dialect() === 'pg' ? 'PostgreSQL' : 'SQLite',
-        series: guildId ? await messagesPerDay(guildId, 7) : await messagesPerDay('', 7),
+        // Grafik dihitung pada zona server: batang "Hari ini" harus hari ini
+        // menurut member, bukan menurut Jakarta.
+        series: guildId
+          ? await messagesPerDay(guildId, 7, await resolveTimeZone(guildId))
+          : await messagesPerDay('', 7),
         // Dibaca dengan `catch`: kalau cgroup/proc tidak bisa dibaca di hosting,
         // panelnya hilang — halaman Ringkasan tetap tampil utuh.
         resources: await readResourceUsage({ workDir: process.cwd() }).catch((error: unknown) => {
@@ -688,6 +695,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       pengaturanPage({
         guildId,
         guildName: await getGuildName(guildId),
+        timeZone: settings?.timezone ?? null,
+        effectiveTimeZone: await resolveTimeZone(guildId),
+        defaultTimeZone: config.features.timeZone,
         model: settings?.model ?? null,
         defaultModel: config.ai.model,
         embedModel: embeddingModelName(),
@@ -875,6 +885,37 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     }
     await setPersona(guildId, persona || null);
     sendJson(response, 200, { ok: true, persona: persona || null });
+    return;
+  }
+
+  // Zona waktu server (WIB/WITA/WIT).
+  //
+  // Endpoint sendiri, bukan menumpang /api/pengaturan: nilainya bukan boolean
+  // dan butuh validasi daftar tertutup — kalau nilai ngawur diterima, semua
+  // jam (termasuk jam tenang malam) meleset tanpa error.
+  if (path === '/api/timezone' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const raw = await readBody(request, 4 * 1024);
+    let payload: { timezone?: unknown };
+    try {
+      payload = JSON.parse(raw) as { timezone?: unknown };
+    } catch {
+      sendJson(response, 400, { error: 'Format JSON tidak valid.' });
+      return;
+    }
+    const requested = typeof payload.timezone === 'string' ? payload.timezone.trim() : '';
+    const known = TIME_ZONES.some((zone) => zone.id === requested);
+    if (!known) {
+      sendJson(response, 400, {
+        error: `Zona waktu tidak dikenal. Pilih ${TIME_ZONES.map((zone) => `${zone.label} (${zone.id})`).join(', ')}.`,
+      });
+      return;
+    }
+    await setGuildTimeZone(guildId, requested);
+    sendJson(response, 200, { ok: true, timezone: requested });
     return;
   }
 
@@ -1299,6 +1340,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         const result = await previewQuietBreak({
           settings: current,
           guildName: (await getGuildName(guildId)) ?? 'Server ini',
+          timeZone: await resolveTimeZone(guildId),
           force: forced,
         });
 
@@ -1458,6 +1500,8 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       name,
       guildName,
       templateOnly: payload.templateOnly === true,
+      // Zona server menentukan kata "pagi/siang/sore" di sambutan.
+      timeZone: await resolveTimeZone(guildId),
       withCard,
       // Banner unggahan ikut dirender supaya admin melihat hasil akhirnya.
       bannerDataUri: await readBannerDataUri(settings.bannerPath),
@@ -1538,6 +1582,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       // State channel hanya ada kalau bot jalan di proses ini. Tanpa itu,
       // pratinjau tidak bisa menilai apakah timernya sudah waktunya.
       state: current.channelId ? channelState(current.channelId) : undefined,
+      timeZone: await resolveTimeZone(guildId),
       force: payload.force === true,
     });
     sendJson(response, 200, { ok: true, ...result });

@@ -1271,6 +1271,9 @@ test('pengaturanPage menampilkan toggle fitur', () => {
   const page = pengaturanPage({
     guildId: '123',
     guildName: 'Server Uji',
+    timeZone: null,
+    effectiveTimeZone: 'Asia/Jakarta',
+    defaultTimeZone: 'Asia/Jakarta',
     model: null,
     defaultModel: 'test',
     embedModel: null,
@@ -3235,8 +3238,11 @@ await testAsync('pemecah sepi: bot asli & pratinjau sama-sama pakai sudut acak',
   // Kalau hanya salah satu yang memakai, pratinjau kembali bukan cermin bot.
   assert.ok(agent.includes('pickQuietAngle'), 'bot asli memakai sudut acak');
   assert.ok(preview.includes('pickQuietAngle'), 'pratinjau memakai sudut acak');
-  assert.ok(agent.includes('buildQuietPrompt(channel.guild.name, { angle'), 'bot meneruskan sudut');
-  assert.ok(preview.includes('buildQuietPrompt(guildName, { angle'), 'pratinjau meneruskan sudut');
+  // Cek perilaku (argumen `angle` benar-benar diteruskan), bukan format satu
+  // baris — dulu test ini merah hanya karena pemanggilnya dipecah ke banyak
+  // baris saat menambah parameter `clock`.
+  assert.ok(/buildQuietPrompt\(channel\.guild\.name,\s*\{[^}]*angle/.test(agent), 'bot meneruskan sudut');
+  assert.ok(/buildQuietPrompt\(guildName,\s*\{[^}]*angle/.test(preview), 'pratinjau meneruskan sudut');
 });
 
 await testAsync('jam tenang malam menahan sapaan 23:00–06:00 WIB', async () => {
@@ -3278,6 +3284,194 @@ await testAsync('jam tenang malam menahan sapaan 23:00–06:00 WIB', async () =>
     siangAt,
   );
   assert.equal(siang, true, 'siang tetap menyapa');
+});
+
+console.log('\nZona waktu Indonesia (WIB/WITA/WIT)');
+
+await testAsync('zona waktu: tiga zona resmi Indonesia dikenali', async () => {
+  const { TIME_ZONES, DEFAULT_TIME_ZONE, normalizeTimeZone, timeZoneLabel, hourInZone } = await import(
+    '../src/lib/timezone.js'
+  );
+
+  assert.equal(TIME_ZONES.length, 3, 'tepat tiga zona');
+  assert.deepEqual(
+    TIME_ZONES.map((zone) => zone.label),
+    ['WIB', 'WITA', 'WIT'],
+    'label sesuai referensi',
+  );
+  assert.deepEqual(
+    TIME_ZONES.map((zone) => zone.offset),
+    [7, 8, 9],
+    'offset 7/8/9 dari UTC',
+  );
+  assert.equal(DEFAULT_TIME_ZONE, 'Asia/Jakarta', 'bawaan WIB (perilaku lama)');
+
+  // Normalisasi menerima nama IANA, label, dan label huruf kecil.
+  assert.equal(normalizeTimeZone('Asia/Makassar'), 'Asia/Makassar');
+  assert.equal(normalizeTimeZone('WITA'), 'Asia/Makassar', 'label diterima');
+  assert.equal(normalizeTimeZone('wit'), 'Asia/Jayapura', 'huruf kecil oke');
+  assert.equal(normalizeTimeZone('Asia/Jayapura'), 'Asia/Jayapura');
+  // Nilai ngawur tidak boleh melempar / mengubah jam jadi acak.
+  assert.equal(normalizeTimeZone('Mars/Olympus'), 'Asia/Jakarta', 'tak dikenal -> WIB');
+  assert.equal(normalizeTimeZone(null), 'Asia/Jakarta');
+  assert.equal(normalizeTimeZone(''), 'Asia/Jakarta');
+
+  assert.equal(timeZoneLabel('Asia/Makassar'), 'WITA');
+  assert.equal(timeZoneLabel(null), 'WIB');
+
+  // Jam harus benar-benar berbeda 1 jam antar zona (12:00 UTC).
+  const noon = Date.UTC(2026, 10, 9, 5, 0, 0); // 12:00 WIB
+  assert.equal(hourInZone(noon, 'Asia/Jakarta'), 12);
+  assert.equal(hourInZone(noon, 'Asia/Makassar'), 13, 'WITA +1 jam');
+  assert.equal(hourInZone(noon, 'Asia/Jayapura'), 14, 'WIT +2 jam');
+});
+
+await testAsync('zona waktu: tengah malam dibaca 0, bukan 24', async () => {
+  const { hourInZone } = await import('../src/lib/timezone.js');
+  // 17:00 UTC = 00:00 WIB. Kalau jam dibaca 24, `24 >= 23` membuat seluruh
+  // dini hari salah dianggap jam tenang — dan itu bug yang sulit terlihat.
+  const midnight = Date.UTC(2026, 10, 8, 17, 0, 0);
+  assert.equal(hourInZone(midnight, 'Asia/Jakarta'), 0);
+});
+
+await testAsync('zona waktu: jam tenang mengikuti zona server', async () => {
+  const { isQuietHour } = await import('../src/features/agent-core.js');
+  // 23:30 WIB = 00:30 WITA = 01:30 WIT (semua masih jam tenang).
+  const at = (iso: string) => new Date(iso).getTime();
+  const wib = at('2026-11-09T23:30:00+07:00');
+  assert.equal(isQuietHour(wib, 'Asia/Jakarta'), true);
+
+  // 22:30 WIB = 23:30 WITA: server WITA sudah tenang, WIB belum.
+  const beda = at('2026-11-09T22:30:00+07:00');
+  assert.equal(isQuietHour(beda, 'Asia/Makassar'), true, 'WITA sudah masuk batas');
+  assert.equal(isQuietHour(beda, 'Asia/Jakarta'), false, 'WIB belum');
+});
+
+await testAsync('zona waktu: tersimpan per server & didahulukan dari .env', async () => {
+  const { getGuildSettings, setGuildTimeZone, resolveTimeZone } = await import('../src/db/repo.js');
+  const { config } = await import('../src/config.js');
+
+  await setGuildTimeZone(GUILD, 'Asia/Makassar');
+  assert.equal((await getGuildSettings(GUILD))?.timezone, 'Asia/Makassar', 'tersimpan');
+  assert.equal(await resolveTimeZone(GUILD), 'Asia/Makassar', 'dipakai, menang atas .env');
+
+  // Tanpa baris DB (server baru) -> default .env.
+  assert.equal(await resolveTimeZone('guild-belum-ada-123'), config.features.timeZone);
+
+  // Nilai ngawur dinormalisasi, bukan disimpan mentah.
+  await setGuildTimeZone(GUILD, 'WIT');
+  assert.equal((await getGuildSettings(GUILD))?.timezone, 'Asia/Jayapura', 'label -> IANA');
+
+  await setGuildTimeZone(GUILD, 'Asia/Jakarta');
+});
+
+await testAsync('zona waktu: prompt & sambutan memakai zona server', async () => {
+  const { buildSystemPrompt } = await import('../src/features/prompt.js');
+
+  const prompt = buildSystemPrompt({
+    botName: 'Zypher',
+    guildName: 'Server Uji',
+    userName: 'Bagas',
+    persona: null,
+    memories: [],
+    keywords: [],
+    now: new Date('2026-11-09T14:05:00+08:00'),
+    timeZone: 'Asia/Makassar',
+  });
+  // Label zona harus tertulis supaya model tahu "pagi" itu jam berapa.
+  assert.ok(prompt.includes('WITA'), 'label zona ada di prompt');
+  assert.equal(prompt.includes('WIB'), false, 'tidak memakai WIB saat disetel WITA');
+
+  const source = await readFile('src/features/prompt.ts', 'utf8');
+  assert.equal(
+    /timeZone: 'Asia\/Jakarta'/.test(source),
+    false,
+    'tidak ada lagi zona yang dipaku di prompt',
+  );
+});
+
+await testAsync('zona waktu: transkrip & grafik ikut zona server', async () => {
+  const { buildTranscriptHtml } = await import('../src/lib/transcript.js');
+  const { messagesPerDay } = await import('../src/db/repo.js');
+
+  const base = {
+    guildName: 'Server Uji',
+    guildIconUrl: null,
+    userName: 'Bagas',
+    userTag: 'bagas',
+    channelName: 'DM',
+    startedAt: new Date('2026-11-09T21:00:00+08:00'),
+    endedAt: new Date('2026-11-09T22:00:00+08:00'),
+    messages: [],
+    memoryLines: [],
+  };
+
+  const wita = buildTranscriptHtml({ ...base, timeZone: 'Asia/Makassar' });
+  const wib = buildTranscriptHtml({ ...base, timeZone: 'Asia/Jakarta' });
+  assert.ok(wita.includes('WITA'), 'footer memakai label zona server');
+  assert.ok(wib.includes('WIB'), 'WIB tetap benar');
+  // Jam di WITA harus 1 jam lebih maju daripada WIB untuk waktu yang sama.
+  assert.notEqual(wita.slice(0, 200), wib.slice(0, 200), 'tanggal/jam berbeda antar zona');
+
+  // Grafik: pengelompokan tanggal mengikuti zona yang diberikan.
+  const now = Date.now();
+  const seriesWita = await messagesPerDay(GUILD, 3, 'Asia/Makassar');
+  const seriesWib = await messagesPerDay(GUILD, 3, 'Asia/Jakarta');
+  assert.equal(seriesWita.length, 3, 'tetap 3 hari');
+  assert.ok(seriesWib.length === 3 && now > 0);
+
+  // Server.ts harus meneruskan zona server, bukan default.
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(/messagesPerDay\(guildId, 7, await resolveTimeZone/.test(server), 'grafik pakai zona server');
+});
+
+await testAsync('zona waktu: tidak ada lagi jam yang dipaku ke WIB', async () => {
+  // Pemindaian sumber: zona yang benar-benar memengaruhi perilaku harus lewat
+  // `lib/timezone.ts`. Format tanggal murni-tampilan (label hari di dashboard)
+  // memang tetap WIB — itu disengaja, karena dashboard dipakai admin Indonesia.
+  const files = [
+    'src/features/prompt.ts',
+    'src/features/agent-core.ts',
+    'src/features/preview.ts',
+    'src/features/welcome.ts',
+    'src/features/agent.ts',
+  ];
+  for (const file of files) {
+    const source = await readFile(file, 'utf8');
+    assert.equal(
+      /timeZone: 'Asia\/Jakarta'/.test(source),
+      false,
+      `${file} masih memaku zona waktu`,
+    );
+  }
+
+  // Fungsi zona harus punya satu sumber.
+  const zone = await readFile('src/lib/timezone.ts', 'utf8');
+  assert.ok(zone.includes('hourCycle'), 'pakai h23 supaya tengah malam = 0');
+  assert.ok(zone.includes("DEFAULT_TIME_ZONE: TimeZoneId = 'Asia/Jakarta'"), 'bawaan WIB');
+});
+
+await testAsync('zona waktu: bisa diatur dari dashboard', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(server.includes("path === '/api/timezone'"), 'endpoint ada');
+  assert.ok(server.includes('Zona waktu tidak dikenal'), 'nilai ngawur ditolak');
+  assert.ok(server.includes('setGuildTimeZone'), 'disimpan lewat repo');
+
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  assert.ok(pages.includes('id="timeZone"'), 'ada pilihan di halaman pengaturan');
+  assert.ok(pages.includes('async function saveTimeZone()'), 'fungsi simpan ada');
+  assert.ok(pages.includes("'/api/timezone'"), 'menembak endpoint yang benar');
+  for (const label of ['WIB', 'WITA', 'WIT']) {
+    assert.ok(pages.includes(label), `pilihan ${label} ada`);
+  }
+
+  // Halaman pengaturan mengirim zona efektif, bukan hanya nilai tersimpan.
+  assert.ok(server.includes('effectiveTimeZone'), 'zona efektif dikirim ke UI');
+
+  const schema = await readFile('src/db/schema.ts', 'utf8');
+  assert.ok(schema.includes('timezone'), 'kolom DB ada');
+  const migrate = await readFile('src/db/index.ts', 'utf8');
+  assert.ok(migrate.includes('ALTER TABLE guilds ADD COLUMN timezone'), 'database lama dimigrasi');
 });
 
 await testAsync('jam tenang: pratinjau menjelaskan alasannya', async () => {

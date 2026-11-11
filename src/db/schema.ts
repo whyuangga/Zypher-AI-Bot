@@ -8,6 +8,9 @@ CREATE TABLE IF NOT EXISTS guilds (
   name           TEXT,
   persona        TEXT,
   model          TEXT,
+  -- Zona waktu server: 'Asia/Jakarta' (WIB), 'Asia/Makassar' (WITA),
+  -- 'Asia/Jayapura' (WIT). NULL = WIB (perilaku lama).
+  timezone       TEXT,
   tts_reply_in_room INTEGER,
   rag_enabled    INTEGER,
   auto_memory    INTEGER,
@@ -192,6 +195,7 @@ CREATE TABLE IF NOT EXISTS guilds (
   name              TEXT,
   persona           TEXT,
   model             TEXT,
+  timezone          TEXT,
   tts_reply_in_room BOOLEAN,
   rag_enabled       BOOLEAN,
   auto_memory       BOOLEAN,

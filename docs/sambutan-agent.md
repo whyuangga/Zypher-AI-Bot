@@ -266,11 +266,18 @@ ke prompt sebagai larangan mengulang (`buildAntiRepeatBlock`), ditambah **sudut
 obrolan acak** (`QUIET_ANGLES`) supaya sapaan tidak selalu berbentuk
 "Sepi banget ya…". Keduanya juga berlaku di pratinjau.
 
+Prompt sapaan menyebut **jam setempat** ("Sekarang pukul 14:05 WITA") supaya
+model tidak salah menebak pagi/siang/malam saat server berada di WITA atau WIT.
+
 ### Jam tenang malam
 
-Sapaan otomatis ditahan antara **23:00–06:00 WIB** (`isQuietHour()`,
-`quiet_hours` di tabel `agent`). Balasan ke mention/reply tetap jalan. Waktu
-diambil dengan zona **Asia/Jakarta**, bukan zona server — hosting umumnya UTC.
+Sapaan otomatis ditahan antara **23:00–06:00 zona server** (`isQuietHour()`,
+`quiet_hours` di tabel `agent`). Balasan ke mention/reply tetap jalan.
+
+Zonanya mengikuti **Pengaturan → Zona waktu server** (WIB/WITA/WIT), bukan
+dipaku ke Jakarta dan bukan zona mesin — hosting umumnya UTC. Server di
+Makassar (WITA) jadi berhenti menyapa satu jam lebih awal daripada WIB, sesuai
+jam dinding warganya. Lihat [dashboard.md](dashboard.md#zona-waktu-server-wib--wita--wit).
 
 Supaya hasil tes tidak pernah menyimpang dari perilaku bot, prompt sambutan,
 prompt perpisahan, aturan gaya agent, dan prompt pemecah sepi **hanya ada di satu
@@ -463,7 +470,7 @@ Tiga penyebab yang sudah diperbaiki:
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 281 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 289 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

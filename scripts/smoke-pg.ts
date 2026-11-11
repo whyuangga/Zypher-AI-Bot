@@ -319,6 +319,19 @@ await test('agent: gallery_channel_id ada di Postgres', async () => {
   assert.equal((await repo.getAgentSettings(guild)).galleryChannelId, null);
 });
 
+await test('guilds: timezone ada di PostgreSQL', async () => {
+  const repo = await import('../src/db/repo.js');
+  const guild = 'g-timezone-pg';
+
+  await repo.setGuildTimeZone(guild, 'Asia/Makassar');
+  assert.equal((await repo.getGuildSettings(guild))?.timezone, 'Asia/Makassar', 'tersimpan');
+  assert.equal(await repo.resolveTimeZone(guild), 'Asia/Makassar', 'dipakai');
+
+  // Normalisasi berlaku juga di jalur Postgres.
+  await repo.setGuildTimeZone(guild, 'WIT');
+  assert.equal((await repo.getGuildSettings(guild))?.timezone, 'Asia/Jayapura', 'label -> IANA');
+});
+
 await test('agent: quiet_hours ada di Postgres', async () => {
   const repo = await import('../src/db/repo.js');
   const guild = 'g-agent-quiet-pg';

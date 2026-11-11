@@ -141,7 +141,46 @@ Kalau panel menampilkan port tertentu (mis. `25566` di tab Startup/Network), tul
 - Aksi destruktif (hapus dokumen/keyword) memakai dialog konfirmasi, bukan `confirm()` bawaan browser.
 - Semua notifikasi muncul sebagai *toast* di kanan bawah.
 
-> Grafik memakai zona waktu **Asia/Jakarta**, jadi batang "Hari ini" mengikuti tanggal WIB — bukan UTC server.
+> Grafik memakai **zona waktu server** (WIB/WITA/WIT), jadi batang "Hari ini"
+> mengikuti tanggal setempat — bukan UTC server. Label hari di sumbu (Sen, Sel,
+> …) tetap berbahasa Indonesia dan disusun di WIB; yang berubah adalah batas
+> harinya.
+
+---
+
+## Zona waktu server (WIB / WITA / WIT)
+
+Indonesia punya tiga zona resmi, dan server Discord bisa berada di mana saja:
+
+| Label | Zona IANA | UTC | Wilayah |
+|---|---|---|---|
+| **WIB** | `Asia/Jakarta` | +7 | Sumatra, Jawa, Kalimantan Barat/Tengah |
+| **WITA** | `Asia/Makassar` | +8 | Bali, NTB, NTT, Sulawesi, Kalimantan Selatan/Timur/Utara |
+| **WIT** | `Asia/Jayapura` | +9 | Maluku, Papua |
+
+Pilihannya ada di **Pengaturan → Zona waktu server**. Nilainya disimpan di
+`guilds.timezone`; sebelum diatur, dipakai `TIMEZONE` dari `.env`, lalu WIB.
+
+Yang ikut berubah saat zona diganti — semuanya, bukan hanya label:
+
+- **Jam di system prompt** chat/DM (`Senin, 9 November 2026 pukul 14.05 WITA`).
+- **Jam tenang malam** agent: 23:00–06:00 dihitung pada zona server, jadi server
+  WITA berhenti menyapa satu jam lebih awal daripada WIB.
+- **Sapaan pemecah sepi**: prompt menyebut jam setempat, jadi "selamat pagi"
+  tidak muncul jam 9 pagi WITA karena model mengira masih jam 8.
+- **Kata pagi/siang/sore** di sambutan member baru.
+- **Grafik aktivitas 7 hari**: batas harinya mengikuti zona server.
+- **Jam di transkrip** yang dikirim ke DM member.
+
+Alasannya bukan sekadar kerapian: hosting umumnya berjalan di UTC, jadi zona
+harus disebut eksplisit. Sebelum fitur ini, semuanya dipaku ke `Asia/Jakarta`
+dan member di Makassar melihat jam yang meleset satu jam.
+
+> **Catatan teknis.** Semua perhitungan jam lewat `src/lib/timezone.ts` —
+> `hourInZone()`, `partOfDayInZone()`, `clockInZone()`. Fungsi pertama memakai
+> `hourCycle: 'h23'`, bukan `hour12: false`: di beberapa runtime yang terakhir
+> menghasilkan "24" untuk tengah malam, dan `24 >= 23` akan membuat seluruh
+> dini hari salah dianggap jam tenang.
 
 ---
 
@@ -351,7 +390,7 @@ Halaman sendiri, sengaja terpisah dari sambutan karena yang diatur bukan
   diabaikan. Isi satu channel di kedua kolom akan ditolak.
 - Batas per jam (gabungan kedua channel), jeda minimum, dan sakelar "diam saat
   ramai".
-- **Jam tenang malam (23:00–06:00 WIB)** — bot berhenti menyapa channel sendiri
+- **Jam tenang malam (23:00–06:00 zona server)** — bot berhenti menyapa channel sendiri
   saat orang tidur. Balasan ke mention/reply **tetap jalan**; yang ditahan hanya
   sapaan pemecah sepi. Bisa dimatikan kalau server memang ramai malam.
 
@@ -418,6 +457,7 @@ Endpoint halaman Sambutan & AI Agent (pratinjau tidak mengirim apa pun;
 | `POST /api/send-test/agent` `{message, role, channelId}` | Kirim satu pesan uji berisi kutipan + balasan bot |
 | `POST /api/send-test/quiet` `{force?}` | Buat kalimat pemecah sepi lalu **kirim** ke channel ngobrol tersimpan |
 | `POST /api/persona` `{guild, persona}` | Simpan persona server (string atau `null`). Dipangkas, maks 1500 karakter; balas `{ok, persona}` |
+| `POST /api/timezone` `{guild, timezone}` | Simpan zona waktu server. Hanya menerima `Asia/Jakarta` \| `Asia/Makassar` \| `Asia/Jayapura`; selain itu 400 dengan daftar pilihan |
 
 Semua `send-test` menolak dengan **400** kalau bot tidak jalan di proses
 dashboard (tidak ada koneksi Discord untuk mengirim), dan alasan kegagalan

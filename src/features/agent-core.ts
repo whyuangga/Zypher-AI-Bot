@@ -12,6 +12,7 @@
  *   5. Menyapa saat sepi hanya kalau memang sudah lama tidak ada obrolan.
  */
 import type { AgentSettings } from '../db/repo.js';
+import { hourInZone } from '../lib/timezone.js';
 
 /** Jejak satu pesan member di channel agent. */
 export interface ChannelTrace {
@@ -191,29 +192,31 @@ export function shouldReply(input: ShouldReplyInput): ReplyDecision {
   return { reply: true, summoned };
 }
 
-/** Boleh menyapa duluan karena channel sudah sepi? */
 /**
- * Apakah `now` masuk jam tenang malam (23:00–06:00 WIB)?
+ * Apakah `now` masuk jam tenang malam (23:00–06:00)?
  *
- * Zona waktu dikunci ke Asia/Jakarta, bukan zona server: hosting umumnya UTC,
- * jadi tanpa ini "jam 3 pagi" jadi jam 10 pagi dan aturannya tidak berguna.
+ * `timeZone` = zona waktu server (WIB/WITA/WIT). Dulu dipaku ke Asia/Jakarta,
+ * jadi server di Makassar baru berhenti menyapa satu jam lebih lambat dari
+ * jadwal yang tertulis di dashboard. Hosting umumnya UTC, jadi zona harus
+ * disebut eksplisit — bukan memakai zona mesin.
  */
-export function isQuietHour(now: number): boolean {
-  const hour = Number(
-    new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hour12: false, timeZone: 'Asia/Jakarta' }).format(
-      new Date(now),
-    ),
-  );
+export function isQuietHour(now: number, timeZone?: string | null): boolean {
+  const hour = hourInZone(now, timeZone);
   return hour >= 23 || hour < 6;
 }
 
-export function shouldBreakSilence(settings: AgentSettings, state: AgentState, now: number): boolean {
+export function shouldBreakSilence(
+  settings: AgentSettings,
+  state: AgentState,
+  now: number,
+  timeZone?: string | null,
+): boolean {
   // Channel galeri tidak pernah disapa sendiri — isinya foto, bukan obrolan.
   if (!settings.channelId || settings.quietMinutes <= 0) return false;
 
   // Jam tenang malam: jangan menyapa channel kosong saat orang tidur. Balasan
   // ke mention tetap jalan lewat jalur lain — yang ditahan hanya sapaan.
-  if (settings.quietHours && isQuietHour(now)) return false;
+  if (settings.quietHours && isQuietHour(now, timeZone)) return false;
   if (settings.cooldownSeconds > 0 && now - state.lastReplyAt < settings.cooldownSeconds * 1000) return false;
 
   const lastTrace = state.traces[state.traces.length - 1];

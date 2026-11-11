@@ -4,6 +4,7 @@
  */
 import { icon } from './icons.js';
 import { DISPLAY_MODES, normalizeDisplayMode } from '../../features/display-mode.js';
+import { TIME_ZONES, normalizeTimeZone, timeZoneTitle } from '../../lib/timezone.js';
 import {
   activityChart,
   badge,
@@ -752,6 +753,11 @@ export function pengaturanPage(
   options: PageContext & {
     // Persona TIDAK lagi di sini — pindah ke halaman AI Agent (`agentPage`),
     // karena di Pengaturan orang mengira itu pengaturan akun.
+    /** Zona waktu tersimpan; null = ikut default .env. */
+    timeZone: string | null;
+    /** Zona yang benar-benar dipakai (sudah termasuk fallback .env). */
+    effectiveTimeZone: string;
+    defaultTimeZone: string;
     model: string | null;
     defaultModel: string;
     embedModel: string | null;
@@ -781,6 +787,32 @@ export function pengaturanPage(
   <button class="btn-primary" type="button" id="saveModel" onclick="saveSettings({ model: document.getElementById('model').value })">
     ${icon('check', 16)} Simpan model
   </button>
+</div>`,
+  });
+
+  // Zona waktu Indonesia. WIB/WITA/WIT mempengaruhi jam di prompt, jam tenang
+  // malam, dan kata "pagi/siang/sore" di sambutan — bukan sekadar label.
+  const timeZoneCard = card({
+    title: 'Zona waktu server',
+    hint: `sekarang: ${timeZoneTitle(options.effectiveTimeZone)}`,
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:12px">
+  <div>
+    <label class="field" for="timeZone">Zona waktu</label>
+    <span class="select-shell" style="width:100%">
+      <select id="timeZone" style="width:100%">
+        ${TIME_ZONES.map(
+          (zone) =>
+            `<option value="${esc(zone.id)}" ${normalizeTimeZone(options.effectiveTimeZone) === zone.id ? 'selected' : ''}>${esc(zone.label)} — ${esc(zone.longName)} (UTC+${esc(zone.offset)})</option>`,
+        ).join('')}
+      </select>
+      ${icon('chevron', 15)}
+    </span>
+    <p class="hint">Mengatur jam di prompt AI, jam tenang malam (23:00–06:00), dan kata sapaan pagi/siang/sore. Server di Bali atau Sulawesi pakai <b>WITA</b>; Maluku &amp; Papua pakai <b>WIT</b>.</p>
+  </div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <button class="btn-primary" type="button" id="saveTimeZone" onclick="saveTimeZone()">${icon('check', 16)} Simpan zona waktu</button>
+    <span class="hint" style="margin:0">Berlaku untuk pesan berikutnya.</span>
+  </div>
 </div>`,
   });
 
@@ -867,11 +899,31 @@ export function pengaturanPage(
     title: 'Pengaturan',
     subtitle: 'Perilaku AI dan informasi server. Perubahan langsung berlaku untuk pesan berikutnya.',
   })}
-<div class="grid cols-2-even">${modelCard}</div>
+<div class="grid cols-2-even">${modelCard}${timeZoneCard}</div>
 <div class="mt">${voiceCard}</div>
 <div class="mt">${featureCard}</div>
 <div class="mt">${infoCard}</div>
 <script>
+/**
+ * Simpan zona waktu server (WIB/WITA/WIT).
+ *
+ * Endpoint sendiri, bukan menumpang saveSettings: nilainya bukan boolean, dan
+ * server menolak nilai di luar tiga zona resmi — jadi salah ketik tidak bisa
+ * diam-diam menggeser jam seluruh bot.
+ */
+async function saveTimeZone() {
+  var button = document.getElementById('saveTimeZone');
+  button.disabled = true;
+  try {
+    await postJson('/api/timezone', {
+      guild: ${JSON.stringify(options.guildId)},
+      timezone: document.getElementById('timeZone').value,
+    }, 'Zona waktu disimpan.');
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function saveSettings(payload) {
   payload.guild = ${JSON.stringify(options.guildId)};
   try {

@@ -7,6 +7,8 @@ export interface TranscriptMessage {
   attachments: Array<{ name: string; url: string }>;
 }
 
+import { normalizeTimeZone, timeZoneLabel } from './timezone.js';
+
 export interface TranscriptInput {
   guildName: string;
   guildIconUrl: string | null;
@@ -18,6 +20,12 @@ export interface TranscriptInput {
   messages: TranscriptMessage[];
   memoryLines: string[];
   summary?: string | null;
+  /**
+   * Zona waktu server (WIB/WITA/WIT). Transkrip dikirim ke DM member yang
+   * biasanya berada di zona yang sama dengan server — jam di transkrip harus
+   * jam mereka, bukan jam Jakarta.
+   */
+  timeZone?: string | null;
 }
 
 const escapeHtml = (value: string): string =>
@@ -28,15 +36,19 @@ const escapeHtml = (value: string): string =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
-const formatDateTime = (date: Date): string =>
+const formatDateTime = (date: Date, timeZone?: string | null): string =>
   new Intl.DateTimeFormat('id-ID', {
     dateStyle: 'medium',
     timeStyle: 'short',
-    timeZone: 'Asia/Jakarta',
+    timeZone: normalizeTimeZone(timeZone),
   }).format(date);
 
-const formatTime = (date: Date): string =>
-  new Intl.DateTimeFormat('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }).format(date);
+const formatTime = (date: Date, timeZone?: string | null): string =>
+  new Intl.DateTimeFormat('id-ID', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: normalizeTimeZone(timeZone),
+  }).format(date);
 
 /** Ubah teks Discord sederhana jadi HTML yang aman (tanpa mengizinkan HTML mentah). */
 function renderContent(raw: string): string {
@@ -59,7 +71,7 @@ function renderContent(raw: string): string {
   return text;
 }
 
-function renderMessage(message: TranscriptMessage): string {
+function renderMessage(message: TranscriptMessage, timeZone?: string | null): string {
   const avatar = message.authorAvatarUrl
     ? `<img class="avatar" src="${escapeHtml(message.authorAvatarUrl)}" alt="">`
     : '<div class="avatar avatar-fallback"></div>';
@@ -80,7 +92,7 @@ function renderMessage(message: TranscriptMessage): string {
         <header>
           <span class="name">${escapeHtml(message.authorName)}</span>
           ${message.isBot ? '<span class="badge">AI</span>' : ''}
-          <time>${formatTime(message.createdAt)}</time>
+          <time>${formatTime(message.createdAt, timeZone)}</time>
         </header>
         <div class="content">${renderContent(message.content) || '<em class="empty">(tanpa teks)</em>'}</div>
         ${attachments}
@@ -103,7 +115,7 @@ export function buildTranscriptHtml(input: TranscriptInput): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Transkrip — ${escapeHtml(input.userName)} — ${formatDateTime(input.endedAt)}</title>
+<title>Transkrip — ${escapeHtml(input.userName)} — ${formatDateTime(input.endedAt, input.timeZone)}</title>
 <style>
   :root {
     color-scheme: dark;
@@ -191,8 +203,8 @@ export function buildTranscriptHtml(input: TranscriptInput): string {
     <div class="stats">
       <div class="stat"><span>Member</span><strong>${escapeHtml(input.userName)}</strong></div>
       <div class="stat"><span>Pesan</span><strong>${input.messages.length}</strong></div>
-      <div class="stat"><span>Mulai</span><strong>${formatDateTime(input.startedAt)}</strong></div>
-      <div class="stat"><span>Selesai</span><strong>${formatDateTime(input.endedAt)}</strong></div>
+      <div class="stat"><span>Mulai</span><strong>${formatDateTime(input.startedAt, input.timeZone)}</strong></div>
+      <div class="stat"><span>Selesai</span><strong>${formatDateTime(input.endedAt, input.timeZone)}</strong></div>
     </div>
   </section>
 
@@ -206,11 +218,11 @@ export function buildTranscriptHtml(input: TranscriptInput): string {
   <section class="card">
     <h2>Percakapan</h2>
     <div class="log">
-      ${input.messages.map(renderMessage).join('\n') || '<p class="muted">Belum ada pesan.</p>'}
+      ${input.messages.map((message) => renderMessage(message, input.timeZone)).join('\n') || '<p class="muted">Belum ada pesan.</p>'}
     </div>
   </section>
 
-  <footer>Dibuat otomatis oleh Zypher AI Bot • ${formatDateTime(input.endedAt)} WIB</footer>
+  <footer>Dibuat otomatis oleh Zypher AI Bot • ${formatDateTime(input.endedAt, input.timeZone)} ${timeZoneLabel(input.timeZone)}</footer>
 </div>
 </body>
 </html>`;

@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { z } from 'zod';
+import { normalizeTimeZone } from './lib/timezone.js';
 
 /**
  * Konversi string env -> boolean dengan benar.
@@ -81,6 +82,12 @@ const requiredGuildId = z
   .refine((value) => /^\d{17,20}$/.test(value), 'GUILD_ID harus angka 17–20 digit (ID server, bukan nama)');
 
 const optionalSecret = z
+  .string()
+  .optional()
+  .transform((value) => (value && value.trim() !== '' ? value.trim() : undefined));
+
+/** Teks bebas yang boleh kosong (mis. TIMEZONE). Kosong -> undefined. */
+const optionalString = z
   .string()
   .optional()
   .transform((value) => (value && value.trim() !== '' ? value.trim() : undefined));
@@ -169,6 +176,9 @@ const schema = z.object({
   SHARD_INDEX: numberish(0, 0, 255),
   SHARD_COUNT: numberish(1, 1, 256),
   AUTO_MEMORY: booleanish(true),
+  // Zona waktu bawaan: WIB/WITA/WIT (atau nama IANA). Bisa dioverride per
+  // server lewat dashboard; ini hanya cadangan untuk database lama.
+  TIMEZONE: optionalString,
   RATE_LIMIT_PER_MINUTE: numberish(12, 0, 240),
   MAX_INPUT_CHARS: numberish(2000, 100, 6000),
   MODLOG_CHANNEL_ID: optionalId,
@@ -338,8 +348,10 @@ export const config = {
     maxBytes: env.VOICE_MAX_MB * 1024 * 1024,
   },
   features: {
-    // Zona waktu untuk jam di prompt sambutan & statistik dashboard.
-    timeZone: 'Asia/Jakarta',
+    // Zona waktu bawaan untuk jam di prompt & statistik dashboard.
+    // Nilai per server (guilds.timezone) menang atas ini — lihat
+    // `resolveTimeZone()` di db/repo.ts.
+    timeZone: normalizeTimeZone(env.TIMEZONE),
     autoMemory: env.AUTO_MEMORY,
     rateLimitPerMinute: env.RATE_LIMIT_PER_MINUTE,
     maxInputChars: env.MAX_INPUT_CHARS,

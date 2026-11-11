@@ -23,6 +23,7 @@ import { config } from '../config.js';
 import { chat, type ChatMessage } from '../lib/llm.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { truncate } from '../lib/text.js';
+import { clockInZone, partOfDayInZone, timeZoneLabel } from '../lib/timezone.js';
 import {
   MEMORY_TURNS,
   QUIET_MAX_CHARS,
@@ -60,20 +61,14 @@ export interface PreviewResult {
   cardDataUri?: string;
 }
 
-/** Jam lokal server untuk menentukan pagi/siang/malam. */
-export function partOfDay(now = new Date()): string {
-  const hour = Number(
-    new Intl.DateTimeFormat('id-ID', {
-      timeZone: config.features.timeZone,
-      hour: 'numeric',
-      hour12: false,
-    }).format(now),
-  );
-  if (hour < 4) return 'dinihari';
-  if (hour < 11) return 'pagi';
-  if (hour < 15) return 'siang';
-  if (hour < 18) return 'sore';
-  return 'malam';
+/**
+ * Jam lokal server untuk menentukan pagi/siang/malam.
+ *
+ * `timeZone` = zona server (WIB/WITA/WIT). Tanpa argumen, memakai
+ * `TIMEZONE` dari .env (cadangan untuk pemanggil lama).
+ */
+export function partOfDay(now = new Date(), timeZone?: string | null): string {
+  return partOfDayInZone(now, timeZone ?? config.features.timeZone);
 }
 
 /* ------------------------------------------------------------------ */
@@ -207,6 +202,8 @@ export interface WelcomePreviewOptions {
   }) => Promise<Buffer | null>;
   /** Banner unggahan admin (data URI) untuk ikut dirender di kartu. */
   bannerDataUri?: string | null;
+  /** Zona waktu server (WIB/WITA/WIT) untuk menentukan pagi/siang/sore. */
+  timeZone?: string | null;
   /** Judul kecil di kartu: "SELAMAT DATANG" atau "SAMPAI JUMPA". */
   kicker?: string;
 }
@@ -222,7 +219,7 @@ export async function previewWelcome(options: WelcomePreviewOptions): Promise<Pr
   if (settings.useAi && !options.templateOnly) {
     const result = await askModel(
       'Kamu menulis satu sapaan singkat. Balas hanya teks sapaannya.',
-      buildWelcomePrompt(settings, { name, guildName }, partOfDay()),
+      buildWelcomePrompt(settings, { name, guildName }, partOfDay(new Date(), options.timeZone)),
       0.9,
       config.ai.brevityTokens,
       'sambutan',
@@ -347,14 +344,24 @@ export function agentRoleInstruction(role: 'chat' | 'gallery'): string {
  */
 export function buildQuietPrompt(
   guildName: string,
-  options: { angle?: string; recent?: readonly string[] } = {},
+  options: {
+    angle?: string;
+    recent?: readonly string[];
+    /** "14:05 WITA" — supaya sapaan menyesuaikan jam setempat. */
+    clock?: string;
+  } = {},
 ): string {
   const lines = [
     `Kamu anggota komunitas di server "${guildName}".`,
     'Channel sedang sepi — tidak ada yang mengobrol cukup lama.',
+  ];
+  // Jam setempat: sapaan "pagi" jam 9 WIT akan terdengar aneh kalau model
+  // mengira masih subuh karena memakai WIB.
+  if (options.clock) lines.push(`Sekarang pukul ${options.clock}.`);
+  lines.push(
     'Buat satu kalimat pembuka ringan untuk mengajak ngobrol (bukan pengumuman, bukan promosi).',
     'Jangan menyebut dirimu bot atau AI. Maksimal 100 karakter.',
-  ];
+  );
   // Sudut acak supaya sapaan tidak selalu berpola sama.
   if (options.angle) lines.push(`Ide sudut obrolan kali ini: ${options.angle}`);
   // Larangan mengulang kalimat bot sebelumnya di channel yang sama.
@@ -436,10 +443,15 @@ function humanMinutes(totalMinutes: number): string {
  * Jelaskan kenapa timer belum akan menyapa — supaya admin tidak menduga fitur
  * rusak padahal memang belum waktunya.
  */
-function explainQuietSkip(settings: AgentSettings, state: AgentState, now: number): string | null {
-  if (settings.quietHours && isQuietHour(now)) {
+function explainQuietSkip(
+  settings: AgentSettings,
+  state: AgentState,
+  now: number,
+  timeZone?: string | null,
+): string | null {
+  if (settings.quietHours && isQuietHour(now, timeZone)) {
     return (
-      'Sekarang jam tenang malam (23:00–06:00 WIB) — bot tidak menyapa channel sendiri. ' +
+      `Sekarang jam tenang malam (23:00–06:00 ${timeZoneLabel(timeZone)}) — bot tidak menyapa channel sendiri. ` +
       'Balasan ke mention tetap jalan. Matikan "Jam tenang malam" kalau tidak ingin ditahan.'
     );
   }
@@ -490,10 +502,15 @@ export async function previewQuietBreak(options: {
   state?: AgentState;
   /** Acuan waktu; default sekarang. Dipakai test supaya hasilnya pasti. */
   now?: number;
+  /**
+   * Zona waktu server (WIB/WITA/WIT). Dipakai untuk menilai jam tenang malam.
+   * Tanpa ini, jam tenang dihitung dengan WIB — bisa meleset 1–2 jam.
+   */
+  timeZone?: string | null;
   /** Paksa menulis kalimatnya walau timer belum waktunya. */
   force?: boolean;
 }): Promise<PreviewResult & { wouldFire: boolean; reason: string }> {
-  const { settings, guildName, state, force = false } = options;
+  const { settings, guildName, state, force = false, timeZone } = options;
   const now = options.now ?? Date.now();
 
   if (!settings.channelId) {
@@ -520,9 +537,9 @@ export async function previewQuietBreak(options: {
   let reason = `Kalau channel ngobrol sunyi selama ${settings.quietMinutes} menit, bot akan mengirim kalimat ini.`;
 
   if (!force && state) {
-    wouldFire = shouldBreakSilence(settings, state, now);
+    wouldFire = shouldBreakSilence(settings, state, now, timeZone);
     if (!wouldFire) {
-      const why = explainQuietSkip(settings, state, now);
+      const why = explainQuietSkip(settings, state, now, timeZone);
       return {
         text: '',
         source: 'template',
@@ -546,7 +563,11 @@ export async function previewQuietBreak(options: {
 
   const result = await askModel(
     QUIET_SYSTEM_PROMPT,
-    buildQuietPrompt(guildName, { angle: pickQuietAngle(), recent: recentReplies }),
+    buildQuietPrompt(guildName, {
+      angle: pickQuietAngle(),
+      recent: recentReplies,
+      clock: clockInZone(now, timeZone),
+    }),
     0.9,
     config.ai.brevityTokens,
     'pemecah sepi',
