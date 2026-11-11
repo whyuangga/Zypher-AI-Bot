@@ -985,6 +985,12 @@ export interface WelcomePageOptions extends PageContext {
     displayMode: string;
     imageEnabled: boolean;
     includeAvatar: boolean;
+    /** Avatar di dalam gambar kartu (sakelar sendiri, terpisah dari embed). */
+    cardAvatar: boolean;
+    /** Teks di dalam gambar kartu. */
+    cardText: boolean;
+    /** Avatar sebagai thumbnail di embed. */
+    embedAvatar: boolean;
     style: string | null;
     example: string | null;
     /** Nama file banner (null = latar bawaan). */
@@ -1004,6 +1010,9 @@ export interface WelcomePageOptions extends PageContext {
     hasBanner: boolean;
     imageEnabled: boolean;
     includeAvatar: boolean;
+    cardAvatar: boolean;
+    cardText: boolean;
+    embedAvatar: boolean;
   };
   channels: Array<{ id: string; name: string }>;
   botOnline: boolean;
@@ -1164,10 +1173,25 @@ export function welcomePage(options: WelcomePageOptions): string {
   </div>
 
   ${displayModePicker('welcome', options.welcome.displayMode)}
-  <label class="check-row" ${CHECK_ROW}>
-    <input type="checkbox" id="welcomeAvatar" ${options.welcome.includeAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
-    <span>Tampilkan avatar member di kartu</span>
-  </label>
+  <div class="check-group">
+    <p class="field" style="margin:0 0 6px">Tampilan kartu (PNG)</p>
+    <label class="check-row" ${CHECK_ROW}>
+      <input type="checkbox" id="welcomeCardAvatar" ${options.welcome.cardAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+      <span>Avatar member di tengah kartu</span>
+    </label>
+    <label class="check-row" ${CHECK_ROW}>
+      <input type="checkbox" id="welcomeCardText" ${options.welcome.cardText ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+      <span>Teks di kartu (SELAMAT DATANG, nama, jumlah member)</span>
+    </label>
+    <p class="hint">Teks sapaan tetap dikirim sebagai pesan Discord di atas gambar — yang dimatikan hanya tulisan <i>di dalam</i> gambarnya.</p>
+  </div>
+  <div class="check-group">
+    <p class="field" style="margin:0 0 6px">Tampilan embed</p>
+    <label class="check-row" ${CHECK_ROW}>
+      <input type="checkbox" id="welcomeEmbedAvatar" ${options.welcome.embedAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+      <span>Avatar member sebagai thumbnail di embed</span>
+    </label>
+  </div>
 
   ${bannerBlock('welcome', options.welcome.bannerPath, options.welcome.hasBanner)}
   ${rendererWarning}
@@ -1223,10 +1247,25 @@ export function welcomePage(options: WelcomePageOptions): string {
   </div>
 
   ${displayModePicker('goodbye', options.goodbye.displayMode)}
-  <label class="check-row" ${CHECK_ROW}>
-    <input type="checkbox" id="goodbyeAvatar" ${options.goodbye.includeAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
-    <span>Tampilkan avatar member di kartu</span>
-  </label>
+  <div class="check-group">
+    <p class="field" style="margin:0 0 6px">Tampilan kartu (PNG)</p>
+    <label class="check-row" ${CHECK_ROW}>
+      <input type="checkbox" id="goodbyeCardAvatar" ${options.goodbye.cardAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+      <span>Avatar member di tengah kartu</span>
+    </label>
+    <label class="check-row" ${CHECK_ROW}>
+      <input type="checkbox" id="goodbyeCardText" ${options.goodbye.cardText ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+      <span>Teks di kartu (SAMPAI JUMPA, nama, jumlah member)</span>
+    </label>
+    <p class="hint">Teks salam tetap dikirim sebagai pesan Discord di atas gambar — yang dimatikan hanya tulisan <i>di dalam</i> gambarnya.</p>
+  </div>
+  <div class="check-group">
+    <p class="field" style="margin:0 0 6px">Tampilan embed</p>
+    <label class="check-row" ${CHECK_ROW}>
+      <input type="checkbox" id="goodbyeEmbedAvatar" ${options.goodbye.embedAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+      <span>Avatar member sebagai thumbnail di embed</span>
+    </label>
+  </div>
 
   ${bannerBlock('goodbye', options.goodbye.bannerPath, options.goodbye.hasBanner)}
 
@@ -1314,7 +1353,10 @@ async function saveWelcome() {
     example: document.getElementById('welcomeExample').value.trim() || null,
     displayMode: modeOf('welcome'),
     imageEnabled: modeOf('welcome') === 'card',
-    includeAvatar: document.getElementById('welcomeAvatar').checked,
+    includeAvatar: document.getElementById('welcomeCardAvatar').checked,
+    cardAvatar: document.getElementById('welcomeCardAvatar').checked,
+    cardText: document.getElementById('welcomeCardText').checked,
+    embedAvatar: document.getElementById('welcomeEmbedAvatar').checked,
   }, 'Sambutan disimpan.');
 }
 
@@ -1403,7 +1445,10 @@ async function sendTest(kind) {
         example: document.getElementById('welcomeExample').value.trim(),
         displayMode: modeOf('welcome'),
         imageEnabled: modeOf('welcome') === 'card',
-        includeAvatar: document.getElementById('welcomeAvatar').checked,
+        includeAvatar: document.getElementById('welcomeCardAvatar').checked,
+        cardAvatar: document.getElementById('welcomeCardAvatar').checked,
+        cardText: document.getElementById('welcomeCardText').checked,
+        embedAvatar: document.getElementById('welcomeEmbedAvatar').checked,
       }
     : {
         useAi: document.getElementById('goodbyeUseAi').checked,
@@ -1412,7 +1457,10 @@ async function sendTest(kind) {
         example: document.getElementById('goodbyeExample').value.trim(),
         displayMode: modeOf('goodbye'),
         imageEnabled: modeOf('goodbye') === 'card',
-        includeAvatar: document.getElementById('goodbyeAvatar').checked,
+        includeAvatar: document.getElementById('goodbyeCardAvatar').checked,
+        cardAvatar: document.getElementById('goodbyeCardAvatar').checked,
+        cardText: document.getElementById('goodbyeCardText').checked,
+        embedAvatar: document.getElementById('goodbyeEmbedAvatar').checked,
       };
 
   try {
@@ -1461,7 +1509,10 @@ async function saveGoodbye() {
     example: document.getElementById('goodbyeExample').value.trim() || null,
     displayMode: modeOf('goodbye'),
     imageEnabled: modeOf('goodbye') === 'card',
-    includeAvatar: document.getElementById('goodbyeAvatar').checked,
+    includeAvatar: document.getElementById('goodbyeCardAvatar').checked,
+    cardAvatar: document.getElementById('goodbyeCardAvatar').checked,
+    cardText: document.getElementById('goodbyeCardText').checked,
+    embedAvatar: document.getElementById('goodbyeEmbedAvatar').checked,
   }, 'Salam perpisahan disimpan.');
 }
 

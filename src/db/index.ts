@@ -60,6 +60,16 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
     'ALTER TABLE welcome ADD COLUMN banner_bytes TEXT',
     'ALTER TABLE goodbye ADD COLUMN banner_mime TEXT',
     'ALTER TABLE goodbye ADD COLUMN banner_bytes TEXT',
+    // Teks di dalam kartu PNG (nama server, jumlah member). NULL pada baris
+    // lama dibaca sebagai "aktif" supaya tampilan yang sudah berjalan tidak
+    // berubah, dan admin bisa mematikannya sendiri kalau mau kartu tanpa teks.
+    'ALTER TABLE welcome ADD COLUMN card_text INTEGER',
+    'ALTER TABLE goodbye ADD COLUMN card_text INTEGER',
+    // Avatar di dalam embed. NULL dibaca sebagai "mati": embed lama tidak
+    // pernah punya avatar, jadi menyalakannya otomatis akan mengubah
+    // tampilan server yang sudah berjalan.
+    'ALTER TABLE welcome ADD COLUMN embed_avatar INTEGER',
+    'ALTER TABLE goodbye ADD COLUMN embed_avatar INTEGER',
     // Jam tenang malam: jangan menyapa channel otomatis saat orang tidur.
     // Default 1 (aktif) mengikuti referensi, tapi baris lama ikut jadi aktif
     // hanya setelah kolom ini ditambahkan — perilaku lama tidak berubah

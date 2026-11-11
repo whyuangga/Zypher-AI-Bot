@@ -482,6 +482,18 @@ textarea.mono { font-family: var(--font-mono); font-size: 12.5px; }
 .field-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .field-grid { display: grid; gap: 18px; }
 .hint { color: var(--text-3); font-size: 12.5px; margin: 8px 0 0; }
+
+/* Kelompok sakelar tampilan (kartu / embed) di halaman Sambutan.
+   Dikelompokkan karena dua-duanya mengatur pesan yang sama; dulu hanya ada
+   satu checkbox tanpa keterangan, sehingga tidak jelas ia mengubah yang mana. */
+.check-group {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-2);
+}
 .hint code { font-size: 11.5px; }
 
 /* ---------------- empty state ---------------- */

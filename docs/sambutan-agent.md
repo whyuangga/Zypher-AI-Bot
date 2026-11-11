@@ -52,6 +52,20 @@ Susunan kartu: banner menutupi seluruh kartu sebagai latar, avatar bulat di
 tengah, judul besar (`SELAMAT DATANG` / `SAMPAI JUMPA`), nama member, lalu baris
 `nama server • member ke-N`. Tanpa banner, latar memakai gradasi tema.
 
+**Dua bagian kartu bisa dimatikan sendiri-sendiri** (halaman Sambutan):
+
+| Sakelar | Mati artinya |
+|---|---|
+| **Avatar member di tengah kartu** | kartu tanpa lingkaran avatar — hanya banner dan teks |
+| **Teks di kartu** | kartu tanpa tulisan apa pun — hanya banner dan avatar |
+
+Teks sapaan **tidak** ikut hilang saat teks kartu dimatikan: sapaan tetap
+dikirim sebagai pesan Discord di atas gambar, dan itu juga yang membuat
+mention-nya aktif. Yang dimatikan hanya tulisan di dalam gambarnya.
+
+Kalau avatar diminta tapi gagal diunduh, kartu memakai lingkaran gradasi dengan
+huruf awal nama — bukan lingkaran kosong.
+
 **Banner di dashboard.** Halaman Sambutan tidak lagi menyisipkan banner sebagai data
 URI ke HTML (dua banner 8 MB = HTML belasan MB, praktis mati di HP). Gambarnya diambil
 dari `GET /api/banner/welcome|goodbye` dan bisa di-cache browser.
@@ -370,7 +384,7 @@ Bentuk pesan sambutan & perpisahan bisa dipilih per server di dashboard:
 |---|---|---|---|
 | **Card** | teks sapaan + kartu PNG sebagai lampiran (**tanpa embed**) | **tidak** | **ya** |
 | **Container** | kartu Components V2 (blok berwarna aksen, gaya panel baru Discord) | tidak | **ya** |
-| **Embed** | embed berwarna bertema server | tidak | tidak |
+| **Embed** | embed berwarna bertema server (avatar member opsional sebagai thumbnail) | tidak | tidak |
 | **Text** | teks polos di `content` | tidak | **ya** |
 
 Kenapa **Embed** satu-satunya yang tidak bisa me-ping: di Discord, mention di
@@ -496,7 +510,7 @@ Tiga penyebab yang sudah diperbaiki:
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 303 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 310 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

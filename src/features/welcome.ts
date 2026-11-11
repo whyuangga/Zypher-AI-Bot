@@ -173,11 +173,14 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
           {
             member,
             text,
-            includeAvatar: settings.includeAvatar,
+            // `cardAvatar`, bukan `includeAvatar`: admin mengatur tampilan
+            // kartu dan embed terpisah karena bentuknya sangat berbeda.
+            includeAvatar: settings.cardAvatar,
             bannerPath: settings.bannerPath,
             kicker: 'SELAMAT DATANG',
             filePrefix: 'selamat-datang',
             detail: cardDetail('welcome', member.guild.name, member.guild.memberCount),
+            showText: settings.cardText,
           },
           usedAi,
         )
@@ -201,6 +204,7 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
     channelName: channel?.name ?? null,
     attachment,
     includeAvatar: settings.includeAvatar,
+    embedAvatar: settings.embedAvatar,
     bannerPath: settings.bannerPath,
     bannerData: settings.bannerData,
     allowed,
@@ -343,6 +347,8 @@ async function composePayload(options: {
   channelName: string | null;
   attachment: AttachmentBuilder | null;
   includeAvatar: boolean;
+  /** Tampilkan avatar member sebagai thumbnail di embed. */
+  embedAvatar?: boolean;
   bannerPath: string | null;
   /** Salinan banner di database — untuk memulihkan file yang hilang saat deploy. */
   bannerData?: { mime: string; base64: string } | null;
@@ -404,6 +410,14 @@ async function composePayload(options: {
     .setDescription(text)
     .setFooter({ text: footer });
 
+  // Avatar di embed: thumbnail kecil di kanan atas. Dipakai HANYA di mode
+  // embed (kartu punya avatarnya sendiri di dalam gambar, container di
+  // headernya). URL Discord CDN dipakai apa adanya — tidak perlu unduh.
+  if (options.embedAvatar && mode === 'embed') {
+    const url = member.displayAvatarURL({ extension: 'png', size: 256 });
+    if (url) embed.setThumbnail(url);
+  }
+
   // Mode kartu: kartu PNG sebagai lampiran, TANPA embed.
   //
   // Dulu kartu dibungkus embed hanya supaya tampil besar. Ternyata wadah itu
@@ -447,6 +461,10 @@ async function buildCard(
      * yang tahu konteksnya: sambutan memakai jumlah member, perpisahan tidak.
      */
     detail: string;
+    /** Tampilkan teks di dalam gambar (nama server, jumlah member, judul). */
+    showText?: boolean;
+    /** Tampilkan avatar di tengah kartu (false = tanpa lingkaran). */
+    showAvatar?: boolean;
   },
   usedAi: boolean,
 ): Promise<AttachmentBuilder | null> {
@@ -464,6 +482,8 @@ async function buildCard(
     bannerDataUri: banner,
     kicker: options.kicker,
     detail: options.detail,
+    showText: options.showText,
+    showAvatar: options.includeAvatar,
   });
   if (!png) return null;
 
@@ -558,11 +578,12 @@ export async function goodbyeMember(member: GuildMember): Promise<boolean> {
           {
             member,
             text,
-            includeAvatar: settings.includeAvatar,
+            includeAvatar: settings.cardAvatar,
             bannerPath: settings.bannerPath,
             kicker: 'SAMPAI JUMPA',
             filePrefix: 'sampai-jumpa',
             detail: cardDetail('goodbye', member.guild.name),
+            showText: settings.cardText,
           },
           Boolean(greeting),
         )
@@ -582,6 +603,7 @@ export async function goodbyeMember(member: GuildMember): Promise<boolean> {
     channelName: channel.name,
     attachment,
     includeAvatar: settings.includeAvatar,
+    embedAvatar: settings.embedAvatar,
     bannerPath: settings.bannerPath,
     bannerData: settings.bannerData,
     allowed,

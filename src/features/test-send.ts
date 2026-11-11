@@ -148,6 +148,8 @@ async function buildCard(options: {
   filePrefix: string;
   /** Baris kecil di bawah nama — konteksnya ditentukan pemanggil. */
   detail: string;
+  /** Tampilkan teks di dalam gambar. */
+  showText?: boolean;
 }): Promise<AttachmentBuilder | null> {
   const banner = await readBannerDataUri(options.bannerPath);
   let avatar: string | null = null;
@@ -171,6 +173,8 @@ async function buildCard(options: {
     bannerDataUri: banner,
     kicker: options.kicker,
     detail: options.detail,
+    showText: options.showText,
+    showAvatar: options.includeAvatar,
   });
   if (!png) return null;
   return new AttachmentBuilder(png, { name: `${options.filePrefix}-test.png` });
@@ -210,11 +214,13 @@ export async function sendWelcomeTest(
           guildName: guild.name,
           text: preview.text,
           bannerPath: settings.bannerPath,
-          includeAvatar: settings.includeAvatar,
+          // Tampilan kartu punya sakelarnya sendiri (lihat WelcomeSettings).
+          includeAvatar: settings.cardAvatar,
           avatarUrl: member.displayAvatarURL({ extension: 'png', size: 256 }),
           kicker: 'SELAMAT DATANG',
           filePrefix: 'selamat-datang',
           detail: cardDetail('welcome', guild.name, guild.memberCount),
+          showText: settings.cardText,
         })
       : null;
 
@@ -374,12 +380,14 @@ export async function sendGoodbyeTest(
           guildName: guild.name,
           text: preview.text,
           bannerPath: settings.bannerPath,
-          includeAvatar: settings.includeAvatar,
+          // Tampilan kartu punya sakelarnya sendiri (lihat WelcomeSettings).
+          includeAvatar: settings.cardAvatar,
           avatarUrl: member.displayAvatarURL({ extension: 'png', size: 256 }),
           kicker: 'SAMPAI JUMPA',
           filePrefix: 'sampai-jumpa',
           // Pesan uji perpisahan harus terlihat seperti perpisahan sungguhan.
           detail: cardDetail('goodbye', guild.name),
+          showText: settings.cardText,
         })
       : null;
 

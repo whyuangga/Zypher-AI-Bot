@@ -1793,6 +1793,9 @@ const welcomeSettings = (patch: Record<string, unknown> = {}) => ({
   example: null,
   displayMode: 'embed' as const, imageEnabled: false,
   includeAvatar: true,
+  cardAvatar: true,
+  cardText: true,
+  embedAvatar: false,
   bannerPath: null,
   bannerData: null,
   updatedAt: 0,
@@ -1809,6 +1812,9 @@ const goodbyeSettings = (patch: Record<string, unknown> = {}) => ({
   example: null,
   displayMode: 'embed' as const, imageEnabled: false,
   includeAvatar: true,
+  cardAvatar: true,
+  cardText: true,
+  embedAvatar: false,
   bannerPath: null,
   bannerData: null,
   updatedAt: 0,
@@ -4291,6 +4297,206 @@ await testAsync('container: kaki kartu memakai detail yang sama dengan PNG', asy
     false,
     'tidak ada kalimat "member ke-" yang ditulis ulang di container',
   );
+});
+
+await testAsync('kartu: teks bisa dimatikan lewat setelan cardText', async () => {
+  // Permintaan pemilik server: teks di dalam gambar bisa diaktifkan/dimatikan.
+  // Diuji dari PIXEL: kartu tanpa teks harus berbeda dari kartu berteks, dan
+  // bagian bawahnya (tempat tulisan berada) harus kosong.
+  const { renderWelcomeCard } = await import('../src/features/welcome-card.js');
+
+  const dasar = {
+    userName: 'wahyuangga12',
+    guildName: 'Zypher Server',
+    message: 'Halo semua',
+    avatarDataUri: null,
+    bannerDataUri: null,
+    kicker: 'SELAMAT DATANG',
+    detail: 'Zypher Server • member ke-3',
+  };
+
+  const berteks = await renderWelcomeCard({ ...dasar, showText: true });
+  const tanpaTeks = await renderWelcomeCard({ ...dasar, showText: false });
+  assert.ok(berteks && tanpaTeks, 'kedua kartu tergambar');
+  assert.equal(
+    Buffer.compare(berteks, tanpaTeks) === 0,
+    false,
+    'mematikan teks benar-benar mengubah gambar',
+  );
+  assert.ok(
+    tanpaTeks.byteLength < berteks.byteLength,
+    'tanpa teks gambarnya lebih sederhana (lebih kecil)',
+  );
+});
+
+await testAsync('kartu: tanpa teks, banner & avatar tetap tergambar', async () => {
+  // Kalau teks dimatikan, yang dihapus HANYA teks — bukan seluruh isi kartu.
+  const { renderWelcomeCard } = await import('../src/features/welcome-card.js');
+  const { createCanvas } = await import('@napi-rs/canvas');
+
+  const banner = createCanvas(400, 200);
+  const bx = banner.getContext('2d');
+  bx.fillStyle = '#ff0000';
+  bx.fillRect(0, 0, 400, 200);
+  const bannerUri = `data:image/webp;base64,${banner.toBuffer('image/webp').toString('base64')}`;
+
+  const polos = await renderWelcomeCard({
+    userName: 'Sky', guildName: 'Zypher', message: 'x', avatarDataUri: null,
+    bannerDataUri: null, showText: false,
+  });
+  const denganBanner = await renderWelcomeCard({
+    userName: 'Sky', guildName: 'Zypher', message: 'x', avatarDataUri: null,
+    bannerDataUri: bannerUri, showText: false,
+  });
+
+  assert.equal(
+    Buffer.compare(polos!, denganBanner!) === 0,
+    false,
+    'banner tetap jadi latar walau teks dimatikan',
+  );
+  assert.ok(denganBanner!.byteLength > 5_000, 'kartu tetap berisi gambar');
+});
+
+await testAsync('kartu: avatar dimatikan benar-benar hilang, bukan jadi placeholder', async () => {
+  // Bug nyata saat cross-check: `showAvatar: false` tetap menggambar lingkaran
+  // gradien di tengah. Yang diminta admin adalah kartu TANPA lingkaran.
+  const { renderWelcomeCard } = await import('../src/features/welcome-card.js');
+
+  const dasar = {
+    userName: 'Sky', guildName: 'Zypher', message: 'x', bannerDataUri: null,
+    kicker: 'SELAMAT DATANG', detail: 'Zypher',
+  };
+
+  const denganAvatar = await renderWelcomeCard({
+    ...dasar,
+    // rusak: avatar diminta tapi gagal dimuat -> gradasi + inisial
+    avatarDataUri: 'data:image/png;base64,rusak',
+    showAvatar: true,
+  });
+  const tanpaAvatar = await renderWelcomeCard({
+    ...dasar,
+    avatarDataUri: 'data:image/png;base64,rusak',
+    showAvatar: false,
+  });
+
+  assert.ok(denganAvatar && tanpaAvatar, 'kedua kartu tergambar');
+  assert.equal(
+    Buffer.compare(denganAvatar, tanpaAvatar) === 0,
+    false,
+    'mematikan avatar mengubah gambar',
+  );
+  assert.ok(
+    tanpaAvatar.byteLength < denganAvatar.byteLength,
+    'tanpa avatar gambarnya lebih sederhana',
+  );
+});
+
+await testAsync('kartu: avatar gagal dimuat tetap tampil, dengan inisial', async () => {
+  // Komentar di kode menjanjikan "gradasi + inisial nama", tapi inisialnya
+  // tidak pernah digambar — kartu hanya berisi lingkaran kosong.
+  const { createCanvas } = await import('@napi-rs/canvas');
+  const { renderWelcomeCard } = await import('../src/features/welcome-card.js');
+
+  const dasar = {
+    guildName: 'Zypher', message: 'x', bannerDataUri: null,
+    kicker: 'SELAMAT DATANG', detail: 'Zypher',
+  };
+
+  // Teks kartu DIMATIKAN supaya satu-satunya yang bisa berbeda adalah inisial
+  // di dalam lingkaran. Versi pertama test ini lupa itu: nama juga digambar
+  // sebagai teks, sehingga dua gambar selalu berbeda walau inisialnya hilang —
+  // test lolos padahal bug-nya ada.
+  const a = await renderWelcomeCard({
+    ...dasar, userName: 'Sky', avatarDataUri: null, showAvatar: true, showText: false,
+  });
+  const b = await renderWelcomeCard({
+    ...dasar, userName: 'Budi', avatarDataUri: null, showAvatar: true, showText: false,
+  });
+  assert.equal(
+    Buffer.compare(a!, b!) === 0,
+    false,
+    'inisial nama benar-benar digambar (Sky vs Budi harus beda)',
+  );
+  void createCanvas;
+});
+
+await testAsync('embed: avatar bisa dinyalakan lewat setelan embedAvatar', async () => {
+  // Dulu embed tidak punya avatar sama sekali dan tidak ada sakelarnya.
+  // Sekarang harus muncul sebagai thumbnail, dan bisa dimatikan lagi.
+  const { welcomeMember } = await import('../src/features/welcome.js');
+  const { saveWelcomeSettings } = await import('../src/db/repo.js');
+
+  const sent: Record<string, unknown>[] = [];
+  const channel = {
+    id: '777777777777777777', name: 'join-leave',
+    isTextBased: () => true, isDMBased: () => false,
+    permissionsFor: () => ({ has: () => true }),
+    send: async (p: Record<string, unknown>) => { sent.push(p); return { id: '1' }; },
+  };
+  const guild = {
+    id: '156942477750257766', name: 'Zypher Server', memberCount: 4,
+    channels: { fetch: async () => channel },
+    members: { me: { id: '999999999999999999' } },
+  };
+  const member = {
+    id: '222222222222222222', displayName: 'Sky', guild,
+    displayAvatarURL: () => 'https://cdn.discordapp.com/avatars/222/abc.png',
+    user: { bot: false, username: 'sky', tag: 'sky#0000', displayAvatarURL: () => 'https://x/y.png' },
+  };
+
+  const thumbnailDari = () => {
+    const embed = (sent.at(-1)!.embeds as Array<{ data?: { thumbnail?: { url?: string } } }>)[0];
+    return embed?.data?.thumbnail?.url ?? null;
+  };
+
+  await saveWelcomeSettings(guild.id, { enabled: true, useAi: false, channelId: channel.id, displayMode: 'embed', embedAvatar: true });
+  await welcomeMember(member as never);
+  assert.match(String(thumbnailDari()), /^https:\/\/cdn\.discordapp\.com\//, 'embed menampilkan avatar member');
+
+  await saveWelcomeSettings(guild.id, { embedAvatar: false });
+  await welcomeMember(member as never);
+  assert.equal(thumbnailDari(), null, 'avatar hilang saat dimatikan');
+});
+
+await testAsync('dashboard: sakelar kartu & embed terpisah, bukan satu checkbox', async () => {
+  // Dulu hanya ada satu checkbox "avatar di kartu". Sekarang ada empat sakelar
+  // yang jelas: avatar & teks untuk kartu, avatar untuk embed.
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  for (const id of [
+    'welcomeCardAvatar', 'welcomeCardText', 'welcomeEmbedAvatar',
+    'goodbyeCardAvatar', 'goodbyeCardText', 'goodbyeEmbedAvatar',
+  ]) {
+    assert.ok(pages.includes(`id="${id}"`), `sakelar ${id} ada`);
+  }
+  // id lama tidak boleh tersisa: elemennya sudah tidak ada, dan membaca
+  // `.checked` dari null akan membuat tombol Simpan gagal diam-diam.
+  assert.equal(pages.includes("'welcomeAvatar'"), false, 'id lama welcome sudah diganti');
+  assert.equal(pages.includes("'goodbyeAvatar'"), false, 'id lama goodbye sudah diganti');
+
+  // Kedua tombol (Simpan & Kirim tes) harus mengirim setelan yang sama.
+  assert.equal(
+    (pages.match(/cardAvatar: document\.getElementById\('welcomeCardAvatar'\)\.checked/g) ?? []).length,
+    2,
+    'Simpan & kirim tes sambutan sama-sama mengirim cardAvatar',
+  );
+});
+
+await testAsync('setelan: kolom baru aman untuk database lama', async () => {
+  // Baris lama belum punya card_text/embed_avatar. Nilai NULL harus dibaca
+  // sebagai "teks aktif, avatar embed mati" supaya tampilan server yang sudah
+  // berjalan tidak berubah diam-diam.
+  const { getWelcomeSettings, saveWelcomeSettings } = await import('../src/db/repo.js');
+  const guild = '888888888888888888';
+  const awal = await getWelcomeSettings(guild);
+  assert.equal(awal.cardText, true, 'teks kartu aktif secara bawaan');
+  assert.equal(awal.cardAvatar, true, 'avatar kartu aktif secara bawaan');
+  assert.equal(awal.embedAvatar, false, 'avatar embed mati secara bawaan');
+
+  await saveWelcomeSettings(guild, { cardText: false, embedAvatar: true });
+  const sesudah = await getWelcomeSettings(guild);
+  assert.equal(sesudah.cardText, false, 'cardText tersimpan');
+  assert.equal(sesudah.embedAvatar, true, 'embedAvatar tersimpan');
+  assert.equal(sesudah.cardAvatar, true, 'nilai lain tidak ikut berubah');
 });
 
 await testAsync('banner: API unggah & hapus ada untuk kedua fitur', async () => {

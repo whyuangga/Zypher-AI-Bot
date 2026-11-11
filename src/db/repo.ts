@@ -780,6 +780,18 @@ export interface WelcomeSettings {
   /** Contoh kalimat yang ditiru nada bicaranya. */
   example: string | null;
   includeAvatar: boolean;
+  /**
+   * Tampilkan avatar member di dalam gambar kartu.
+   *
+   * Terpisah dari `includeAvatar` (yang juga dipakai embed) supaya admin bisa
+   * mengatur dua tampilan itu sendiri-sendiri: kartu PNG dan embed punya
+   * bentuk yang sangat berbeda, jadi satu sakelar untuk dua-duanya menyulitkan.
+   */
+  cardAvatar: boolean;
+  /** Tampilkan teks di dalam kartu (nama server + jumlah member). */
+  cardText: boolean;
+  /** Tampilkan avatar member di dalam embed (mode `embed`). */
+  embedAvatar: boolean;
   /** Nama file banner di data/banners (null = pakai latar bawaan). */
   bannerPath: string | null;
   /**
@@ -803,6 +815,10 @@ interface WelcomeRow {
   style: string | null;
   example: string | null;
   include_avatar: number | boolean;
+  /** NULL pada baris lama = aktif (lihat migrasi di db/index.ts). */
+  card_text: number | boolean | null;
+  /** NULL pada baris lama = mati. */
+  embed_avatar: number | boolean | null;
   banner_path: string | null;
   banner_mime: string | null;
   banner_bytes: string | null;
@@ -819,6 +835,11 @@ export const WELCOME_DEFAULTS = {
   style: null,
   example: null,
   includeAvatar: true,
+  cardAvatar: true,
+  cardText: true,
+  // Embed lama tidak pernah punya avatar; menyalakannya otomatis akan
+  // mengubah tampilan server yang sudah berjalan.
+  embedAvatar: false,
   bannerPath: null,
   bannerData: null,
 } as const;
@@ -844,6 +865,12 @@ export async function getWelcomeSettings(guildId: string): Promise<WelcomeSettin
     style: row.style,
     example: row.example,
     includeAvatar: Boolean(row.include_avatar),
+    // undefined/NULL = baris lama: teks kartu aktif, avatar embed mati.
+    cardAvatar: row.include_avatar === null || row.include_avatar === undefined
+      ? true
+      : Boolean(row.include_avatar),
+    cardText: row.card_text === null || row.card_text === undefined ? true : Boolean(row.card_text),
+    embedAvatar: Boolean(row.embed_avatar),
     bannerPath: row.banner_path ?? null,
     bannerData:
       row.banner_mime && row.banner_bytes
@@ -860,8 +887,8 @@ export async function saveWelcomeSettings(
   const current = await getWelcomeSettings(guildId);
   const next = { ...current, ...patch };
   await run(
-    `INSERT INTO welcome (guild_id, channel_id, enabled, use_ai, template, display_mode, image_enabled, style, example, include_avatar, banner_path, banner_mime, banner_bytes, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO welcome (guild_id, channel_id, enabled, use_ai, template, display_mode, image_enabled, style, example, include_avatar, card_text, embed_avatar, banner_path, banner_mime, banner_bytes, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (guild_id) DO UPDATE SET
        channel_id = excluded.channel_id,
        enabled = excluded.enabled,
@@ -872,6 +899,8 @@ export async function saveWelcomeSettings(
        style = excluded.style,
        example = excluded.example,
        include_avatar = excluded.include_avatar,
+       card_text = excluded.card_text,
+       embed_avatar = excluded.embed_avatar,
        banner_path = excluded.banner_path,
        banner_mime = excluded.banner_mime,
        banner_bytes = excluded.banner_bytes,
@@ -887,6 +916,8 @@ export async function saveWelcomeSettings(
       next.style,
       next.example,
       next.includeAvatar ? 1 : 0,
+      next.cardText ? 1 : 0,
+      next.embedAvatar ? 1 : 0,
       next.bannerPath,
       next.bannerData?.mime ?? null,
       next.bannerData?.base64 ?? null,
@@ -910,6 +941,12 @@ export interface GoodbyeSettings {
   /** Kartu perpisahan PNG (opsional) — dipakai mode `card`. */
   imageEnabled: boolean;
   includeAvatar: boolean;
+  /** Tampilkan avatar member di dalam gambar kartu — lihat `WelcomeSettings`. */
+  cardAvatar: boolean;
+  /** Tampilkan teks di dalam kartu (nama server + kalimat penutup). */
+  cardText: boolean;
+  /** Tampilkan avatar member di dalam embed. */
+  embedAvatar: boolean;
   /** Nama file banner di data/banners (null = pakai latar bawaan). */
   bannerPath: string | null;
   /** Salinan banner di database — lihat catatan di `WelcomeSettings`. */
@@ -928,6 +965,10 @@ interface GoodbyeRow {
   example: string | null;
   image_enabled: number | boolean;
   include_avatar: number | boolean;
+  /** NULL pada baris lama = aktif (lihat migrasi di db/index.ts). */
+  card_text: number | boolean | null;
+  /** NULL pada baris lama = mati. */
+  embed_avatar: number | boolean | null;
   banner_path: string | null;
   banner_mime: string | null;
   banner_bytes: string | null;
@@ -944,6 +985,9 @@ export const GOODBYE_DEFAULTS = {
   example: null,
   imageEnabled: false,
   includeAvatar: true,
+  cardAvatar: true,
+  cardText: true,
+  embedAvatar: false,
   bannerPath: null,
   bannerData: null,
 } as const;
@@ -965,6 +1009,11 @@ export async function getGoodbyeSettings(guildId: string): Promise<GoodbyeSettin
     example: row.example,
     imageEnabled: Boolean(row.image_enabled),
     includeAvatar: Boolean(row.include_avatar),
+    cardAvatar: row.include_avatar === null || row.include_avatar === undefined
+      ? true
+      : Boolean(row.include_avatar),
+    cardText: row.card_text === null || row.card_text === undefined ? true : Boolean(row.card_text),
+    embedAvatar: Boolean(row.embed_avatar),
     bannerPath: row.banner_path ?? null,
     bannerData:
       row.banner_mime && row.banner_bytes
@@ -981,8 +1030,8 @@ export async function saveGoodbyeSettings(
   const current = await getGoodbyeSettings(guildId);
   const next = { ...current, ...patch };
   await run(
-    `INSERT INTO goodbye (guild_id, channel_id, enabled, use_ai, template, display_mode, style, example, image_enabled, include_avatar, banner_path, banner_mime, banner_bytes, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO goodbye (guild_id, channel_id, enabled, use_ai, template, display_mode, style, example, image_enabled, include_avatar, card_text, embed_avatar, banner_path, banner_mime, banner_bytes, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (guild_id) DO UPDATE SET
        channel_id = excluded.channel_id,
        enabled = excluded.enabled,
@@ -993,6 +1042,8 @@ export async function saveGoodbyeSettings(
        example = excluded.example,
        image_enabled = excluded.image_enabled,
        include_avatar = excluded.include_avatar,
+       card_text = excluded.card_text,
+       embed_avatar = excluded.embed_avatar,
        banner_path = excluded.banner_path,
        banner_mime = excluded.banner_mime,
        banner_bytes = excluded.banner_bytes,
@@ -1008,6 +1059,8 @@ export async function saveGoodbyeSettings(
       next.example,
       next.imageEnabled ? 1 : 0,
       next.includeAvatar ? 1 : 0,
+      next.cardText ? 1 : 0,
+      next.embedAvatar ? 1 : 0,
       next.bannerPath,
       next.bannerData?.mime ?? null,
       next.bannerData?.base64 ?? null,

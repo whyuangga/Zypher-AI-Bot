@@ -140,6 +140,22 @@ export interface CardInput {
   kicker?: string;
   /** Baris kecil di bawah nama, mis. "member ke-1.284". */
   detail?: string;
+  /**
+   * Tampilkan avatar di tengah kartu.
+   *
+   * `false` = tidak ada lingkaran sama sekali. Dibedakan dari
+   * `avatarDataUri: null`, yang berarti avatar diminta tapi gagal dimuat —
+   * di kasus itu gradasi + inisial tetap digambar supaya kartu tidak bolong.
+   */
+  showAvatar?: boolean;
+  /**
+   * Tampilkan judul, nama, dan baris detail di dalam gambar.
+   *
+   * `false` = kartu hanya berisi banner + avatar. Berguna kalau admin ingin
+   * gambar bersih tanpa tulisan (mis. banner yang sudah memuat teks sendiri).
+   * Teks sapaan tetap dikirim sebagai `content` pesan, tidak ikut hilang.
+   */
+  showText?: boolean;
 }
 
 /**
@@ -204,6 +220,8 @@ function drawAvatar(
   centerX: number,
   centerY: number,
   radius: number,
+  /** Huruf awal nama, dipakai saat avatar gagal dimuat. */
+  initial?: string,
 ): void {
   // Cincin luar: gelap dulu supaya avatar terpisah dari banner yang terang.
   ctx.save();
@@ -225,7 +243,8 @@ function drawAvatar(
     drawCover(ctx, avatar, radius * 2, radius * 2);
     ctx.restore();
   } else {
-    // Tanpa foto profil: isi dengan gradasi tema + inisial nama.
+    // Avatar diminta tapi gagal dimuat: gradasi tema + inisial nama, supaya
+    // kartu tidak tampak bolong dan member tetap dikenali dari huruf awalnya.
     ctx.save();
     ctx.beginPath();
     ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
@@ -240,7 +259,16 @@ function drawAvatar(
     gradient.addColorStop(1, '#c98b7a');
     ctx.fillStyle = gradient;
     ctx.fillRect(centerX - radius, centerY - radius, radius * 2, radius * 2);
+    // Inisial di tengah lingkaran.
+    const inisial = (initial ?? '?').slice(0, 1).toUpperCase();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+    ctx.font = `500 ${Math.round(radius * 1.45)}px "${FONT_FAMILY}"`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(inisial, centerX, centerY + radius * 0.04);
     ctx.restore();
+    // Kembalikan baseline supaya teks berikutnya tidak ikut bergeser.
+    ctx.textBaseline = 'alphabetic';
   }
 
   ctx.beginPath();
@@ -289,11 +317,21 @@ async function drawCard(input: CardInput): Promise<Buffer> {
   ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
 
   // --- Avatar ------------------------------------------------------------
+  // `showAvatar === false` = tidak digambar sama sekali (bukan diganti
+  // placeholder): admin yang mematikan avatar memang ingin kartu tanpa
+  // lingkaran di tengahnya.
   const avatarRadius = 86;
   const avatarY = 152;
-  drawAvatar(ctx, avatar, CARD_WIDTH / 2, avatarY, avatarRadius);
+  if (input.showAvatar !== false) {
+    drawAvatar(ctx, avatar, CARD_WIDTH / 2, avatarY, avatarRadius, input.userName);
+  }
 
   // --- Teks --------------------------------------------------------------
+  // Dimatikan lewat setelan: kartu jadi banner + avatar saja. Teks sapaan
+  // tetap dikirim sebagai `content` pesan, jadi tidak ada informasi yang
+  // hilang — hanya gambar yang lebih bersih.
+  if (input.showText === false) return canvas.toBuffer('image/png');
+
   ctx.textAlign = 'center';
 
   // Judul besar ("SELAMAT DATANG"). Dikecilkan otomatis kalau kepanjangan.
