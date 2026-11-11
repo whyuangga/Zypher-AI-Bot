@@ -346,6 +346,21 @@ code {
 .res-foot {
   padding: 14px 24px 18px; font-size: 12px; color: var(--text-3);
   border-top: 1px solid var(--line);
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+/* Penanda "langsung": titik berdenyut halus selama polling jalan.
+   Saat gagal, titik jadi abu-abu dan teksnya "terputus" — angka terakhir
+   tetap tampil, karena menghapusnya justru lebih membingungkan. */
+.res-live { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.res-dot {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--ok);
+  box-shadow: 0 0 0 3px var(--ok-soft); animation: resPulse 2.4s ease-in-out infinite;
+  flex: 0 0 auto;
+}
+.res-dot.off { background: var(--text-3); box-shadow: none; animation: none; }
+@keyframes resPulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) {
+  .res-dot { animation: none; }
 }
 @media (max-width: 560px) {
   .res-value { font-size: 17px; }
@@ -493,8 +508,11 @@ textarea.mono { font-family: var(--font-mono); font-size: 12.5px; }
 }
 .tab {
   /* Tombol global: padding 12px 18px + huruf kapital ber-spasi. Tab butuh
-     bentuk lain, jadi semuanya ditimpa di sini. */
-  display: inline-flex; align-items: center; gap: 8px;
+     bentuk lain, jadi semuanya ditimpa di sini.
+     justify-content: flex-start WAJIB: aturan button global memakai center,
+     dan di HP tiap tab selebar layar sehingga teks+penanda sebagai satu grup
+     tergeser ke tengah — penandanya jadi tampak melayang jauh dari teksnya. */
+  display: inline-flex; align-items: center; justify-content: flex-start; gap: 8px;
   padding: 11px 18px; margin-bottom: -1px;
   background: transparent; border: 1px solid transparent; border-bottom: 2px solid transparent;
   border-radius: var(--r-sm) var(--r-sm) 0 0;
@@ -505,11 +523,15 @@ textarea.mono { font-family: var(--font-mono); font-size: 12.5px; }
 .tab:hover { color: var(--text); background: rgba(226, 209, 204, .04); }
 .tab:active { transform: none; }
 .tab.is-active { color: var(--text); border-bottom-color: var(--text); }
-/* Titik = jenis pesan ini sedang aktif mengirim. Tetap terlihat walau tab-nya
-   tidak dibuka, karena gunanya justru memberi tahu tanpa harus membuka tab. */
-.tab-dot {
-  width: 5px; height: 5px; border-radius: 50%; background: var(--ok);
-  flex: 0 0 auto; box-shadow: 0 0 0 3px var(--ok-soft);
+/* Penanda "jenis pesan ini sedang aktif". Dulu berupa titik kecil, dan
+   maksudnya tidak terbaca: di layar sempit ia tampak seperti bullet nyasar di
+   samping teks tab, dan orang mengira itu penanda tab yang sedang dibuka.
+   Sekarang teks "AKTIF" — tidak mungkin disalahartikan. */
+.tab-flag {
+  font-size: 8px; font-weight: 500; letter-spacing: .1em;
+  padding: 2px 5px; border-radius: var(--r-sm);
+  color: #c3dcc7; background: var(--ok-soft); border: 1px solid rgba(169, 195, 173, .35);
+  flex: 0 0 auto; line-height: 1.3; white-space: nowrap;
 }
 
 .tab-pane { margin-top: 18px; }

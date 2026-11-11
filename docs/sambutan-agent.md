@@ -89,6 +89,20 @@ id yang sama untuk dua tab membuat `getElementById()` selalu mengembalikan
 elemen pertama — status "Selesai" untuk perpisahan akan tertulis di panel
 sambutan.
 
+**Penanda "aktif" di tab.** Dulu berupa titik kecil berwarna hijau, dan dua hal
+membuatnya disalahpahami:
+
+1. Maksudnya tidak terbaca — di layar sempit titik itu tampak seperti bullet
+   nyasar di samping teks tab, dan orang mengira penanda tab yang sedang dibuka.
+2. Titik itu diikat ke "tab mana yang terbuka", sehingga selalu muncul di tab
+   kiri dan hilang saat pindah tab. Tidak memberi informasi apa pun.
+
+Sekarang bentuknya **teks "AKTIF"** dan isinya status sakelar yang sebenarnya —
+tetap terlihat saat tab itu tidak dibuka, karena gunanya justru memberi tahu
+tanpa harus membuka tab. Badge status di judul tab juga dipindah menempel pada
+kartu **PENGATURAN**, bukan menggantung di baris judul tab (di HP badge itu
+turun ke baris sendiri dan jauh dari teks yang diterangkannya).
+
 Kalau avatar diminta tapi gagal diunduh, kartu memakai lingkaran gradasi dengan
 huruf awal nama — bukan lingkaran kosong.
 
@@ -166,6 +180,100 @@ menyindir, dan tidak menyebut aturan server. Orang bisa keluar karena masalah
 pribadi; bot tidak perlu mengomentari itu.
 
 ---
+
+## 1c. Panel "Pemakaian server" di Ringkasan
+
+Kartu ini memperlihatkan CPU, memori, jaringan, dan disk **milik proses bot
+ini**, bukan seluruh mesin — di hosting itulah yang relevan, karena admin
+peduli seberapa dekat ke jatah 512 MB / 1 GB, bukan berapa RAM host.
+
+### Angkanya sekarang hidup
+
+Dulu halaman Ringkasan memotret sekali saat dimuat: angka CPU dan jaringan
+tinggal diam sampai halaman di-refresh, sementara panel hosting terus bergerak.
+Sekarang dashboard **polling `GET /api/resources` tiap 3 detik** dan
+memperbarui panel tanpa memuat ulang halaman.
+
+Kenapa polling, bukan SSE/WebSocket: dashboard ini dilayani lewat proxy panel
+hosting (Pterodactyl/Wispbyte), dan proxy seperti itu sering **menahan respons
+`text/event-stream`** sehingga angkanya justru membeku — persis masalah yang
+ingin dihilangkan. `fetch` biasa paling tahan terhadap proxy.
+
+Aturan yang dijaga:
+
+- Polling **berhenti saat tab disembunyikan** (`document.hidden`) dan lanjut
+  begitu tab terlihat lagi — tidak ada gunanya membebani server untuk halaman
+  yang tidak dilihat.
+- Respons memakai `cache-control: no-store`; tanpa itu proxy panel bisa
+  menyimpan respons GET dan angkanya membeku lagi.
+- Gagal jaringan sesaat **tidak menghapus angka terakhir**. Setelah 3 kegagalan
+  berturut-turut penanda "langsung" berubah jadi "terputus", angka tetap ada.
+- Angka awal sudah dirender server (`#resSeed`), jadi panel tidak berkedip
+  kosong saat halaman dibuka.
+
+### CPU: dari `cpu.stat`, tanpa jeda
+
+CPU dihitung dari delta `usage_usec` di `cpu.stat` cgroup terhadap sampel
+sebelumnya. Cara lama menunggu 120 ms (`setTimeout`) untuk menebak persentase —
+itu membuat halaman Ringkasan lebih lambat tanpa manfaat. Sampel pertama belum
+punya pembanding, jadi ditulis "—" (lebih baik daripada angka karangan).
+
+Sampel lama **dibuang saat bot restart**: `cpu.stat` milik cgroup tidak kembali
+ke nol saat proses lahir, sehingga delta terhadap sampel proses sebelumnya bisa
+meledak. Penandanya `starttime` dari `/proc/<pid>/stat`.
+
+### Memori: RSS proses, bukan `anon` cgroup
+
+Ini kesalahan nyata yang dilaporkan: dashboard menulis **86,4 MB** sementara
+panel hosting menulis **69 MB** untuk proses yang sama.
+
+Penyebabnya dua lapis:
+
+1. `memory.current` ikut menghitung page cache (`file`), bukan hanya memori
+   proses.
+2. Lebih parah: cgroup container di hosting **dipakai bersama beberapa proses**,
+   jadi `anon`-nya menjumlahkan semuanya. Di sandbox nilainya terpantau berubah
+   430 KB → 75 MB dalam hitungan detik karena proses lain ikut dihitung.
+
+Yang dipakai sekarang adalah **RSS proses itu sendiri** (`/proc/<pid>/statm`).
+Itu definisi yang paling dekat dengan angka panel hosting. Kalau `/proc` tidak
+terbaca, urutannya: `anon` cgroup → `process.memoryUsage().rss`. Prioritasnya
+ada di fungsi murni `pickMemoryUsed()` supaya bisa diuji dengan angka yang
+sengaja jauh berbeda.
+
+### Disk: kuota container harus dinyatakan
+
+Dulu penyebut bar Disk adalah `statfs()` partisi folder kerja — di hosting itu
+**partisi mesin induk**, dan hasilnya "353 GB dari 441 GB (80%)" padahal panel
+hosting menulis 247 MB dari 1 GB. Angka itu tidak ada hubungannya dengan bot.
+
+Sekarang:
+
+- **Pemakaian** = jumlah byte isi folder server (termasuk `node_modules` dan
+  database), bukan partisi.
+- **Kuota** = angka yang dinyatakan, dari salah satu sumber:
+
+| Sumber | Cara | Menang atas |
+|---|---|---|
+| `.env` → `DISK_LIMIT_MB=1024` | sekali, berlaku untuk semua | isian di Pengaturan |
+| Halaman **Pengaturan** → "Kuota disk container" | per server, bisa diubah kapan saja | — |
+| Tidak diisi | bar disk kosong, hanya "166 MB terpakai" | — |
+
+Kuota **tidak bisa ditebak**: cgroup Linux tidak menyediakan kuota kapasitas
+disk (`io.max` hanya membatasi kecepatan baca/tulis), dan panel hosting tidak
+mengekspornya ke dalam container. Karena itu angkanya harus dinyatakan; lebih
+jujur menampilkan "kuota belum diatur" daripada memakai kapasitas mesin induk.
+
+### Jaringan & I/O disk: kecepatan, bukan total
+
+Kolom Jaringan dulu menampilkan total kumulatif ("↓ 228 KB · ↑ 277 KB sejak bot
+hidup"), yang tidak bisa dibandingkan dengan panel hosting yang menampilkan
+`0 B/s`. Sekarang yang ditampilkan **byte/detik** dari selisih antar-poll, dengan
+total kumulatif tetap dicantumkan kecil di bawahnya.
+
+`0 B/s` sah dan ditampilkan apa adanya — itu hasil pengukuran "tidak ada lalu
+lintas", bukan "tidak tersedia". Kecepatan baca/tulis disk diambil dari cgroup
+`io.stat`.
 
 ## 2. AI Agent: channel ngobrol + channel galeri
 
@@ -548,7 +656,7 @@ Tiga penyebab yang sudah diperbaiki:
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 316 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 321 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

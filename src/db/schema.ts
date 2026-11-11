@@ -15,6 +15,9 @@ CREATE TABLE IF NOT EXISTS guilds (
   rag_enabled    INTEGER,
   auto_memory    INTEGER,
   admin_only_rooms INTEGER,
+  -- Kuota disk container (MB) yang diisi admin. NULL = tidak diatur.
+  -- cgroup tidak menyediakan kuota kapasitas, jadi angkanya harus dinyatakan.
+  disk_quota_mb  INTEGER,
   created_at     INTEGER NOT NULL
 );
 
@@ -204,6 +207,7 @@ CREATE TABLE IF NOT EXISTS guilds (
   rag_enabled       BOOLEAN,
   auto_memory       BOOLEAN,
   admin_only_rooms  BOOLEAN,
+  disk_quota_mb     INTEGER,
   created_at        BIGINT NOT NULL
 );
 

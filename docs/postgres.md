@@ -123,7 +123,7 @@ di database (berguna untuk admin yang mau melihat keseluruhan).
 ### Uji tanpa server Postgres
 
 ```bash
-npm run smoke      # 316 test, jalur SQLite
+npm run smoke      # 321 test, jalur SQLite
 npm run smoke:pg   # 16 test, jalur Postgres lewat pg-mem (in-memory)
 ```
 

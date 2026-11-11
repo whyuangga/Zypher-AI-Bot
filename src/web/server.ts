@@ -40,6 +40,7 @@ import {
   setGuildRagEnabled,
   setGuildAutoMemory,
   setGuildAdminOnlyRooms,
+  setGuildDiskQuota,
   setGuildTimeZone,
   resolveTimeZone,
   setModerationSettings,
@@ -57,7 +58,7 @@ import {
   SAMPLE_MEMBER_NAME,
 } from '../features/preview.js';
 import { channelState } from '../features/agent.js';
-import { readResourceUsage } from './resources.js';
+import { readResourceUsage, readPartitionCapacity } from './resources.js';
 import { TIME_ZONES } from '../lib/timezone.js';
 import { normalizeDisplayMode } from '../features/display-mode.js';
 import { cardRendererAvailable, chromiumPath, renderWelcomeCard } from '../features/welcome-card.js';
@@ -440,6 +441,8 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
   if (path === '/' && method === 'GET') {
     const sessions = guildId ? (await listDmSessions(guildId)).slice(0, 8) : [];
     const documents = guildId ? (await listDocuments(guildId)).slice(0, 6) : [];
+    // Kuota disk per server dipakai agar render pertama sama dengan polling.
+    const guildRow = guildId ? await getGuildSettings(guildId) : null;
 
     sendHtml(
       response,
@@ -482,7 +485,14 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
           : await messagesPerDay('', 7),
         // Dibaca dengan `catch`: kalau cgroup/proc tidak bisa dibaca di hosting,
         // panelnya hilang — halaman Ringkasan tetap tampil utuh.
-        resources: await readResourceUsage({ workDir: process.cwd() }).catch((error: unknown) => {
+        resources: await readResourceUsage({
+          workDir: process.cwd(),
+          // Kuota harus sama dengan yang dipakai /api/resources. Tanpa ini,
+          // render pertama menulis "kuota belum diatur" lalu polling 3 detik
+          // kemudian menampilkannya — angka yang berubah sendiri membingungkan.
+          diskLimitEnv: config.features.diskLimitBytes || null,
+          diskLimitSetting: guildRow?.diskQuotaMb ? guildRow.diskQuotaMb * 1024 * 1024 : null,
+        }).catch((error: unknown) => {
           logger.warn(`Gagal membaca pemakaian sumber daya — ${errorMessage(error)}`);
           return null;
         }),
@@ -717,6 +727,10 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         autoMemoryDefault: config.features.autoMemory,
         adminOnlyRoomsSetting: settings?.adminOnlyRooms ?? null,
         adminOnlyRoomsDefault: config.features.adminOnlyRooms,
+        diskQuotaMb: settings?.diskQuotaMb ?? null,
+        diskQuotaEnvMb: config.features.diskLimitBytes
+          ? Math.round(config.features.diskLimitBytes / 1024 / 1024)
+          : null,
         stats: {
           rooms: guildId ? await countGuildRows(guildId, 'dm_sessions') : 0,
           messages: guildId ? await countGuildMessages(guildId) : 0,
@@ -900,6 +914,40 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
   // Endpoint sendiri, bukan menumpang /api/pengaturan: nilainya bukan boolean
   // dan butuh validasi daftar tertutup — kalau nilai ngawur diterima, semua
   // jam (termasuk jam tenang malam) meleset tanpa error.
+  /**
+   * Sumber daya server dalam JSON, untuk polling di halaman Ringkasan.
+   *
+   * Halaman Ringkasan dulu hanya memotret sekali saat dimuat, jadi angka CPU
+   * dan jaringan selalu basi sampai halaman di-refresh. Endpoint ini yang
+   * dipoll tiap beberapa detik. `no-store` wajib: proxy panel hosting suka
+   * menyimpan respons GET dan membuat angkanya membeku.
+   */
+  if (path === '/api/resources' && method === 'GET') {
+    const settings = guildId ? await getGuildSettings(guildId) : null;
+    const usage = await readResourceUsage({
+      workDir: process.cwd(),
+      diskLimitEnv: config.features.diskLimitBytes || null,
+      diskLimitSetting: settings?.diskQuotaMb ? settings.diskQuotaMb * 1024 * 1024 : null,
+    });
+    response.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store, no-cache, must-revalidate',
+      pragma: 'no-cache',
+    });
+    response.end(
+      JSON.stringify({
+        ...usage,
+        // Kapasitas partisi mesin: keterangan saja, bukan kuota container.
+        partitionTotal: await readPartitionCapacity(process.cwd()),
+        diskLimitEnvMb: config.features.diskLimitBytes
+          ? Math.round(config.features.diskLimitBytes / 1024 / 1024)
+          : null,
+        diskLimitSettingMb: settings?.diskQuotaMb ?? null,
+      }),
+    );
+    return;
+  }
+
   if (path === '/api/timezone' && method === 'POST') {
     if (!guildId) {
       sendJson(response, 400, { error: 'Server belum dipilih.' });
@@ -923,6 +971,47 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     }
     await setGuildTimeZone(guildId, requested);
     sendJson(response, 200, { ok: true, timezone: requested });
+    return;
+  }
+
+  /**
+   * Kuota disk container (MB). Endpoint sendiri karena nilainya angka, bukan
+   * boolean seperti toggle di /api/pengaturan.
+   *
+   * Kosong (`null`/0) = tidak diatur, dan dashboard berhenti menampilkan bar
+   * persentase disk alih-alih memakai kapasitas mesin induk.
+   */
+  if (path === '/api/disk-quota' && method === 'POST') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const raw = await readBody(request, 4 * 1024);
+    let payload: { megabytes?: unknown };
+    try {
+      payload = JSON.parse(raw) as { megabytes?: unknown };
+    } catch {
+      sendJson(response, 400, { error: 'Format JSON tidak valid.' });
+      return;
+    }
+
+    const value = payload.megabytes;
+    if (value !== null && typeof value !== 'number') {
+      sendJson(response, 400, { error: 'megabytes harus angka atau null.' });
+      return;
+    }
+    if (typeof value === 'number' && (!Number.isFinite(value) || value < 0)) {
+      sendJson(response, 400, { error: 'megabytes tidak boleh negatif.' });
+      return;
+    }
+    if (typeof value === 'number' && value > 10_485_760) {
+      sendJson(response, 400, { error: 'megabytes terlalu besar (maks 10.485.760 = 10 TB).' });
+      return;
+    }
+
+    await setGuildDiskQuota(guildId, value === null || value === 0 ? null : value);
+    const settings = await getGuildSettings(guildId);
+    sendJson(response, 200, { ok: true, diskQuotaMb: settings?.diskQuotaMb ?? null });
     return;
   }
 

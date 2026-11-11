@@ -188,10 +188,22 @@ export interface ResourcePanelData {
   memoryFromCgroup: boolean;
   networkIn: number | null;
   networkOut: number | null;
+  /** Byte/detik. `null` = belum ada sampel pembanding. */
+  networkInRate?: number | null;
+  networkOutRate?: number | null;
+  /** Pemakaian folder server (bukan partisi mesin). */
   diskUsed: number | null;
+  /** Kuota container. `null` = tidak diatur → bar disk tidak ditampilkan. */
   diskTotal: number | null;
+  diskTotalSource?: 'env' | 'setting' | null;
+  diskReadRate?: number | null;
+  diskWriteRate?: number | null;
   uptimeSeconds: number;
   inContainer: boolean;
+  /** Epoch ms sampel. Dipakai untuk label "diperbarui X lalu". */
+  sampledAt?: number;
+  /** Kapasitas partisi mesin — keterangan saja, bukan kuota. */
+  partitionTotal?: number | null;
 }
 
 /** "2 jam 5 menit" — uptime proses, enak dibaca di sub-baris. */
@@ -208,15 +220,36 @@ function humanUptime(seconds: number): string {
 }
 
 /**
+ * Byte/detik yang enak dibaca: "0 B/s", "512 B/s", "12,4 KB/s".
+ *
+ * Nol ditulis "0 B/s" — bukan "—" — karena nol adalah hasil pengukuran yang
+ * sah ("tidak ada lalu lintas"), sama seperti panel hosting menampilkannya.
+ */
+function rateLabel(value: number | null | undefined): string {
+  if (value === null || value === undefined) return '—';
+  const round1 = (num: number): string =>
+    (num >= 10 ? Math.round(num) : Math.round(num * 10) / 10).toLocaleString('id-ID');
+  if (value < 1024) return `${formatNumber(value)} B/s`;
+  const kb = value / 1024;
+  if (kb < 1024) return `${round1(kb)} KB/s`;
+  const mb = kb / 1024;
+  return `${round1(mb)} MB/s`;
+}
+
+/**
  * Panel "Pemakaian server": CPU, memori, jaringan, disk.
  *
- * Angka di sini mencerminkan **proses dashboard/bot ini** dan batas container-nya
- * — bukan seluruh mesin. Di Pterodactyl itulah yang relevan: admin ingin tahu
- * seberapa dekat ia ke batas 612 MB / 1 GB, bukan berapa RAM host.
+ * Semua angka milik **proses bot ini**, bukan seluruh mesin. Nilai di dalam
+ * `data-*` dipakai JS untuk memperbarui panel tanpa memuat ulang halaman
+ * (lihat `liveResources()` di halaman Ringkasan).
  */
 export function resourcePanel(data: ResourcePanelData): string {
   const memPercent =
     data.memoryTotal && data.memoryTotal > 0 ? (data.memoryUsed / data.memoryTotal) * 100 : null;
+
+  // Disk: bar persentase HANYA kalau kuota diketahui. Dulu penyebutnya
+  // kapasitas partisi mesin induk, sehingga hosting 1 GB terbaca
+  // "353 GB / 441 GB" — angka yang tidak ada hubungannya dengan jatah bot.
   const diskPercent =
     data.diskTotal && data.diskTotal > 0 && data.diskUsed !== null
       ? (data.diskUsed / data.diskTotal) * 100
@@ -228,23 +261,33 @@ export function resourcePanel(data: ResourcePanelData): string {
       }`
     : 'batas tidak terbaca';
 
-  // Jaringan: byte kumulatif proses. Ditampilkan sebagai total, bukan B/s —
-  // sampel sesaat selalu menipu karena halaman dimuat sekali saja.
+  // Jaringan: kecepatan sesaat + total kumulatif sebagai konteks.
+  const netRateIn = rateLabel(data.networkInRate);
+  const netRateOut = rateLabel(data.networkOutRate);
   const netSub =
-    data.networkIn === null && data.networkOut === null
+    data.networkInRate === null && data.networkOutRate === null && data.networkIn === null
       ? 'statistik jaringan tidak tersedia di sistem ini'
-      : `↓ ${formatBytes(data.networkIn)} masuk · ↑ ${formatBytes(data.networkOut)} keluar (sejak bot hidup)`;
+      : `↓ ${netRateIn} · ↑ ${netRateOut} sekarang — total ${formatBytes(data.networkIn)} masuk / ${formatBytes(data.networkOut)} keluar`;
 
-  const diskSub = data.diskTotal
-    ? `${formatNumber(decimals(diskPercent))}% dari ${formatBytes(data.diskTotal)}`
-    : 'kapasitas tidak terbaca';
+  const diskSub = !data.diskTotal
+    ? `kuota container belum diatur · ${formatBytes(data.diskUsed)} terpakai${data.partitionTotal ? ` (partisi mesin ${formatBytes(data.partitionTotal)})` : ''}`
+    : `${formatNumber(decimals(diskPercent))}% dari ${formatBytes(data.diskTotal)}${data.diskTotalSource === 'env' ? ' (dari .env)' : data.diskTotalSource === 'setting' ? ' (dari Pengaturan)' : ''}`;
+
+  // Kecepatan disk hanya kalau sampelnya ada; jangan tampilkan baris kosong.
+  const diskIoRate =
+    data.diskReadRate === null && data.diskWriteRate === null
+      ? ''
+      : ` · baca ${rateLabel(data.diskReadRate)} / tulis ${rateLabel(data.diskWriteRate)}`;
 
   const rows = [
     meterRow({
       icon: 'cpu',
       label: 'CPU',
       value: data.cpuPercent === null ? '—' : `${formatNumber(oneDecimal(data.cpuPercent))}%`,
-      sub: `sampel ${data.inContainer ? 'dari jatah container' : 'dari seluruh inti mesin'}`,
+      sub:
+        data.cpuPercent === null
+          ? 'menunggu sampel berikutnya'
+          : `sampel ${data.inContainer ? 'dari jatah container' : 'dari seluruh inti mesin'}`,
       percent: data.cpuPercent,
     }),
     meterRow({
@@ -257,7 +300,7 @@ export function resourcePanel(data: ResourcePanelData): string {
     meterRow({
       icon: 'network',
       label: 'Jaringan',
-      value: formatBytes((data.networkIn ?? 0) + (data.networkOut ?? 0)),
+      value: `${rateLabel(data.networkInRate)} masuk`,
       sub: netSub,
       percent: null,
     }),
@@ -265,13 +308,38 @@ export function resourcePanel(data: ResourcePanelData): string {
       icon: 'disk',
       label: 'Disk',
       value: formatBytes(data.diskUsed),
-      sub: diskSub,
+      sub: `${diskSub}${diskIoRate}`,
       percent: diskPercent,
     }),
   ].join('');
 
+  // Data mentah untuk JS: panel diperbarui tanpa memuat ulang halaman.
+  const live = JSON.stringify({
+    cpuPercent: data.cpuPercent,
+    memoryUsed: data.memoryUsed,
+    memoryTotal: data.memoryTotal,
+    memoryFromCgroup: data.memoryFromCgroup,
+    networkIn: data.networkIn,
+    networkOut: data.networkOut,
+    networkInRate: data.networkInRate ?? null,
+    networkOutRate: data.networkOutRate ?? null,
+    diskUsed: data.diskUsed,
+    diskTotal: data.diskTotal,
+    diskTotalSource: data.diskTotalSource ?? null,
+    diskReadRate: data.diskReadRate ?? null,
+    diskWriteRate: data.diskWriteRate ?? null,
+    uptimeSeconds: data.uptimeSeconds,
+    inContainer: data.inContainer,
+    sampledAt: data.sampledAt ?? Date.now(),
+    partitionTotal: data.partitionTotal ?? null,
+  });
+
   return `<div class="res-list">${rows}</div>
-<div class="res-foot">Proses hidup ${esc(humanUptime(data.uptimeSeconds))} · angka di sini milik <b>proses bot ini</b>, bukan seluruh mesin.</div>`;
+<div class="res-foot">
+  <span id="resUpdated">Proses hidup ${esc(humanUptime(data.uptimeSeconds))} · angka di sini milik <b>proses bot ini</b>, bukan seluruh mesin.</span>
+  <span class="res-live"><span class="res-dot" id="resDot"></span><span id="resLive">langsung</span></span>
+</div>
+<script type="application/json" id="resSeed">${live}</script>`;
 }
 
 /** 1 desimal, tapi "0%" tetap "0%" — bukan "0,0%". */

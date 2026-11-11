@@ -1286,6 +1286,8 @@ test('pengaturanPage menampilkan toggle fitur', () => {
     autoMemoryDefault: true,
     adminOnlyRoomsSetting: null,
     adminOnlyRoomsDefault: false,
+    diskQuotaMb: null,
+    diskQuotaEnvMb: null,
     stats: { messages: 0, rooms: 0, documents: 0 },
     status: { online: false, mode: 'standalone', uptimeSeconds: 0 },
     counts: {},
@@ -4899,7 +4901,7 @@ await testAsync('halaman sambutan: tab Sambutan & Perpisahan, bukan dua form men
     persona: null, model: null, defaultModel: 'x', embedModel: null, ragEnabled: false,
     ttsReplyInRoom: null, ttsReplyInRoomDefault: true, ragEnabledSetting: null,
     ragEnabledDefault: true, autoMemorySetting: null, autoMemoryDefault: true,
-    adminOnlyRoomsSetting: null, adminOnlyRoomsDefault: false,
+    adminOnlyRoomsSetting: null, adminOnlyRoomsDefault: false, diskQuotaMb: null, diskQuotaEnvMb: null,
     stats: { rooms: 0, messages: 0, documents: 0 },
     status: { online: true, mode: 'bot', uptimeSeconds: 0 }, counts: {},
   } as never);
@@ -4944,11 +4946,172 @@ await testAsync('halaman sambutan: tab Sambutan & Perpisahan, bukan dua form men
   assert.equal(paneWelcome.includes('outGoodbye'), false, 'pratinjau perpisahan tidak ikut di tab sambutan');
 });
 
-await testAsync('halaman sambutan: titik tab mengikuti sakelar aktif, bukan tab yang dibuka', async () => {
-  // Bug nyata saat tab pertama kali dibuat: titik indikator diikat ke "tab mana
-  // yang terbuka", jadi selalu muncul di kiri dan hilang saat pindah tab —
-  // tidak memberi informasi apa pun. Gunanya justru menunjukkan jenis pesan
-  // mana yang SEDANG mengirim, termasuk saat tab itu tidak dibuka.
+await testAsync('sumber daya: disk memakai kuota container, bukan partisi mesin induk', async () => {
+  // Bug nyata dari laporan pemilik server: panel menulis "353 GB dari 441 GB
+  // (80%)" padahal panel hosting menulis 247 MB dari 1 GB. Penyebabnya
+  // `statfs()` membaca partisi MESIN INDUK. cgroup tidak menyediakan kuota
+  // kapasitas disk (io.max hanya membatasi kecepatan), jadi kuota harus
+  // dinyatakan lewat env atau isian admin — tidak boleh ditebak.
+  const { readResourceUsage } = await import('../src/web/resources.js');
+
+  const tanpaKuota = await readResourceUsage({ workDir: process.cwd() });
+  assert.equal(tanpaKuota.diskTotal, null, 'tanpa kuota: penyebut null, bukan kapasitas mesin');
+  assert.equal(tanpaKuota.diskTotalSource, null, 'sumber kuota null');
+  assert.ok(tanpaKuota.diskUsed !== null && tanpaKuota.diskUsed > 0, 'pemakaian folder terbaca');
+
+  const dariEnv = await readResourceUsage({
+    workDir: process.cwd(),
+    diskLimitEnv: 1024 * 1024 * 1024,
+  });
+  assert.equal(dariEnv.diskTotal, 1024 * 1024 * 1024, 'kuota dari env dipakai');
+  assert.equal(dariEnv.diskTotalSource, 'env', 'sumbernya dilaporkan');
+
+  // env menang atas isian admin — supaya panel hosting tetap jadi acuan.
+  const keduanya = await readResourceUsage({
+    workDir: process.cwd(),
+    diskLimitEnv: 1024 * 1024 * 1024,
+    diskLimitSetting: 2 * 1024 * 1024 * 1024,
+  });
+  assert.equal(keduanya.diskTotal, 1024 * 1024 * 1024, 'env menang');
+  assert.equal(keduanya.diskTotalSource, 'env');
+
+  const hanyaSetting = await readResourceUsage({
+    workDir: process.cwd(),
+    diskLimitSetting: 2 * 1024 * 1024 * 1024,
+  });
+  assert.equal(hanyaSetting.diskTotalSource, 'setting', 'isian admin dipakai kalau env kosong');
+
+  // Folder server yang diukur bukan partisi: nilainya harus JAUH di bawah
+  // kapasitas partisi mesin (partisi bisa ratusan GB).
+  const { readPartitionCapacity } = await import('../src/web/resources.js');
+  const partisi = await readPartitionCapacity(process.cwd());
+  if (partisi) {
+    assert.ok(dariEnv.diskUsed! < partisi, 'pemakaian folder < kapasitas partisi');
+  }
+});
+
+await testAsync('sumber daya: sampel kedua melaporkan CPU & kecepatan, sampel pertama jujur kosong', async () => {
+  const { readResourceUsage } = await import('../src/web/resources.js');
+
+  // Panggilan pertama tidak punya pembanding. Jangan mengarang angka: null,
+  // dan UI menulis "menunggu sampel berikutnya".
+  const pertama = await readResourceUsage({ workDir: process.cwd() });
+  assert.equal(typeof pertama.sampledAt, 'number', 'ada cap waktu sampel');
+
+  // Beri beban CPU supaya ada yang terukur.
+  const end = Date.now() + 260;
+  let x = 0;
+  while (Date.now() < end) x += Math.sqrt(x + 1);
+  await new Promise((resolve) => setTimeout(resolve, 220));
+
+  const kedua = await readResourceUsage({ workDir: process.cwd() });
+  assert.ok(kedua.cpuPercent !== null, 'sampel kedua punya angka CPU');
+  assert.ok(kedua.cpuPercent! >= 0 && kedua.cpuPercent! <= 100, 'CPU dalam 0–100');
+
+  // Kecepatan jaringan: 0 sah ("tidak ada lalu lintas"), bukan null.
+  assert.ok(
+    kedua.networkInRate !== null && kedua.networkInRate! >= 0,
+    'kecepatan jaringan terukur (0 sah)',
+  );
+  assert.ok(kedua.networkOutRate !== null && kedua.networkOutRate! >= 0, 'keluar juga');
+
+  // Memori = RSS proses ini, bukan anon cgroup bersama. Selisih dengan RSS
+  // nyata harus kecil; kalau kode kembali memakai `anon`, angkanya bisa
+  // berbeda puluhan MB karena proses lain di cgroup yang sama ikut dihitung.
+  const statm = await readFile(`/proc/${process.pid}/statm`, 'utf8').catch(() => '');
+  if (statm) {
+    const rss = Number(statm.trim().split(/\s+/)[1]) * 4096;
+    const selisih = Math.abs(kedua.memoryUsed - rss) / rss;
+    assert.ok(selisih < 0.25, `memori sampel (${kedua.memoryUsed}) dekat RSS nyata (${rss})`);
+  }
+});
+
+await testAsync('sumber daya: memori memakai RSS proses, bukan anon cgroup bersama', async () => {
+  // Ini kesalahan yang nyata di laporan: dashboard menulis 86,4 MB sementara
+  // panel hosting menulis 69 MB untuk proses yang sama. `anon` cgroup
+  // menjumlahkan SEMUA proses yang berbagi container, jadi bukan pemakaian
+  // bot. Diuji dengan nilai yang sengaja jauh berbeda — di mesin nyata kedua
+  // angka sering terlalu dekat untuk membedakan benar/salah.
+  const { pickMemoryUsed } = await import('../src/web/resources.js');
+
+  assert.equal(
+    pickMemoryUsed({ ownRss: 69 * 1024 * 1024, cgroupAnon: 86 * 1024 * 1024, fallback: 1 }),
+    69 * 1024 * 1024,
+    'RSS proses menang atas anon cgroup',
+  );
+
+  // /proc tidak terbaca (mis. Windows): pakai anon, jangan 0.
+  assert.equal(
+    pickMemoryUsed({ ownRss: null, cgroupAnon: 42, fallback: 7 }),
+    42,
+    'cadangan anon kalau RSS tak terbaca',
+  );
+
+  // Keduanya kosong: cadangan terakhir tetap angka wajar, bukan 0.
+  assert.equal(pickMemoryUsed({ ownRss: null, cgroupAnon: null, fallback: 7 }), 7);
+
+  // Nilai 0 dari /proc berarti "tidak terbaca", bukan "tidak memakai memori".
+  assert.equal(
+    pickMemoryUsed({ ownRss: 0, cgroupAnon: 42, fallback: 7 }),
+    42,
+    'nol tidak dipakai sebagai pemakaian',
+  );
+});
+
+await testAsync('sumber daya: endpoint polling ada, tidak di-cache, dan dipakai halaman Ringkasan', async () => {
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(server.includes("path === '/api/resources'"), 'endpoint /api/resources ada');
+  assert.ok(server.includes("'cache-control': 'no-store"), 'tidak boleh di-cache proxy panel');
+  assert.ok(server.includes('diskLimitEnv: config.features.diskLimitBytes'),
+    'kuota dari env diteruskan');
+  assert.ok(server.includes('diskLimitSetting: settings?.diskQuotaMb'),
+    'kuota dari isian admin diteruskan');
+
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  // Halaman Ringkasan dulu hanya memotret sekali; tanpa polling angkanya basi.
+  assert.ok(pages.includes("fetch('/api/resources'"), 'halaman memanggil endpoint sumber daya');
+  assert.ok(pages.includes('setInterval'), 'memakai polling');
+  assert.ok(pages.includes("addEventListener('visibilitychange'"), 'berhenti saat tab disembunyikan');
+  assert.ok(pages.includes('INTERVAL_MS = 3000'), 'interval wajar (3 detik)');
+
+  // Panel harus membawa data awal dari server, supaya tidak ada kedipan kosong.
+  const base = await readFile('src/web/ui/base.ts', 'utf8');
+  assert.ok(base.includes('id="resSeed"'), 'data awal disisipkan ke HTML');
+});
+
+await testAsync('sumber daya: kuota disk bisa disimpan dari halaman Pengaturan', async () => {
+  const { setGuildDiskQuota, getGuildSettings } = await import('../src/db/repo.js');
+  const guild = '141414141414141414';
+
+  await setGuildDiskQuota(guild, 1024);
+  assert.equal((await getGuildSettings(guild))?.diskQuotaMb, 1024, 'kuota tersimpan');
+
+  await setGuildDiskQuota(guild, null);
+  assert.equal((await getGuildSettings(guild))?.diskQuotaMb, null, 'bisa dikosongkan');
+
+  // Nilai ngawur tidak boleh masuk: negatif & nol jadi null, raksasa dipotong.
+  await setGuildDiskQuota(guild, -5 as never);
+  assert.equal((await getGuildSettings(guild))?.diskQuotaMb, null, 'negatif ditolak');
+  await setGuildDiskQuota(guild, 0);
+  assert.equal((await getGuildSettings(guild))?.diskQuotaMb, null, 'nol = tidak diatur');
+  await setGuildDiskQuota(guild, 99_999_999_999);
+  assert.equal((await getGuildSettings(guild))?.diskQuotaMb, 10_485_760, 'dipotong di batas atas');
+
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(server.includes("path === '/api/disk-quota'"), 'endpoint simpan kuota ada');
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  assert.ok(pages.includes("'/api/disk-quota'"), 'Pengaturan menembak endpoint yang benar');
+  assert.ok(pages.includes('id="diskQuotaMb"'), 'ada kolom isian kuota');
+  assert.ok(pages.includes('DISK_LIMIT_MB'), 'menjelaskan env yang mengunci nilainya');
+});
+
+await testAsync('halaman sambutan: penanda AKTIF di tab mengikuti sakelar, bukan tab yang dibuka', async () => {
+  // Dua kesalahan nyata pada penanda ini:
+  //   1. awalnya diikat ke "tab mana yang terbuka" → selalu muncul di kiri dan
+  //      hilang saat pindah tab, tidak memberi informasi apa pun;
+  //   2. bentuknya titik kecil → di layar sempit terbaca seperti bullet nyasar
+  //      di samping teks tab, dan pemilik server mengira itu penanda tab aktif.
+  // Sekarang bentuknya teks "aktif" dan isinya status enabled yang sebenarnya.
   const { welcomePage } = await import('../src/web/ui/pages.js');
   const base = {
     useAi: false, channelId: null, template: 'Halo {user}!',
@@ -4967,31 +5130,36 @@ await testAsync('halaman sambutan: titik tab mengikuti sakelar aktif, bukan tab 
       ttsReplyInRoom: null, ttsReplyInRoomDefault: true, ragEnabledSetting: null,
       ragEnabledDefault: true, autoMemorySetting: null, autoMemoryDefault: true,
       adminOnlyRoomsSetting: null, adminOnlyRoomsDefault: false,
+      diskQuotaMb: null, diskQuotaEnvMb: null,
       stats: { rooms: 0, messages: 0, documents: 0 },
       status: { online: true, mode: 'bot', uptimeSeconds: 0 }, counts: {},
     } as never);
 
-  const dot = (html: string, kind: string): string => {
-    const at = html.indexOf(`id="tabDot-${kind}"`);
-    assert.ok(at > -1, `titik tab ${kind} ada`);
-    return html.slice(at, html.indexOf('>', at));
+  const flag = (html: string, kind: string): string => {
+    const at = html.indexOf(`id="tabFlag-${kind}"`);
+    assert.ok(at > -1, `penanda tab ${kind} ada`);
+    return html.slice(at, html.indexOf('</span>', at));
   };
 
   // Sambutan aktif, perpisahan mati.
   const satu = render(true, false);
-  assert.equal(/\shidden/.test(dot(satu, 'welcome')), false, 'sambutan aktif → titik tampil');
-  assert.equal(/\shidden/.test(dot(satu, 'goodbye')), true, 'perpisahan mati → titik disembunyikan');
+  assert.equal(/\shidden/.test(flag(satu, 'welcome')), false, 'sambutan aktif → penanda tampil');
+  assert.equal(/\shidden/.test(flag(satu, 'goodbye')), true, 'perpisahan mati → penanda disembunyikan');
+  assert.ok(/aktif/i.test(flag(satu, 'welcome')), 'penanda berupa teks "aktif", bukan titik');
 
   // Dibalik: hanya perpisahan yang aktif.
   const dua = render(false, true);
-  assert.equal(/\shidden/.test(dot(dua, 'welcome')), true, 'sambutan mati → titik disembunyikan');
-  assert.equal(/\shidden/.test(dot(dua, 'goodbye')), false, 'perpisahan aktif → titik tampil');
+  assert.equal(/\shidden/.test(flag(dua, 'welcome')), true, 'sambutan mati → penanda disembunyikan');
+  assert.equal(/\shidden/.test(flag(dua, 'goodbye')), false, 'perpisahan aktif → penanda tampil');
+
+  // Bentuk lama (titik) tidak boleh kembali — itulah yang disalahpahami.
+  assert.equal(satu.includes('tab-dot'), false, 'titik kecil sudah diganti teks');
 
   // Kode harus membaca checkbox saat itu, bukan nilai beku hasil render.
-  assert.ok(satu.includes('function syncTabDots('), 'ada penyelaras titik');
-  assert.ok(satu.includes("'Enabled'"), 'titik dibaca dari checkbox enabled');
-  assert.ok(satu.includes("addEventListener('change', syncTabDots)"),
-    'titik ikut berubah saat sakelar diubah sebelum disimpan');
+  assert.ok(satu.includes('function syncTabFlags('), 'ada penyelaras penanda');
+  assert.ok(satu.includes("'Enabled'"), 'penanda dibaca dari checkbox enabled');
+  assert.ok(satu.includes("addEventListener('change', syncTabFlags)"),
+    'penanda ikut berubah saat sakelar diubah sebelum disimpan');
 
   // Scroll otomatis saat pindah tab bisa menaruh judul panel di bawah topbar
   // yang sticky. Tab bar-nya ada di atas panel, jadi tidak perlu digulir.
@@ -5045,7 +5213,7 @@ await testAsync('banner: halaman tidak menyisipkan data URI (bisa belasan MB)', 
     persona: null, model: null, defaultModel: 'x', embedModel: null, ragEnabled: false,
     ttsReplyInRoom: null, ttsReplyInRoomDefault: true, ragEnabledSetting: null,
     ragEnabledDefault: true, autoMemorySetting: null, autoMemoryDefault: true,
-    adminOnlyRoomsSetting: null, adminOnlyRoomsDefault: false,
+    adminOnlyRoomsSetting: null, adminOnlyRoomsDefault: false, diskQuotaMb: null, diskQuotaEnvMb: null,
     stats: { rooms: 0, messages: 0, documents: 0 },
     status: { online: false, mode: 'standalone', uptimeSeconds: 0 },
     counts: {},

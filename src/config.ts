@@ -184,6 +184,11 @@ const schema = z.object({
   MODLOG_CHANNEL_ID: optionalId,
   STAFF_ROLE_ID: optionalId,
   ADMIN_ONLY_ROOMS: booleanish(false),
+  // Kuota disk container dari panel hosting (MB). cgroup TIDAK menyediakannya
+  // dan panel tidak mengekspornya ke dalam container, jadi admin mengisinya
+  // sendiri. Kosong = tidak diatur; bar disk di dashboard hanya muncul kalau
+  // angkanya diketahui (lebih baik tidak ada daripada angka mesin induk).
+  DISK_LIMIT_MB: numberish(0, 0, 10_485_760),
   // ---------- Moderasi otomatis ----------
   MODERATION_ENABLED: booleanish(false),
   // Daftar kata dipisah koma. Boleh juga diatur per server dari dashboard.
@@ -356,6 +361,15 @@ export const config = {
     rateLimitPerMinute: env.RATE_LIMIT_PER_MINUTE,
     maxInputChars: env.MAX_INPUT_CHARS,
     adminOnlyRooms: env.ADMIN_ONLY_ROOMS,
+    /**
+     * Kuota disk container (byte), 0 = tidak diatur.
+     *
+     * Dulu dashboard memakai `statfs()` partisi folder kerja, dan di hosting
+     * hasilnya "353 GB / 441 GB" — itu kapasitas mesin induk, bukan jatah
+     * container yang cuma 1 GB. Sekarang kuota harus dinyatakan eksplisit,
+     * lewat env ini atau isian di halaman Pengaturan.
+     */
+    diskLimitBytes: env.DISK_LIMIT_MB * 1024 * 1024,
   },
   ids: {
     modLogChannel: env.MODLOG_CHANNEL_ID,
