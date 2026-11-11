@@ -450,8 +450,8 @@ export function panelPage(options: PanelOptions): string {
   const hasPanel = Boolean(options.messageId);
 
   const channelField = options.channels.length
-    ? `<span class="select-shell" style="display:flex;width:100%">
-    <select id="panelChannel" style="width:100%;max-width:none">
+    ? `<span class="select-shell full">
+    <select id="panelChannel">
       <option value="">— pilih channel —</option>
       ${options.channels
         .map(
@@ -996,8 +996,8 @@ export function pengaturanPage(
     body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:12px">
   <div>
     <label class="field" for="timeZone">Zona waktu</label>
-    <span class="select-shell" style="width:100%">
-      <select id="timeZone" style="width:100%">
+    <span class="select-shell full">
+      <select id="timeZone">
         ${TIME_ZONES.map(
           (zone) =>
             `<option value="${esc(zone.id)}" ${normalizeTimeZone(options.effectiveTimeZone) === zone.id ? 'selected' : ''}>${esc(zone.label)} — ${esc(zone.longName)} (UTC+${esc(zone.offset)})</option>`,
@@ -1474,8 +1474,8 @@ export function welcomePage(options: WelcomePageOptions): string {
 
   <div>
     <label class="field" for="welcomeChannel">Kirim ke</label>
-    <span class="select-shell" style="width:100%">
-      <select id="welcomeChannel" style="width:100%">
+    <span class="select-shell full">
+      <select id="welcomeChannel">
         ${channelOptions(options.channels, options.welcome.channelId, 'DM member (disarankan)')}
       </select>
       ${icon('chevron', 15)}
@@ -1544,8 +1544,8 @@ export function welcomePage(options: WelcomePageOptions): string {
 
   <div>
     <label class="field" for="goodbyeChannel">Kirim ke</label>
-    <span class="select-shell" style="width:100%">
-      <select id="goodbyeChannel" style="width:100%">
+    <span class="select-shell full">
+      <select id="goodbyeChannel">
         ${channelOptions(options.channels, options.goodbye.channelId, 'Belum dipilih — salam tidak dikirim')}
       </select>
       ${icon('chevron', 15)}
@@ -2078,8 +2078,8 @@ export function agentPage(options: AgentPageOptions): string {
 
   <div>
     <label class="field" for="agentChannel">Channel ngobrol</label>
-    <span class="select-shell" style="width:100%">
-      <select id="agentChannel" style="width:100%">
+    <span class="select-shell full">
+      <select id="agentChannel">
         ${channelOptions(options.channels, options.agent.channelId, 'Mati — AI tidak ikut ngobrol')}
       </select>
       ${icon('chevron', 15)}
@@ -2089,8 +2089,8 @@ export function agentPage(options: AgentPageOptions): string {
 
   <div>
     <label class="field" for="agentGallery">Channel galeri</label>
-    <span class="select-shell" style="width:100%">
-      <select id="agentGallery" style="width:100%">
+    <span class="select-shell full">
+      <select id="agentGallery">
         ${channelOptions(options.channels, options.agent.galleryChannelId, 'Mati — AI tidak mengomentari foto')}
       </select>
       ${icon('chevron', 15)}
@@ -2158,8 +2158,8 @@ export function agentPage(options: AgentPageOptions): string {
 
   <div>
     <label class="field" for="testRole">Uji sebagai</label>
-    <span class="select-shell" style="width:100%">
-      <select id="testRole" style="width:100%">
+    <span class="select-shell full">
+      <select id="testRole">
         <option value="chat">Pesan di channel ngobrol</option>
         <option value="gallery">Komentar di channel galeri</option>
       </select>
@@ -2468,8 +2468,8 @@ export function moderasiPage(options: ModerasiOptions): string {
   <div class="grid cols-2-even" style="gap:14px">
     <div>
       <label class="field" for="modAction">Tindakan</label>
-      <span class="select-shell" style="width:100%">
-        <select id="modAction" style="width:100%">
+      <span class="select-shell full">
+        <select id="modAction">
           <option value="delete" ${options.action === 'delete' ? 'selected' : ''}>Hapus pesan</option>
           <option value="warn" ${options.action === 'warn' ? 'selected' : ''}>Hapus + peringatan</option>
           <option value="timeout" ${options.action === 'timeout' ? 'selected' : ''}>Hapus + timeout member</option>

@@ -156,10 +156,22 @@ code {
 }
 /* Badge server di topbar. Bukan kontrol: bot ini untuk satu server,
    jadi yang perlu diketahui admin hanya server mana yang sedang dibuka. */
-/* Shell mengikuti lebar <select>, bukan sebaliknya.
-   Dulu shell bisa width:100% sementara select dibatasi max-width:260px,
-   jadi chevron (position:absolute; right:10px) menempel ke tepi shell —
-   jauh di kanan garis bawah select. Sekarang shell menyusut selebar select. */
+/* Select dengan chevron sendiri: appearance:none membuang panah bawaan
+   browser, jadi panahnya digambar sebagai <svg> di dalam shell.
+
+   Dua varian lebar, dan bedanya penting:
+
+   - bawaan (tanpa modifier): untuk select sempit di topbar. Shell menyusut
+     mengikuti isi, select dibatasi 260px.
+   - .full: untuk select di dalam form yang harus selebar kolomnya.
+
+   Sebelum ada .full, form memakai inline style width:100% pada shell — dan di
+   situlah bug-nya: shell jadi selebar kolom (mis. 400px), tetapi select tetap
+   dibatasi 260px. Chevron diposisikan right:10px terhadap SHELL, jadi ia jatuh
+   140px di kanan teks dan di luar garis bawah select.
+   Yang terlihat: garis putus sebelum ujung baris, lalu panah melayang sendiri.
+   Kuncinya: select dan chevron harus berbagi kotak yang sama, jadi lebarnya
+   diatur di SHELL dan select selalu 100% dari shell. */
 .select-shell { position: relative; display: inline-flex; align-items: center; max-width: 100%; }
 .select-shell svg { position: absolute; right: 10px; pointer-events: none; color: var(--text-3); }
 .select-shell select {
@@ -168,6 +180,14 @@ code {
   color: var(--text); font-family: var(--font-mono); font-size: 12.5px; letter-spacing: .02em;
 }
 .select-shell select:hover { border-bottom-color: var(--text); }
+
+/* Varian selebar kolom form. Select ikut 100% supaya garis bawah dan chevron
+   berakhir di titik yang sama. min-width:0 mencegah select mendorong lebar
+   shell melebihi kolom saat nama channel panjang. padding-right 34px = lebar
+   chevron (15px) + jarak 10px + ruang aman, supaya nama channel panjang
+   terpotong SEBELUM menabrak panah. */
+.select-shell.full { display: flex; width: 100%; }
+.select-shell.full select { min-width: 0; max-width: none; padding-right: 34px; }
 
 .guild-static {
   display: inline-flex; align-items: center; gap: 9px; min-width: 0;

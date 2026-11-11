@@ -656,7 +656,7 @@ Tiga penyebab yang sudah diperbaiki:
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 321 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 322 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

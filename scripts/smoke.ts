@@ -1561,6 +1561,55 @@ await testAsync('card-head: teks di samping judul tidak turun (margin .hint dire
   assert.ok(block.includes('margin: 0'), '.card-head .hint harus margin:0');
 });
 
+await testAsync('select-shell: chevron tidak melayang di luar garis bawah select', async () => {
+  // Bug nyata dari laporan pemilik server: garis bawah select berhenti di
+  // tengah baris, lalu panah chevron melayang jauh di kanannya.
+  //
+  // Penyebabnya: form memakai `<span class="select-shell" style="width:100%">`,
+  // jadi shell selebar kolom (mis. 400px) sementara `<select>` tetap dibatasi
+  // `max-width: 260px`. Chevron diposisikan `right: 10px` terhadap SHELL, jadi
+  // ia jatuh ~140px di kanan ujung select dan di luar garis bawahnya.
+  const { STYLE } = await import('../src/web/ui/theme.js');
+
+  const rule = (selector: string): string => {
+    const start = STYLE.indexOf(`${selector} {`);
+    assert.ok(start > -1, `aturan ${selector} ada`);
+    return STYLE.slice(start, STYLE.indexOf('}', start));
+  };
+
+  const full = rule('.select-shell.full');
+  assert.ok(/width:\s*100%/.test(full), 'shell varian .full selebar kolom');
+
+  const fullSelect = rule('.select-shell.full select');
+  // Kunci perbaikannya: select tidak boleh lagi dibatasi 260px, kalau tidak
+  // chevron (posisinya relatif ke shell) berakhir di luar garis bawah select.
+  assert.ok(
+    /max-width:\s*none/.test(fullSelect),
+    'select di dalam .full TIDAK dibatasi max-width (chevron ikut ujung garis)',
+  );
+  assert.ok(/min-width:\s*0/.test(fullSelect), 'nama channel panjang tidak mendorong lebar');
+  // Chevron 15px + right:10px. Padding kanan harus lebih besar dari itu,
+  // kalau tidak nama channel panjang menabrak panahnya.
+  assert.ok(
+    /padding-right:\s*34px/.test(fullSelect),
+    'padding kanan menyisakan ruang untuk chevron',
+  );
+
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  // Inline style itulah akar bug: ia melebarkan SHELL, bukan select.
+  assert.equal(
+    /class="select-shell"[^>]*style="[^"]*width:\s*100%/.test(pages),
+    false,
+    'tidak ada lagi shell selebar kolom lewat inline style',
+  );
+  // Semua shell di dalam form harus memakai varian .full supaya select dan
+  // chevron berbagi kotak yang sama.
+  const shells = [...pages.matchAll(/class="select-shell([^"]*)"/g)].map((m) => m[1]!.trim());
+  assert.ok(shells.length >= 6, `ada ${shells.length} pemakaian select-shell`);
+  const tanpaFull = shells.filter((cls) => !cls.includes('full'));
+  assert.deepEqual(tanpaFull, [], `select-shell di form wajib .full: ${tanpaFull.join(' | ')}`);
+});
+
 await testAsync('select-shell: chevron menempel ke ujung <select>, bukan tepi shell', async () => {
   const { STYLE } = await import('../src/web/ui/theme.js');
   const shell = STYLE.slice(STYLE.indexOf('.select-shell {'), STYLE.indexOf('.select-shell select'));
