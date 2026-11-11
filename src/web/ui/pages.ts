@@ -985,6 +985,12 @@ export interface WelcomePageOptions extends PageContext {
     displayMode: string;
     imageEnabled: boolean;
     includeAvatar: boolean;
+    /** Avatar di dalam gambar kartu (sakelar sendiri, terpisah dari embed). */
+    cardAvatar: boolean;
+    /** Teks di dalam gambar kartu. */
+    cardText: boolean;
+    /** Avatar sebagai thumbnail di embed. */
+    embedAvatar: boolean;
     style: string | null;
     example: string | null;
     /** Nama file banner (null = latar bawaan). */
@@ -1004,6 +1010,9 @@ export interface WelcomePageOptions extends PageContext {
     hasBanner: boolean;
     imageEnabled: boolean;
     includeAvatar: boolean;
+    cardAvatar: boolean;
+    cardText: boolean;
+    embedAvatar: boolean;
   };
   channels: Array<{ id: string; name: string }>;
   botOnline: boolean;
@@ -1106,6 +1115,80 @@ function bannerBlock(
   </div>`;
 }
 
+/**
+ * Satu panel tab: form di kiri, pratinjau & tes di kanan.
+ *
+ * Kenapa begini: dulu sambutan dan perpisahan dirender sebagai dua kartu
+ * berdampingan yang PENUH form, lalu kartu "Pratinjau & tes" untuk keduanya
+ * ditaruh di bawah. Hasilnya halaman sangat panjang — untuk mengubah satu
+ * sakelar sambutan lalu melihat hasilnya, admin harus scroll jauh ke bawah dan
+ * kehilangan konteks form yang sedang diubah.
+ *
+ * Sekarang hanya satu jenis pesan yang tampil sekaligus (lewat tab), dan
+ * pratinjaunya menempel di kanan pada layar lebar, jadi hasil tes terlihat
+ * tanpa scroll sama sekali.
+ */
+function welcomePane(options: {
+  kind: 'welcome' | 'goodbye';
+  form: string;
+  preview: string;
+  status: string;
+  hint: string;
+}): string {
+  const label = options.kind === 'welcome' ? 'Sambutan' : 'Perpisahan';
+  const note = options.kind === 'welcome'
+    ? 'Sapa member yang baru bergabung. Kalau dimatikan, tidak ada yang dikirim.'
+    : 'Ucapkan salam saat member keluar. Kalau dimatikan, tidak ada yang dikirim.';
+
+  // Panel perpisahan langsung disembunyikan dari HTML, BUKAN menunggu JS.
+  // Kalau hanya mengandalkan showTab(), dua form tampil bersamaan pada
+  // milidetik pertama (dan selamanya kalau JS gagal) — persis masalah yang
+  // ingin dihilangkan halaman ini.
+  return `<section class="tab-pane" id="pane-${options.kind}" data-kind="${options.kind}"${options.kind === 'welcome' ? '' : ' hidden'}>
+  <div class="pane-head">
+    <div>
+      <h2>${esc(label)}</h2>
+      <p class="hint">${esc(note)}</p>
+    </div>
+    <div class="right">${options.status}</div>
+  </div>
+  <div class="pane-grid">
+    <section class="card">
+      <div class="card-head"><h2>Pengaturan</h2><span class="hint">${esc(options.hint)}</span></div>
+      ${options.form}
+    </section>
+    ${options.preview}
+  </div>
+</section>`;
+}
+
+/**
+ * Tab Sambutan & Perpisahan.
+ *
+ * Catatan penting soal perilaku: tab memakai `hidden`, BUKAN melepas elemen dari
+ * DOM. Semua input tetap ada di halaman, sehingga
+ *   - `saveWelcome()` / `saveGoodbye()` tetap membaca nilai yang benar,
+ *   - membuka tab tidak menghapus isi form yang belum disimpan,
+ *   - pratinjau yang sudah tampil tidak hilang saat berpindah tab.
+ */
+function welcomeTabs(welcomeEnabled: boolean, goodbyeEnabled: boolean): string {
+  // Titik di tab = jenis pesan itu SEDANG AKTIF mengirim. Dulu titik ini
+  // diikat ke "tab mana yang terbuka", sehingga selalu muncul di tab kiri dan
+  // hilang saat pindah tab — tidak memberi informasi apa pun. Sekarang isinya
+  // status enabled yang sebenarnya.
+  const tab = (kind: 'welcome' | 'goodbye', label: string, active: boolean, on: boolean): string =>
+    `<button type="button" role="tab" class="tab${active ? ' is-active' : ''}"
+       id="tab-${kind}" data-tab="${kind}"
+       aria-controls="pane-${kind}" aria-selected="${active ? 'true' : 'false'}"
+       onclick="showTab('${kind}')">${esc(label)}<span class="tab-dot" id="tabDot-${kind}"${on ? '' : ' hidden'}></span></button>`;
+
+  return `<div class="tabs" role="tablist" aria-label="Sambutan atau perpisahan" style="margin-top:14px">
+    ${tab('welcome', 'Sambutan', true, welcomeEnabled)}
+    ${tab('goodbye', 'Perpisahan', false, goodbyeEnabled)}
+    <span class="hint" style="margin:0 0 0 auto;align-self:center">Satu tab = satu jenis pesan. Isian di tab lain tidak hilang.</span>
+  </div>`;
+}
+
 export function welcomePage(options: WelcomePageOptions): string {
   const welcomeStatus = options.welcome.enabled ? badge('Aktif', 'ok') : badge('Nonaktif', 'warn');
   const goodbyeStatus = options.goodbye.enabled ? badge('Aktif', 'ok') : badge('Nonaktif', 'warn');
@@ -1118,11 +1201,7 @@ export function welcomePage(options: WelcomePageOptions): string {
     ? `<div class="notice" style="margin-top:12px">${icon('alert', 16)}<span><b>Kartu PNG tidak akan terkirim.</b> Mesin gambar kartu gagal dimuat di server ini, jadi sambutan & perpisahan jatuh ke embed teks. Coba jalankan ulang bot; kalau tetap gagal, periksa log saat start.</span></div>`
     : '';
 
-  const welcomeCard = card({
-    title: 'Sambutan member baru',
-    hint: 'satu pesan per member baru',
-    right: welcomeStatus,
-    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+  const welcomeForm = `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
   <label class="check-row" ${CHECK_ROW}>
     <input type="checkbox" id="welcomeEnabled" ${options.welcome.enabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
     <span>Sapa setiap member yang baru bergabung</span>
@@ -1164,23 +1243,33 @@ export function welcomePage(options: WelcomePageOptions): string {
   </div>
 
   ${displayModePicker('welcome', options.welcome.displayMode)}
-  <label class="check-row" ${CHECK_ROW}>
-    <input type="checkbox" id="welcomeAvatar" ${options.welcome.includeAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
-    <span>Tampilkan avatar member di kartu</span>
-  </label>
+  <div class="check-group">
+    <p class="field" style="margin:0 0 6px">Tampilan kartu (PNG)</p>
+    <label class="check-row" ${CHECK_ROW}>
+      <input type="checkbox" id="welcomeCardAvatar" ${options.welcome.cardAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+      <span>Avatar member di tengah kartu</span>
+    </label>
+    <label class="check-row" ${CHECK_ROW}>
+      <input type="checkbox" id="welcomeCardText" ${options.welcome.cardText ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+      <span>Teks di kartu (SELAMAT DATANG, nama, jumlah member)</span>
+    </label>
+    <p class="hint">Teks sapaan tetap dikirim sebagai pesan Discord di atas gambar — yang dimatikan hanya tulisan <i>di dalam</i> gambarnya.</p>
+  </div>
+  <div class="check-group">
+    <p class="field" style="margin:0 0 6px">Tampilan embed</p>
+    <label class="check-row" ${CHECK_ROW}>
+      <input type="checkbox" id="welcomeEmbedAvatar" ${options.welcome.embedAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+      <span>Avatar member sebagai thumbnail di embed</span>
+    </label>
+  </div>
 
   ${bannerBlock('welcome', options.welcome.bannerPath, options.welcome.hasBanner)}
   ${rendererWarning}
 
   <div><button class="btn-primary" type="button" onclick="saveWelcome()">${icon('check', 16)} Simpan sambutan</button></div>
-</div>`,
-  });
+</div>`;
 
-  const goodbyeCard = card({
-    title: 'Salam perpisahan',
-    hint: 'saat member keluar',
-    right: goodbyeStatus,
-    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+  const goodbyeForm = `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
   <label class="check-row" ${CHECK_ROW}>
     <input type="checkbox" id="goodbyeEnabled" ${options.goodbye.enabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
     <span>Kirim salam saat ada member keluar</span>
@@ -1223,81 +1312,187 @@ export function welcomePage(options: WelcomePageOptions): string {
   </div>
 
   ${displayModePicker('goodbye', options.goodbye.displayMode)}
-  <label class="check-row" ${CHECK_ROW}>
-    <input type="checkbox" id="goodbyeAvatar" ${options.goodbye.includeAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
-    <span>Tampilkan avatar member di kartu</span>
-  </label>
+  <div class="check-group">
+    <p class="field" style="margin:0 0 6px">Tampilan kartu (PNG)</p>
+    <label class="check-row" ${CHECK_ROW}>
+      <input type="checkbox" id="goodbyeCardAvatar" ${options.goodbye.cardAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+      <span>Avatar member di tengah kartu</span>
+    </label>
+    <label class="check-row" ${CHECK_ROW}>
+      <input type="checkbox" id="goodbyeCardText" ${options.goodbye.cardText ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+      <span>Teks di kartu (SAMPAI JUMPA, nama, jumlah member)</span>
+    </label>
+    <p class="hint">Teks salam tetap dikirim sebagai pesan Discord di atas gambar — yang dimatikan hanya tulisan <i>di dalam</i> gambarnya.</p>
+  </div>
+  <div class="check-group">
+    <p class="field" style="margin:0 0 6px">Tampilan embed</p>
+    <label class="check-row" ${CHECK_ROW}>
+      <input type="checkbox" id="goodbyeEmbedAvatar" ${options.goodbye.embedAvatar ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+      <span>Avatar member sebagai thumbnail di embed</span>
+    </label>
+  </div>
 
   ${bannerBlock('goodbye', options.goodbye.bannerPath, options.goodbye.hasBanner)}
 
   <div><button class="btn-primary" type="button" onclick="saveGoodbye()">${icon('check', 16)} Simpan salam</button></div>
-</div>`,
-  });
+</div>`;
 
-  const previewCard = card({
-    title: 'Pratinjau & tes',
-    hint: 'tanpa mengirim apa pun ke Discord',
-    right: `<span id="previewState" class="hint" style="margin:0">Siap diuji</span>`,
-    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
-  <div>
-    <label class="field" for="previewName">Nama contoh</label>
-    <input type="text" id="previewName" value="${esc(options.sampleName)}" placeholder="Sky" maxlength="60">
-    <p class="hint">Dipakai sebagai nama member di sapaan. Coba beberapa nama untuk melihat kalimatnya berubah.</p>
-  </div>
+  // Panel pratinjau per tab.
+  //
+  // `previewState` & `previewName` WAJIB berbeda per tab. Dulu keduanya hanya
+  // ada satu karena pratinjau memang cuma satu untuk dua form; setelah dipisah
+  // per tab, memakai id yang sama berarti dua elemen ber-id sama di satu halaman
+  // — getElementById() selalu mengembalikan yang PERTAMA, sehingga status
+  // "Selesai" untuk perpisahan akan menulis ke panel sambutan.
+  const welcomePreview = `<section class="card pane-preview">
+    <div class="card-head">
+      <h2>Pratinjau &amp; tes</h2>
+      <span class="hint">tanpa mengirim apa pun</span>
+      <span class="right"><span id="welcomePreviewState" class="hint" style="margin:0">Siap diuji</span></span>
+    </div>
+    <div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+      <div>
+        <label class="field" for="welcomePreviewName">Nama contoh</label>
+        <input type="text" id="welcomePreviewName" value="${esc(options.sampleName)}" placeholder="Sky" maxlength="60">
+      </div>
 
-  <div style="display:flex;gap:10px;flex-wrap:wrap">
-    <button class="btn-primary" type="button" id="testWelcome" onclick="runTest('welcome')">${icon('message', 16)} Tes sambutan</button>
-    <button class="btn-ghost" type="button" onclick="runTest('welcome', true)">Tes tanpa AI</button>
-  </div>
-  <div class="preview-box" id="outWelcome" hidden>
-    <div class="preview-meta" id="metaWelcome"></div>
-    <div class="preview-text" id="textWelcome"></div>
-    <img id="cardWelcome" class="preview-img" alt="Kartu sambutan" hidden>
-  </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn-primary" type="button" id="testWelcome" onclick="runTest('welcome')">${icon('message', 16)} Tes sambutan</button>
+        <button class="btn-ghost" type="button" onclick="runTest('welcome', true)">Tes tanpa AI</button>
+      </div>
+      <div class="preview-box" id="outWelcome" hidden>
+        <div class="preview-meta" id="metaWelcome"></div>
+        <div class="preview-text" id="textWelcome"></div>
+        <img id="cardWelcome" class="preview-img" alt="Kartu sambutan" hidden>
+      </div>
 
-  <div class="send-row">
-    <select id="sendWhere" class="send-select" ${options.botOnline ? '' : 'disabled'}>
-      <option value="dm">Kirim ke DM saya</option>
-      <option value="channel">Kirim ke channel sambutan</option>
-    </select>
-    <button class="btn-ghost" type="button" id="sendWelcome" onclick="sendTest('welcome')" ${options.botOnline ? '' : 'disabled'}>
-      ${icon('external', 15)} Kirim tes sungguhan
-    </button>
-  </div>
-  <p class="hint" style="margin:0">Tombol ini <b>benar-benar mengirim</b> satu pesan ke Discord, diberi penanda "pesan uji". Dipakai untuk membuktikan alurnya jalan — tidak perlu menunggu member baru.${options.botOnline ? '' : ' <b>Bot sedang offline</b>, jadi pengiriman dinonaktifkan.'}</p>
+      <div class="send-row">
+        <select id="sendWhere" class="send-select" ${options.botOnline ? '' : 'disabled'}>
+          <option value="dm">Kirim ke DM saya</option>
+          <option value="channel">Kirim ke channel sambutan</option>
+        </select>
+        <button class="btn-ghost" type="button" id="sendWelcome" onclick="sendTest('welcome')" ${options.botOnline ? '' : 'disabled'}>
+          ${icon('external', 15)} Kirim tes sungguhan
+        </button>
+      </div>
+      <p class="hint" style="margin:0">Tombol ini <b>benar-benar mengirim</b> satu pesan ke Discord, diberi penanda "pesan uji". Dipakai untuk membuktikan alurnya jalan — tidak perlu menunggu member baru.${options.botOnline ? '' : ' <b>Bot sedang offline</b>, jadi pengiriman dinonaktifkan.'}</p>
+      <p class="hint" style="margin:0">Yang diuji adalah <b>isi pesannya</b>, bukan pengirimannya. Tombol ini memakai form di samping apa adanya, jadi kamu bisa mencoba gaya lain sebelum menyimpan.</p>
+    </div>
+  </section>`;
 
-  <hr style="border:none;border-top:1px solid var(--line);margin:2px 0">
+  const goodbyePreview = `<section class="card pane-preview">
+    <div class="card-head">
+      <h2>Pratinjau &amp; tes</h2>
+      <span class="hint">tanpa mengirim apa pun</span>
+      <span class="right"><span id="goodbyePreviewState" class="hint" style="margin:0">Siap diuji</span></span>
+    </div>
+    <div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+      <div>
+        <label class="field" for="goodbyePreviewName">Nama contoh</label>
+        <input type="text" id="goodbyePreviewName" value="${esc(options.sampleName)}" placeholder="Sky" maxlength="60">
+      </div>
 
-  <div style="display:flex;gap:10px;flex-wrap:wrap">
-    <button class="btn-primary" type="button" id="testGoodbye" onclick="runTest('goodbye')">${icon('logout', 16)} Tes salam perpisahan</button>
-    <button class="btn-ghost" type="button" onclick="runTest('goodbye', true)">Tes tanpa AI</button>
-  </div>
-  <div class="preview-box" id="outGoodbye" hidden>
-    <div class="preview-meta" id="metaGoodbye"></div>
-    <div class="preview-text" id="textGoodbye"></div>
-    <img id="cardGoodbye" class="preview-img" alt="Kartu perpisahan" hidden>
-  </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn-primary" type="button" id="testGoodbye" onclick="runTest('goodbye')">${icon('logout', 16)} Tes salam perpisahan</button>
+        <button class="btn-ghost" type="button" onclick="runTest('goodbye', true)">Tes tanpa AI</button>
+      </div>
+      <div class="preview-box" id="outGoodbye" hidden>
+        <div class="preview-meta" id="metaGoodbye"></div>
+        <div class="preview-text" id="textGoodbye"></div>
+        <img id="cardGoodbye" class="preview-img" alt="Kartu perpisahan" hidden>
+      </div>
 
-  <div class="send-row">
-    <button class="btn-ghost" type="button" id="sendGoodbye" onclick="sendTest('goodbye')" ${options.botOnline ? '' : 'disabled'}>
-      ${icon('external', 15)} Kirim tes ke channel
-    </button>
-  </div>
-  <p class="hint" style="margin:0">Salam perpisahan <b>selalu ke channel</b> — member yang keluar tidak bisa dikirimi DM. Channel harus dipilih &amp; disimpan dulu.</p>
-
-  <p class="hint" style="margin:0">Yang diuji adalah <b>isi pesannya</b>, bukan pengirimannya. Tombol ini memakai form di atas apa adanya, jadi kamu bisa mencoba gaya lain sebelum menyimpan.</p>
-</div>`,
-  });
+      <div class="send-row">
+        <button class="btn-ghost" type="button" id="sendGoodbye" onclick="sendTest('goodbye')" ${options.botOnline ? '' : 'disabled'}>
+          ${icon('external', 15)} Kirim tes ke channel
+        </button>
+      </div>
+      <p class="hint" style="margin:0">Salam perpisahan <b>selalu ke channel</b> — member yang keluar tidak bisa dikirimi DM. Channel harus dipilih &amp; disimpan dulu.</p>
+      <p class="hint" style="margin:0">Yang diuji adalah <b>isi pesannya</b>, bukan pengirimannya. Tombol ini memakai form di samping apa adanya.</p>
+    </div>
+  </section>`;
 
   const body = `${pageHead({
     kicker: '03 — Kehadiran',
     title: 'Sambutan & Perpisahan',
     subtitle: 'Sapa member yang baru datang, dan ucapkan salam saat mereka pamit. Dua-duanya mati secara default.',
   })}
-<div class="grid cols-2-even mt">${welcomeCard}${goodbyeCard}</div>
-<div class="mt">${previewCard}</div>
+${welcomeTabs(options.welcome.enabled, options.goodbye.enabled)}
+${welcomePane({ kind: 'welcome', form: welcomeForm, preview: welcomePreview, status: welcomeStatus, hint: 'satu pesan per member baru' })}
+${welcomePane({ kind: 'goodbye', form: goodbyeForm, preview: goodbyePreview, status: goodbyeStatus, hint: 'saat member keluar' })}
 
 <script>
+/**
+ * Pindah tab Sambutan ↔ Perpisahan.
+ *
+ * Panel yang tidak aktif hanya disembunyikan (atribut hidden) — tidak dilepas
+ * dari DOM. Dengan begitu isian yang belum disimpan tidak hilang, dan semua
+ * getElementById di bawah tetap menemukan elemennya.
+ */
+function showTab(kind) {
+  var kinds = ['welcome', 'goodbye'];
+  for (var i = 0; i < kinds.length; i++) {
+    var name = kinds[i];
+    var active = name === kind;
+    var pane = document.getElementById('pane-' + name);
+    var tab = document.getElementById('tab-' + name);
+    var dot = document.getElementById('tabDot-' + name);
+    if (pane) pane.hidden = !active;
+    if (tab) {
+      tab.classList.toggle('is-active', active);
+      tab.setAttribute('aria-selected', active ? 'true' : 'false');
+    }
+    // Titik kecil di tab = pesan jenis itu sedang aktif. Dibaca dari checkbox
+    // saat ini, bukan dari nilai saat halaman dirender: admin bisa mematikan
+    // sambutan lalu belum menyimpan, dan titiknya harus ikut berubah.
+    if (dot) {
+      var toggle = document.getElementById(name + 'Enabled');
+      dot.hidden = !(toggle && toggle.checked);
+    }
+  }
+  // Tab yang dibuka disimpan supaya tidak balik ke Sambutan setelah simpan.
+  try { localStorage.setItem('zypher.tab.sambutan', kind); } catch (e) {}
+  // Tidak ada scrollIntoView di sini: tab bar ada di ATAS panel, jadi untuk
+  // menekan tab admin sudah berada di dekat atas halaman. Menggulir otomatis
+  // justru bisa menaruh judul panel di bawah topbar yang sticky.
+}
+
+/**
+ * Samakan titik indikator tab dengan checkbox "aktif" milik tab itu.
+ *
+ * Dipanggil saat halaman dimuat dan setiap kali salah satu checkbox berubah,
+ * supaya titik tidak berbohong saat admin menyalakan/mematikan sambutan tanpa
+ * menyimpan.
+ */
+function syncTabDots() {
+  var kinds = ['welcome', 'goodbye'];
+  for (var i = 0; i < kinds.length; i++) {
+    var name = kinds[i];
+    var dot = document.getElementById('tabDot-' + name);
+    var toggle = document.getElementById(name + 'Enabled');
+    if (dot) dot.hidden = !(toggle && toggle.checked);
+  }
+}
+
+(function watchToggles() {
+  var kinds = ['welcome', 'goodbye'];
+  for (var i = 0; i < kinds.length; i++) {
+    var toggle = document.getElementById(kinds[i] + 'Enabled');
+    if (toggle && toggle.addEventListener) {
+      toggle.addEventListener('change', syncTabDots);
+    }
+  }
+  syncTabDots();
+})();
+
+// Buka tab terakhir yang dipakai. Ini juga yang membuat halaman terasa ringkas:
+// admin yang sedang mengurus perpisahan tidak selalu mendarat di Sambutan.
+(function restoreTab() {
+  var saved = null;
+  try { saved = localStorage.getItem('zypher.tab.sambutan'); } catch (e) {}
+  if (saved === 'goodbye') showTab('goodbye');
+})();
+
 /** Nilai radio mode tampilan yang sedang dipilih. */
 function modeOf(kind) {
   var picked = document.querySelector('input[name="' + kind + 'Mode"]:checked');
@@ -1314,7 +1509,10 @@ async function saveWelcome() {
     example: document.getElementById('welcomeExample').value.trim() || null,
     displayMode: modeOf('welcome'),
     imageEnabled: modeOf('welcome') === 'card',
-    includeAvatar: document.getElementById('welcomeAvatar').checked,
+    includeAvatar: document.getElementById('welcomeCardAvatar').checked,
+    cardAvatar: document.getElementById('welcomeCardAvatar').checked,
+    cardText: document.getElementById('welcomeCardText').checked,
+    embedAvatar: document.getElementById('welcomeEmbedAvatar').checked,
   }, 'Sambutan disimpan.');
 }
 
@@ -1382,6 +1580,18 @@ function showBanner(kind, src) {
 }
 
 /**
+ * Tulis status ke panel pratinjau milik tab yang bersangkutan.
+ *
+ * Ada DUA panel pratinjau sekarang (satu per tab), jadi id-nya tidak boleh
+ * sama: getElementById() mengembalikan elemen pertama, sehingga status untuk
+ * perpisahan akan muncul di panel sambutan.
+ */
+function setPreviewState(kind, text) {
+  var el = document.getElementById(kind + 'PreviewState');
+  if (el) el.textContent = text;
+}
+
+/**
  * Kirim satu pesan sungguhan ke Discord memakai form apa adanya.
  *
  * Sengaja terpisah dari runTest(): pratinjau hanya menampilkan teks, sedangkan
@@ -1392,7 +1602,7 @@ async function sendTest(kind) {
   var label = button.innerHTML;
   button.disabled = true;
   button.textContent = 'Mengirim…';
-  document.getElementById('previewState').textContent = 'Mengirim ke Discord…';
+  setPreviewState(kind, 'Mengirim ke Discord…');
 
   var payload = kind === 'welcome'
     ? {
@@ -1403,7 +1613,10 @@ async function sendTest(kind) {
         example: document.getElementById('welcomeExample').value.trim(),
         displayMode: modeOf('welcome'),
         imageEnabled: modeOf('welcome') === 'card',
-        includeAvatar: document.getElementById('welcomeAvatar').checked,
+        includeAvatar: document.getElementById('welcomeCardAvatar').checked,
+        cardAvatar: document.getElementById('welcomeCardAvatar').checked,
+        cardText: document.getElementById('welcomeCardText').checked,
+        embedAvatar: document.getElementById('welcomeEmbedAvatar').checked,
       }
     : {
         useAi: document.getElementById('goodbyeUseAi').checked,
@@ -1412,7 +1625,10 @@ async function sendTest(kind) {
         example: document.getElementById('goodbyeExample').value.trim(),
         displayMode: modeOf('goodbye'),
         imageEnabled: modeOf('goodbye') === 'card',
-        includeAvatar: document.getElementById('goodbyeAvatar').checked,
+        includeAvatar: document.getElementById('goodbyeCardAvatar').checked,
+        cardAvatar: document.getElementById('goodbyeCardAvatar').checked,
+        cardText: document.getElementById('goodbyeCardText').checked,
+        embedAvatar: document.getElementById('goodbyeEmbedAvatar').checked,
       };
 
   try {
@@ -1423,11 +1639,11 @@ async function sendTest(kind) {
     });
     var where = data.where === 'dm' ? 'DM kamu' : ('#' + data.channelName);
     toast('✅ Terkirim ke ' + where + (data.card ? ' (dengan kartu)' : ''));
-    document.getElementById('previewState').textContent = 'Terkirim';
+    setPreviewState(kind, 'Terkirim');
     showSendResult(kind, data);
   } catch (error) {
     toast('Gagal mengirim: ' + error.message, true);
-    document.getElementById('previewState').textContent = 'Gagal mengirim';
+    setPreviewState(kind, 'Gagal mengirim');
     showSendError(kind, error.message);
   } finally {
     button.disabled = false;
@@ -1461,7 +1677,10 @@ async function saveGoodbye() {
     example: document.getElementById('goodbyeExample').value.trim() || null,
     displayMode: modeOf('goodbye'),
     imageEnabled: modeOf('goodbye') === 'card',
-    includeAvatar: document.getElementById('goodbyeAvatar').checked,
+    includeAvatar: document.getElementById('goodbyeCardAvatar').checked,
+    cardAvatar: document.getElementById('goodbyeCardAvatar').checked,
+    cardText: document.getElementById('goodbyeCardText').checked,
+    embedAvatar: document.getElementById('goodbyeEmbedAvatar').checked,
   }, 'Salam perpisahan disimpan.');
 }
 
@@ -1471,13 +1690,14 @@ async function saveGoodbye() {
  */
 async function runTest(kind, templateOnly) {
   var button = document.getElementById(kind === 'welcome' ? 'testWelcome' : 'testGoodbye');
-  var state = document.getElementById('previewState');
   var label = button.textContent;
   button.disabled = true;
   button.textContent = 'Menguji…';
-  state.textContent = 'Menghubungi model…';
+  setPreviewState(kind, 'Menghubungi model…');
 
-  var name = document.getElementById('previewName').value.trim();
+  // Tiap tab punya kolom nama contoh sendiri (id per tab): menguji perpisahan
+  // tidak boleh memakai nama yang diketik untuk sambutan.
+  var name = document.getElementById(kind + 'PreviewName').value.trim();
   var payload = kind === 'welcome'
     ? {
         name: name,
@@ -1518,10 +1738,10 @@ async function runTest(kind, templateOnly) {
     var image = document.getElementById(kind === 'welcome' ? 'cardWelcome' : 'cardGoodbye');
     image.hidden = !data.cardDataUri;
     if (data.cardDataUri) image.src = data.cardDataUri;
-    state.textContent = 'Selesai';
+    setPreviewState(kind, 'Selesai');
     toast('✅ Pratinjau siap — belum ada yang dikirim');
   } catch (error) {
-    state.textContent = 'Gagal';
+    setPreviewState(kind, 'Gagal');
     toast('Gagal menguji: ' + error.message, true);
   } finally {
     button.disabled = false;

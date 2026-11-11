@@ -10,8 +10,12 @@
  * Aturan yang dijaga:
  *   - Pesan selalu diberi penanda jelas "ini pesan uji" supaya member yang
  *     melihatnya di channel tidak mengira itu sambutan sungguhan.
- *   - Mention tidak pernah dipicu (`allowedMentions: { parse: [] }`), jadi tidak
- *     ada yang ter-tag karena tes.
+ *   - Sambutan & perpisahan tetap men-mention member (bentuknya harus sama
+ *     dengan pesan sungguhan). Sudah ada penanda uji yang jelas, jadi mention
+ *     itu tidak akan disangka sambutan asli — dan hanya member itu yang
+ *     diizinkan lewat `allowedMentions.users`, bukan `@everyone`.
+ *   - Jalur agent & pemecah sepi tetap memakai `allowedMentions: { parse: [] }`:
+ *     keduanya memang tidak pernah men-mention siapa pun.
  *   - Kalau pengiriman gagal, alasannya dikembalikan apa adanya (izin kurang,
  *     channel tidak ada, DM ditutup, kartu gagal dibuat) — bukan "gagal" polos.
  *
@@ -148,6 +152,8 @@ async function buildCard(options: {
   filePrefix: string;
   /** Baris kecil di bawah nama — konteksnya ditentukan pemanggil. */
   detail: string;
+  /** Tampilkan teks di dalam gambar. */
+  showText?: boolean;
 }): Promise<AttachmentBuilder | null> {
   const banner = await readBannerDataUri(options.bannerPath);
   let avatar: string | null = null;
@@ -171,6 +177,8 @@ async function buildCard(options: {
     bannerDataUri: banner,
     kicker: options.kicker,
     detail: options.detail,
+    showText: options.showText,
+    showAvatar: options.includeAvatar,
   });
   if (!png) return null;
   return new AttachmentBuilder(png, { name: `${options.filePrefix}-test.png` });
@@ -210,11 +218,13 @@ export async function sendWelcomeTest(
           guildName: guild.name,
           text: preview.text,
           bannerPath: settings.bannerPath,
-          includeAvatar: settings.includeAvatar,
+          // Tampilan kartu punya sakelarnya sendiri (lihat WelcomeSettings).
+          includeAvatar: settings.cardAvatar,
           avatarUrl: member.displayAvatarURL({ extension: 'png', size: 256 }),
           kicker: 'SELAMAT DATANG',
           filePrefix: 'selamat-datang',
           detail: cardDetail('welcome', guild.name, guild.memberCount),
+          showText: settings.cardText,
         })
       : null;
 
@@ -259,7 +269,13 @@ export async function sendWelcomeTest(
       ? (() => {
           const built = buildContainerCard({
             kind: 'welcome',
-            text: preview.text,
+            // Components V2 melarang `content`, jadi mention hidup di dalam
+            // teks komponen — sama seperti sambutan sungguhan.
+            //
+            // Penanda uji WAJIB ikut: dulu mode container mengirim bentuk yang
+            // identik dengan sambutan asli, sehingga member di channel tidak
+            // bisa membedakan mana pesan uji.
+            text: `${TEST_MARK}\n\n<@${member.id}> ${preview.text}`,
             guildName: guild.name,
             memberCount: guild.memberCount,
             bannerName: containerBanner?.name ?? null,
@@ -275,10 +291,14 @@ export async function sendWelcomeTest(
     ? {
         ...container,
         files: containerBanner ? [containerBanner.attachment] : [],
-        allowedMentions: { parse: [] as const },
+        // Mention ada di dalam komponen; tanpa ini ia tampil sebagai teks mentah.
+        allowedMentions: { users: [member.id] },
       }
     : modeNow === 'text'
-      ? { content: `${TEST_MARK}\n\n${preview.text}`, allowedMentions: { parse: [] as const } }
+      ? {
+          content: `${TEST_MARK}\n\n<@${member.id}> ${preview.text}`,
+          allowedMentions: { users: [member.id] },
+        }
       : card
         ? {
             // Sama seperti sambutan sungguhan: teks sapaan + mention + kartu,
@@ -290,10 +310,12 @@ export async function sendWelcomeTest(
             allowedMentions: { users: [member.id] },
           }
         : {
-            content: TEST_MARK,
+            // Mode embed sama seperti produksi: mention dikirim lewat content,
+            // bukan lewat deskripsi embed (mention di dalam embed mati).
+            content: `${TEST_MARK}\n\n<@${member.id}>`,
             embeds: [embed],
             files: bannerFile ? [bannerFile.attachment] : [],
-            allowedMentions: { parse: [] as const },
+            allowedMentions: { users: [member.id] },
           };
 
   // Target DM: menguji jalur paling rawan (member menutup DM).
@@ -374,12 +396,14 @@ export async function sendGoodbyeTest(
           guildName: guild.name,
           text: preview.text,
           bannerPath: settings.bannerPath,
-          includeAvatar: settings.includeAvatar,
+          // Tampilan kartu punya sakelarnya sendiri (lihat WelcomeSettings).
+          includeAvatar: settings.cardAvatar,
           avatarUrl: member.displayAvatarURL({ extension: 'png', size: 256 }),
           kicker: 'SAMPAI JUMPA',
           filePrefix: 'sampai-jumpa',
           // Pesan uji perpisahan harus terlihat seperti perpisahan sungguhan.
           detail: cardDetail('goodbye', guild.name),
+          showText: settings.cardText,
         })
       : null;
 
@@ -417,7 +441,8 @@ export async function sendGoodbyeTest(
         ? (() => {
             const built = buildContainerCard({
               kind: 'goodbye',
-              text: preview.text,
+              // Penanda uji ikut, sama seperti jalur sambutan.
+              text: `${TEST_MARK}\n\n<@${member.id}> ${preview.text}`,
               guildName: guild.name,
               memberCount: guild.memberCount,
               bannerName: goodbyeBanner?.name ?? null,
@@ -434,10 +459,14 @@ export async function sendGoodbyeTest(
         ? {
             ...goodbyeContainer,
             files: goodbyeBanner ? [goodbyeBanner.attachment] : [],
-            allowedMentions: { parse: [] as const },
+            // Mention ada di dalam komponen, bukan di `content`.
+            allowedMentions: { users: [member.id] },
           }
         : modeNow === 'text'
-          ? { content: `${TEST_MARK}\n\n${preview.text}`, allowedMentions: { parse: [] as const } }
+          ? {
+              content: `${TEST_MARK}\n\n<@${member.id}> ${preview.text}`,
+              allowedMentions: { users: [member.id] },
+            }
           : card
             ? {
                 // Sama seperti sambutan sungguhan: teks + mention + kartu,
@@ -448,10 +477,11 @@ export async function sendGoodbyeTest(
                 allowedMentions: { users: [member.id] },
               }
             : {
-                content: TEST_MARK,
+                // Sama seperti jalur sambutan: mention lewat content.
+                content: `${TEST_MARK}\n\n<@${member.id}>`,
                 embeds: [embed],
                 files: bannerFile ? [bannerFile.attachment] : [],
-                allowedMentions: { parse: [] as const },
+                allowedMentions: { users: [member.id] },
               },
     );
     logger.info(`Kirim tes salam perpisahan ke #${channel.name} berhasil.`);

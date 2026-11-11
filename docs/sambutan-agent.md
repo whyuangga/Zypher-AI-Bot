@@ -52,6 +52,46 @@ Susunan kartu: banner menutupi seluruh kartu sebagai latar, avatar bulat di
 tengah, judul besar (`SELAMAT DATANG` / `SAMPAI JUMPA`), nama member, lalu baris
 `nama server • member ke-N`. Tanpa banner, latar memakai gradasi tema.
 
+**Dua bagian kartu bisa dimatikan sendiri-sendiri** (halaman Sambutan):
+
+| Sakelar | Mati artinya |
+|---|---|
+| **Avatar member di tengah kartu** | kartu tanpa lingkaran avatar — hanya banner dan teks |
+| **Teks di kartu** | kartu tanpa tulisan apa pun — hanya banner dan avatar |
+
+Teks sapaan **tidak** ikut hilang saat teks kartu dimatikan: sapaan tetap
+dikirim sebagai pesan Discord di atas gambar, dan itu juga yang membuat
+mention-nya aktif. Yang dimatikan hanya tulisan di dalam gambarnya.
+
+### Dua tab: Sambutan di kiri, Perpisahan di kanan
+
+Halaman Sambutan dulu menampilkan **dua form panjang berdampingan**, lalu satu
+blok "Pratinjau & tes" untuk keduanya di bagian paling bawah. Akibatnya, untuk
+mengubah satu sakelar lalu melihat hasilnya, admin harus menggulir jauh dan
+kehilangan konteks form yang sedang diubah.
+
+Sekarang:
+
+- **Tab** memisahkan Sambutan dan Perpisahan — hanya satu jenis pesan yang
+  tampil sekaligus, dan pratinjau/tes ikut di dalam tab masing-masing.
+- Di layar lebar, **pratinjau menempel di kanan** (`position: sticky`), jadi
+  hasil tes terlihat tanpa menggulir sama sekali. Di layar sempit, pratinjau
+  kembali mengalir normal di bawah form.
+- Tab yang tidak aktif hanya **disembunyikan** (`hidden`), tidak dilepas dari
+  DOM. Isian yang belum disimpan tidak hilang, dan tombol Simpan tetap mengirim
+  nilai yang benar untuk tab mana pun.
+- Tab terakhir yang dibuka diingat browser (`localStorage`), jadi admin yang
+  sedang mengurus perpisahan tidak selalu mendarat di Sambutan.
+
+Catatan teknis yang dijaga test: setiap tab punya kolom **Nama contoh** dan
+status pratinjau sendiri (`welcomePreviewName`, `goodbyePreviewName`). Memakai
+id yang sama untuk dua tab membuat `getElementById()` selalu mengembalikan
+elemen pertama — status "Selesai" untuk perpisahan akan tertulis di panel
+sambutan.
+
+Kalau avatar diminta tapi gagal diunduh, kartu memakai lingkaran gradasi dengan
+huruf awal nama — bukan lingkaran kosong.
+
 **Banner di dashboard.** Halaman Sambutan tidak lagi menyisipkan banner sebagai data
 URI ke HTML (dua banner 8 MB = HTML belasan MB, praktis mati di HP). Gambarnya diambil
 dari `GET /api/banner/welcome|goodbye` dan bisa di-cache browser.
@@ -370,7 +410,7 @@ Bentuk pesan sambutan & perpisahan bisa dipilih per server di dashboard:
 |---|---|---|---|
 | **Card** | teks sapaan + kartu PNG sebagai lampiran (**tanpa embed**) | **tidak** | **ya** |
 | **Container** | kartu Components V2 (blok berwarna aksen, gaya panel baru Discord) | tidak | **ya** |
-| **Embed** | embed berwarna bertema server | tidak | tidak |
+| **Embed** | embed berwarna bertema server (avatar member opsional sebagai thumbnail) | tidak | tidak |
 | **Text** | teks polos di `content` | tidak | **ya** |
 
 Kenapa **Embed** satu-satunya yang tidak bisa me-ping: di Discord, mention di
@@ -381,6 +421,18 @@ teks di `content`, jadi mention-nya aktif seperti bot besar.
 Catatan jujur untuk perpisahan: membernya **sudah keluar** dari server, jadi
 Discord tidak memicu notifikasi untuk mention itu — yang tampil hanya nama yang
 bisa diklik. Teksnya tetap mention, bukan nama polos.
+
+**Bagaimana mention dikirim per mode:**
+
+| Mode | Tempat mention | Kenapa |
+|---|---|---|
+| Card | `content` bersama teks sapaan | teks di luar gambarlah yang bisa me-ping |
+| Embed | `content`, **mention saja** | mention di dalam embed mati; teksnya sudah ada di deskripsi embed jadi tidak diulang |
+| Text | `content` | memang teks biasa |
+| Container | di dalam Text Display | Components V2 melarang `content` |
+
+Dulu mode **Embed** mengirim `content: ''` sehingga member baru tidak pernah
+menerima notifikasi sama sekali.
 
 **Container** (Components V2) butuh discord.js ≥ 14.19 — di proyek ini
 14.28.1. Kalau pustakanya lebih lama, bot otomatis mundur ke Embed dan
@@ -496,7 +548,7 @@ Tiga penyebab yang sudah diperbaiki:
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 303 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 316 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

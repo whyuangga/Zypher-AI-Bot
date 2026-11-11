@@ -1793,6 +1793,9 @@ const welcomeSettings = (patch: Record<string, unknown> = {}) => ({
   example: null,
   displayMode: 'embed' as const, imageEnabled: false,
   includeAvatar: true,
+  cardAvatar: true,
+  cardText: true,
+  embedAvatar: false,
   bannerPath: null,
   bannerData: null,
   updatedAt: 0,
@@ -1809,6 +1812,9 @@ const goodbyeSettings = (patch: Record<string, unknown> = {}) => ({
   example: null,
   displayMode: 'embed' as const, imageEnabled: false,
   includeAvatar: true,
+  cardAvatar: true,
+  cardText: true,
+  embedAvatar: false,
   bannerPath: null,
   bannerData: null,
   updatedAt: 0,
@@ -2820,13 +2826,106 @@ await testAsync('mode tampilan: welcomeMember mengirim sesuai mode (end-to-end)'
     'mention diizinkan (kalau tidak, tidak akan memicu notifikasi)',
   );
 
-  // Mode embed: tanpa mention, ada satu embed.
+  // Mode embed: satu embed, dan mention lewat content.
+  //
+  // Test ini dulu berbunyi "mode embed tidak menulis content" — dan itulah
+  // bug-nya: member baru tidak pernah menerima notifikasi di mode embed.
+  // Mention HARUS di content, karena `<@id>` di dalam embed cuma teks biasa.
   await saveWelcomeSettings(guild.id, { displayMode: 'embed' });
   await welcomeMember(member as never);
   const embedKirim = sent.at(-1)!;
-  assert.equal(kirim.content === embedKirim.content, false, 'embed tidak mengirim teks yang sama di content');
-  assert.equal(embedKirim.content, undefined, 'mode embed tidak menulis content');
   assert.equal((embedKirim.embeds as unknown[]).length, 1, 'mode embed mengirim 1 embed');
+  assert.equal(embedKirim.content, '<@555555555555555555>', 'mention dikirim lewat content');
+  assert.ok(
+    !String(embedKirim.content).includes('Halo Sky'),
+    'teks sapaan tidak diulang di content — sudah ada di deskripsi embed',
+  );
+  assert.ok(
+    JSON.stringify(embedKirim.allowedMentions).includes('555555555555555555'),
+    'mention diizinkan',
+  );
+});
+
+await testAsync('mention: aktif di SEMUA mode, bukan hanya text', async () => {
+  // Bug nyata: mode embed mengembalikan `content: ''`, jadi member baru tidak
+  // pernah dapat notifikasi. Test lama justru mengunci bug itu ("mode embed
+  // tidak menulis content"). Sekarang seluruh matriks diuji sekaligus supaya
+  // tidak ada mode yang terlewat lagi.
+  const { welcomeMember } = await import('../src/features/welcome.js');
+  const { saveWelcomeSettings } = await import('../src/db/repo.js');
+
+  const ID = '222222222222222222';
+  const sent: Record<string, unknown>[] = [];
+  const channel = {
+    id: '999999999999999991', name: 'join-leave',
+    isTextBased: () => true, isDMBased: () => false,
+    permissionsFor: () => ({ has: () => true }),
+    send: async (p: Record<string, unknown>) => { sent.push(p); return { id: '1' }; },
+  };
+  const guild = {
+    id: '156942477750257700', name: 'Komunitas Zypher', memberCount: 5,
+    channels: { fetch: async () => channel },
+    members: { me: { id: '999999999999999999' } },
+  };
+  const member = {
+    id: ID, displayName: 'Sky', guild,
+    displayAvatarURL: () => 'https://x/y.png',
+    user: { bot: false, username: 'sky', tag: 'sky#0000', displayAvatarURL: () => 'https://x/y.png' },
+  };
+
+  for (const mode of ['card', 'embed', 'text', 'container'] as const) {
+    await saveWelcomeSettings(guild.id, {
+      enabled: true, useAi: false, channelId: channel.id,
+      template: 'Halo {user}!', displayMode: mode, bannerPath: null,
+    });
+    await welcomeMember(member as never);
+    const p = sent.at(-1)!;
+
+    // Container menaruh mention di komponen; mode lain di content.
+    // Yang dibandingkan adalah payload utuh, karena itu yang diterima Discord.
+    const utuh = JSON.stringify({ content: p.content ?? '', components: p.components ?? [] });
+    assert.ok(utuh.includes(`<@${ID}>`), `mode ${mode}: member di-mention`);
+    assert.ok(
+      JSON.stringify(p.allowedMentions ?? {}).includes(ID),
+      `mode ${mode}: mention diizinkan (tanpa ini yang tampil teks mentah)`,
+    );
+  }
+});
+
+await testAsync('mention: mode embed tidak mengulang teks sapaan di content', async () => {
+  // Mention embed harus dikirim sebagai content, TAPI teksnya sudah ada di
+  // deskripsi embed. Kalau ditempel lagi, sapaan tampil dua kali.
+  const { welcomeMember } = await import('../src/features/welcome.js');
+  const { saveWelcomeSettings } = await import('../src/db/repo.js');
+
+  const sent: Record<string, unknown>[] = [];
+  const channel = {
+    id: '999999999999999992', name: 'join-leave',
+    isTextBased: () => true, isDMBased: () => false,
+    permissionsFor: () => ({ has: () => true }),
+    send: async (p: Record<string, unknown>) => { sent.push(p); return { id: '1' }; },
+  };
+  const guild = {
+    id: '156942477750257701', name: 'Komunitas Zypher', memberCount: 5,
+    channels: { fetch: async () => channel },
+    members: { me: { id: '999999999999999999' } },
+  };
+  const member = {
+    id: '222222222222222223', displayName: 'Rani', guild,
+    displayAvatarURL: () => 'https://x/y.png',
+    user: { bot: false, username: 'rani', tag: 'rani#0000', displayAvatarURL: () => 'https://x/y.png' },
+  };
+
+  await saveWelcomeSettings(guild.id, {
+    enabled: true, useAi: false, channelId: channel.id,
+    template: 'Halo {user}!', displayMode: 'embed', bannerPath: null,
+  });
+  await welcomeMember(member as never);
+
+  const p = sent.at(-1)!;
+  assert.equal(p.content, '<@222222222222222223>', 'content hanya berisi mention');
+  const embed = (p.embeds as Array<{ data?: { description?: string } }>)[0];
+  assert.ok(String(embed?.data?.description).includes('Halo Rani'), 'teks sapaan ada di embed');
 });
 
 await testAsync('mode tampilan: DM tidak pernah menyertakan mention', async () => {
@@ -4293,6 +4392,206 @@ await testAsync('container: kaki kartu memakai detail yang sama dengan PNG', asy
   );
 });
 
+await testAsync('kartu: teks bisa dimatikan lewat setelan cardText', async () => {
+  // Permintaan pemilik server: teks di dalam gambar bisa diaktifkan/dimatikan.
+  // Diuji dari PIXEL: kartu tanpa teks harus berbeda dari kartu berteks, dan
+  // bagian bawahnya (tempat tulisan berada) harus kosong.
+  const { renderWelcomeCard } = await import('../src/features/welcome-card.js');
+
+  const dasar = {
+    userName: 'wahyuangga12',
+    guildName: 'Zypher Server',
+    message: 'Halo semua',
+    avatarDataUri: null,
+    bannerDataUri: null,
+    kicker: 'SELAMAT DATANG',
+    detail: 'Zypher Server • member ke-3',
+  };
+
+  const berteks = await renderWelcomeCard({ ...dasar, showText: true });
+  const tanpaTeks = await renderWelcomeCard({ ...dasar, showText: false });
+  assert.ok(berteks && tanpaTeks, 'kedua kartu tergambar');
+  assert.equal(
+    Buffer.compare(berteks, tanpaTeks) === 0,
+    false,
+    'mematikan teks benar-benar mengubah gambar',
+  );
+  assert.ok(
+    tanpaTeks.byteLength < berteks.byteLength,
+    'tanpa teks gambarnya lebih sederhana (lebih kecil)',
+  );
+});
+
+await testAsync('kartu: tanpa teks, banner & avatar tetap tergambar', async () => {
+  // Kalau teks dimatikan, yang dihapus HANYA teks — bukan seluruh isi kartu.
+  const { renderWelcomeCard } = await import('../src/features/welcome-card.js');
+  const { createCanvas } = await import('@napi-rs/canvas');
+
+  const banner = createCanvas(400, 200);
+  const bx = banner.getContext('2d');
+  bx.fillStyle = '#ff0000';
+  bx.fillRect(0, 0, 400, 200);
+  const bannerUri = `data:image/webp;base64,${banner.toBuffer('image/webp').toString('base64')}`;
+
+  const polos = await renderWelcomeCard({
+    userName: 'Sky', guildName: 'Zypher', message: 'x', avatarDataUri: null,
+    bannerDataUri: null, showText: false,
+  });
+  const denganBanner = await renderWelcomeCard({
+    userName: 'Sky', guildName: 'Zypher', message: 'x', avatarDataUri: null,
+    bannerDataUri: bannerUri, showText: false,
+  });
+
+  assert.equal(
+    Buffer.compare(polos!, denganBanner!) === 0,
+    false,
+    'banner tetap jadi latar walau teks dimatikan',
+  );
+  assert.ok(denganBanner!.byteLength > 5_000, 'kartu tetap berisi gambar');
+});
+
+await testAsync('kartu: avatar dimatikan benar-benar hilang, bukan jadi placeholder', async () => {
+  // Bug nyata saat cross-check: `showAvatar: false` tetap menggambar lingkaran
+  // gradien di tengah. Yang diminta admin adalah kartu TANPA lingkaran.
+  const { renderWelcomeCard } = await import('../src/features/welcome-card.js');
+
+  const dasar = {
+    userName: 'Sky', guildName: 'Zypher', message: 'x', bannerDataUri: null,
+    kicker: 'SELAMAT DATANG', detail: 'Zypher',
+  };
+
+  const denganAvatar = await renderWelcomeCard({
+    ...dasar,
+    // rusak: avatar diminta tapi gagal dimuat -> gradasi + inisial
+    avatarDataUri: 'data:image/png;base64,rusak',
+    showAvatar: true,
+  });
+  const tanpaAvatar = await renderWelcomeCard({
+    ...dasar,
+    avatarDataUri: 'data:image/png;base64,rusak',
+    showAvatar: false,
+  });
+
+  assert.ok(denganAvatar && tanpaAvatar, 'kedua kartu tergambar');
+  assert.equal(
+    Buffer.compare(denganAvatar, tanpaAvatar) === 0,
+    false,
+    'mematikan avatar mengubah gambar',
+  );
+  assert.ok(
+    tanpaAvatar.byteLength < denganAvatar.byteLength,
+    'tanpa avatar gambarnya lebih sederhana',
+  );
+});
+
+await testAsync('kartu: avatar gagal dimuat tetap tampil, dengan inisial', async () => {
+  // Komentar di kode menjanjikan "gradasi + inisial nama", tapi inisialnya
+  // tidak pernah digambar — kartu hanya berisi lingkaran kosong.
+  const { createCanvas } = await import('@napi-rs/canvas');
+  const { renderWelcomeCard } = await import('../src/features/welcome-card.js');
+
+  const dasar = {
+    guildName: 'Zypher', message: 'x', bannerDataUri: null,
+    kicker: 'SELAMAT DATANG', detail: 'Zypher',
+  };
+
+  // Teks kartu DIMATIKAN supaya satu-satunya yang bisa berbeda adalah inisial
+  // di dalam lingkaran. Versi pertama test ini lupa itu: nama juga digambar
+  // sebagai teks, sehingga dua gambar selalu berbeda walau inisialnya hilang —
+  // test lolos padahal bug-nya ada.
+  const a = await renderWelcomeCard({
+    ...dasar, userName: 'Sky', avatarDataUri: null, showAvatar: true, showText: false,
+  });
+  const b = await renderWelcomeCard({
+    ...dasar, userName: 'Budi', avatarDataUri: null, showAvatar: true, showText: false,
+  });
+  assert.equal(
+    Buffer.compare(a!, b!) === 0,
+    false,
+    'inisial nama benar-benar digambar (Sky vs Budi harus beda)',
+  );
+  void createCanvas;
+});
+
+await testAsync('embed: avatar bisa dinyalakan lewat setelan embedAvatar', async () => {
+  // Dulu embed tidak punya avatar sama sekali dan tidak ada sakelarnya.
+  // Sekarang harus muncul sebagai thumbnail, dan bisa dimatikan lagi.
+  const { welcomeMember } = await import('../src/features/welcome.js');
+  const { saveWelcomeSettings } = await import('../src/db/repo.js');
+
+  const sent: Record<string, unknown>[] = [];
+  const channel = {
+    id: '777777777777777777', name: 'join-leave',
+    isTextBased: () => true, isDMBased: () => false,
+    permissionsFor: () => ({ has: () => true }),
+    send: async (p: Record<string, unknown>) => { sent.push(p); return { id: '1' }; },
+  };
+  const guild = {
+    id: '156942477750257766', name: 'Zypher Server', memberCount: 4,
+    channels: { fetch: async () => channel },
+    members: { me: { id: '999999999999999999' } },
+  };
+  const member = {
+    id: '222222222222222222', displayName: 'Sky', guild,
+    displayAvatarURL: () => 'https://cdn.discordapp.com/avatars/222/abc.png',
+    user: { bot: false, username: 'sky', tag: 'sky#0000', displayAvatarURL: () => 'https://x/y.png' },
+  };
+
+  const thumbnailDari = () => {
+    const embed = (sent.at(-1)!.embeds as Array<{ data?: { thumbnail?: { url?: string } } }>)[0];
+    return embed?.data?.thumbnail?.url ?? null;
+  };
+
+  await saveWelcomeSettings(guild.id, { enabled: true, useAi: false, channelId: channel.id, displayMode: 'embed', embedAvatar: true });
+  await welcomeMember(member as never);
+  assert.match(String(thumbnailDari()), /^https:\/\/cdn\.discordapp\.com\//, 'embed menampilkan avatar member');
+
+  await saveWelcomeSettings(guild.id, { embedAvatar: false });
+  await welcomeMember(member as never);
+  assert.equal(thumbnailDari(), null, 'avatar hilang saat dimatikan');
+});
+
+await testAsync('dashboard: sakelar kartu & embed terpisah, bukan satu checkbox', async () => {
+  // Dulu hanya ada satu checkbox "avatar di kartu". Sekarang ada empat sakelar
+  // yang jelas: avatar & teks untuk kartu, avatar untuk embed.
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  for (const id of [
+    'welcomeCardAvatar', 'welcomeCardText', 'welcomeEmbedAvatar',
+    'goodbyeCardAvatar', 'goodbyeCardText', 'goodbyeEmbedAvatar',
+  ]) {
+    assert.ok(pages.includes(`id="${id}"`), `sakelar ${id} ada`);
+  }
+  // id lama tidak boleh tersisa: elemennya sudah tidak ada, dan membaca
+  // `.checked` dari null akan membuat tombol Simpan gagal diam-diam.
+  assert.equal(pages.includes("'welcomeAvatar'"), false, 'id lama welcome sudah diganti');
+  assert.equal(pages.includes("'goodbyeAvatar'"), false, 'id lama goodbye sudah diganti');
+
+  // Kedua tombol (Simpan & Kirim tes) harus mengirim setelan yang sama.
+  assert.equal(
+    (pages.match(/cardAvatar: document\.getElementById\('welcomeCardAvatar'\)\.checked/g) ?? []).length,
+    2,
+    'Simpan & kirim tes sambutan sama-sama mengirim cardAvatar',
+  );
+});
+
+await testAsync('setelan: kolom baru aman untuk database lama', async () => {
+  // Baris lama belum punya card_text/embed_avatar. Nilai NULL harus dibaca
+  // sebagai "teks aktif, avatar embed mati" supaya tampilan server yang sudah
+  // berjalan tidak berubah diam-diam.
+  const { getWelcomeSettings, saveWelcomeSettings } = await import('../src/db/repo.js');
+  const guild = '888888888888888888';
+  const awal = await getWelcomeSettings(guild);
+  assert.equal(awal.cardText, true, 'teks kartu aktif secara bawaan');
+  assert.equal(awal.cardAvatar, true, 'avatar kartu aktif secara bawaan');
+  assert.equal(awal.embedAvatar, false, 'avatar embed mati secara bawaan');
+
+  await saveWelcomeSettings(guild, { cardText: false, embedAvatar: true });
+  const sesudah = await getWelcomeSettings(guild);
+  assert.equal(sesudah.cardText, false, 'cardText tersimpan');
+  assert.equal(sesudah.embedAvatar, true, 'embedAvatar tersimpan');
+  assert.equal(sesudah.cardAvatar, true, 'nilai lain tidak ikut berubah');
+});
+
 await testAsync('banner: API unggah & hapus ada untuk kedua fitur', async () => {
   const server = await readFile('src/web/server.ts', 'utf8');
   assert.ok(server.includes("'/api/banner/welcome'"), 'endpoint sambutan');
@@ -4583,6 +4882,146 @@ await testAsync('stream: stream kosong memicu provider berikutnya', async () => 
   );
 });
 
+await testAsync('halaman sambutan: tab Sambutan & Perpisahan, bukan dua form menumpuk', async () => {
+  // Keluhan pemilik server: dua form panjang berdampingan + pratinjau di bawah
+  // membuat halaman harus di-scroll jauh hanya untuk melihat hasil satu sakelar.
+  const { welcomePage } = await import('../src/web/ui/pages.js');
+  const settings = {
+    enabled: true, useAi: false, channelId: null, template: 'Halo {user}!',
+    displayMode: 'embed' as const, imageEnabled: false, includeAvatar: false,
+    cardAvatar: true, cardText: true, embedAvatar: false,
+    style: null, example: null, bannerPath: null, hasBanner: false,
+  };
+  const html = welcomePage({
+    guildId: '1', guildName: 'Server', welcome: settings, goodbye: settings,
+    channels: [], botOnline: true, sampleName: 'Sky',
+    cardRenderer: { available: true, path: null },
+    persona: null, model: null, defaultModel: 'x', embedModel: null, ragEnabled: false,
+    ttsReplyInRoom: null, ttsReplyInRoomDefault: true, ragEnabledSetting: null,
+    ragEnabledDefault: true, autoMemorySetting: null, autoMemoryDefault: true,
+    adminOnlyRoomsSetting: null, adminOnlyRoomsDefault: false,
+    stats: { rooms: 0, messages: 0, documents: 0 },
+    status: { online: true, mode: 'bot', uptimeSeconds: 0 }, counts: {},
+  } as never);
+
+  // 1. Dua tab, keduanya benar-benar ada dan bisa dipanggil.
+  assert.ok(html.includes('id="tab-welcome"'), 'tab sambutan ada');
+  assert.ok(html.includes('id="tab-goodbye"'), 'tab perpisahan ada');
+  assert.ok(/class="tab is-active"\s+id="tab-welcome"/.test(html), 'sambutan aktif saat halaman dibuka');
+  assert.ok(html.includes('function showTab('), 'fungsi pindah tab ada');
+
+  // 2. Panel perpisahan WAJIB sudah tersembunyi dari HTML. Kalau hanya
+  //    menunggu JS, dua form sempat tampil bersamaan — persis yang dihindari.
+  assert.ok(
+    /<section class="tab-pane" id="pane-goodbye"[^>]*hidden>/.test(html),
+    'panel perpisahan tersembunyi sejak HTML, bukan menunggu JS',
+  );
+  assert.ok(
+    !/<section class="tab-pane" id="pane-welcome"[^>]*hidden>/.test(html),
+    'panel sambutan tidak ikut tersembunyi',
+  );
+
+  // 3. Semua input tetap ada meski panelnya tersembunyi — kalau tidak,
+  //    menyimpan tab yang tidak dibuka akan mengirim nilai kosong.
+  for (const id of ['welcomeEnabled', 'welcomeTemplate', 'goodbyeEnabled', 'goodbyeTemplate',
+                    'welcomeCardAvatar', 'goodbyeCardAvatar']) {
+    assert.ok(html.includes(`id="${id}"`), `${id} tetap ada di DOM`);
+  }
+
+  // 4. Tidak boleh ada id ganda. Satu id ganda = getElementById() selalu
+  //    mengembalikan elemen pertama, jadi status/isi tab kanan menulis ke kiri.
+  const ids = [...html.matchAll(/ id="([^"]+)"/g)].map((m) => m[1]!);
+  const dupes = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))];
+  assert.deepEqual(dupes, [], `id ganda di satu halaman: ${dupes.join(', ')}`);
+
+  // 5. Pratinjau ada di dalam panel masing-masing, bukan satu blok di bawah.
+  const paneWelcome = html.slice(html.indexOf('id="pane-welcome"'), html.indexOf('id="pane-goodbye"'));
+  const paneGoodbye = html.slice(html.indexOf('id="pane-goodbye"'));
+  assert.ok(paneWelcome.includes('id="outWelcome"'), 'pratinjau sambutan di tabnya sendiri');
+  assert.ok(paneWelcome.includes('id="welcomePreviewName"'), 'nama contoh sambutan milik tab sambutan');
+  assert.ok(paneGoodbye.includes('id="outGoodbye"'), 'pratinjau perpisahan di tabnya sendiri');
+  assert.ok(paneGoodbye.includes('id="goodbyePreviewName"'), 'nama contoh perpisahan milik tab perpisahan');
+  assert.equal(paneWelcome.includes('outGoodbye'), false, 'pratinjau perpisahan tidak ikut di tab sambutan');
+});
+
+await testAsync('halaman sambutan: titik tab mengikuti sakelar aktif, bukan tab yang dibuka', async () => {
+  // Bug nyata saat tab pertama kali dibuat: titik indikator diikat ke "tab mana
+  // yang terbuka", jadi selalu muncul di kiri dan hilang saat pindah tab —
+  // tidak memberi informasi apa pun. Gunanya justru menunjukkan jenis pesan
+  // mana yang SEDANG mengirim, termasuk saat tab itu tidak dibuka.
+  const { welcomePage } = await import('../src/web/ui/pages.js');
+  const base = {
+    useAi: false, channelId: null, template: 'Halo {user}!',
+    displayMode: 'embed' as const, imageEnabled: false, includeAvatar: false,
+    cardAvatar: true, cardText: true, embedAvatar: false,
+    style: null, example: null, bannerPath: null, hasBanner: false,
+  };
+  const render = (welcomeOn: boolean, goodbyeOn: boolean): string =>
+    welcomePage({
+      guildId: '1', guildName: 'Server',
+      welcome: { ...base, enabled: welcomeOn },
+      goodbye: { ...base, enabled: goodbyeOn },
+      channels: [], botOnline: true, sampleName: 'Sky',
+      cardRenderer: { available: true, path: null },
+      persona: null, model: null, defaultModel: 'x', embedModel: null, ragEnabled: false,
+      ttsReplyInRoom: null, ttsReplyInRoomDefault: true, ragEnabledSetting: null,
+      ragEnabledDefault: true, autoMemorySetting: null, autoMemoryDefault: true,
+      adminOnlyRoomsSetting: null, adminOnlyRoomsDefault: false,
+      stats: { rooms: 0, messages: 0, documents: 0 },
+      status: { online: true, mode: 'bot', uptimeSeconds: 0 }, counts: {},
+    } as never);
+
+  const dot = (html: string, kind: string): string => {
+    const at = html.indexOf(`id="tabDot-${kind}"`);
+    assert.ok(at > -1, `titik tab ${kind} ada`);
+    return html.slice(at, html.indexOf('>', at));
+  };
+
+  // Sambutan aktif, perpisahan mati.
+  const satu = render(true, false);
+  assert.equal(/\shidden/.test(dot(satu, 'welcome')), false, 'sambutan aktif → titik tampil');
+  assert.equal(/\shidden/.test(dot(satu, 'goodbye')), true, 'perpisahan mati → titik disembunyikan');
+
+  // Dibalik: hanya perpisahan yang aktif.
+  const dua = render(false, true);
+  assert.equal(/\shidden/.test(dot(dua, 'welcome')), true, 'sambutan mati → titik disembunyikan');
+  assert.equal(/\shidden/.test(dot(dua, 'goodbye')), false, 'perpisahan aktif → titik tampil');
+
+  // Kode harus membaca checkbox saat itu, bukan nilai beku hasil render.
+  assert.ok(satu.includes('function syncTabDots('), 'ada penyelaras titik');
+  assert.ok(satu.includes("'Enabled'"), 'titik dibaca dari checkbox enabled');
+  assert.ok(satu.includes("addEventListener('change', syncTabDots)"),
+    'titik ikut berubah saat sakelar diubah sebelum disimpan');
+
+  // Scroll otomatis saat pindah tab bisa menaruh judul panel di bawah topbar
+  // yang sticky. Tab bar-nya ada di atas panel, jadi tidak perlu digulir.
+  assert.equal(/scrollIntoView\(\{\s*block/.test(satu), false,
+    'pindah tab tidak menggulir otomatis');
+});
+
+await testAsync('halaman sambutan: pratinjau menempel di kanan form (tanpa scroll)', async () => {
+  const theme = await readFile('src/web/ui/theme.ts', 'utf8');
+
+  const gridStart = theme.indexOf('.pane-grid {');
+  assert.ok(gridStart > -1, 'ada grid panel');
+  const grid = theme.slice(gridStart, theme.indexOf('}', gridStart));
+  assert.ok(/grid-template-columns:\s*minmax\(0,\s*1\.5fr\)\s*minmax\(0,\s*1fr\)/.test(grid),
+    'form kiri lebih lebar, pratinjau kanan');
+  assert.ok(/align-items:\s*start/.test(grid), 'kartu tidak saling meregang');
+
+  const stickyStart = theme.indexOf('.pane-preview {');
+  assert.ok(stickyStart > -1, 'ada gaya pratinjau');
+  const sticky = theme.slice(stickyStart, theme.indexOf('}', stickyStart));
+  assert.ok(/position:\s*sticky/.test(sticky), 'pratinjau menempel saat form di-scroll');
+  assert.ok(/top:\s*\d+px/.test(sticky), 'menempel di bawah topbar, bukan menutupinya');
+
+  // Di layar sempit, sticky dilepas: pratinjau setinggi layar di HP akan
+  // menghalangi form di bawahnya.
+  const mobile = theme.slice(theme.indexOf('.pane-grid { grid-template-columns: minmax(0, 1fr); }'));
+  assert.ok(/\.pane-preview\s*\{\s*position:\s*static/.test(mobile.slice(0, 400)),
+    'di HP pratinjau kembali normal');
+});
+
 await testAsync('banner: halaman tidak menyisipkan data URI (bisa belasan MB)', async () => {
   // Dua banner 8 MB sebagai data URI = HTML belasan MB; di HP praktis mati.
   const { welcomePage } = await import('../src/web/ui/pages.js');
@@ -4816,6 +5255,8 @@ await testAsync('kirim tes: pesan benar-benar terkirim lewat channel (channel pa
   };
   const fakeClient = { guilds: { fetch: async () => guild } } as never;
   const member = {
+    // `id` wajib: mention dibangun dari id, bukan nama.
+    id: '222222222222222999',
     displayName: 'Sky',
     user: { username: 'sky', tag: 'sky#0001' },
     displayAvatarURL: () => 'https://contoh.invalid/a.png',
@@ -4837,8 +5278,70 @@ await testAsync('kirim tes: pesan benar-benar terkirim lewat channel (channel pa
 
   const payload = sent[0]!;
   assert.ok(String(payload.content).includes('Pesan uji dari dashboard'), 'pesan diberi penanda');
-  assert.deepEqual(payload.allowedMentions, { parse: [] }, 'mention tidak dipicu');
+  // Mode embed: mention lewat content (dulu 'parse: []' sehingga tidak pernah ping).
+  assert.ok(
+    String(payload.content).includes('<@222222222222222999>'),
+    'member di-mention di pesan uji',
+  );
+  assert.deepEqual(payload.allowedMentions, { users: ['222222222222222999'] }, 'hanya member itu yang diizinkan');
   assert.equal(result.text, 'Sampai jumpa Sky!', 'isi pesan = hasil pratinjau');
+});
+
+await testAsync('kirim tes: mention tetap ada di SEMUA mode (sambutan & perpisahan)', async () => {
+  // Bug nyata: pesan uji mode embed memakai `content: TEST_MARK` +
+  // `allowedMentions: { parse: [] }`, jadi admin menguji bentuk yang TIDAK
+  // memuat mention — padahal pesan sungguhannya men-mention member. Pesan uji
+  // harus memperlihatkan bentuk akhir, bukan versi yang lebih aman.
+  const { sendWelcomeTest, sendGoodbyeTest } = await import('../src/features/test-send.js');
+
+  const ID = '222222222222222777';
+  for (const mode of ['card', 'embed', 'text', 'container'] as const) {
+    const sent: Record<string, unknown>[] = [];
+    const channel = {
+      id: '111111111111111112', name: 'join-leave',
+      isTextBased: () => true, isDMBased: () => false,
+      permissionsFor: () => ({ has: () => true }),
+      send: async (p: Record<string, unknown>) => { sent.push(p); return { id: '1' }; },
+    };
+    const guild = {
+      id: '156942477750257800', name: 'Komunitas Zypher', memberCount: 7,
+      channels: { fetch: async () => channel },
+      members: { me: { id: '2' } },
+    };
+    const client = { guilds: { fetch: async () => guild } } as never;
+    const member = {
+      id: ID, displayName: 'Sky', guild,
+      displayAvatarURL: () => 'https://x/y.png',
+      user: { username: 'sky', tag: 'sky#0000' },
+      send: async () => ({ id: '3' }),
+    } as never;
+    const settings = {
+      guildId: guild.id, channelId: channel.id, useAi: false,
+      displayMode: mode, imageEnabled: false,
+      cardAvatar: true, cardText: true, embedAvatar: false,
+      template: 'Halo {user}!', style: '', example: '', bannerPath: null,
+    } as never;
+
+    await sendWelcomeTest(client, { guildId: guild.id, settings, member, target: 'channel' });
+    await sendGoodbyeTest(client, { guildId: guild.id, settings, member });
+
+    const [masuk, keluar] = sent;
+    for (const [label, p] of [['sambutan', masuk], ['perpisahan', keluar]] as const) {
+      assert.ok(p, `${mode}/${label}: pesan terkirim`);
+      // Container menyimpan mention di komponen; mode lain di `content`.
+      const utuh = JSON.stringify({ c: p.content ?? '', comp: p.components ?? [] });
+      assert.ok(utuh.includes(`<@${ID}>`), `${mode}/${label}: pesan uji men-mention member`);
+      assert.ok(
+        JSON.stringify(p.allowedMentions ?? {}).includes(ID),
+        `${mode}/${label}: mention diizinkan`,
+      );
+      // Penanda uji tidak boleh hilang — mention bukan alasan menghapusnya.
+      assert.ok(
+        utuh.includes('Pesan uji dari dashboard'),
+        `${mode}/${label}: penanda uji tetap ada`,
+      );
+    }
+  }
 });
 
 await testAsync('kirim tes: menolak perpisahan tanpa channel, tidak ada yang terkirim', async () => {

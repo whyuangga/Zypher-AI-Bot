@@ -529,6 +529,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
             displayMode: welcome.displayMode,
             imageEnabled: welcome.imageEnabled,
             includeAvatar: welcome.includeAvatar,
+            cardAvatar: welcome.cardAvatar,
+            cardText: welcome.cardText,
+            embedAvatar: welcome.embedAvatar,
             style: welcome.style,
             example: welcome.example,
             bannerPath: welcome.bannerPath,
@@ -547,6 +550,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
             displayMode: goodbye.displayMode,
             imageEnabled: goodbye.imageEnabled,
             includeAvatar: goodbye.includeAvatar,
+            cardAvatar: goodbye.cardAvatar,
+            cardText: goodbye.cardText,
+            embedAvatar: goodbye.embedAvatar,
           },
           channels,
           botOnline: status.online,
@@ -1033,6 +1039,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         : normalizeDisplayMode(payload.displayMode),
       imageEnabled: bool(payload.imageEnabled, current.imageEnabled),
       includeAvatar: bool(payload.includeAvatar, current.includeAvatar),
+      cardAvatar: bool(payload.cardAvatar, current.cardAvatar),
+      cardText: bool(payload.cardText, current.cardText),
+      embedAvatar: bool(payload.embedAvatar, current.embedAvatar),
     });
 
     sendJson(response, 200, { ok: true, welcome: await getWelcomeSettings(guildId) });
@@ -1077,6 +1086,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         : normalizeDisplayMode(payload.displayMode),
       imageEnabled: bool(payload.imageEnabled, current.imageEnabled),
       includeAvatar: bool(payload.includeAvatar, current.includeAvatar),
+      cardAvatar: bool(payload.cardAvatar, current.cardAvatar),
+      cardText: bool(payload.cardText, current.cardText),
+      embedAvatar: bool(payload.embedAvatar, current.embedAvatar),
     });
 
     sendJson(response, 200, { ok: true, goodbye: await getGoodbyeSettings(guildId) });
