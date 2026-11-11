@@ -350,7 +350,8 @@ async function composePayload(options: {
     kind === 'welcome' ? `Member baru · ${member.guild.name}` : `Member keluar · ${member.guild.name}`;
   const color = kind === 'welcome' ? 0x6d8cff : 0x716c98;
 
-  // Mode teks: satu-satunya yang benar-benar me-ping member di luar komponen.
+  // Mode teks: me-ping member lewat `content` (mode lain memakai embed, yang
+  // tidak pernah memicu notifikasi; `container` memakai teks di dalam komponen).
   if (mode === 'text') {
     return { content: mentionUser ? `<@${member.id}> ${text}` : text, embeds: [], files: [] };
   }

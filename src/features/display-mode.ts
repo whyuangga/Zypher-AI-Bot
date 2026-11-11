@@ -1,14 +1,14 @@
 /**
  * Mode tampilan pesan sambutan & salam perpisahan.
  *
- * Tiga mode, mengikuti dua bot pembanding yang sudah ditinjau:
+ * Empat mode, mengikuti dua bot pembanding yang sudah ditinjau:
  *
- * | Mode        | Bentuk pesan                                   | Butuh kartu PNG? |
- * |-------------|------------------------------------------------|------------------|
- * | `card`      | kartu PNG sebagai lampiran                     | ya               |
- * | `container` | kartu Components V2 (blok berwarna aksen)      | tidak            |
- * | `embed`     | embed Discord biasa                            | tidak            |
- * | `text`      | teks polos (satu-satunya yang bisa me-*ping*)  | tidak            |
+ * | Mode        | Bentuk pesan                                   | Butuh kartu PNG? | Bisa me-ping? |
+ * |-------------|------------------------------------------------|------------------|---------------|
+ * | `card`      | kartu PNG sebagai lampiran                     | ya               | tidak         |
+ * | `container` | kartu Components V2 (blok berwarna aksen)      | tidak            | ya            |
+ * | `embed`     | embed Discord biasa                            | tidak            | tidak         |
+ * | `text`      | teks polos di `content`                        | tidak            | ya            |
  *
  * Catatan mention: **mention hanya hidup di luar embed**. Di dalam embed,
  * `<@id>` tampil sebagai teks biasa dan tidak pernah memicu notifikasi. Karena
