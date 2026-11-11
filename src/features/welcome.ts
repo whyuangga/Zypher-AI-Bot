@@ -182,7 +182,7 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
         )
       : null;
 
-  // Kartu diminta tapi gagal dirender (Chromium tidak ada / render error):
+  // Kartu diminta tapi gagal dirender (modul gambar bermasalah / render error):
   // dulu hasilnya `embeds: []` + tanpa file, sehingga Discord menolak pesan
   // kosong dan sambutan hilang tanpa penjelasan. Sekarang jatuh ke embed biasa,
   // mengikuti pola bot referensi: sambutan tidak boleh gagal hanya karena kartu.
@@ -448,6 +448,12 @@ async function buildCard(
     avatarDataUri: avatar,
     bannerDataUri: banner,
     kicker: options.kicker,
+    // Baris kecil di bawah nama. Jumlah member hanya bermakna untuk sambutan:
+    // saat member keluar, angka yang tersisa sudah tidak mencerminkan dia.
+    detail:
+      options.kicker === 'SAMPAI JUMPA'
+        ? member.guild.name
+        : `${member.guild.name} • member ke-${member.guild.memberCount.toLocaleString('id-ID')}`,
   });
   if (!png) return null;
 

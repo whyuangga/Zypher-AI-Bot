@@ -1009,7 +1009,7 @@ export interface WelcomePageOptions extends PageContext {
   botOnline: boolean;
   /** Nama awal di kolom "Nama contoh" pada panel pratinjau. */
   sampleName: string;
-  /** Status Chromium — kartu PNG butuh ini; null artinya tidak tersedia. */
+  /** Status mesin gambar kartu (Skia) — null artinya tidak tersedia. */
   cardRenderer: { available: boolean; path: string | null };
 }
 
@@ -1115,7 +1115,7 @@ export function welcomePage(options: WelcomePageOptions): string {
     normalizeDisplayMode(options.welcome.displayMode) === 'card' ||
     normalizeDisplayMode(options.goodbye.displayMode) === 'card';
   const rendererWarning = cardModeActive && !options.cardRenderer.available
-    ? `<div class="notice" style="margin-top:12px">${icon('alert', 16)}<span><b>Kartu PNG tidak akan terkirim.</b> Chromium tidak ditemukan di server ini, jadi sambutan & perpisahan jatuh ke embed teks. Set <code>CHROMIUM_PATH</code> ke binary Chromium di hosting-mu untuk mengaktifkan kartu.</span></div>`
+    ? `<div class="notice" style="margin-top:12px">${icon('alert', 16)}<span><b>Kartu PNG tidak akan terkirim.</b> Mesin gambar kartu gagal dimuat di server ini, jadi sambutan & perpisahan jatuh ke embed teks. Coba jalankan ulang bot; kalau tetap gagal, periksa log saat start.</span></div>`
     : '';
 
   const welcomeCard = card({

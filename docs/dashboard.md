@@ -371,7 +371,7 @@ Dua kartu berdampingan, satu tema "kehadiran":
 
   Kegagalan dijelaskan spesifik, bukan "gagal": channel tidak ditemukan, bot
   tidak punya izin *Send Message* / *View Channel*, DM ditutup privasi, atau
-  Chromium tidak ada sehingga kartu tidak dibuat.
+  kartu gagal digambar.
 
 ---
 
@@ -462,7 +462,7 @@ Endpoint halaman Sambutan & AI Agent (pratinjau tidak mengirim apa pun;
 Semua `send-test` menolak dengan **400** kalau bot tidak jalan di proses
 dashboard (tidak ada koneksi Discord untuk mengirim), dan alasan kegagalan
 dikembalikan apa adanya: channel tidak ditemukan, izin kurang, DM ditutup,
-atau Chromium tidak ada.
+atau kartu gagal digambar.
 
 Endpoint halaman Panel:
 

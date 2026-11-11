@@ -2235,20 +2235,31 @@ await testAsync('mode tampilan: tiap mode mengirim bentuk berbeda (channel palsu
   assert.ok(Array.isArray(embedKirim.embeds) && embedKirim.embeds.length === 1, 'mode embed mengirim 1 embed');
   assert.deepEqual(embedKirim.files, [], 'mode embed tanpa lampiran (tanpa banner)');
 
-  // Mode card. Hasilnya BERGANTUNG lingkungan: kalau Chromium ada (runner CI
-  // Ubuntu sudah punya Chrome), kartu terender -> files berisi PNG. Kalau tidak
-  // ada (sandbox/dev), bot mundur ke embed. Yang tidak boleh terjadi di dua-duanya:
-  // pesan kosong.
+  // Mode card: PNG kartu + embed sebagai wadahnya.
+  //
+  // Dulu test ini menerima "kartu ATAU embed" karena hasilnya bergantung ada
+  // tidaknya Chromium di mesin yang menjalankan test. Sekarang kartu digambar
+  // sendiri, jadi hasilnya pasti — dan kelonggaran lama itu dihapus supaya
+  // regresi tidak bisa lolos lagi. Embed wajib ada: tanpa wadah itu Discord
+  // menampilkan PNG sebagai lampiran kecil, bukan kartu besar. Ini sama dengan
+  // yang dilakukan `composePayload` untuk sambutan sungguhan.
   await sendGoodbyeTest(client, {
     guildId: guild.id,
     member: member as never,
     settings: { ...GOODBYE_DEFAULTS, guildId: guild.id, enabled: true, useAi: false, channelId: channel.id, displayMode: 'card', updatedAt: 0 } as never,
   });
   const cardKirim = sent.at(-1)!;
-  const adaFile = Array.isArray(cardKirim.files) && (cardKirim.files as unknown[]).length === 1;
-  const adaEmbed = Array.isArray(cardKirim.embeds) && (cardKirim.embeds as unknown[]).length === 1;
-  assert.ok(adaFile || adaEmbed, 'mode card mengirim kartu ATAU mundur ke embed, bukan pesan kosong');
-  assert.ok(!(adaFile && adaEmbed), 'tidak mengirim kartu dan embed sekaligus');
+  const kartuFiles = (cardKirim.files ?? []) as Array<{ name?: string }>;
+  assert.equal(kartuFiles.length, 1, 'mode card mengirim tepat satu lampiran');
+  assert.match(String(kartuFiles[0]?.name), /^sampai-jumpa-.*\.png$/, 'lampirannya PNG kartu');
+
+  const kartuEmbeds = (cardKirim.embeds ?? []) as Array<{ data?: { image?: { url?: string } } }>;
+  assert.equal(kartuEmbeds.length, 1, 'kartu dibungkus satu embed');
+  assert.equal(
+    kartuEmbeds[0]?.data?.image?.url,
+    `attachment://${kartuFiles[0]?.name}`,
+    'embed menampilkan PNG kartu lewat attachment://',
+  );
 });
 
 await testAsync('dashboard: tombol Kelola tidak memakai panah dropdown', async () => {
@@ -2398,22 +2409,29 @@ await testAsync('banner: tetap terkirim saat mode card jatuh ke embed', async ()
     const files = (payload.files ?? []) as unknown[];
     const embeds = (payload.embeds ?? []) as unknown[];
 
-    assert.ok(files.length >= 1, 'ada lampiran (kartu PNG atau banner)');
+    // Sejak kartu digambar sendiri (tanpa Chromium), mode Card WAJIB menghasilkan
+    // PNG. Dulu test ini menerima "kartu ATAU embed" karena di hosting tidak ada
+    // Chromium — kelonggaran itulah yang menyembunyikan bug "banner tak pernah
+    // terkirim" selama berbulan-bulan. Sekarang tidak ada alasan untuk mundur.
+    assert.equal(files.length, 1, 'mode card mengirim tepat satu lampiran PNG');
+    const kartu = files[0] as { name?: string; attachment?: unknown };
+    assert.match(String(kartu.name), /^selamat-datang-.*\.png$/, 'lampirannya PNG kartu');
+    assert.ok((kartu.attachment as Buffer).byteLength > 10_000, 'PNG-nya berisi gambar nyata');
 
-    if (embeds.length === 1) {
-      // Jatuh ke embed: banner HARUS ikut sebagai lampiran.
-      const embed = embeds[0] as { data?: { image?: { url?: string } } };
-      const imageUrl = embed.data?.image?.url ?? '';
-      assert.match(
-        imageUrl,
-        /^attachment:\/\//,
-        'embed merujuk banner lewat attachment:// (bukan data URI — Discord menolaknya)',
-      );
-      const bannerTerlampir = files.some(
-        (file) => (file as { name?: string }).name === banner.name,
-      );
-      assert.ok(bannerTerlampir, 'banner benar-benar ikut terlampir saat mundur ke embed');
-    }
+    assert.equal(embeds.length, 1, 'kartu dibungkus satu embed');
+    const embed = embeds[0] as { data?: { image?: { url?: string } } };
+    assert.match(
+      String(embed.data?.image?.url ?? ''),
+      /^attachment:\/\/selamat-datang-.*\.png$/,
+      'embed merujuk PNG kartu lewat attachment://',
+    );
+
+    // Banner TIDAK dikirim terpisah lagi: isinya sudah menjadi latar kartu.
+    assert.equal(
+      files.some((file) => (file as { name?: string }).name === banner.name),
+      false,
+      'banner tidak dikirim sebagai lampiran kedua',
+    );
   } finally {
     await deleteBanner(banner.name).catch(() => undefined);
   }
@@ -3924,12 +3942,92 @@ await testAsync('banner: default null (tanpa banner = kartu bawaan)', async () =
   assert.equal((await getGoodbyeSettings('999999999999999012')).bannerPath, null);
 });
 
-await testAsync('banner: kartu lebih tinggi saat banner dipakai', async () => {
+await testAsync('banner: kartu tidak berubah tinggi, banner jadi latar penuh', async () => {
+  // Dulu banner dipasang sebagai STRIP 110px di atas kartu sehingga tinggi kartu
+  // bertambah. Sekarang banner menutupi seluruh kartu (gaya bot besar), jadi
+  // ukurannya tetap sama dengan atau tanpa banner.
   const { cardHeight } = await import('../src/features/welcome-card.js');
   const tanpa = cardHeight({ bannerDataUri: null });
   const dengan = cardHeight({ bannerDataUri: 'data:image/png;base64,AAAA' });
-  assert.ok(dengan > tanpa, 'tinggi bertambah supaya teks tidak menimpa gambar');
-  assert.equal(dengan - tanpa, 110, 'selisihnya setinggi strip banner');
+  assert.equal(dengan, tanpa, 'tinggi kartu sama, banner hanya mengisi latar');
+});
+
+await testAsync('kartu: benar-benar digambar tanpa Chromium (bukan null)', async () => {
+  // Ini inti keluhan user: bot referensi bisa membuat kartu di hosting tanpa
+  // Chromium, sedangkan bot ini tidak pernah bisa. Kartu sekarang digambar
+  // langsung lewat Skia, jadi hasilnya harus SELALU ada — termasuk di mesin
+  // yang sama sekali tidak punya browser.
+  const { renderWelcomeCard, cardRendererAvailable } = await import('../src/features/welcome-card.js');
+
+  assert.equal(cardRendererAvailable(), true, 'renderer siap tanpa Chromium');
+
+  const png = await renderWelcomeCard({
+    userName: 'wahyuangga12',
+    guildName: 'Xcution',
+    message: 'Welcome to our Xcution',
+    avatarDataUri: null,
+    bannerDataUri: null,
+    kicker: 'SELAMAT DATANG',
+  });
+
+  assert.ok(png, 'kartu dihasilkan, bukan null');
+  assert.deepEqual([...png.subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47], 'berkasnya PNG asli');
+  assert.ok(png.byteLength > 10_000, 'PNG berisi gambar, bukan kotak kosong');
+});
+
+await testAsync('kartu: banner dipakai sebagai latar penuh (pikselnya berubah)', async () => {
+  // Menguji HAL YANG TERLIHAT, bukan sekadar "fungsi tidak melempar error".
+  // Banner diuji dalam format webp karena itulah yang diunggah di server user.
+  const { createCanvas } = await import('@napi-rs/canvas');
+  const { renderWelcomeCard, cardHeight } = await import('../src/features/welcome-card.js');
+
+  // Banner merah polos: kalau benar-benar jadi latar, sudut kartu ikut merah.
+  const banner = createCanvas(400, 200);
+  const bx = banner.getContext('2d');
+  bx.fillStyle = '#ff0000';
+  bx.fillRect(0, 0, 400, 200);
+  const bannerUri = `data:image/webp;base64,${banner.toBuffer('image/webp').toString('base64')}`;
+
+  const input = {
+    userName: 'Sky',
+    guildName: 'Komunitas Zypher',
+    message: 'Halo',
+    avatarDataUri: null,
+    kicker: 'SELAMAT DATANG',
+  } as const;
+
+  const denganBanner = await renderWelcomeCard({ ...input, bannerDataUri: bannerUri });
+  const tanpaBanner = await renderWelcomeCard({ ...input, bannerDataUri: null });
+  assert.ok(denganBanner && tanpaBanner, 'kedua kartu tergambar');
+
+  // Latar berbeda → byte PNG harus berbeda. Kalau banner diabaikan (bug lama),
+  // dua-duanya akan identik.
+  assert.equal(
+    Buffer.compare(denganBanner, tanpaBanner) === 0,
+    false,
+    'banner benar-benar memengaruhi hasil gambar',
+  );
+
+  // Tinggi kartu tidak berubah: banner mengisi latar, bukan menambah strip.
+  assert.equal(
+    cardHeight({ bannerDataUri: bannerUri }),
+    cardHeight({ bannerDataUri: null }),
+    'ukuran kartu tetap sama',
+  );
+});
+
+await testAsync('kartu: nama panjang & avatar rusak tidak menggagalkan sambutan', async () => {
+  const { renderWelcomeCard } = await import('../src/features/welcome-card.js');
+  const png = await renderWelcomeCard({
+    userName: 'a'.repeat(60),
+    guildName: 'Server Dengan Nama Yang Sangat Panjang Sekali '.repeat(2),
+    message: 'Halo',
+    // data URI rusak: tidak boleh melempar, kartu tetap jadi tanpa foto profil.
+    avatarDataUri: 'data:image/png;base64,bukan-gambar-sungguhan',
+    bannerDataUri: 'data:image/webp;base64,rusak-juga',
+    kicker: 'SELAMAT DATANG',
+  });
+  assert.ok(png && png.byteLength > 5_000, 'kartu tetap dibuat walau gambar masukan rusak');
 });
 
 await testAsync('banner: API unggah & hapus ada untuk kedua fitur', async () => {
@@ -4060,7 +4158,7 @@ await testAsync('preview: catatan kegagalan tidak dobel di respons API', async (
   const preview = await readFile('src/features/preview.ts', 'utf8');
   // Dulu dua tempat menambahkan catatan kartu, hasilnya kalimat berulang.
   assert.equal(server.includes('Kartu PNG tidak tersedia — sambutan tetap terkirim'), false);
-  assert.ok(preview.includes('Kartu PNG tidak dirender'), 'satu sumber catatan kartu');
+  assert.ok(preview.includes('Kartu PNG tidak bisa dirender'), 'satu sumber catatan kartu');
 });
 
 await testAsync('kirim tes: benar-benar memakai API Discord (bukan pratinjau)', async () => {
@@ -4100,7 +4198,7 @@ await testAsync('kirim tes: izin channel dilaporkan spesifik', async () => {
 await testAsync('kirim tes: kartu ikut dikirim kalau diaktifkan', async () => {
   const source = await readFile('src/features/test-send.ts', 'utf8');
   assert.ok(source.includes('renderWelcomeCard'), 'memakai renderer kartu yang sama');
-  assert.ok(source.includes('Chromium tidak tersedia'), 'memberi tahu saat kartu gagal');
+  assert.ok(source.includes('Kartu PNG tidak bisa dibuat'), 'memberi tahu saat kartu gagal');
 });
 
 await testAsync('kirim tes: endpoint terpisah dari pratinjau', async () => {
@@ -4535,10 +4633,12 @@ await testAsync('kirim tes: DM gagal menjelaskan sebab dan menawarkan target cha
   );
 });
 
-await testAsync('dashboard: peringatan ditampilkan kalau Chromium tidak ada', async () => {
+await testAsync('dashboard: peringatan tampil kalau mesin gambar kartu gagal dimuat', async () => {
   const pages = await readFile('src/web/ui/pages.ts', 'utf8');
   assert.ok(pages.includes('Kartu PNG tidak akan terkirim'), 'peringatan ada');
-  assert.ok(pages.includes('CHROMIUM_PATH'), 'menyebut cara memperbaiki');
+  assert.ok(pages.includes('Mesin gambar kartu gagal dimuat'), 'menjelaskan penyebabnya');
+  // Chromium sudah tidak dipakai: saran lama itu menyesatkan.
+  assert.equal(pages.includes('CHROMIUM_PATH'), false, 'tidak lagi menyuruh set CHROMIUM_PATH');
 
   const card = await readFile('src/features/welcome-card.ts', 'utf8');
   assert.ok(card.includes('export function cardRendererAvailable'), 'status bisa dicek');

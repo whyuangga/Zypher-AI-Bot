@@ -38,6 +38,7 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@napi-rs/canvas": "^1.1.0",
     "discord.js": "^14.16.3",
     "dotenv": "^16.4.7",
     "fflate": "^0.8.3",
@@ -50,7 +51,6 @@
     "@types/node": "^22.10.5",
     "@types/pg": "^8.23.1",
     "pg-mem": "^3.0.14",
-    "puppeteer-core": "23.11.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }
