@@ -63,6 +63,32 @@ Teks sapaan **tidak** ikut hilang saat teks kartu dimatikan: sapaan tetap
 dikirim sebagai pesan Discord di atas gambar, dan itu juga yang membuat
 mention-nya aktif. Yang dimatikan hanya tulisan di dalam gambarnya.
 
+### Dua tab: Sambutan di kiri, Perpisahan di kanan
+
+Halaman Sambutan dulu menampilkan **dua form panjang berdampingan**, lalu satu
+blok "Pratinjau & tes" untuk keduanya di bagian paling bawah. Akibatnya, untuk
+mengubah satu sakelar lalu melihat hasilnya, admin harus menggulir jauh dan
+kehilangan konteks form yang sedang diubah.
+
+Sekarang:
+
+- **Tab** memisahkan Sambutan dan Perpisahan — hanya satu jenis pesan yang
+  tampil sekaligus, dan pratinjau/tes ikut di dalam tab masing-masing.
+- Di layar lebar, **pratinjau menempel di kanan** (`position: sticky`), jadi
+  hasil tes terlihat tanpa menggulir sama sekali. Di layar sempit, pratinjau
+  kembali mengalir normal di bawah form.
+- Tab yang tidak aktif hanya **disembunyikan** (`hidden`), tidak dilepas dari
+  DOM. Isian yang belum disimpan tidak hilang, dan tombol Simpan tetap mengirim
+  nilai yang benar untuk tab mana pun.
+- Tab terakhir yang dibuka diingat browser (`localStorage`), jadi admin yang
+  sedang mengurus perpisahan tidak selalu mendarat di Sambutan.
+
+Catatan teknis yang dijaga test: setiap tab punya kolom **Nama contoh** dan
+status pratinjau sendiri (`welcomePreviewName`, `goodbyePreviewName`). Memakai
+id yang sama untuk dua tab membuat `getElementById()` selalu mengembalikan
+elemen pertama — status "Selesai" untuk perpisahan akan tertulis di panel
+sambutan.
+
 Kalau avatar diminta tapi gagal diunduh, kartu memakai lingkaran gradasi dengan
 huruf awal nama — bukan lingkaran kosong.
 
@@ -522,7 +548,7 @@ Tiga penyebab yang sudah diperbaiki:
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 313 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 316 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

@@ -483,6 +483,70 @@ textarea.mono { font-family: var(--font-mono); font-size: 12.5px; }
 .field-grid { display: grid; gap: 18px; }
 .hint { color: var(--text-3); font-size: 12.5px; margin: 8px 0 0; }
 
+/* ---------------- tab Sambutan / Perpisahan ----------------
+   Halaman ini dulu menumpuk dua form panjang lalu pratinjau di bawahnya, jadi
+   untuk melihat hasil satu sakelar admin harus scroll jauh. Sekarang hanya satu
+   jenis pesan tampil sekaligus, dengan pratinjau menempel di kanan. */
+.tabs {
+  display: flex; align-items: flex-end; gap: 4px;
+  border-bottom: 1px solid var(--line); padding-bottom: 0; flex-wrap: wrap;
+}
+.tab {
+  /* Tombol global: padding 12px 18px + huruf kapital ber-spasi. Tab butuh
+     bentuk lain, jadi semuanya ditimpa di sini. */
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 11px 18px; margin-bottom: -1px;
+  background: transparent; border: 1px solid transparent; border-bottom: 2px solid transparent;
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
+  color: var(--text-3); font-size: 11px; font-weight: 500;
+  letter-spacing: .13em; text-transform: uppercase; cursor: pointer;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.tab:hover { color: var(--text); background: rgba(226, 209, 204, .04); }
+.tab:active { transform: none; }
+.tab.is-active { color: var(--text); border-bottom-color: var(--text); }
+/* Titik = jenis pesan ini sedang aktif mengirim. Tetap terlihat walau tab-nya
+   tidak dibuka, karena gunanya justru memberi tahu tanpa harus membuka tab. */
+.tab-dot {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--ok);
+  flex: 0 0 auto; box-shadow: 0 0 0 3px var(--ok-soft);
+}
+
+.tab-pane { margin-top: 18px; }
+.pane-head {
+  display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.pane-head h2 { font-size: 19px; font-weight: 500; letter-spacing: -.02em; }
+.pane-head .hint { margin: 4px 0 0; }
+.pane-head .right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+/* Form di kiri (lebih lebar), pratinjau di kanan. PENTING: item grid tidak
+   boleh saling meregang — tanpa align-items:start, kartu pratinjau ikut
+   setinggi form dan "menempel" di layar jadi tidak berguna. */
+.pane-grid {
+  display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: 14px; align-items: start;
+}
+/* Pratinjau menempel di bawah topbar saat form di-scroll. Dengan begitu hasil
+   tes terlihat tanpa harus menggulir ke bawah. align-self:start wajib supaya
+   sticky bekerja di dalam grid. */
+.pane-preview {
+  position: sticky; top: 84px; align-self: start;
+  max-height: calc(100vh - 104px); overflow-y: auto;
+}
+@media (max-width: 1080px) {
+  /* Layar sedang: satu kolom. Pratinjau dilepas dari sticky dan diletakkan
+     SETELAH form (bukan sebelumnya), karena di HP orang mengisi dulu baru
+     melihat hasil. */
+  .pane-grid { grid-template-columns: minmax(0, 1fr); }
+  .pane-preview { position: static; max-height: none; overflow: visible; }
+}
+@media (max-width: 640px) {
+  .tabs .hint { display: none; } /* keterangan panjang tidak muat, tab tetap jelas */
+  .tab { flex: 1 1 auto; justify-content: center; padding: 11px 12px; }
+  .pane-head h2 { font-size: 17px; }
+}
+
 /* Kelompok sakelar tampilan (kartu / embed) di halaman Sambutan.
    Dikelompokkan karena dua-duanya mengatur pesan yang sama; dulu hanya ada
    satu checkbox tanpa keterangan, sehingga tidak jelas ia mengubah yang mana. */

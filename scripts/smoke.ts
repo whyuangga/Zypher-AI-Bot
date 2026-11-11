@@ -4882,6 +4882,146 @@ await testAsync('stream: stream kosong memicu provider berikutnya', async () => 
   );
 });
 
+await testAsync('halaman sambutan: tab Sambutan & Perpisahan, bukan dua form menumpuk', async () => {
+  // Keluhan pemilik server: dua form panjang berdampingan + pratinjau di bawah
+  // membuat halaman harus di-scroll jauh hanya untuk melihat hasil satu sakelar.
+  const { welcomePage } = await import('../src/web/ui/pages.js');
+  const settings = {
+    enabled: true, useAi: false, channelId: null, template: 'Halo {user}!',
+    displayMode: 'embed' as const, imageEnabled: false, includeAvatar: false,
+    cardAvatar: true, cardText: true, embedAvatar: false,
+    style: null, example: null, bannerPath: null, hasBanner: false,
+  };
+  const html = welcomePage({
+    guildId: '1', guildName: 'Server', welcome: settings, goodbye: settings,
+    channels: [], botOnline: true, sampleName: 'Sky',
+    cardRenderer: { available: true, path: null },
+    persona: null, model: null, defaultModel: 'x', embedModel: null, ragEnabled: false,
+    ttsReplyInRoom: null, ttsReplyInRoomDefault: true, ragEnabledSetting: null,
+    ragEnabledDefault: true, autoMemorySetting: null, autoMemoryDefault: true,
+    adminOnlyRoomsSetting: null, adminOnlyRoomsDefault: false,
+    stats: { rooms: 0, messages: 0, documents: 0 },
+    status: { online: true, mode: 'bot', uptimeSeconds: 0 }, counts: {},
+  } as never);
+
+  // 1. Dua tab, keduanya benar-benar ada dan bisa dipanggil.
+  assert.ok(html.includes('id="tab-welcome"'), 'tab sambutan ada');
+  assert.ok(html.includes('id="tab-goodbye"'), 'tab perpisahan ada');
+  assert.ok(/class="tab is-active"\s+id="tab-welcome"/.test(html), 'sambutan aktif saat halaman dibuka');
+  assert.ok(html.includes('function showTab('), 'fungsi pindah tab ada');
+
+  // 2. Panel perpisahan WAJIB sudah tersembunyi dari HTML. Kalau hanya
+  //    menunggu JS, dua form sempat tampil bersamaan — persis yang dihindari.
+  assert.ok(
+    /<section class="tab-pane" id="pane-goodbye"[^>]*hidden>/.test(html),
+    'panel perpisahan tersembunyi sejak HTML, bukan menunggu JS',
+  );
+  assert.ok(
+    !/<section class="tab-pane" id="pane-welcome"[^>]*hidden>/.test(html),
+    'panel sambutan tidak ikut tersembunyi',
+  );
+
+  // 3. Semua input tetap ada meski panelnya tersembunyi — kalau tidak,
+  //    menyimpan tab yang tidak dibuka akan mengirim nilai kosong.
+  for (const id of ['welcomeEnabled', 'welcomeTemplate', 'goodbyeEnabled', 'goodbyeTemplate',
+                    'welcomeCardAvatar', 'goodbyeCardAvatar']) {
+    assert.ok(html.includes(`id="${id}"`), `${id} tetap ada di DOM`);
+  }
+
+  // 4. Tidak boleh ada id ganda. Satu id ganda = getElementById() selalu
+  //    mengembalikan elemen pertama, jadi status/isi tab kanan menulis ke kiri.
+  const ids = [...html.matchAll(/ id="([^"]+)"/g)].map((m) => m[1]!);
+  const dupes = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))];
+  assert.deepEqual(dupes, [], `id ganda di satu halaman: ${dupes.join(', ')}`);
+
+  // 5. Pratinjau ada di dalam panel masing-masing, bukan satu blok di bawah.
+  const paneWelcome = html.slice(html.indexOf('id="pane-welcome"'), html.indexOf('id="pane-goodbye"'));
+  const paneGoodbye = html.slice(html.indexOf('id="pane-goodbye"'));
+  assert.ok(paneWelcome.includes('id="outWelcome"'), 'pratinjau sambutan di tabnya sendiri');
+  assert.ok(paneWelcome.includes('id="welcomePreviewName"'), 'nama contoh sambutan milik tab sambutan');
+  assert.ok(paneGoodbye.includes('id="outGoodbye"'), 'pratinjau perpisahan di tabnya sendiri');
+  assert.ok(paneGoodbye.includes('id="goodbyePreviewName"'), 'nama contoh perpisahan milik tab perpisahan');
+  assert.equal(paneWelcome.includes('outGoodbye'), false, 'pratinjau perpisahan tidak ikut di tab sambutan');
+});
+
+await testAsync('halaman sambutan: titik tab mengikuti sakelar aktif, bukan tab yang dibuka', async () => {
+  // Bug nyata saat tab pertama kali dibuat: titik indikator diikat ke "tab mana
+  // yang terbuka", jadi selalu muncul di kiri dan hilang saat pindah tab —
+  // tidak memberi informasi apa pun. Gunanya justru menunjukkan jenis pesan
+  // mana yang SEDANG mengirim, termasuk saat tab itu tidak dibuka.
+  const { welcomePage } = await import('../src/web/ui/pages.js');
+  const base = {
+    useAi: false, channelId: null, template: 'Halo {user}!',
+    displayMode: 'embed' as const, imageEnabled: false, includeAvatar: false,
+    cardAvatar: true, cardText: true, embedAvatar: false,
+    style: null, example: null, bannerPath: null, hasBanner: false,
+  };
+  const render = (welcomeOn: boolean, goodbyeOn: boolean): string =>
+    welcomePage({
+      guildId: '1', guildName: 'Server',
+      welcome: { ...base, enabled: welcomeOn },
+      goodbye: { ...base, enabled: goodbyeOn },
+      channels: [], botOnline: true, sampleName: 'Sky',
+      cardRenderer: { available: true, path: null },
+      persona: null, model: null, defaultModel: 'x', embedModel: null, ragEnabled: false,
+      ttsReplyInRoom: null, ttsReplyInRoomDefault: true, ragEnabledSetting: null,
+      ragEnabledDefault: true, autoMemorySetting: null, autoMemoryDefault: true,
+      adminOnlyRoomsSetting: null, adminOnlyRoomsDefault: false,
+      stats: { rooms: 0, messages: 0, documents: 0 },
+      status: { online: true, mode: 'bot', uptimeSeconds: 0 }, counts: {},
+    } as never);
+
+  const dot = (html: string, kind: string): string => {
+    const at = html.indexOf(`id="tabDot-${kind}"`);
+    assert.ok(at > -1, `titik tab ${kind} ada`);
+    return html.slice(at, html.indexOf('>', at));
+  };
+
+  // Sambutan aktif, perpisahan mati.
+  const satu = render(true, false);
+  assert.equal(/\shidden/.test(dot(satu, 'welcome')), false, 'sambutan aktif → titik tampil');
+  assert.equal(/\shidden/.test(dot(satu, 'goodbye')), true, 'perpisahan mati → titik disembunyikan');
+
+  // Dibalik: hanya perpisahan yang aktif.
+  const dua = render(false, true);
+  assert.equal(/\shidden/.test(dot(dua, 'welcome')), true, 'sambutan mati → titik disembunyikan');
+  assert.equal(/\shidden/.test(dot(dua, 'goodbye')), false, 'perpisahan aktif → titik tampil');
+
+  // Kode harus membaca checkbox saat itu, bukan nilai beku hasil render.
+  assert.ok(satu.includes('function syncTabDots('), 'ada penyelaras titik');
+  assert.ok(satu.includes("'Enabled'"), 'titik dibaca dari checkbox enabled');
+  assert.ok(satu.includes("addEventListener('change', syncTabDots)"),
+    'titik ikut berubah saat sakelar diubah sebelum disimpan');
+
+  // Scroll otomatis saat pindah tab bisa menaruh judul panel di bawah topbar
+  // yang sticky. Tab bar-nya ada di atas panel, jadi tidak perlu digulir.
+  assert.equal(/scrollIntoView\(\{\s*block/.test(satu), false,
+    'pindah tab tidak menggulir otomatis');
+});
+
+await testAsync('halaman sambutan: pratinjau menempel di kanan form (tanpa scroll)', async () => {
+  const theme = await readFile('src/web/ui/theme.ts', 'utf8');
+
+  const gridStart = theme.indexOf('.pane-grid {');
+  assert.ok(gridStart > -1, 'ada grid panel');
+  const grid = theme.slice(gridStart, theme.indexOf('}', gridStart));
+  assert.ok(/grid-template-columns:\s*minmax\(0,\s*1\.5fr\)\s*minmax\(0,\s*1fr\)/.test(grid),
+    'form kiri lebih lebar, pratinjau kanan');
+  assert.ok(/align-items:\s*start/.test(grid), 'kartu tidak saling meregang');
+
+  const stickyStart = theme.indexOf('.pane-preview {');
+  assert.ok(stickyStart > -1, 'ada gaya pratinjau');
+  const sticky = theme.slice(stickyStart, theme.indexOf('}', stickyStart));
+  assert.ok(/position:\s*sticky/.test(sticky), 'pratinjau menempel saat form di-scroll');
+  assert.ok(/top:\s*\d+px/.test(sticky), 'menempel di bawah topbar, bukan menutupinya');
+
+  // Di layar sempit, sticky dilepas: pratinjau setinggi layar di HP akan
+  // menghalangi form di bawahnya.
+  const mobile = theme.slice(theme.indexOf('.pane-grid { grid-template-columns: minmax(0, 1fr); }'));
+  assert.ok(/\.pane-preview\s*\{\s*position:\s*static/.test(mobile.slice(0, 400)),
+    'di HP pratinjau kembali normal');
+});
+
 await testAsync('banner: halaman tidak menyisipkan data URI (bisa belasan MB)', async () => {
   // Dua banner 8 MB sebagai data URI = HTML belasan MB; di HP praktis mati.
   const { welcomePage } = await import('../src/web/ui/pages.js');
