@@ -183,6 +183,7 @@ export function pesanPage(options: PesanPageOptions): string {
       <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('divider')">${icon('menu', 15)} Pemisah</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('container')">${icon('sliders', 15)} Container</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('section')">${icon('users', 15)} Section</button>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('close')">${icon('logout', 15)} Tutup kartu</button>
     </div>
     <div id="usageBar" class="usage-bar" hidden>
       <span id="usageText">0/40 komponen</span>
@@ -379,7 +380,8 @@ var LABEL = {
   button: 'Tombol',
   divider: 'Pemisah',
   container: 'Container baru',
-  section: 'Section (teks + gambar/tombol)'
+  section: 'Section (teks + gambar/tombol)',
+  close: 'Tutup kartu (di luar kartu)'
 };
 
 function lineCount(value) {
@@ -543,6 +545,12 @@ function renderBlocks() {
         ? 'Tombol di kanan dipakai; gambar kecil diabaikan saat tombol terisi.'
         : 'Isi salah satu: gambar kecil ATAU tombol. Discord hanya mengizinkan satu aksesori per section.';
       row.appendChild(ketAks);
+    } else if (block.kind === 'close') {
+      var ketTutup = document.createElement('p');
+      ketTutup.className = 'hint';
+      ketTutup.style.margin = '0';
+      ketTutup.textContent = 'Blok sesudah ini tampil DI LUAR kartu — polos di pesan, seperti teks pembuka dan baris tombol di Discohook. Tambahkan Container untuk masuk ke kartu lagi.';
+      row.appendChild(ketTutup);
     } else if (block.kind === 'text') {
       var ta = document.createElement('textarea');
       ta.rows = Math.min(10, Math.max(2, lineCount(block.value)));
@@ -655,9 +663,9 @@ function moveBlock(index, delta) {
 function payloadBlocks() {
   return blocks.filter(function (b) {
     if (b.kind === 'divider') return true;
-    // Container adalah penanda struktur: tanpa ia, blok sesudahnya berpindah
-    // ke kartu sebelumnya dan tampilan pesan berubah tanpa admin sadar.
-    if (b.kind === 'container') return true;
+    // Container & tutup-kartu adalah penanda struktur: tanpa keduanya, blok
+    // sesudahnya berpindah tempat dan tampilan pesan berubah tanpa admin sadar.
+    if (b.kind === 'container' || b.kind === 'close') return true;
     if (b.kind === 'section') {
       return Boolean(String(b.value || '').trim() || String(b.thumbnail || '').trim());
     }
@@ -812,7 +820,7 @@ function renderPreview() {
    * satu hal di dashboard dan hal lain di Discord.
    */
   var isi = blocks.filter(function (b) {
-    if (b.kind === 'divider' || b.kind === 'container') return true;
+    if (b.kind === 'divider' || b.kind === 'container' || b.kind === 'close') return true;
     if (b.kind === 'section') return Boolean(String(b.value || '').trim() || String(b.thumbnail || '').trim());
     if (b.kind === 'image') return Boolean(b.data || b.value);
     return String(b.value || '').trim().length > 0;
@@ -844,7 +852,47 @@ function renderPreview() {
     kartuList.push(kartu);
     host.appendChild(kartu);
   }
-  bukaKartu(null);
+  /*
+   * Ada blok container = blok sebelum container pertama tampil DI LUAR
+   * kartu (top-level), sama seperti pesan Discohook. Tanpa container, semua
+   * masuk satu kartu seperti perilaku lama.
+   */
+  var adaContainer = isi.some(function (b) { return b.kind === 'container'; });
+  var luar = adaContainer;
+
+  /**
+   * Elemen tujuan penulisan: kartu (punya border warna) atau pembungkus polos
+   * di luar kartu (tanpa border, karena di Discord pun tanpa kartu).
+   */
+  var luarHost = document.createElement('div');
+  luarHost.className = 'preview-outside';
+  host.appendChild(luarHost);
+
+  var tujuanLuar = luarHost;
+  function targetTulis() { return luar ? tujuanLuar : kartu; }
+
+  /**
+   * Tandai bahwa tujuan yang sedang ditulis sudah berisi.
+   *
+   * Sengaja memakai targetTulis() dan bukan variabel kartu langsung: saat
+   * menulis di luar kartu, variabel kartu masih menunjuk kartu terakhir yang
+   * mungkin
+   * sudah dibuang, dan menandainya berisi membuatnya lolos dari pembersihan
+   * kartu kosong - itulah yang dulu menyisakan kartu hantu di pratinjau.
+   */
+  function tandaiBerisi() {
+    var tujuan = targetTulis();
+    if (tujuan) tujuan._adaIsi = true;
+  }
+
+  /*
+   * Kartu pertama hanya dibuat kalau pesan memang mulai DI DALAM kartu.
+   * Kalau pesan diawali di luar kartu (ada blok container), membuat kartu
+   * kosong di sini akan menyisakan kartu hantu di pratinjau — kartu itu tidak
+   * pernah mendapat isi karena semua blok awal menulis ke pembungkus luar,
+   * tetapi sempat ditandai berisi oleh baris else kartu._adaIsi = true.
+   */
+  if (!luar) bukaKartu(null);
 
   var tertunda = [];
   function flushTombol() {
@@ -857,8 +905,8 @@ function renderPreview() {
         b.textContent = teksTombol(t);
         baris.appendChild(b);
       });
-      kartu.appendChild(baris);
-      kartu._adaIsi = true;
+      targetTulis().appendChild(baris);
+      tandaiBerisi();
     }
     tertunda = [];
   }
@@ -867,6 +915,24 @@ function renderPreview() {
     if (blok.kind === 'container') {
       if (tertunda.length) flushTombol();
       bukaKartu(blok.accent || null);
+      luar = false;
+      return;
+    }
+    if (blok.kind === 'close') {
+      if (tertunda.length) flushTombol();
+      /*
+       * Penanda hanya muncul saat benar-benar ADA transisi dari dalam kartu ke
+       * luar. Kalau pesan sudah mulai di luar kartu (karena punya blok
+       * container), blok close pertama tidak mengubah apa pun — menampilkan
+       * penanda di situ akan menyesatkan admin.
+       */
+      if (!luar) {
+        var batas = document.createElement('div');
+        batas.className = 'pc-outside-hint';
+        batas.textContent = 'di luar kartu';
+        tujuanLuar.appendChild(batas);
+      }
+      luar = true;
       return;
     }
     if (blok.kind === 'button') { tertunda.push(blok); return; }
@@ -903,15 +969,15 @@ function renderPreview() {
         kanan.appendChild(thumb);
       }
       sec.appendChild(kanan);
-      kartu.appendChild(sec);
-      kartu._adaIsi = true;
+      targetTulis().appendChild(sec);
+      tandaiBerisi();
       return;
     }
 
     if (blok.kind === 'divider') {
       var sep = document.createElement('div');
       sep.className = 'pc-sep' + (blok.spacing === 'large' ? ' pc-sep-large' : '');
-      kartu.appendChild(sep);
+      targetTulis().appendChild(sep);
       return;
     }
     if (blok.kind === 'image') {
@@ -920,7 +986,7 @@ function renderPreview() {
         img.src = blok.data;
         img.className = 'pc-image';
         img.alt = 'gambar unggahan';
-        kartu.appendChild(img);
+        targetTulis().appendChild(img);
       } else {
         var jauh = document.createElement('img');
         jauh.src = blok.value;
@@ -929,9 +995,9 @@ function renderPreview() {
         jauh.onerror = function () {
           jauh.replaceWith(salinanTeks('[ gambar tidak bisa dimuat ]'));
         };
-        kartu.appendChild(jauh);
+        targetTulis().appendChild(jauh);
       }
-      kartu._adaIsi = true;
+      tandaiBerisi();
       return;
     }
     // Teks: -# di awal = teks kecil di Discord.
@@ -940,21 +1006,31 @@ function renderPreview() {
     var el = document.createElement('div');
     el.className = 'pc-line' + (kecil ? ' pc-small' : '');
     el.textContent = teks;
-    kartu.appendChild(el);
-    kartu._adaIsi = true;
+    targetTulis().appendChild(el);
+    tandaiBerisi();
   });
   if (tertunda.length) flushTombol();
 
   // Kartu yang tidak mendapat isi sama sekali dibuang: di Discord kartu itu
   // tidak akan muncul, jadi menampilkannya di pratinjau justru menyesatkan.
+  // Pembungkus luar juga dibuang kalau tidak terpakai, supaya tidak ada
+  // celah kosong di pratinjau.
   for (var k = kartuList.length - 1; k >= 0; k -= 1) {
     if (!kartuList[k]._adaIsi) kartuList[k].remove();
   }
-  // Wadah untuk tombol role: kartu terakhir yang masih tampil — sama dengan
-  // penyusun payload yang menaruh tombol di wadah aktif terakhir.
+  if (!tujuanLuar._adaIsi) tujuanLuar.remove();
+
+  /*
+   * Tombol role & menu selalu menempel di KARTU TERAKHIR yang berisi — sama
+   * dengan penyusun payload. Kalau tidak ada kartu berisi sama sekali,
+   * keduanya jatuh ke pembungkus luar supaya tetap terlihat.
+   */
+  var kartuRole = null;
   for (var m = kartuList.length - 1; m >= 0; m -= 1) {
-    if (kartuList[m]._adaIsi) { kartu = kartuList[m]; break; }
+    if (kartuList[m]._adaIsi) { kartuRole = kartuList[m]; break; }
   }
+  if (kartuRole) kartu = kartuRole;
+  else if (tujuanLuar._adaIsi) kartu = tujuanLuar;
 
   // Tombol role: baris paling bawah, sama seperti pesan sungguhan.
   for (var i = 0; i < roleButtons.length; i += 5) {
@@ -1011,7 +1087,8 @@ function renderPreview() {
  * tampil hanya :nama: — cukup untuk memastikan admin memilih emoji yang benar.
  */
 function teksTombol(tombol) {
-  var label = tombol.label || '(tanpa label)';
+  // Tombol link menyimpan teksnya di value; tombol role di label.
+  var label = tombol.value || tombol.label || '(tanpa label)';
   var emoji = tombol.emoji || '';
   if (!emoji) return label;
   var kustom = /^<a?:([a-zA-Z0-9_]{2,32}):\\d{15,25}>$/.exec(emoji);

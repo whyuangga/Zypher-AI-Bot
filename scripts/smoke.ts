@@ -6672,10 +6672,17 @@ await testAsync('pesan: blok container menghasilkan beberapa container berwarna 
   const built = buildPostPayload(blocks, deps);
   assert.ok(built, 'payload terbentuk');
 
-  type C = { accent_color?: number; components: Array<Record<string, any>> };
+  type C = { type: number; accent_color?: number; components: Array<Record<string, any>> };
   const json = (built!.components as Array<{ toJSON: () => C }>).map((c) => c.toJSON());
-  assert.equal(json.length, 3, 'tiga container: bawaan + dua dari blok');
-  assert.equal(json[0]!.accent_color, 0x6d8cff, 'container pertama ikut warna pesan');
+
+  /*
+   * Sejak blok `close` ada, teks sebelum container pertama tampil DI LUAR
+   * kartu (top-level), bukan lagi dibungkus container bawaan. Itu yang membuat
+   * pesan bisa menyerupai Discohook: pembuka polos, lalu kartu-kartunya.
+   * Karena itu hasilnya 1 TextDisplay + 2 Container, bukan 3 Container.
+   */
+  assert.equal(json.length, 3, 'teks pembuka + dua container');
+  assert.equal(json[0]!.type, 10, 'teks pembuka di luar kartu');
   assert.equal(json[1]!.accent_color, 0x58b9ff, 'warna container sendiri dipakai');
   assert.equal(json[2]!.accent_color, 0xff8800);
   assert.equal(json[1]!.components.length, 2);
@@ -6757,6 +6764,90 @@ await testAsync('pesan: pemisah berjarak besar memakai spacing 2', async () => {
   const sep = json.components.find((c) => c.type === 14);
   assert.equal(sep?.spacing, 2, 'jarak besar');
   assert.equal(sep?.divider, true);
+});
+
+await testAsync('pesan: blok tutup-kartu menaruh komponen di luar container', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    accent: 0x6d8cff,
+    accentToNumber: (hex: string) => parseInt(hex.slice(1), 16),
+  };
+
+  // Struktur pesan Discohook: pembuka polos, dua kartu berwarna, tombol penutup.
+  const blok = sanitizeBlocks([
+    { kind: 'text', value: 'Pembuka' },
+    { kind: 'close' },
+    { kind: 'container', accent: '#58b9ff' },
+    { kind: 'text', value: 'Kartu satu' },
+    { kind: 'container', accent: '#ff8800' },
+    { kind: 'text', value: 'Kartu dua' },
+    { kind: 'close' },
+    { kind: 'button', value: 'Situs', url: 'https://example.com' },
+  ]).blocks;
+  type C = { type: number; accent_color?: number; components?: Array<{ content?: string; label?: string }> };
+  const built = buildPostPayload(blok, deps);
+  assert.ok(built, 'pesan tidak boleh dianggap kosong');
+  const json = (built!.components as Array<{ toJSON: () => C }>).map((c) => c.toJSON());
+
+  // 10 = TextDisplay, 17 = Container, 1 = ActionRow
+  assert.deepEqual(
+    json.map((c) => c.type),
+    [10, 17, 17, 1],
+    'pembuka & tombol di luar kartu, dua kartu di tengah',
+  );
+  assert.equal(json[0]!.components, undefined, 'TextDisplay top-level tidak berisi komponen');
+  assert.equal(json[1]!.accent_color, 0x58b9ff, 'kartu pertama biru');
+  assert.equal(json[2]!.accent_color, 0xff8800, 'kartu kedua oranye');
+  assert.equal(json[3]!.components?.[0]!.label, 'Situs', 'label tombol penutup');
+});
+
+await testAsync('pesan: tanpa blok container tetap satu kartu (pesan lama aman)', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+  };
+  const built = buildPostPayload(
+    sanitizeBlocks([
+      { kind: 'text', value: 'Halo' },
+      { kind: 'text', value: 'Dunia' },
+      { kind: 'button', value: 'Situs', url: 'https://example.com' },
+    ]).blocks,
+    deps,
+  );
+  type C = { type: number; components?: Array<{ type: number }> };
+  const json = (built!.components as Array<{ toJSON: () => C }>).map((c) => c.toJSON());
+  assert.equal(json.length, 1, 'hanya satu container');
+  assert.equal(json[0]!.type, 17, 'komponennya container');
+});
+
+await testAsync('pesan: dua blok tutup-kartu berurutan tidak menggandakan komponen', async () => {
+  const { sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const { blocks, dropped } = sanitizeBlocks([
+    { kind: 'container' },
+    { kind: 'text', value: 'A' },
+    { kind: 'close' },
+    { kind: 'close' },
+    { kind: 'text', value: 'B' },
+  ]);
+  assert.deepEqual(dropped, [], 'tidak ada blok yang dibuang');
+  assert.equal(blocks.filter((b) => b.kind === 'close').length, 1, 'penutup ganda diringkas jadi satu');
 });
 
 await testAsync('pesan: penghitung batas komponen menghitung seperti Discord', async () => {

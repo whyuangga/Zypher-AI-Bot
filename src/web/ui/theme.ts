@@ -1168,6 +1168,31 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   margin-top: 6px;
 }
 
+/*
+ * Komponen di LUAR kartu (top-level).
+ *
+ * Di Discord, teks pembuka dan baris tombol seperti di pesan Discohook tidak
+ * punya border maupun latar — ia hanya menumpang di pesan. Pratinjau harus
+ * sama: tanpa border, tanpa latar, supaya admin tidak mengira itu kartu.
+ */
+.preview-outside {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px 2px 4px;
+}
+/* Penanda tipis batas kartu — hanya di pratinjau, tidak dikirim ke Discord. */
+.pc-outside-hint {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6b7280;
+  opacity: 0.75;
+  padding-top: 2px;
+}
+.preview-outside .pc-line { color: #dbdee1; }
+.preview-outside .pc-line.pc-small { color: #949ba4; }
+
 .pc-section-text { flex: 1 1 auto; min-width: 0; }
 .pc-section-aksesori { flex: 0 0 auto; display: flex; align-items: center; }
 

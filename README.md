@@ -352,7 +352,9 @@ Butuh pesan sendiri (rules, pengumuman, info server, **ambil role**)? Pakai
 halaman [`/pesan`](docs/pesan.md) — susun blok teks/gambar/tombol, kirim sekali,
 lalu perbarui tanpa kirim ulang. Satu pesan bisa berisi **beberapa container**
 (masing-masing dengan warna aksen sendiri), **section** yang menaruh gambar kecil
-atau tombol di samping teks, dan **penghitung batas komponen** yang menunjukkan
+atau tombol di samping teks, **blok Tutup kartu** yang mengeluarkan teks & tombol
+dari container (pembuka polos di atas, baris tombol di bawah — seperti pesan
+Discohook), dan **penghitung batas komponen** yang menunjukkan
 sisa kuota sebelum Discord menolak. Ada **pratinjau hidup**, **warna aksen** bebas,
 **unggah gambar**, dan pilihan pengirim: lewat bot, atau **atas nama server**
 (webhook — tokennya dienkripsi, butuh izin *Manage Webhooks*). Tombol **ambil
@@ -482,7 +484,7 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke # 379 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
+npm run smoke # 382 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
 npm run smoke:pg       # 21 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # 15 pemeriksaan rantai fallback provider (server tiruan)
 npm run test:ui        # 75 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)

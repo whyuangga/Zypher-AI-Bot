@@ -54,22 +54,58 @@ warna berbeda. Caranya: tambahkan blok **Container**, lalu semua blok sesudah
 blok berikutnya masuk ke kartu itu sampai ada Container lagi.
 
 ```
-Teks            "Hey, welcome to …"        → kartu 1 (warna pesan)
+Teks            "Hey, welcome to …"        → di luar kartu (polos)
 Container       #58b9ff
-Teks            "### What is this?"        → kartu 2
-Teks            "At its core, …"           → kartu 2
+Teks            "### What is this?"        → kartu 1
+Teks            "At its core, …"           → kartu 1
 Container       #ff8800
-Teks            "### Get started"          → kartu 3
+Teks            "### Get started"          → kartu 2
 ```
 
 Aturan yang dipegang:
 
 - **Tanpa blok Container, hasilnya tetap satu kartu** — pesan yang sudah ada
   tidak berubah tampilannya.
+- Begitu pesan punya blok Container, blok isi **sebelum Container pertama**
+  tampil **di luar kartu** (tanpa border warna), persis seperti pesan Discohook:
+  teks pembuka polos di atas, baru kartu-kartunya. Ini yang membuat pesan tidak
+  lagi terkurung dalam satu kotak besar.
 - Container **kosong dibuang** sebelum dikirim. Admin yang menambah kartu lalu
   berubah pikiran tidak mendapat kartu kosong.
 - Container **tidak bisa bersarang** di dalam container lain (aturan Discord).
 - Maksimal **10** komponen teratas per pesan.
+
+### Tutup kartu: teks & tombol di luar container
+
+Di pesan Discohook, teks pembuka dan baris tombol berada **di luar** kartu.
+Untuk itu ada blok **Tutup kartu**: semua blok sesudahnya tampil langsung di
+pesan, sampai ada blok **Container** lagi.
+
+```
+Teks            "Hey, welcome to …"
+Tutup kartu                                 → mulai menulis di luar kartu
+Container       #58b9ff
+Teks            "### What is this?"         → kartu 1
+Container       #ff8800
+Teks            "### Get started"           → kartu 2
+Tutup kartu                                 → keluar dari kartu lagi
+Tombol          "Support Server"  ┐
+Tombol          "Invite Bot"      ┘         → satu baris tombol polos
+```
+
+Yang perlu diketahui:
+
+| Hal | Perilaku |
+|---|---|
+| Blok di luar kartu | teks, pemisah, gambar, section, dan baris tombol |
+| Tombol di luar kartu | satu ActionRow, maksimal 5 — sisanya jadi baris berikutnya |
+| Container sesudah "Tutup kartu" | otomatis masuk ke kartu lagi |
+| Dua "Tutup kartu" berurutan | diringkas jadi satu, tidak menggandakan apa pun |
+| Tombol ambil role & menu | **selalu** menempel di kartu terakhir, bukan di luar |
+| Penghitung komponen | komponen di luar kartu ikut dihitung sebagai komponen teratas (maks 10) |
+
+Di pratinjau, area luar kartu diberi label kecil **di luar kartu** supaya batas
+kartu terlihat jelas. Label itu hanya ada di dashboard — tidak ikut terkirim.
 
 ### Section: teks dengan aksesori
 

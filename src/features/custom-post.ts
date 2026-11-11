@@ -22,7 +22,21 @@
  * tempat blok lain berada, bukan menambah teks. Blok isi sesudah `container`
  * masuk ke dalam container itu sampai ada `container` berikutnya.
  */
-export type PostBlockKind = 'text' | 'divider' | 'image' | 'button' | 'container' | 'section';
+export type PostBlockKind =
+  | 'text'
+  | 'divider'
+  | 'image'
+  | 'button'
+  | 'container'
+  | 'section'
+  /**
+   * Menutup kartu: blok sesudahnya tampil DI LUAR container, langsung di
+   * pesan — seperti teks pembuka dan baris tombol di pesan Discohook.
+   *
+   * Tanpa ini, semua blok selalu berada di dalam suatu kartu, sehingga pesan
+   * bergaya "pembuka + dua kartu + tombol penutup" tidak bisa disusun.
+   */
+  | 'close';
 
 export interface PostBlock {
   kind: PostBlockKind;
@@ -386,6 +400,15 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
       continue;
     }
 
+    if (kind === 'close') {
+      // Penanda struktur murni: tidak menghasilkan komponen, dan dua penutup
+      // berurutan sama saja dengan satu.
+      if (out.length > 0 && out[out.length - 1]!.kind !== 'close') {
+        out.push({ kind: 'close', value: '' });
+      }
+      continue;
+    }
+
     dropped.push(`jenis blok tidak dikenal: ${String(kind).slice(0, 20)}`);
   }
 
@@ -441,26 +464,62 @@ export function measureBlocks(blocks: PostBlock[]): ComponentUsage {
   let text = 0;
   let containers = 0;
 
-  // Wadah pertama selalu ada (blok isi tanpa blok container tetap dikirim).
+  /*
+   * Hitungan ini meniru `buildPostPayload`, termasuk aturan yang mudah
+   * terlewat: kalau pesan memakai blok `container`, maka blok isi SEBELUM
+   * container pertama tampil di luar kartu (top-level), bukan di dalamnya.
+   */
+  const adaContainerEksplisit = blocks.some((b) => b.kind === 'container');
+
   let anak = 0;
   let adaIsi = false;
   let adaTombol = 0;
+  /** true = sedang menulis di luar kartu (komponen top-level). */
+  let luar = adaContainerEksplisit;
+  /** Komponen top-level di luar container (teks/tombol pembuka & penutup). */
+  let luarCount = 0;
 
   const tutup = (): void => {
     if (!adaIsi) return;
     topLevel += 1;
     containers += 1;
-    // ActionRow tombol menumpuk dan baru dihitung saat ditutup, karena baru
-    // di titik itu jumlah barisnya diketahui.
-    total += anak + Math.ceil(adaTombol / LIMITS.buttonsPerRow);
+    total += anak;
     anak = 0;
     adaTombol = 0;
     adaIsi = false;
   };
 
+  /**
+   * Tutup deretan tombol yang sedang menumpuk.
+   *
+   * Di dalam kartu, hasilnya ditambahkan ke `anak` — BUKAN langsung ke `total`,
+   * karena `tutup()` menjumlahkan `anak` ke `total`. Menambah ke keduanya
+   * membuat tombol terhitung dua kali (3 dihitung sebagai 4).
+   */
+  const tutupTombol = (): void => {
+    if (adaTombol === 0) return;
+    const baris = Math.ceil(adaTombol / LIMITS.buttonsPerRow);
+    if (luar) {
+      total += baris;
+      luarCount += baris;
+    } else {
+      anak += baris;
+      adaIsi = true;
+    }
+    adaTombol = 0;
+  };
+
   for (const block of blocks) {
     if (block.kind === 'container') {
+      tutupTombol();
       tutup();
+      luar = false;
+      continue;
+    }
+    if (block.kind === 'close') {
+      tutupTombol();
+      tutup();
+      luar = true;
       continue;
     }
     if (block.kind === 'button') {
@@ -469,18 +528,32 @@ export function measureBlocks(blocks: PostBlock[]): ComponentUsage {
     }
     if (block.kind === 'divider') {
       // Pemisah pertama di container kosong tidak ditampilkan sendirian.
-      if (adaIsi) {
-        anak += 1;
+      if (adaIsi || luar) {
+        if (luar) {
+          total += 1;
+          luarCount += 1;
+        } else {
+          anak += 1;
+        }
       }
       continue;
     }
     if (block.kind === 'text' || block.kind === 'section' || block.kind === 'image') {
       text += block.kind === 'text' || block.kind === 'section' ? block.value.length : 0;
-      anak += 1;
-      adaIsi = true;
+      if (luar) {
+        total += 1;
+        luarCount += 1;
+      } else {
+        anak += 1;
+        adaIsi = true;
+      }
     }
   }
+  tutupTombol();
   tutup();
+
+  // Komponen di luar kartu juga memakan kuota top-level (batas Discord: 10).
+  topLevel += luarCount;
 
   if (total > LIMITS.totalComponents) {
     masalah.push(
@@ -649,15 +722,88 @@ export function buildPostPayload(
     return baru;
   };
   /*
-   * Wadah pertama selalu ada: kalau pesan hanya memakai blok isi biasa, semua
-   * masuk ke sini dan hasilnya sama seperti sebelum fitur container ada.
+   * Apakah pesan ini memakai container EKSPLISIT (blok `container`).
+   *
+   * Ini menentukan perilaku untuk blok yang datang SEBELUM container pertama:
+   *   - tidak ada container → semua masuk satu kartu (perilaku lama)
+   *   - ada container       → blok sebelum container pertama tampil DI LUAR
+   *     kartu, persis seperti pesan Discohook (teks pembuka polos di atas,
+   *     baru kemudian kartu-kartunya)
+   *
+   * Kalau aturan ini tidak dibuat, teks pembuka ikut terkurung di dalam
+   * kartu pertama dan hasilnya tidak lagi menyerupai Discohook.
    */
+  const adaContainerEksplisit = blocks.some((b) => b.kind === 'container');
+
   let aktif = buatWadah();
+
+  /*
+   * Komponen yang tampil DI LUAR kartu (top-level).
+   *
+   * Discord mengizinkan TextDisplay, Separator, MediaGallery, Section, dan
+   * ActionRow tampil langsung di pesan tanpa dibungkus Container. Itu yang
+   * dipakai pesan Discohook: teks pembuka polos di atas, lalu dua kartu,
+   * lalu baris tombol penutup.
+   *
+   * Disimpan beserta urutannya terhadap wadah, karena urutan tampil harus
+   * sama dengan urutan blok yang disusun admin.
+   */
+  interface TopLevel {
+    /** `container` = wadah, `lain` = komponen langsung di pesan. */
+    jenis: 'container' | 'lain';
+    wadah?: Wadah;
+    komponen?: any;
+  }
+  const urutan: TopLevel[] = [];
+  const daftarkanWadah = (w: Wadah): void => {
+    // Wadah yang sama hanya didaftarkan sekali; panggilan berikutnya dari
+    // blok isi berikutnya tidak menambah entri.
+    if (urutan.some((u) => u.wadah === w)) return;
+    urutan.push({ jenis: 'container', wadah: w });
+  };
+  // Wadah awal hanya dipakai kalau pesan memang tanpa container eksplisit.
+  if (!adaContainerEksplisit) daftarkanWadah(aktif);
+
+  /**
+   * Mode penulisan: di dalam kartu (bawaan) atau langsung di pesan.
+   *
+   * `luar` dinyalakan oleh blok `close`, dan dimatikan lagi oleh blok
+   * `container` berikutnya. Bedanya penting: komponen di luar kartu tidak
+   * mendapat warna aksen dan tidak bisa berisi ActionRow + teks sekaligus.
+   */
+  let luar = adaContainerEksplisit;
+
+  /** Tulis satu komponen ke tujuan yang sedang aktif. */
+  const tulis = (komponen: any): void => {
+    if (luar) {
+      urutan.push({ jenis: 'lain', komponen });
+      return;
+    }
+    /*
+     * ContainerBuilder tidak punya `addComponents` generik — ia hanya punya
+     * penambah per jenis (addTextDisplayComponents, addSeparatorComponents,
+     * ...). `spliceComponents` adalah satu-satunya cara menyisipkan komponen
+     * tanpa peduli jenisnya, dan itulah yang dipakai di sini.
+     *
+     * Catatan: versi pertama fungsi ini memakai `addComponents?.()` — opsional
+     * chaining membuatnya diam-diam tidak melakukan apa pun, sehingga semua
+     * isi container hilang tanpa satu pun error.
+     */
+    aktif.builder.spliceComponents(aktif.builder.components.length, 0, komponen);
+    aktif.anak += 1;
+    aktif.adaIsi = true;
+  };
 
   /** Pindah ke container berikutnya; dipanggil saat blok `container` dibaca. */
   const bukaContainer = (block: PostBlock): void => {
     const accent = block.accent && deps.accentToNumber ? deps.accentToNumber(block.accent) : undefined;
     aktif = buatWadah(accent);
+    // Wadah BARU harus didaftarkan — tanpa ini ia tidak pernah masuk daftar
+    // urutan dan seluruh isinya hilang dari pesan.
+    daftarkanWadah(aktif);
+    // Container SELALU membuka kartu: admin yang menutup kartu lalu menambah
+    // container jelas ingin kembali ke dalam kartu.
+    luar = false;
   };
 
   // Gambar unggahan dikumpulkan dulu, lalu dikirim sebagai lampiran.
@@ -682,9 +828,14 @@ export function buildPostPayload(
         if (emoji) button.setEmoji(emoji);
         row.addComponents(button);
       }
-      aktif.builder.addActionRowComponents(row);
-      aktif.anak += 1;
-      aktif.adaIsi = true;
+      if (luar) {
+        // Di luar kartu, ActionRow berdiri sendiri sebagai komponen top-level.
+        urutan.push({ jenis: 'lain', komponen: row });
+      } else {
+        aktif.builder.addActionRowComponents(row);
+        aktif.anak += 1;
+        aktif.adaIsi = true;
+      }
     }
   };
 
@@ -694,6 +845,11 @@ export function buildPostPayload(
     if (block.kind === 'container') {
       if (tombolTertunda.length > 0) flushButtons();
       bukaContainer(block);
+      continue;
+    }
+    if (block.kind === 'close') {
+      if (tombolTertunda.length > 0) flushButtons();
+      luar = true;
       continue;
     }
     if (block.kind === 'button') {
@@ -708,15 +864,11 @@ export function buildPostPayload(
       // Jarak: 1 = kecil (rapat), 2 = besar (renggang). Discord menamainya
       // `spacing`, bukan ukuran piksel.
       if (block.spacing === 'large' && typeof sep.setSpacing === 'function') sep.setSpacing(2);
-      aktif.builder.addSeparatorComponents(sep);
-      aktif.anak += 1;
-      aktif.adaIsi = true;
+      tulis(sep);
       continue;
     }
     if (block.kind === 'text') {
-      aktif.builder.addTextDisplayComponents(new deps.TextDisplayBuilder().setContent(block.value));
-      aktif.anak += 1;
-      aktif.adaIsi = true;
+      tulis(new deps.TextDisplayBuilder().setContent(block.value));
       continue;
     }
     if (block.kind === 'section') {
@@ -738,9 +890,7 @@ export function buildPostPayload(
           thumb.setURL(block.thumbnail);
           section.setThumbnailAccessory(thumb);
         }
-        aktif.builder.addSectionComponents(section);
-        aktif.anak += 1;
-        aktif.adaIsi = true;
+        tulis(section);
       }
       continue;
     }
@@ -753,13 +903,11 @@ export function buildPostPayload(
         files.push({ dataUri: block.data, name });
         url = `attachment://${name}`;
       }
-      aktif.builder.addMediaGalleryComponents(
+      tulis(
         new deps.MediaGalleryBuilder().addItems(
           new deps.MediaGalleryItemBuilder().setURL(url),
         ),
       );
-      aktif.anak += 1;
-      aktif.adaIsi = true;
     }
   }
   if (tombolTertunda.length > 0) flushButtons();
@@ -781,6 +929,12 @@ export function buildPostPayload(
         if (emoji) button.setEmoji(emoji);
         row.addComponents(button);
       }
+      /*
+       * Tombol role SELALU masuk ke kartu terakhir, bukan ke luar kartu.
+       * Alasan: ia menyatu secara visual dengan isi pesan, dan kalau
+       * ditaruh di luar kartu ia bisa jadi komponen top-level tambahan yang
+       * memakan kuota 10 — untuk komponen yang tidak admin susun sendiri.
+       */
       aktif.builder.addActionRowComponents(row);
       aktif.anak += 1;
       aktif.adaIsi = true;
@@ -814,21 +968,29 @@ export function buildPostPayload(
   }
 
   /*
-   * Buang container kosong.
+   * Susun komponen top-level sesuai urutan blok.
    *
-   * Dua alasan: (1) Discord menolak container tanpa komponen, (2) admin yang
-   * menekan "container baru" lalu berubah pikiran tidak boleh mendapat kartu
-   * kosong di pesannya. Kalau SEMUA kosong, pemanggil menganggap pesan kosong
-   * (mengembalikan null) — sama seperti perilaku sebelumnya.
+   * Container kosong dibuang: (1) Discord menolak container tanpa komponen,
+   * (2) admin yang menekan "container baru" lalu berubah pikiran tidak boleh
+   * mendapat kartu kosong. Kalau semua kosong, pemanggil menganggap pesan
+   * kosong (null) — sama seperti perilaku sebelumnya.
    */
-  const dipakai = wadah.filter((w) => w.adaIsi);
-  if (dipakai.length === 0) return null;
+  const komponen: any[] = [];
+  for (const item of urutan) {
+    if (item.jenis === 'container') {
+      if (item.wadah?.adaIsi) komponen.push(item.wadah.builder);
+    } else if (item.komponen) {
+      komponen.push(item.komponen);
+    }
+  }
+  if (komponen.length === 0) return null;
 
-  // Batas top-level: 10 komponen teratas per pesan (batas Discord, bukan
-  // pilihan kita). Wadah pertama selalu container, jadi ini cukup.
-  const terpakai = dipakai.slice(0, LIMITS.topLevelComponents);
-
-  return { components: terpakai.map((w) => w.builder), flags: 1 << 15, files };
+  // Batas Discord: 10 komponen teratas per pesan.
+  return {
+    components: komponen.slice(0, LIMITS.topLevelComponents),
+    flags: 1 << 15,
+    files,
+  };
 }
 
 /* ------------------------------------------------------------------ */
