@@ -242,7 +242,9 @@ export async function previewWelcome(options: WelcomePreviewOptions): Promise<Pr
         text: finalText,
         guildName,
         bannerDataUri: options.bannerDataUri ?? null,
-        kicker: options.kicker,
+        // Default di sini, bukan di pemanggil: dulu dashboard mengandalkan
+        // server mengirim judul, dan lupa bahwa itu opsional.
+        kicker: options.kicker ?? 'SELAMAT DATANG',
       });
       result.card = Boolean(buffer);
       result.cardBytes = buffer?.byteLength ?? 0;
@@ -261,13 +263,30 @@ export async function previewWelcome(options: WelcomePreviewOptions): Promise<Pr
   return result;
 }
 
-/** Hasil salam perpisahan seperti yang akan diposting ke channel. */
-export async function previewGoodbye(options: {
+export interface PreviewGoodbyeOptions {
   settings: GoodbyeSettings;
   name: string;
   guildName: string;
+  /** Paksa jalur template walau `useAi` menyala (tombol "tanpa AI"). */
   templateOnly?: boolean;
-}): Promise<PreviewResult> {
+  /** Render kartu PNG juga — memakan waktu, jadi opsional. */
+  withCard?: boolean;
+  /** Renderer disuntikkan supaya modul ini tidak bergantung paket gambar. */
+  renderCard?: (input: {
+    name: string;
+    text: string;
+    guildName: string;
+    bannerDataUri?: string | null;
+    kicker?: string;
+  }) => Promise<Buffer | null>;
+  /** Banner unggahan admin (data URI) untuk ikut dirender di kartu. */
+  bannerDataUri?: string | null;
+  /** Judul kecil di kartu. */
+  kicker?: string;
+}
+
+/** Hasil salam perpisahan seperti yang akan diposting ke channel. */
+export async function previewGoodbye(options: PreviewGoodbyeOptions): Promise<PreviewResult> {
   const { settings, name, guildName } = options;
   const template = settings.template?.trim() || DEFAULT_GOODBYE_TEMPLATE;
 
@@ -288,11 +307,36 @@ export async function previewGoodbye(options: {
     note = settings.useAi ? 'Mode template dipaksa.' : 'AI dimatikan di pengaturan.';
   }
 
-  return {
-    text: text ?? fillText(template, previewValues(name, guildName)),
-    source: text ? 'ai' : 'template',
-    note: text ? null : note,
-  };
+  const finalText = text ?? fillText(template, previewValues(name, guildName));
+  const result: PreviewResult = { text: finalText, source: text ? 'ai' : 'template', note: text ? null : note };
+
+  // Kartu perpisahan: jalurnya harus sama persis dengan sambutan. Sebelumnya
+  // pratinjau perpisahan tidak pernah merender kartu, jadi admin memilih mode
+  // Card dan tidak melihat apa pun — padahal sambutan menampilkannya.
+  if (options.withCard && options.renderCard) {
+    try {
+      const buffer = await options.renderCard({
+        name,
+        text: finalText,
+        guildName,
+        bannerDataUri: options.bannerDataUri ?? null,
+        kicker: options.kicker ?? 'SAMPAI JUMPA',
+      });
+      result.card = Boolean(buffer);
+      result.cardBytes = buffer?.byteLength ?? 0;
+      result.cardDataUri = buffer ? `data:image/png;base64,${buffer.toString('base64')}` : undefined;
+      if (!buffer) {
+        result.note = mergeNote(result.note, 'Kartu PNG tidak bisa dirender — embed teks dipakai.');
+      }
+    } catch (error) {
+      logger.warn('Gagal merender kartu pada pratinjau perpisahan', errorMessage(error));
+      result.card = false;
+      result.cardBytes = 0;
+      result.note = mergeNote(result.note, `Kartu gagal dirender: ${errorMessage(error)}`);
+    }
+  }
+
+  return result;
 }
 
 /**

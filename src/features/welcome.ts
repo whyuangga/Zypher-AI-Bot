@@ -452,7 +452,7 @@ async function buildCard(
     // saat member keluar, angka yang tersisa sudah tidak mencerminkan dia.
     detail:
       options.kicker === 'SAMPAI JUMPA'
-        ? member.guild.name
+        ? `Terima kasih dari ${member.guild.name}`
         : `${member.guild.name} • member ke-${member.guild.memberCount.toLocaleString('id-ID')}`,
   });
   if (!png) return null;

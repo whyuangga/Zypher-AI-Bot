@@ -4030,6 +4030,151 @@ await testAsync('kartu: nama panjang & avatar rusak tidak menggagalkan sambutan'
   assert.ok(png && png.byteLength > 5_000, 'kartu tetap dibuat walau gambar masukan rusak');
 });
 
+await testAsync('perpisahan: kartu PNG dikirim, bukan hanya embed', async () => {
+  // Welcome & goodbye satu kesatuan: kalau sambutan punya kartu, perpisahan
+  // harus sama. Dulu jalur perpisahan hanya diuji "ada file ATAU embed",
+  // sehingga kartu yang gagal dibuat tidak pernah ketahuan.
+  const { goodbyeMember } = await import('../src/features/welcome.js');
+  const { saveGoodbyeSettings } = await import('../src/db/repo.js');
+  const { saveBanner, deleteBanner } = await import('../src/features/banner.js');
+
+  // Banner disimpan ke DB (bukan hanya disk) supaya kartu punya latar.
+  const bannerPng = await buatPngMinimal(600, 300);
+  const banner = await saveBanner(`data:image/png;base64,${bannerPng.toString('base64')}`, 'uji-goodbye-kartu');
+
+  const sent: Record<string, unknown>[] = [];
+  const channel = {
+    id: '111111111111111111',
+    name: 'perpisahan',
+    isTextBased: () => true,
+    isDMBased: () => false,
+    permissionsFor: () => ({ has: () => true }),
+    send: async (payload: Record<string, unknown>) => {
+      sent.push(payload);
+      return { id: '1' };
+    },
+  };
+  const guild = {
+    id: '156942477750257766',
+    name: 'Komunitas Zypher',
+    memberCount: 12,
+    channels: { fetch: async () => channel },
+    members: { me: { id: '999999999999999999' } },
+  };
+  const member = {
+    id: '222222222222222222',
+    displayName: 'Sky',
+    guild,
+    displayAvatarURL: () => 'https://x/y.png',
+    user: { username: 'sky', tag: 'sky#0000', displayAvatarURL: () => 'https://x/y.png' },
+  };
+
+  try {
+    // Setelan disimpan dulu: goodbyeMember membaca dari database, bukan default.
+    await saveGoodbyeSettings(guild.id, {
+      enabled: true,
+      useAi: false,
+      channelId: channel.id,
+      template: 'Sampai jumpa {user}',
+      displayMode: 'card',
+      includeAvatar: false,
+      bannerPath: banner.name,
+    });
+
+    const ok = await goodbyeMember(member as never);
+    assert.equal(ok, true, 'goodbye terkirim');
+
+    const payload = sent.at(-1)!;
+    const files = (payload.files ?? []) as Array<{ name?: string; attachment?: Buffer }>;
+    const embeds = (payload.embeds ?? []) as Array<{ data?: { image?: { url?: string } } }>;
+
+    assert.ok(files.length >= 1, 'perpisahan mengirim lampiran');
+    const kartu = files.find((f) => /^sampai-jumpa-/.test(String(f.name)));
+    assert.ok(kartu, 'lampirannya kartu sampai-jumpa-*.png');
+    assert.ok((kartu!.attachment as Buffer).byteLength > 10_000, 'PNG kartunya berisi gambar');
+    assert.equal(embeds.length, 1, 'kartu dibungkus satu embed');
+    assert.equal(
+      embeds[0]?.data?.image?.url,
+      `attachment://${kartu!.name}`,
+      'embed menampilkan kartu lewat attachment://',
+    );
+  } finally {
+    await deleteBanner(banner.name).catch(() => undefined);
+  }
+});
+
+await testAsync('perpisahan: pratinjau merender kartu seperti sambutan', async () => {
+  // Bug nyata: pratinjau sambutan menampilkan kartu, pratinjau perpisahan tidak
+  // pernah merender apa pun — admin memilih mode Card di perpisahan dan hanya
+  // melihat teks. Diuji lewat PERILAKU, bukan cocok-cocokan teks sumber:
+  // membandingkan dua fungsi pratinjau sekaligus supaya tidak bisa berbeda lagi.
+  const { previewWelcome, previewGoodbye } = await import('../src/features/preview.js');
+  const { WELCOME_DEFAULTS, GOODBYE_DEFAULTS } = await import('../src/db/repo.js');
+
+  const pngPalsu = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+  const dipanggil: Array<{ name: string; kicker?: string }> = [];
+  const renderCard = async (input: { name: string; kicker?: string }) => {
+    dipanggil.push({ name: input.name, kicker: input.kicker });
+    return pngPalsu;
+  };
+
+  const sambutan = await previewWelcome({
+    settings: { ...WELCOME_DEFAULTS, guildId: '1', useAi: false } as never,
+    name: 'Sky',
+    guildName: 'Komunitas Zypher',
+    templateOnly: true,
+    withCard: true,
+    renderCard,
+  });
+
+  const perpisahan = await previewGoodbye({
+    settings: { ...GOODBYE_DEFAULTS, guildId: '1', useAi: false } as never,
+    name: 'Sky',
+    guildName: 'Komunitas Zypher',
+    templateOnly: true,
+    withCard: true,
+    renderCard,
+  });
+
+  // Bentuk hasilnya harus sama untuk kedua halaman.
+  assert.equal(perpisahan.card, true, 'perpisahan melaporkan kartu dibuat');
+  assert.equal(perpisahan.cardBytes, pngPalsu.byteLength, 'ukuran kartu perpisahan ikut');
+  assert.match(String(perpisahan.cardDataUri), /^data:image\/png;base64,/, 'gambar kartu dikirim ke dashboard');
+  assert.equal(sambutan.card, perpisahan.card, 'welcome & goodbye sepakat soal kartu');
+
+  // Renderer dipanggil dengan judul yang benar untuk masing-masing.
+  assert.deepEqual(dipanggil.map((d) => d.kicker), ['SELAMAT DATANG', 'SAMPAI JUMPA']);
+
+  // Tanpa withCard tidak ada render sama sekali (hemat waktu di dashboard).
+  const tanpa = await previewGoodbye({
+    settings: { ...GOODBYE_DEFAULTS, guildId: '1', useAi: false } as never,
+    name: 'Sky',
+    guildName: 'Komunitas Zypher',
+    templateOnly: true,
+  });
+  assert.equal(tanpa.card, undefined, 'tanpa withCard tidak merender apa pun');
+
+  // Server harus meneruskan permintaan dashboard ke previewGoodbye, bukan
+  // merender sendiri di tempat lain (itu sumber perbedaan perilaku dulu).
+  const server = await readFile('src/web/server.ts', 'utf8');
+  const blok = server.slice(
+    server.indexOf("'/api/preview/goodbye'"),
+    server.indexOf("'/api/preview/welcome'"),
+  );
+  assert.match(blok, /withCard,\s*\n/, 'withCard diteruskan apa adanya ke previewGoodbye');
+  assert.ok(blok.includes('Terima kasih dari'), 'baris detail kartu perpisahan');
+});
+
+await testAsync('perpisahan: tidak pernah menyebut "member ke-N"', async () => {
+  // Member sudah keluar; angka member tidak lagi mencerminkan dirinya.
+  const source = await readFile('../src/features/welcome.ts', 'utf8').catch(() =>
+    readFile('src/features/welcome.ts', 'utf8'),
+  );
+  const card = source.slice(source.indexOf('async function buildCard'));
+  assert.ok(card.includes('Terima kasih dari'), 'kartu perpisahan memakai kalimat terima kasih');
+  assert.ok(card.includes('member ke-'), 'sambutan tetap memakai jumlah member');
+});
+
 await testAsync('banner: API unggah & hapus ada untuk kedua fitur', async () => {
   const server = await readFile('src/web/server.ts', 'utf8');
   assert.ok(server.includes("'/api/banner/welcome'"), 'endpoint sambutan');

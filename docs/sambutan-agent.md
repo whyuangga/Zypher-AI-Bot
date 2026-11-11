@@ -86,12 +86,17 @@ dengan sambutan, jadi pengaturannya ada di halaman yang sama.
 ### Mencoba tanpa menunggu member
 
 Menunggu ada orang join/keluar untuk menguji jelas tidak praktis. Halaman
-Sambutan punya dua tingkat pengujian:
+Sambutan punya dua tingkat pengujian — dan berlaku **sama untuk sambutan maupun
+perpisahan**:
 
 | Tombol | Mengirim? | Gunanya |
 |---|---|---|
 | **Tes sambutan / Tes salam perpisahan** | tidak | memeriksa teks + kartu dari isi form saat itu, termasuk sebelum disimpan |
 | **Kirim tes sungguhan / Kirim tes ke channel** | ya, 1 pesan | membuktikan izin, channel, DM, dan kartu benar-benar jalan |
+
+Kartu perpisahan memakai renderer yang sama dengan sambutan, hanya judulnya
+`SAMPAI JUMPA` dan baris bawahnya `Terima kasih dari <server>` — bukan
+`member ke-N`, karena member yang keluar tidak lagi dihitung.
 
 Pesan uji diawali penanda *"🧪 Pesan uji dari dashboard"* dan tidak memicu
 mention, jadi aman dites di channel yang sudah dipakai member.
@@ -235,7 +240,7 @@ diulang kalau hasilnya kurang pas. Karena itu kedua halaman punya panel tes.
 |---|---|
 | **Tes sambutan** | Teks sapaan dibuat untuk nama contoh di atas — persis seperti yang akan diterima member |
 | **Tes tanpa AI** | Sama, tapi memakai template (untuk melihat teks cadangan) |
-| **Tes salam perpisahan** | Sama untuk goodbye |
+| **Tes salam perpisahan** | Sama untuk goodbye — termasuk kartu PNG-nya |
 
 Hasilnya menampilkan **sumber teksnya**: `ditulis AI`, `dari template`, atau
 `gagal` beserta alasannya. Kalau opsi kartu dicentang, kartu PNG ikut dirender
@@ -486,7 +491,7 @@ Tiga penyebab yang sudah diperbaiki:
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 296 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 299 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),
