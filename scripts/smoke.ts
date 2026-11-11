@@ -5765,6 +5765,253 @@ await testAsync('pesan: data rusak di database tidak membuat halaman gagal', asy
   assert.equal(parseBlocks('[{"kind":"text","value":"Halo"}]')[0]?.value, 'Halo', 'JSON sah terbaca');
 });
 
+await testAsync('pesan: tombol role menolak role di atas bot atau member', async () => {
+  const { roleBlocker, memberCanToggle, parseRoleButtonId, roleButtonId } = await import(
+    '../src/features/role-buttons.js'
+  );
+
+  const gamer = { id: '111', name: 'Gamer', position: 3 };
+
+  // Bot punya izin & posisinya di atas: boleh.
+  assert.equal(roleBlocker({ role: gamer, botHighestPosition: 10, hasManageRoles: true }), null);
+
+  // Tanpa Manage Roles: alasan paling sering, pesannya harus "bot-izin".
+  assert.equal(
+    roleBlocker({ role: gamer, botHighestPosition: 10, hasManageRoles: false }),
+    'bot-izin',
+  );
+
+  // Role di posisi yang sama dengan role tertinggi bot: Discord menolak,
+  // jadi kita juga harus menolak (posisi >= bot).
+  assert.equal(
+    roleBlocker({ role: { ...gamer, position: 10 }, botHighestPosition: 10, hasManageRoles: true }),
+    'bot-posisi',
+  );
+
+  // @everyone dan role terkelola integrasi tidak pernah bisa dibagikan.
+  assert.equal(
+    roleBlocker({ role: { ...gamer, isEveryone: true }, botHighestPosition: 10, hasManageRoles: true }),
+    'role-terlarang',
+  );
+  assert.equal(
+    roleBlocker({ role: { ...gamer, managed: true }, botHighestPosition: 10, hasManageRoles: true }),
+    'role-terlarang',
+  );
+
+  // INTI KEAMANAN: member biasa tidak boleh memberi role yang setara/lebih
+  // tinggi dari dirinya — kalau tidak, siapa pun bisa jadi moderator.
+  assert.equal(
+    memberCanToggle({
+      role: { ...gamer, position: 8 },
+      botHighestPosition: 10,
+      memberHighestPosition: 5,
+      hasManageRoles: true,
+    }),
+    'member-posisi',
+  );
+  // Role di bawah member: boleh.
+  assert.equal(
+    memberCanToggle({
+      role: gamer,
+      botHighestPosition: 10,
+      memberHighestPosition: 5,
+      hasManageRoles: true,
+    }),
+    null,
+  );
+
+  // customId: prefix dinamis, dan yang bukan angka ditolak.
+  assert.equal(roleButtonId(42), 'post-role:42');
+  assert.equal(parseRoleButtonId('post-role:42'), 42);
+  assert.equal(parseRoleButtonId('post-role:abc'), null);
+  assert.equal(parseRoleButtonId('post-role:'), null);
+  assert.equal(parseRoleButtonId('dm:start'), null);
+  assert.equal(parseRoleButtonId('post-role:0'), null);
+});
+
+await testAsync('pesan: tombol role - keputusan beri vs lepas', async () => {
+  const { planToggle } = await import('../src/features/role-button-handler.js');
+
+  const dasar = {
+    role: { id: '111', name: 'Gamer', position: 3 },
+    botHighestPosition: 10,
+    memberHighestPosition: 5,
+    hasManageRoles: true,
+  };
+
+  // Mode toggle: belum punya -> beri, sudah punya -> lepas.
+  assert.equal(
+    planToggle({ ...dasar, button: { id: 1, postId: 1, roleId: '111', label: 'Gamer', mode: 'toggle', position: 0 }, memberHasRole: false }).action,
+    'give',
+  );
+  assert.equal(
+    planToggle({ ...dasar, button: { id: 1, postId: 1, roleId: '111', label: 'Gamer', mode: 'toggle', position: 0 }, memberHasRole: true }).action,
+    'remove',
+  );
+
+  // Mode "hanya beri": klik kedua tidak melepas role.
+  const hanyaBeri = planToggle({
+    ...dasar,
+    button: { id: 1, postId: 1, roleId: '111', label: 'Gamer', mode: 'give', position: 0 },
+    memberHasRole: true,
+  });
+  assert.equal(hanyaBeri.action, null, 'tidak melepas role');
+  assert.equal(hanyaBeri.blocker, 'sudah-punya');
+
+  // Blocker menang atas aksi: member di bawah role tidak boleh memberi.
+  const ditolak = planToggle({
+    ...dasar,
+    memberHighestPosition: 1,
+    button: { id: 1, postId: 1, roleId: '111', label: 'Gamer', mode: 'toggle', position: 0 },
+    memberHasRole: false,
+  });
+  assert.equal(ditolak.action, null);
+  assert.equal(ditolak.blocker, 'member-posisi');
+});
+
+await testAsync('pesan: klik tombol role benar-benar memberi & melepas role', async () => {
+  // Memakai database smoke yang sudah terbuka (:memory:). JANGAN menutupnya:
+  // driver itu dipakai test-test sesudah ini — percobaan pertama menutupnya
+  // dan membuat puluhan test berikutnya gagal dengan "database is not open".
+  {
+    const repo = await import('../src/db/repo.js');
+    const { handleRoleButton } = await import('../src/features/role-button-handler.js');
+    const GUILD = '123456789012345678';
+    const ROLE = '900000000000000001';
+
+    const post = await repo.createCustomPost(GUILD, {
+      name: 'Ambil role',
+      channelId: null,
+      blocks: [{ kind: 'text', value: 'Pilih' }],
+    });
+
+    /** Jalankan satu klik dan kembalikan apa yang terjadi. */
+    const klik = async (options: {
+      buttonId: number;
+      punyaRole?: boolean;
+      izin?: boolean;
+      posisiBot?: number;
+      posisiMember?: number;
+    }) => {
+      const catatan = { add: [] as string[], remove: [] as string[], pesan: '' };
+      const interaction = {
+        isButton: () => true,
+        customId: `post-role:${options.buttonId}`,
+        guildId: GUILD,
+        deferred: false,
+        replied: false,
+        user: { id: '2', tag: 'uji#0001' },
+        member: {
+          roles: {
+            cache: { has: () => options.punyaRole ?? false },
+            highest: { position: options.posisiMember ?? 5 },
+            add: async (id: string) => void catatan.add.push(id),
+            remove: async (id: string) => void catatan.remove.push(id),
+          },
+        },
+        guild: {
+          id: GUILD,
+          roles: {
+            cache: new Map([[ROLE, { id: ROLE, name: 'Gamer', position: 3, managed: false }]]),
+            fetch: async () => ({ id: ROLE, name: 'Gamer', position: 3, managed: false }),
+          },
+          members: {
+            me: {
+              roles: { highest: { position: options.posisiBot ?? 10 } },
+              permissions: { has: () => options.izin ?? true },
+            },
+            fetchMe: async () => null,
+          },
+        },
+        reply: async (payload: { content: string }) => void (catatan.pesan = payload.content),
+        editReply: async (payload: { content: string }) => void (catatan.pesan = payload.content),
+      };
+      const ditangani = await handleRoleButton(interaction as never);
+      return { ...catatan, ditangani };
+    };
+
+    // 1. Belum punya -> role DIBERIKAN.
+    const toggle = await repo.replaceRoleButtons(GUILD, post.id, [
+      { label: 'Gamer', roleId: ROLE, mode: 'toggle' },
+    ]);
+    const id = toggle.buttons[0]!.id;
+
+    const a = await klik({ buttonId: id });
+    assert.deepEqual(a.add, [ROLE], 'role diberikan');
+    assert.deepEqual(a.remove, [], 'tidak ada yang dilepas');
+    assert.match(a.pesan, /sudah ditambahkan/);
+
+    // 2. Sudah punya -> role DILEPAS (mode toggle).
+    const b = await klik({ buttonId: id, punyaRole: true });
+    assert.deepEqual(b.remove, [ROLE], 'role dilepas');
+    assert.deepEqual(b.add, [], 'tidak menambah lagi');
+
+    // 3. Mode "hanya beri": sudah punya -> tidak melepas.
+    const hanyaBeri = await repo.replaceRoleButtons(GUILD, post.id, [
+      { label: 'Gamer', roleId: ROLE, mode: 'give' },
+    ]);
+    const c = await klik({ buttonId: hanyaBeri.buttons[0]!.id, punyaRole: true });
+    assert.deepEqual(c.remove, [], 'mode give tidak pernah melepas');
+
+    // 4. Tanpa izin Manage Roles -> tidak menyentuh role sama sekali.
+    // CATATAN: memakai ID dari `hanyaBeri`, bukan `id` lama — mengganti daftar
+    // tombol memang membatalkan customId sebelumnya (perilaku yang diinginkan,
+    // dan diuji di langkah 7).
+    const d = await klik({ buttonId: hanyaBeri.buttons[0]!.id, izin: false });
+    assert.deepEqual(d.add, [], 'tidak memberi tanpa izin');
+    assert.match(d.pesan, /Manage Roles/);
+
+    // 5. Role di atas posisi bot -> ditolak sebelum memanggil Discord.
+    const e = await klik({ buttonId: hanyaBeri.buttons[0]!.id, posisiBot: 1 });
+    assert.deepEqual(e.add, [], 'tidak memberi role di atas bot');
+    assert.match(e.pesan, /di bawah role ini/);
+
+    // 6. Member di bawah role -> ditolak (pencegahan eskalasi hak).
+    const f = await klik({ buttonId: hanyaBeri.buttons[0]!.id, posisiMember: 1 });
+    assert.deepEqual(f.add, [], 'member biasa tidak bisa menaikkan dirinya');
+
+    // 7. Tombol lama yang sudah diganti -> tidak berlaku.
+    const g = await klik({ buttonId: 999999 });
+    assert.match(g.pesan, /sudah tidak berlaku/);
+
+    // 8. customId bukan tombol role -> router tidak mengklaimnya.
+    assert.equal(g.ditangani, true, 'customId post-role selalu diklaim');
+  }
+});
+
+await testAsync('pesan: tombol role - input dashboard dirapikan', async () => {
+  const { sanitizeRoleButtons, buildRoleOptions } = await import('../src/features/role-buttons.js');
+
+  // Role sama dua kali: hanya satu yang dipakai (dua tombol untuk role yang
+  // sama membingungkan member).
+  const hasil = sanitizeRoleButtons([
+    { label: 'Gamer', roleId: '123456789012345678' },
+    { label: 'Gamer lagi', roleId: '123456789012345678' },
+    { label: 'Tanpa role' },
+    { label: 'Bukan angka', roleId: 'abc' },
+    { label: '', roleId: '987654321098765432' },
+  ]);
+  assert.equal(hasil.buttons.length, 1, 'hanya satu tombol sah');
+  assert.equal(hasil.buttons[0]!.roleId, '123456789012345678');
+  assert.equal(hasil.buttons[0]!.mode, 'toggle', 'mode bawaan toggle');
+  assert.equal(hasil.dropped.length, 4, 'sisanya dilaporkan');
+
+  // Opsi role untuk dropdown: @everyone disembunyikan, urut posisi tertinggi.
+  const opsi = buildRoleOptions({
+    roles: [
+      { id: '1', name: '@everyone', position: 0, isEveryone: true },
+      { id: '2', name: 'Gamer', position: 3, color: 0x6d8cff },
+      { id: '3', name: 'Admin', position: 20 },
+    ],
+    botHighestPosition: 10,
+    hasManageRoles: true,
+  });
+  assert.deepEqual(opsi.options.map((o) => o.name), ['Admin', 'Gamer'], 'urut & tanpa @everyone');
+  assert.equal(opsi.options[0]!.blockedBy, 'bot-posisi', 'Admin di atas bot -> diblokir');
+  assert.equal(opsi.options[1]!.blockedBy, null, 'Gamer bisa dibagi');
+  assert.equal(opsi.options[1]!.color, '#6d8cff', 'warna role diteruskan');
+});
+
 await testAsync('pesan: kirim memperbarui pesan lama, bukan mengirim ulang', async () => {
   const { sendOrUpdatePost, deletePostMessage, PostSendError } = await import(
     '../src/features/custom-post-send.js'
@@ -5846,6 +6093,44 @@ await testAsync('pesan: kirim memperbarui pesan lama, bukan mengirim ulang', asy
   );
 });
 
+await testAsync('pesan: tombol role tampil di baris bawah sebagai tombol interaktif', async () => {
+  const { buildPostPayload } = await import('../src/features/custom-post.js');
+  const { roleButtonId } = await import('../src/features/role-buttons.js');
+  const d = await import('discord.js');
+
+  const built = buildPostPayload([{ kind: 'text', value: 'Pilih role' }], {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    roleButtons: Array.from({ length: 7 }, (_, i) => ({ id: i + 1, label: `R${i + 1}` })),
+    roleButtonId,
+  });
+  assert.ok(built, 'payload terbentuk');
+
+  const rows = (built.components[0] as { toJSON: () => { components: Array<{ type: number; components?: Array<Record<string, unknown>> }> } })
+    .toJSON()
+    .components.filter((c) => c.type === 1);
+
+  // 7 tombol -> dua ActionRow (5 + 2). Discord menolak lebih dari 5 per baris.
+  assert.deepEqual(rows.map((r) => r.components!.length), [5, 2], 'dibagi 5 per baris');
+
+  // Tombol role harus INTERAKTIF (style Primary = 1) dengan customId, bukan
+  // tombol link — kalau salah, klik member tidak akan sampai ke bot.
+  const semua = rows.flatMap((r) => r.components!);
+  for (const tombol of semua) {
+    assert.equal(tombol.style, 1, 'style Primary');
+    assert.match(String(tombol.custom_id), /^post-role:\d+$/, 'customId berprefix');
+    assert.equal(tombol.url, undefined, 'bukan tombol link');
+  }
+  // customId harus di bawah batas Discord (100 karakter) bahkan untuk ID besar.
+  assert.ok(roleButtonId(Number.MAX_SAFE_INTEGER).length < 100, 'customId pendek');
+});
+
 await testAsync('pesan: isi blok tidak bisa keluar dari tag <script>', async () => {
   const { pesanPage } = await import('../src/web/ui/pesan.js');
 
@@ -5868,6 +6153,9 @@ await testAsync('pesan: isi blok tidak bisa keluar dari tag <script>', async () 
     ],
     channels: [],
     botReady: false,
+    roles: [],
+    hasManageRoles: false,
+    roleButtons: {},
   });
 
   // Yang diperiksa: TIDAK ADA penutup script yang diikuti tag HTML.

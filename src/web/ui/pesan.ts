@@ -26,11 +26,26 @@ export interface PostRowView {
   updatedAt: number;
 }
 
+export interface RoleOptionView {
+  id: string;
+  name: string;
+  color: string;
+  position: number;
+  /** null = role bisa dibagi; selain itu alasannya. */
+  blockedBy: string | null;
+}
+
 export interface PesanPageOptions extends PageContext {
   posts: PostRowView[];
   channels: Array<{ id: string; name: string }>;
   /** Bot siap menerima perintah kirim. */
   botReady: boolean;
+  /** Role server untuk tombol ambil role (kosong kalau bot offline). */
+  roles: RoleOptionView[];
+  /** Bot punya izin Manage Roles — tanpa ini tombol role tidak akan bekerja. */
+  hasManageRoles: boolean;
+  /** Tombol role per pesan (pesanId -> tombol). */
+  roleButtons: Record<number, Array<{ id: number; roleId: string; label: string; mode: string }>>;
 }
 
 /**
@@ -144,12 +159,48 @@ export function pesanPage(options: PesanPageOptions): string {
     <p class="hint" id="blockHint">Teks mendukung format Discord; baris diawali <code>-#</code> menjadi teks kecil.</p>
   </div>
 
-  <div class="notice">${icon('alert', 16)}<span>Tombol di sini adalah <b>tombol link</b> (membuka URL). Tombol yang memberi role otomatis belum tersedia — sedang disiapkan.</span></div>
+  <div class="notice">${icon('alert', 16)}<span>Blok <b>Tombol</b> di atas adalah tombol <b>link</b> (membuka URL). Untuk tombol yang memberi role, pakai kartu <b>Tombol ambil role</b> di bawah.</span></div>
 
   <div style="display:flex;gap:10px;flex-wrap:wrap">
     <button class="btn-primary" type="button" id="postSave" onclick="savePost()">${icon('check', 16)} Simpan</button>
     <button class="btn btn-ghost" type="button" id="postSend" onclick="sendPost()" ${options.botReady ? '' : 'disabled title="Bot offline"'}>${icon('external', 16)} Kirim ke Discord</button>
   </div>
+</div>`,
+  });
+
+  const roleCard = card({
+    title: 'Tombol ambil role',
+    hint: `${options.hasManageRoles ? 'izin Manage Roles: ada' : 'izin Manage Roles: BELUM ADA'}`,
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:12px">
+  ${
+    options.botReady
+      ? ''
+      : '<p class="hint">Bot sedang offline, jadi daftar role tidak bisa dibaca. Jalankan bot untuk memakai tombol role.</p>'
+  }
+  ${
+    options.hasManageRoles || !options.botReady
+      ? ''
+      : `<div class="notice">${icon('alert', 16)}<span>Bot belum punya izin <b>Manage Roles</b>, jadi tombol role akan gagal. Beri izinnya di Server Settings → Roles.</span></div>`
+  }
+  <div id="roleList" class="block-list"></div>
+  <div class="block-add">
+    <span class="select-shell full" style="max-width:320px">
+      <select id="rolePick">
+        <option value="">Pilih role…</option>
+        ${options.roles
+          .map(
+            (r) =>
+              `<option value="${esc(r.id)}"${r.blockedBy ? ' disabled' : ''}>${esc(r.name)}${
+                r.blockedBy ? ` — ${esc(r.blockedBy)}` : ''
+              }</option>`,
+          )
+          .join('')}
+      </select>
+      ${icon('chevron', 15)}
+    </span>
+    <button class="btn btn-ghost btn-sm" type="button" onclick="addRoleButton()">${icon('users', 15)} Tambah tombol</button>
+  </div>
+  <p class="hint">Tombol role tampil <b>di baris paling bawah</b> pesan. Klik member = beri role; klik lagi = lepas (kecuali mode "hanya beri").</p>
 </div>`,
   });
 
@@ -160,8 +211,16 @@ export function pesanPage(options: PesanPageOptions): string {
     actions: badge(`${options.posts.length} pesan`, 'brand'),
   })}
 <div class="grid cols-2">${listCard}${editorCard}</div>
+${roleCard}
 <script>
 const GUILD = ${jsonForScript(options.guildId)};
+/** Daftar role server + alasan tidak bisa dibagi (kalau ada). */
+var ROLES = ${jsonForScript(options.roles)};
+/** Tombol role per pesan: { pesanId: [...] }. */
+var ROLE_BUTTONS = ${jsonForScript(options.roleButtons)};
+/** Tombol role yang sedang disusun (belum disimpan). */
+var roleButtons = [];
+var roleEditingId = null;
 /** Blok yang sedang disusun. Disimpan sebagai data, bukan HTML. */
 var blocks = [];
 /** ID pesan yang sedang diubah (null = pesan baru). */
@@ -301,6 +360,9 @@ async function savePost(andSend) {
     } else {
       toast('✅ Pesan tersimpan');
     }
+    // Tombol role disimpan setelah pesan punya ID — endpoint-nya per pesan.
+    await saveRoleButtons(result.post.id);
+
     if (andSend) {
       await api('/api/posts/' + result.post.id + '/send', { method: 'POST' });
       toast('✅ Terkirim ke Discord');
@@ -352,11 +414,131 @@ function loadExisting() {
   });
   var send = document.getElementById('postSend');
   if (send) send.textContent = 'Simpan & kirim ulang';
+  loadRoleButtonsFor(found.id);
+  renderRoleButtons();
   renderBlocks();
+}
+
+
+/* ---------------- Tombol ambil role ---------------- */
+
+function roleById(id) {
+  return ROLES.find(function (r) { return r.id === id; }) || null;
+}
+
+/** Gambar ulang daftar tombol role yang sedang disusun. */
+function renderRoleButtons() {
+  var host = document.getElementById('roleList');
+  if (!host) return;
+  host.innerHTML = '';
+  if (roleButtons.length === 0) {
+    var kosong = document.createElement('p');
+    kosong.className = 'hint';
+    kosong.textContent = 'Belum ada tombol role. Pilih role di atas, lalu "Tambah tombol".';
+    host.appendChild(kosong);
+    return;
+  }
+
+  roleButtons.forEach(function (tombol, index) {
+    var role = roleById(tombol.roleId);
+    var row = document.createElement('div');
+    row.className = 'block-row';
+
+    var head = document.createElement('div');
+    head.className = 'block-head';
+    var jenis = document.createElement('span');
+    jenis.className = 'block-kind';
+    jenis.textContent = role ? ('@' + role.name) : 'role terhapus';
+    head.appendChild(jenis);
+
+    var tools = document.createElement('div');
+    tools.className = 'block-tools';
+
+    // Mode: toggle (klik lagi melepas) atau hanya memberi.
+    var mode = document.createElement('select');
+    mode.className = 'role-mode';
+    [['toggle', 'klik = pasang/lepas'], ['give', 'hanya beri']].forEach(function (opt) {
+      var o = document.createElement('option');
+      o.value = opt[0];
+      o.textContent = opt[1];
+      if ((tombol.mode || 'toggle') === opt[0]) o.selected = true;
+      mode.appendChild(o);
+    });
+    mode.onchange = function () { roleButtons[index].mode = mode.value; };
+    tools.appendChild(mode);
+
+    var del = document.createElement('button');
+    del.className = 'btn-danger btn-sm btn-icon';
+    del.type = 'button';
+    del.title = 'Hapus tombol';
+    del.textContent = '×';
+    del.onclick = function () { roleButtons.splice(index, 1); renderRoleButtons(); };
+    tools.appendChild(del);
+    head.appendChild(tools);
+    row.appendChild(head);
+
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.value = tombol.label || '';
+    input.placeholder = 'Label tombol, mis. Ambil role Gamer';
+    input.oninput = function () { roleButtons[index].label = input.value; };
+    row.appendChild(input);
+
+    if (role && role.blockedBy) {
+      var warn = document.createElement('p');
+      warn.className = 'hint';
+      warn.style.color = 'var(--warn, #ffb454)';
+      warn.textContent = 'Akan gagal: ' + role.blockedBy;
+      row.appendChild(warn);
+    }
+    host.appendChild(row);
+  });
+}
+
+function addRoleButton() {
+  var pick = document.getElementById('rolePick');
+  if (!pick || !pick.value) return toast('Pilih role dulu', true);
+  if (roleButtons.some(function (b) { return b.roleId === pick.value; })) {
+    return toast('Role itu sudah punya tombol', true);
+  }
+  var role = roleById(pick.value);
+  roleButtons.push({
+    roleId: pick.value,
+    label: 'Ambil role ' + (role ? role.name : ''),
+    mode: 'toggle',
+  });
+  pick.value = '';
+  renderRoleButtons();
+}
+
+/**
+ * Simpan tombol role. Dipanggil sebelum/sesudah menyimpan pesan.
+ *
+ * Dijalankan sebagai bagian dari savePost supaya admin tidak perlu menekan
+ * tombol "simpan role" terpisah — satu tombol Simpan untuk semuanya.
+ */
+async function saveRoleButtons(postId) {
+  var result = await api('/api/posts/' + postId + '/roles', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ buttons: roleButtons }),
+  });
+  if (result.dropped && result.dropped.length) {
+    toast('Sebagian tombol role dibuang: ' + result.dropped[0], true);
+  }
+  return result;
+}
+
+/** Muat tombol role saat mengubah pesan yang sudah punya tombol. */
+function loadRoleButtonsFor(postId) {
+  roleButtons = (ROLE_BUTTONS[postId] || []).map(function (b) {
+    return { roleId: b.roleId, label: b.label, mode: b.mode || 'toggle' };
+  });
 }
 
 loadExisting();
 renderBlocks();
+renderRoleButtons();
 </script>`;
 
   return appShell({

@@ -208,6 +208,20 @@ CREATE TABLE IF NOT EXISTS custom_posts (
   message_id TEXT,
   updated_at INTEGER NOT NULL
 );
+
+-- ---------- tombol ambil role (tahap 3) ----------
+-- Satu baris = satu tombol. Role disimpan di sini, BUKAN di dalam customId:
+-- customId hanya membawa ID baris, jadi role bisa diganti tanpa mengirim ulang
+-- pesan, dan customId tetap pendek (batas Discord 100 karakter).
+CREATE TABLE IF NOT EXISTS post_role_buttons (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id TEXT NOT NULL,
+  post_id  INTEGER NOT NULL,
+  role_id  TEXT NOT NULL,
+  label    TEXT NOT NULL,
+  mode     TEXT NOT NULL DEFAULT 'toggle',
+  position INTEGER NOT NULL DEFAULT 0
+);
 `;
 
 /**
@@ -401,5 +415,15 @@ CREATE TABLE IF NOT EXISTS custom_posts (
   blocks     TEXT NOT NULL,
   message_id TEXT,
   updated_at BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS post_role_buttons (
+  id       SERIAL PRIMARY KEY,
+  guild_id TEXT NOT NULL,
+  post_id  INTEGER NOT NULL,
+  role_id  TEXT NOT NULL,
+  label    TEXT NOT NULL,
+  mode     TEXT NOT NULL DEFAULT 'toggle',
+  position INTEGER NOT NULL DEFAULT 0
 );
 `;

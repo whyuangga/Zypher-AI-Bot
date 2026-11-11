@@ -229,8 +229,16 @@ export function buildPostPayload(
     MediaGalleryItemBuilder: new () => any;
     ActionRowBuilder: new () => any;
     ButtonBuilder: new () => any;
-    ButtonStyle: { Link: number };
+    ButtonStyle: { Link: number; Primary?: number; Secondary?: number };
     accent?: number;
+    /**
+     * Tombol ambil role milik pesan ini (dari tabel post_role_buttons).
+     * customId diambil dari `roleButtonId()` supaya router bot bisa
+     * mengenalinya lewat prefix.
+     */
+    roleButtons?: Array<{ id: number; label: string }>;
+    /** Pembuat customId — disuntik supaya modul ini tetap murni. */
+    roleButtonId?: (id: number) => string;
   },
 ): BuiltPost | null {
   const isi = blocks.filter((b) => b.kind !== 'divider' || blocks.length > 1);
@@ -283,6 +291,26 @@ export function buildPostPayload(
     }
   }
   if (tombolTertunda.length > 0) flushButtons();
+
+  // Tombol role selalu di baris paling bawah, sesudah semua isi. Alasan:
+  // tombol ini yang paling sering diklik member, jadi posisinya tetap dan
+  // mudah ditemukan walaupun admin mengubah isi teks di atasnya.
+  const roleButtons = deps.roleButtons ?? [];
+  if (roleButtons.length > 0 && deps.roleButtonId && deps.ButtonStyle.Primary !== undefined) {
+    for (let i = 0; i < roleButtons.length; i += LIMITS.buttonsPerRow) {
+      const baris = roleButtons.slice(i, i + LIMITS.buttonsPerRow);
+      const row = new deps.ActionRowBuilder();
+      for (const tombol of baris) {
+        row.addComponents(
+          new deps.ButtonBuilder()
+            .setStyle(deps.ButtonStyle.Primary)
+            .setCustomId(deps.roleButtonId(tombol.id))
+            .setLabel(tombol.label.slice(0, 80)),
+        );
+      }
+      container.addActionRowComponents(row);
+    }
+  }
 
   return { components: [container], flags: 1 << 15 };
 }

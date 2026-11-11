@@ -52,11 +52,14 @@ import {
   updateCustomPost,
   deleteCustomPost,
   setCustomPostMessage,
+  listRoleButtons,
+  replaceRoleButtons,
 } from '../db/repo.js';
 import { invalidateModerationCache } from '../features/moderation.js';
 import { listPanelChannels, PanelError, publishPanel, removePanel } from '../features/panel.js';
 import { deletePostMessage, PostSendError, sendOrUpdatePost } from '../features/custom-post-send.js';
 import { sanitizeBlocks } from '../features/custom-post.js';
+import { listGuildRoles } from '../features/role-buttons.js';
 import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
 import {
   previewAgentReply,
@@ -633,24 +636,51 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       });
     }
 
+    const posts = guildId ? await listCustomPosts(guildId) : [];
+
+    // Tombol role per pesan, dikumpulkan sekalian supaya halaman tidak
+    // menembak satu permintaan per pesan saat dibuka.
+    const roleButtons: Record<number, Array<{ id: number; roleId: string; label: string; mode: string }>> = {};
+    for (const post of posts) {
+      const buttons = await listRoleButtons(guildId, post.id);
+      if (buttons.length > 0) {
+        roleButtons[post.id] = buttons.map((b) => ({
+          id: b.id,
+          roleId: b.roleId,
+          label: b.label,
+          mode: b.mode,
+        }));
+      }
+    }
+
+    // Daftar role hanya tersedia saat bot online.
+    const roleInfo =
+      guildId && botClient?.isReady()
+        ? await listGuildRoles(botClient, guildId).catch((error: unknown) => {
+            logger.warn(`Pesan: gagal membaca daftar role — ${errorMessage(error)}`);
+            return { options: [], hasManageRoles: false, botHighestPosition: 0 };
+          })
+        : { options: [], hasManageRoles: false, botHighestPosition: 0 };
+
     sendHtml(
       response,
       200,
       pesanPage({
         guildId,
         guildName: await getGuildName(guildId),
-        posts: guildId
-          ? (await listCustomPosts(guildId)).map((post) => ({
-              id: post.id,
-              name: post.name,
-              channelId: post.channelId,
-              blocks: post.blocks,
-              messageId: post.messageId,
-              updatedAt: post.updatedAt,
-            }))
-          : [],
+        posts: posts.map((post) => ({
+          id: post.id,
+          name: post.name,
+          channelId: post.channelId,
+          blocks: post.blocks,
+          messageId: post.messageId,
+          updatedAt: post.updatedAt,
+        })),
         channels,
         botReady: Boolean(botClient?.isReady()),
+        roles: roleInfo.options,
+        hasManageRoles: roleInfo.hasManageRoles,
+        roleButtons,
         status: dashboardStatus(),
         counts: await navCounts(guildId),
       }),
@@ -1611,6 +1641,23 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
 
   /* ---------------- Pesan container (halaman /pesan) ---------------- */
 
+  /** Daftar role server untuk pemilih "tombol ambil role". */
+  if (path === '/api/roles' && method === 'GET') {
+    if (!guildId || !botClient?.isReady()) {
+      sendJson(response, 200, { options: [], hasManageRoles: false, botHighestPosition: 0, offline: true });
+      return;
+    }
+    try {
+      const roles = await listGuildRoles(botClient, guildId);
+      sendJson(response, 200, { ...roles, offline: false });
+    } catch (error) {
+      // Dashboard tetap harus terbuka walau Discord sedang bermasalah.
+      logger.warn(`Gagal membaca daftar role — ${errorMessage(error)}`);
+      sendJson(response, 200, { options: [], hasManageRoles: false, botHighestPosition: 0, offline: true });
+    }
+    return;
+  }
+
   /** `?withMessage=1` saat DELETE = hapus juga pesan di Discord. */
 
   if (path === '/api/posts' && method === 'POST') {
@@ -1636,14 +1683,15 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
 
-  const postMatch = /^\/api\/posts\/(\d+)(\/send)?$/.exec(path);
+  const postMatch = /^\/api\/posts\/(\d+)(\/send|\/roles)?$/.exec(path);
   if (postMatch) {
     if (!guildId) {
       sendJson(response, 400, { error: 'Server belum dipilih.' });
       return;
     }
     const id = Number(postMatch[1]);
-    const isSend = Boolean(postMatch[2]);
+    const isSend = postMatch[2] === '/send';
+    const isRoles = postMatch[2] === '/roles';
 
     if (isSend && method === 'POST') {
       if (!botClient?.isReady()) {
@@ -1660,11 +1708,13 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         return;
       }
       try {
+        const roleButtons = await listRoleButtons(guildId, id);
         const result = await sendOrUpdatePost({
           client: botClient,
           channelId: post.channelId,
           messageId: post.messageId,
           blocks: post.blocks,
+          roleButtons: roleButtons.map((b) => ({ id: b.id, label: b.label })),
         });
         await setCustomPostMessage(guildId, id, result.messageId);
         sendJson(response, 200, { ok: true, messageId: result.messageId, edited: result.edited });
@@ -1678,6 +1728,20 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
           sendJson(response, 500, { error: 'Gagal mengirim ke Discord.' });
         }
       }
+      return;
+    }
+
+    /* Tombol ambil role: diganti seluruhnya tiap simpan. */
+    if (isRoles && method === 'PUT') {
+      const payload = await readJson(request, response);
+      if (!payload) return;
+      const post = await getCustomPost(guildId, id);
+      if (!post) {
+        sendJson(response, 404, { error: 'Pesan tidak ditemukan.' });
+        return;
+      }
+      const result = await replaceRoleButtons(guildId, id, payload.buttons);
+      sendJson(response, 200, { ok: true, buttons: result.buttons, dropped: result.dropped });
       return;
     }
 

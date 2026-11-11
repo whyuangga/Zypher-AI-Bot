@@ -1097,6 +1097,14 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   flex-wrap: wrap;
   margin-top: 10px;
 }
+.role-mode {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}
 .list-actions {
   display: flex;
   gap: 6px;

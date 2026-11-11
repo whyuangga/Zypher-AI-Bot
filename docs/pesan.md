@@ -77,21 +77,56 @@ Sebagian blok dibuang: tombol "Rusak" (URL tujuan harus http/https)
 | Rules server | ✅ satu pesan teks + beberapa pemisah |
 | Pengumuman sekali kirim | ✅ teks + gambar + tombol tautan |
 | Info server & tautan penting | ✅ daftar tombol link |
-| Ambil role otomatis | ⏳ belum — butuh tombol role (tahap berikutnya) |
+| Ambil role otomatis | ✅ lihat bagian 4 di bawah |
 | Sambutan member baru | ❌ pakai `/sambutan` — butuh template & AI |
 
 ---
 
-## 4. Yang belum ada
+## 4. Tombol ambil role
 
-**Tombol ambil role.** Tombol di halaman ini hanya membuka tautan. Tombol yang
-memberi role butuh:
+Kartu **Tombol ambil role** memberi member role hanya dengan mengklik tombol —
+tanpa admin turun tangan.
 
-- tabel pemetaan tombol → role,
-- `customId` dinamis (bukan satu ID tetap per tombol),
-- izin **Manage Roles** untuk bot, dan posisi role bot **di atas** role yang dibagi.
+| Langkah | Keterangan |
+|---|---|
+| Pilih role → **Tambah tombol** | label bisa diubah bebas |
+| **Mode** | `klik = pasang/lepas` (toggle) atau `hanya beri` (klik kedua tidak melepas) |
+| **Simpan** | tombol role tersimpan bersama pesannya, satu tombol untuk semuanya |
+| **Kirim ke Discord** | tombol role muncul di **baris paling bawah** pesan |
 
-Rencananya dijadikan tahap lanjutan di halaman yang sama, bukan halaman baru.
+Role yang tidak bisa dibagikan sudah ditandai **sebelum** pesan dikirim, lengkap
+dengan alasannya — bukan baru ketahuan saat member mengklik.
+
+### Syarat agar tombol bekerja
+
+1. **Izin Manage Roles** untuk bot (Server Settings → Roles → pilih role bot).
+2. **Posisi role bot di ATAS role yang dibagikan.** Ini aturan Discord, bukan
+   pilihan bot. Kalau role "Gamer" ada di atas role bot, Discord menolak
+   walaupun bot punya izinnya.
+3. Member yang mengklik juga harus berada **di atas** role tersebut. Tanpa ini,
+   member biasa bisa memberi dirinya role moderator.
+
+Kalau salah satu syarat tidak terpenuhi, member mendapat penjelasan singkat
+(hanya dia yang melihatnya), dan bot mencatat alasannya di log.
+
+### Kenapa customId-nya `post-role:<id>`
+
+Role disimpan di **database**, bukan di dalam `customId`. CustomId hanya membawa
+ID baris tombol, jadi:
+
+- customId tetap pendek (batas Discord 100 karakter),
+- role bisa diganti tanpa mengirim ulang pesan,
+- tombol yang dihapus admin langsung berhenti berlaku — customId lama tidak
+  ditemukan di database.
+
+Konsekuensinya: **menyimpan ulang tombol role membatalkan customId lama.**
+Kalau isi tombol berubah, kirim ulang pesannya supaya member melihat tombol baru.
+
+### Kenapa tombol role di baris paling bawah
+
+Tombol ini yang paling sering diklik member, jadi posisinya tetap dan mudah
+ditemukan walaupun admin mengubah isi teks di atasnya. Tombol link dari blok
+**Tombol** tetap di tempatnya sesuai urutan blok.
 
 ---
 
@@ -116,6 +151,8 @@ Rencananya dijadikan tahap lanjutan di halaman yang sama, bukan halaman baru.
 | `POST` | `/api/posts/:id/send` | kirim, atau perbarui pesan Discord yang sudah ada |
 | `DELETE` | `/api/posts/:id` | hapus dari dashboard |
 | `DELETE` | `/api/posts/:id?withMessage=1` | hapus dari dashboard **dan** dari Discord |
+| `PUT` | `/api/posts/:id/roles` | ganti seluruh tombol ambil role pesan |
+| `GET` | `/api/roles` | daftar role server + alasan tidak bisa dibagi |
 
 Kalau bot sedang offline, tombol kirim dinonaktifkan dan permintaan kirim
 dijawab `400` dengan pesan yang jelas — bukan `500`.

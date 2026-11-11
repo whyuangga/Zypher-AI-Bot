@@ -400,6 +400,39 @@ await test('posting: blok berbahaya dibuang sebelum disimpan', async () => {
   assert.deepEqual(dibuat.blocks.map((b) => b.kind), ['text'], 'hanya blok sah');
 });
 
+await test('posting: tombol role tersimpan, terurut, dan bisa dicari', async () => {
+  const guild = 'g-roles-pg';
+  const post = await repo.createCustomPost(guild, {
+    name: 'Ambil role',
+    channelId: '1400000000000000001',
+    blocks: [{ kind: 'text', value: 'Pilih role' }],
+  });
+
+  const hasil = await repo.replaceRoleButtons(guild, post.id, [
+    { label: 'Gamer', roleId: '111111111111111111' },
+    { label: 'Musik', roleId: '222222222222222222' },
+    { label: 'Gamer lagi', roleId: '111111111111111111' },
+  ]);
+  assert.deepEqual(hasil.buttons.map((b) => b.label), ['Gamer', 'Musik'], 'duplikat dibuang');
+  assert.equal(hasil.buttons[0]!.position, 0, 'urutan disimpan');
+  assert.equal(hasil.buttons[1]!.position, 1);
+
+  // Cari dari customId — jalur yang dipakai bot saat tombol diklik.
+  const dariKlik = await repo.findRoleButton(guild, hasil.buttons[1]!.id);
+  assert.equal(dariKlik!.label, 'Musik');
+  assert.equal(dariKlik!.roleId, '222222222222222222');
+
+  // Ganti seluruh daftar: ID lama harus HILANG, bukan menumpuk.
+  const baru = await repo.replaceRoleButtons(guild, post.id, [
+    { label: 'Artist', roleId: '333333333333333333' },
+  ]);
+  assert.equal(baru.buttons.length, 1);
+  assert.equal(await repo.findRoleButton(guild, hasil.buttons[0]!.id), null, 'tombol lama tidak berlaku');
+
+  // Server lain tidak bisa membaca tombol server ini.
+  assert.equal(await repo.findRoleButton('g-lain-pg', baru.buttons[0]!.id), null, 'terisolasi per server');
+});
+
 /* ------------------------------------------------------------------ */
 
 await driver.close();

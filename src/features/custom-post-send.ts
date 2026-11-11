@@ -24,12 +24,16 @@ import {
   type TextChannel,
 } from 'discord.js';
 import { buildPostPayload, type PostBlock } from './custom-post.js';
+import { roleButtonId } from './role-buttons.js';
 import { logger } from '../lib/logger.js';
 
 /** Error yang pesannya aman ditampilkan ke admin. */
 export class PostSendError extends Error {}
 
-function buildPayload(blocks: PostBlock[]): { components: ContainerBuilder[]; flags: number } | null {
+function buildPayload(
+  blocks: PostBlock[],
+  roleButtons: Array<{ id: number; label: string }> = [],
+): { components: ContainerBuilder[]; flags: number } | null {
   const built = buildPostPayload(blocks, {
     ContainerBuilder,
     TextDisplayBuilder,
@@ -42,6 +46,8 @@ function buildPayload(blocks: PostBlock[]): { components: ContainerBuilder[]; fl
     // Warna aksen sengaja bisa diatur pemanggil kelak; hari ini memakai warna
     // brand yang sama dengan sambutan supaya pesan bot terlihat satu keluarga.
     accent: 0x6d8cff,
+    roleButtons,
+    roleButtonId,
   });
   if (!built) return null;
   return { components: built.components as ContainerBuilder[], flags: built.flags };
@@ -70,11 +76,13 @@ export interface SendResult {
  */
 export async function sendOrUpdatePost(options: {
   client: Client;
+  /** Tombol ambil role milik pesan ini (opsional). */
+  roleButtons?: Array<{ id: number; label: string }>;
   channelId: string;
   messageId: string | null;
   blocks: PostBlock[];
 }): Promise<SendResult> {
-  const payload = buildPayload(options.blocks);
+  const payload = buildPayload(options.blocks, options.roleButtons);
   if (!payload) {
     throw new PostSendError('Pesan masih kosong — isi minimal satu teks atau gambar.');
   }

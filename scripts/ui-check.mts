@@ -440,7 +440,19 @@ const pages: Array<{ name: string; render: () => string }> = [
   },
   {
     name: '/pesan',
-    render: () => pesanPage({ ...base, posts: [], channels: [channel], botReady: true } as never),
+    render: () =>
+      pesanPage({
+        ...base,
+        posts: [],
+        channels: [channel],
+        botReady: true,
+        roles: [
+          { id: '9001', name: 'Gamer', color: '#6d8cff', position: 3, blockedBy: null },
+          { id: '9002', name: 'Admin', color: '#ff5555', position: 20, blockedBy: 'bot-posisi' },
+        ],
+        hasManageRoles: true,
+        roleButtons: {},
+      } as never),
   },
   {
     // Varian berisi: menguji mode ubah (?id=) memuat blok dan nama dengan benar.
@@ -464,6 +476,9 @@ const pages: Array<{ name: string; render: () => string }> = [
         ],
         channels: [channel],
         botReady: true,
+        roles: [{ id: '9001', name: 'Gamer', color: '#6d8cff', position: 3, blockedBy: null }],
+        hasManageRoles: true,
+        roleButtons: { 1: [{ id: 5, roleId: '9001', label: 'Ambil role Gamer', mode: 'toggle' }] },
       } as never),
   },
   { name: '/dokumen', render: () => dokumenPage({ ...base, documents: [], embedModel: null } as never) },

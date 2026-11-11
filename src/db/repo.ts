@@ -3,6 +3,11 @@ import { config } from '../config.js';
 import { normalizeTimeZone } from '../lib/timezone.js';
 import { parseBlocks, sanitizeBlocks, type PostBlock } from '../features/custom-post.js';
 import {
+  sanitizeRoleButtons,
+  type RoleButtonInput,
+  type RoleButtonMode,
+} from '../features/role-buttons.js';
+import {
   modeFromLegacySettings,
   normalizeDisplayMode,
   type DisplayMode,
@@ -1522,3 +1527,92 @@ export async function setCustomPostMessage(
 export async function deleteCustomPost(guildId: string, id: number): Promise<void> {
   await run('DELETE FROM custom_posts WHERE guild_id = ? AND id = ?', [guildId, id]);
 }
+
+/* ------------------------------------------------------------------ */
+/*  Tombol ambil role (halaman /pesan)                                 */
+/* ------------------------------------------------------------------ */
+
+export interface RoleButton {
+  id: number;
+  postId: number;
+  roleId: string;
+  label: string;
+  mode: RoleButtonMode;
+  position: number;
+}
+
+interface RoleButtonRow {
+  id: number | string;
+  guild_id: string;
+  post_id: number | string;
+  role_id: string;
+  label: string;
+  mode: string;
+  position: number | string;
+}
+
+function toRoleButton(row: RoleButtonRow): RoleButton {
+  return {
+    id: Number(row.id),
+    postId: Number(row.post_id),
+    roleId: row.role_id,
+    label: row.label,
+    mode: row.mode === 'give' ? 'give' : 'toggle',
+    position: Number(row.position),
+  };
+}
+
+/** Tombol role milik satu pesan, urut sesuai posisi di pesan. */
+export async function listRoleButtons(guildId: string, postId: number): Promise<RoleButton[]> {
+  const rows = await all<RoleButtonRow>(
+    'SELECT * FROM post_role_buttons WHERE guild_id = ? AND post_id = ? ORDER BY position ASC, id ASC',
+    [guildId, postId],
+  );
+  return rows.map(toRoleButton);
+}
+
+/**
+ * Ganti SELURUH tombol role satu pesan.
+ *
+ * Kenapa hapus-lalu-tulis, bukan sinkronisasi per baris: urutan tombol adalah
+ * hal yang admin atur, dan mencocokkan "baris lama mana yang jadi baris baru"
+ * hanya menambah kerumitan tanpa manfaat. Jumlahnya paling banyak 25.
+ *
+ * `id` sengaja dibuat ulang. customId tombol lama jadi tidak berlaku lagi —
+ * itu yang diinginkan: tombol yang sudah dihapus dari dashboard tidak boleh
+ * masih bisa memberi role kalau ada orang yang masih memegang pesan lamanya.
+ */
+export async function replaceRoleButtons(
+  guildId: string,
+  postId: number,
+  input: unknown,
+): Promise<{ buttons: RoleButton[]; dropped: string[] }> {
+  const { buttons, dropped } = sanitizeRoleButtons(input);
+  await run('DELETE FROM post_role_buttons WHERE guild_id = ? AND post_id = ?', [guildId, postId]);
+
+  let position = 0;
+  for (const button of buttons) {
+    await insert(
+      `INSERT INTO post_role_buttons (guild_id, post_id, role_id, label, mode, position)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [guildId, postId, button.roleId, button.label, button.mode, position],
+    );
+    position += 1;
+  }
+
+  return { buttons: await listRoleButtons(guildId, postId), dropped };
+}
+
+/** Cari tombol role dari customId — dipakai bot saat tombol diklik. */
+export async function findRoleButton(
+  guildId: string,
+  buttonId: number,
+): Promise<RoleButton | null> {
+  const row = await get<RoleButtonRow>(
+    'SELECT * FROM post_role_buttons WHERE guild_id = ? AND id = ?',
+    [guildId, buttonId],
+  );
+  return row ? toRoleButton(row) : null;
+}
+
+export type { RoleButtonInput };
