@@ -47,15 +47,17 @@ jobs:
         # sehingga smoke yang gagal akan terlihat hijau.
         run: |
           set -o pipefail
-          npm run smoke 2>&1 | tee /tmp/smoke.log
-
-      # Sementara: unggah log supaya kegagalan bisa dibaca dari artefak.
-      - name: Unggah log smoke
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: smoke-log
-          path: /tmp/smoke.log
+          npm run smoke 2>&1 | tee /tmp/smoke.log || {
+            echo "::group::Baris yang gagal"
+            grep -n "❌" -A 12 /tmp/smoke.log | head -80
+            echo "::endgroup::"
+            echo "::group::Konteks lingkungan"
+            node -p "process.version"
+            node -e "try{require('node:sqlite');console.log('node:sqlite ADA')}catch(e){console.log('node:sqlite TIDAK ADA:',e.message)}"
+            npm -v
+            echo "::endgroup::"
+            exit 1
+          }
 
       - name: Uji rantai fallback AI
         run: npm run test:fallback
