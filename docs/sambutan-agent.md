@@ -368,14 +368,19 @@ Bentuk pesan sambutan & perpisahan bisa dipilih per server di dashboard:
 
 | Mode | Bentuk pesan | Butuh browser? | Bisa me-ping? |
 |---|---|---|---|
-| **Card** | kartu PNG (banner jadi latar + avatar + nama) sebagai lampiran | **tidak** | tidak |
+| **Card** | teks sapaan + kartu PNG sebagai lampiran (**tanpa embed**) | **tidak** | **ya** |
 | **Container** | kartu Components V2 (blok berwarna aksen, gaya panel baru Discord) | tidak | **ya** |
 | **Embed** | embed berwarna bertema server | tidak | tidak |
 | **Text** | teks polos di `content` | tidak | **ya** |
 
-Kenapa hanya **Text** & **Container** yang bisa me-ping: di Discord, mention di
-dalam embed tidak memicu notifikasi. Kalau kamu ingin member baru benar-benar
-mendapat notifikasi, pilih Text atau Container.
+Kenapa **Embed** satu-satunya yang tidak bisa me-ping: di Discord, mention di
+dalam embed tidak memicu notifikasi. **Card** dulu ikut tidak bisa karena
+kartunya dibungkus embed; sekarang kartu dikirim sebagai lampiran biasa dengan
+teks di `content`, jadi mention-nya aktif seperti bot besar.
+
+Catatan jujur untuk perpisahan: membernya **sudah keluar** dari server, jadi
+Discord tidak memicu notifikasi untuk mention itu — yang tampil hanya nama yang
+bisa diklik. Teksnya tetap mention, bukan nama polos.
 
 **Container** (Components V2) butuh discord.js ≥ 14.19 — di proyek ini
 14.28.1. Kalau pustakanya lebih lama, bot otomatis mundur ke Embed dan
@@ -450,7 +455,7 @@ Template teks (dipakai saat AI mati atau gagal) mengenal token berikut:
 | Token | Diganti menjadi | Catatan |
 |---|---|---|
 | `{user}` | nama panggilan member | perilaku lama, **bukan** mention |
-| `{user.mention}` | tag member (`@nama`) | hanya berpengaruh di teks biasa — mention di dalam embed tidak menjadi tag |
+| `{user.mention}` | tag member (`@nama`) | tidak menjadi tag di dalam embed; di mode Card/Text/Container benar-benar mention |
 | `{user.tag}` | username lengkap | mis. `sky#0001` |
 | `{server}` | nama server | |
 | `{memberCount}` | jumlah member saat ini | ikut berubah tiap ada yang masuk/keluar |

@@ -2235,14 +2235,12 @@ await testAsync('mode tampilan: tiap mode mengirim bentuk berbeda (channel palsu
   assert.ok(Array.isArray(embedKirim.embeds) && embedKirim.embeds.length === 1, 'mode embed mengirim 1 embed');
   assert.deepEqual(embedKirim.files, [], 'mode embed tanpa lampiran (tanpa banner)');
 
-  // Mode card: PNG kartu + embed sebagai wadahnya.
+  // Mode card: kartu PNG saja — TANPA embed.
   //
-  // Dulu test ini menerima "kartu ATAU embed" karena hasilnya bergantung ada
-  // tidaknya Chromium di mesin yang menjalankan test. Sekarang kartu digambar
-  // sendiri, jadi hasilnya pasti — dan kelonggaran lama itu dihapus supaya
-  // regresi tidak bisa lolos lagi. Embed wajib ada: tanpa wadah itu Discord
-  // menampilkan PNG sebagai lampiran kecil, bukan kartu besar. Ini sama dengan
-  // yang dilakukan `composePayload` untuk sambutan sungguhan.
+  // Dulu kartu dibungkus embed "supaya tampil besar". Ternyata wadah itu yang
+  // membuat hasilnya terbaca sebagai embed biasa (garis biru + footer), padahal
+  // yang diminta adalah kartu seperti bot besar: teks, lalu gambar. Test ini
+  // sekarang mengunci bentuk itu, termasuk mention yang benar-benar aktif.
   await sendGoodbyeTest(client, {
     guildId: guild.id,
     member: member as never,
@@ -2253,12 +2251,14 @@ await testAsync('mode tampilan: tiap mode mengirim bentuk berbeda (channel palsu
   assert.equal(kartuFiles.length, 1, 'mode card mengirim tepat satu lampiran');
   assert.match(String(kartuFiles[0]?.name), /^sampai-jumpa-.*\.png$/, 'lampirannya PNG kartu');
 
-  const kartuEmbeds = (cardKirim.embeds ?? []) as Array<{ data?: { image?: { url?: string } } }>;
-  assert.equal(kartuEmbeds.length, 1, 'kartu dibungkus satu embed');
-  assert.equal(
-    kartuEmbeds[0]?.data?.image?.url,
-    `attachment://${kartuFiles[0]?.name}`,
-    'embed menampilkan PNG kartu lewat attachment://',
+  assert.deepEqual(cardKirim.embeds, [], 'kartu TIDAK dibungkus embed');
+  assert.ok(
+    String(cardKirim.content).includes('<@222222222222222222>'),
+    'member di-mention di content, bukan hanya namanya',
+  );
+  assert.ok(
+    JSON.stringify(cardKirim.allowedMentions).includes('222222222222222222'),
+    'mention diizinkan — tanpa ini yang tampil teks mentah',
   );
 });
 
@@ -2418,12 +2418,15 @@ await testAsync('banner: tetap terkirim saat mode card jatuh ke embed', async ()
     assert.match(String(kartu.name), /^selamat-datang-.*\.png$/, 'lampirannya PNG kartu');
     assert.ok((kartu.attachment as Buffer).byteLength > 10_000, 'PNG-nya berisi gambar nyata');
 
-    assert.equal(embeds.length, 1, 'kartu dibungkus satu embed');
-    const embed = embeds[0] as { data?: { image?: { url?: string } } };
-    assert.match(
-      String(embed.data?.image?.url ?? ''),
-      /^attachment:\/\/selamat-datang-.*\.png$/,
-      'embed merujuk PNG kartu lewat attachment://',
+    // Kartu dikirim sebagai lampiran gambar biasa, bukan di dalam embed.
+    assert.deepEqual(embeds, [], 'kartu TIDAK dibungkus embed');
+    assert.ok(
+      String(payload.content).includes('<@222222222222222222>'),
+      'member baru di-mention di content',
+    );
+    assert.ok(
+      JSON.stringify(payload.allowedMentions).includes('222222222222222222'),
+      'mention diizinkan',
     );
 
     // Banner TIDAK dikirim terpisah lagi: isinya sudah menjadi latar kartu.
@@ -2703,13 +2706,14 @@ await testAsync('mode tampilan: card, embed, text dikenali', async () => {
   assert.equal(displayModeLabel('text'), 'Text');
 });
 
-await testAsync('mode tampilan: hanya text & container yang bisa me-ping', async () => {
+await testAsync('mode tampilan: embed satu-satunya yang tidak bisa me-ping', async () => {
   const { DISPLAY_MODES } = await import('../src/features/display-mode.js');
   const peming = DISPLAY_MODES.filter((m) => m.canMention).map((m) => m.key);
-  // Discord tidak memicu mention di dalam embed. `container` bisa, karena
-  // mention-nya ditulis di Text Display, bukan di embed. Kalau daftar ini
+  // Discord tidak memicu mention di dalam embed — itu satu-satunya batasan
+  // nyata. Card ikut bisa me-ping sejak kartunya tidak lagi dibungkus embed;
+  // container bisa karena mention-nya di Text Display. Kalau daftar ini
   // berubah, dashboard akan menjanjikan ping yang tidak pernah terjadi.
-  assert.deepEqual(peming, ['container', 'text']);
+  assert.deepEqual(peming, ['card', 'container', 'text']);
 });
 
 await testAsync('mode tampilan: nilai asing jatuh ke embed, bukan error', async () => {
@@ -2957,11 +2961,18 @@ await testAsync('mode tampilan: mention tidak ditulis dua kali', async () => {
   assert.ok(source.includes('content: plainText || undefined'), 'content dipakai apa adanya');
 });
 
-await testAsync('mode tampilan: perpisahan tidak pernah me-ping', async () => {
+await testAsync('mode tampilan: perpisahan menyebut member sebagai mention', async () => {
+  // Keputusan pemilik server: perpisahan juga menyapa member dengan mention.
+  // Discord tidak memicu notifikasi untuk member yang sudah keluar, jadi yang
+  // tampil hanya nama yang bisa diklik — tapi teksnya tetap mention, bukan
+  // nama polos.
   const source = await readFile('src/features/welcome.ts', 'utf8');
   const goodbye = source.slice(source.indexOf('export async function goodbyeMember'));
-  assert.ok(goodbye.includes('mentionUser: false'), 'perpisahan tidak mention');
-  assert.ok(goodbye.includes("allowedMentions: { parse: [] }"), 'mention dimatikan total');
+  assert.ok(goodbye.includes('mentionUser: true'), 'perpisahan memakai mention');
+  assert.ok(
+    goodbye.includes('allowedMentions: { users: [member.id] }'),
+    'hanya member itu yang diizinkan — @everyone tetap mati',
+  );
 });
 
 await testAsync('sambutan: token template {user.mention} & {memberCount} jalan', async () => {
@@ -4092,11 +4103,10 @@ await testAsync('perpisahan: kartu PNG dikirim, bukan hanya embed', async () => 
     const kartu = files.find((f) => /^sampai-jumpa-/.test(String(f.name)));
     assert.ok(kartu, 'lampirannya kartu sampai-jumpa-*.png');
     assert.ok((kartu!.attachment as Buffer).byteLength > 10_000, 'PNG kartunya berisi gambar');
-    assert.equal(embeds.length, 1, 'kartu dibungkus satu embed');
-    assert.equal(
-      embeds[0]?.data?.image?.url,
-      `attachment://${kartu!.name}`,
-      'embed menampilkan kartu lewat attachment://',
+    assert.deepEqual(embeds, [], 'kartu TIDAK dibungkus embed');
+    assert.ok(
+      String(payload.content).includes('<@222222222222222222>'),
+      'perpisahan menyebut member sebagai mention',
     );
   } finally {
     await deleteBanner(banner.name).catch(() => undefined);

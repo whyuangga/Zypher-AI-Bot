@@ -5,15 +5,16 @@
  *
  * | Mode        | Bentuk pesan                                   | Butuh kartu PNG? | Bisa me-ping? |
  * |-------------|------------------------------------------------|------------------|---------------|
- * | `card`      | kartu PNG sebagai lampiran                     | ya               | tidak         |
+ * | `card`      | teks + kartu PNG sebagai lampiran (tanpa embed) | ya               | ya            |
  * | `container` | kartu Components V2 (blok berwarna aksen)      | tidak            | ya            |
  * | `embed`     | embed Discord biasa                            | tidak            | tidak         |
  * | `text`      | teks polos di `content`                        | tidak            | ya            |
  *
  * Catatan mention: **mention hanya hidup di luar embed**. Di dalam embed,
- * `<@id>` tampil sebagai teks biasa dan tidak pernah memicu notifikasi. Karena
- * itu `text` (lewat `content`) dan `container` (mention di dalam Text Display)
- * bisa me-ping, sedangkan `card` dan `embed` tidak.
+ * `<@id>` tampil sebagai teks biasa dan tidak pernah memicu notifikasi. Mode
+ * `card` dulu membungkus kartunya dengan embed, sehingga tidak bisa me-ping;
+ * sekarang kartu dikirim sebagai lampiran biasa dan teksnya di `content`, jadi
+ * mention ikut aktif.
  *
  * Catatan Components V2: pesan ber-flag `IsComponentsV2` **tidak boleh**
  * memuat `content`, `embeds`, atau `files` — Discord menolaknya. Karena itu
@@ -41,9 +42,9 @@ export const DISPLAY_MODES: DisplayModeInfo[] = [
   {
     key: 'card',
     label: 'Card',
-    note: 'Kartu PNG (banner + avatar + nama). Tidak bisa me-ping member.',
+    note: 'Teks + kartu PNG (banner sebagai latar, avatar, nama). Bisa me-ping member.',
     needsCard: true,
-    canMention: false,
+    canMention: true,
   },
   {
     key: 'container',

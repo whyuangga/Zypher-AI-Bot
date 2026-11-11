@@ -404,11 +404,20 @@ async function composePayload(options: {
     .setDescription(text)
     .setFooter({ text: footer });
 
-  // Mode kartu: PNG jadi lampiran, dan embed hanya dipakai sebagai wadah
-  // supaya kartu tampil besar tanpa merusak tata letak.
+  // Mode kartu: kartu PNG sebagai lampiran, TANPA embed.
+  //
+  // Dulu kartu dibungkus embed hanya supaya tampil besar. Ternyata wadah itu
+  // yang membuat hasilnya terlihat seperti embed biasa: garis aksen biru di
+  // kiri dan footer "Member baru · <server>" — bukan kartu seperti bot besar.
+  // Tanpa embed, Discord menampilkan lampiran gambar selebar pesan, dengan
+  // teks sapaan di atasnya dan mention yang benar-benar memicu notifikasi
+  // (mention di dalam embed tidak pernah memicu apa pun).
   if (mode === 'card' && attachment) {
-    embed.setImage(`attachment://${attachment.name}`);
-    return { content: '', embeds: [embed], files: [attachment] };
+    return {
+      content: mentionUser ? `<@${member.id}> ${text}` : text,
+      embeds: [],
+      files: [attachment],
+    };
   }
 
   // Mode embed: banner opsional sebagai gambar embed. Discord MENOLAK data URI
@@ -576,8 +585,12 @@ export async function goodbyeMember(member: GuildMember): Promise<boolean> {
     bannerPath: settings.bannerPath,
     bannerData: settings.bannerData,
     allowed,
-    // Member sudah keluar: jangan pernah mention.
-    mentionUser: false,
+    // Permintaan eksplisit pemilik server: perpisahan juga menyapa member
+    // dengan mention, bukan hanya namanya. Catatan jujur: member sudah keluar
+    // dari server, jadi Discord TIDAK memicu notifikasi untuk mention ini —
+    // yang tampil hanya nama yang bisa diklik. Itu batasan Discord, bukan
+    // pilihan bot.
+    mentionUser: true,
   });
   const embeds = payload.embeds;
   const files = payload.files;
@@ -586,7 +599,7 @@ export async function goodbyeMember(member: GuildMember): Promise<boolean> {
   // Jaring pengaman sama seperti sambutan: jangan pernah mengirim pesan tanpa isi.
   if (!plainText && embeds.length === 0 && files.length === 0 && !payload.components?.length) {
     try {
-      await channel.send({ content: text, allowedMentions: { parse: [] } });
+      await channel.send({ content: `<@${member.id}> ${text}`, allowedMentions: { users: [member.id] } });
       logger.info(`Salam perpisahan untuk ${member.user.tag} terkirim (teks polos).`);
       return true;
     } catch (error) {
@@ -598,14 +611,22 @@ export async function goodbyeMember(member: GuildMember): Promise<boolean> {
   try {
     await channel.send(
       payload.components?.length
-        ? { components: payload.components, flags: payload.flags, files, allowedMentions: { parse: [] } }
+        ? {
+            components: payload.components,
+            flags: payload.flags,
+            files,
+            // Tanpa ini, `<@id>` di content tampil sebagai teks mentah.
+            allowedMentions: { users: [member.id] },
+          }
         : {
-            // `content` hanya berisi sesuatu pada mode text (lihat composePayload).
+            // `content` berisi mention + teks untuk mode text, card, dan
+            // container (lihat composePayload).
             content: plainText || undefined,
             embeds,
             files,
-            // Perpisahan tidak pernah me-ping siapa pun.
-            allowedMentions: { parse: [] },
+            // Hanya member yang disebut yang diizinkan — `@everyone` dan
+            // mention lain tetap mati.
+            allowedMentions: { users: [member.id] },
           },
     );
     logger.info(`Salam perpisahan untuk ${member.user.tag} terkirim${greeting ? ' (AI)' : ' (template)'}.`);
