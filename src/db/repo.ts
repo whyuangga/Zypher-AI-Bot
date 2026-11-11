@@ -2,6 +2,7 @@ import { all, get, insert, run } from './index.js';
 import { config } from '../config.js';
 import { normalizeTimeZone } from '../lib/timezone.js';
 import { parseBlocks, sanitizeBlocks, type PostBlock } from '../features/custom-post.js';
+import { decryptSecret, encryptSecret } from '../features/webhook-secret.js';
 import {
   sanitizeRoleButtons,
   type RoleButtonInput,
@@ -1423,6 +1424,10 @@ export interface CustomPost {
   channelId: string | null;
   /** ID pesan Discord yang sudah dikirim (null = belum pernah dikirim). */
   messageId: string | null;
+  /** Warna aksen `#rrggbb`; null = bawaan. */
+  accent: string | null;
+  /** `webhook` = tampil atas nama server; selain itu lewat bot. */
+  sender: 'bot' | 'webhook';
   updatedAt: number;
 }
 
@@ -1433,6 +1438,8 @@ interface CustomPostRow {
   channel_id: string | null;
   blocks: string;
   message_id: string | null;
+  accent?: string | null;
+  sender?: string | null;
   updated_at: number | string;
 }
 
@@ -1443,6 +1450,8 @@ function toCustomPost(row: CustomPostRow): CustomPost {
     channelId: row.channel_id,
     blocks: parseBlocks(row.blocks),
     messageId: row.message_id,
+    accent: row.accent ?? null,
+    sender: row.sender === 'webhook' ? 'webhook' : 'bot',
     updatedAt: Number(row.updated_at),
   };
 }
@@ -1475,13 +1484,27 @@ export async function getCustomPost(guildId: string, id: number): Promise<Custom
  */
 export async function createCustomPost(
   guildId: string,
-  input: { name: string; channelId: string | null; blocks: unknown },
+  input: {
+    name: string;
+    channelId: string | null;
+    blocks: unknown;
+    accent?: string | null;
+    sender?: 'bot' | 'webhook';
+  },
 ): Promise<CustomPost> {
   const blocks = sanitizeBlocks(input.blocks).blocks;
   const id = await insert(
-    `INSERT INTO custom_posts (guild_id, name, channel_id, blocks, message_id, updated_at)
-     VALUES (?, ?, ?, ?, NULL, ?)`,
-    [guildId, input.name.slice(0, 120), input.channelId, JSON.stringify(blocks), Date.now()],
+    `INSERT INTO custom_posts (guild_id, name, channel_id, blocks, message_id, accent, sender, updated_at)
+     VALUES (?, ?, ?, ?, NULL, ?, ?, ?)`,
+    [
+      guildId,
+      input.name.slice(0, 120),
+      input.channelId,
+      JSON.stringify(blocks),
+      input.accent ?? null,
+      input.sender ?? 'bot',
+      Date.now(),
+    ],
   );
   return (await getCustomPost(guildId, id))!;
 }
@@ -1490,18 +1513,26 @@ export async function createCustomPost(
 export async function updateCustomPost(
   guildId: string,
   id: number,
-  input: { name?: string; channelId?: string | null; blocks?: unknown },
+  input: {
+    name?: string;
+    channelId?: string | null;
+    blocks?: unknown;
+    accent?: string | null;
+    sender?: 'bot' | 'webhook';
+  },
 ): Promise<CustomPost | null> {
   const current = await getCustomPost(guildId, id);
   if (!current) return null;
 
   const blocks = input.blocks === undefined ? current.blocks : sanitizeBlocks(input.blocks).blocks;
   await run(
-    'UPDATE custom_posts SET name = ?, channel_id = ?, blocks = ?, updated_at = ? WHERE guild_id = ? AND id = ?',
+    'UPDATE custom_posts SET name = ?, channel_id = ?, blocks = ?, accent = ?, sender = ?, updated_at = ? WHERE guild_id = ? AND id = ?',
     [
       (input.name ?? current.name).slice(0, 120),
       input.channelId === undefined ? current.channelId : input.channelId,
       JSON.stringify(blocks),
+      input.accent === undefined ? current.accent : input.accent,
+      input.sender ?? current.sender,
       Date.now(),
       guildId,
       id,
@@ -1616,3 +1647,72 @@ export async function findRoleButton(
 }
 
 export type { RoleButtonInput };
+
+/* ------------------------------------------------------------------ */
+/*  Webhook per channel (pesan atas nama server)                       */
+/* ------------------------------------------------------------------ */
+
+export interface StoredWebhook {
+  channelId: string;
+  webhookId: string;
+  /** URL lengkap hasil dekripsi. HANYA untuk memanggil Discord. */
+  url: string;
+}
+
+interface WebhookRow {
+  channel_id: string;
+  guild_id: string;
+  webhook_id: string;
+  token: string;
+  updated_at: number | string;
+}
+
+/**
+ * Webhook yang tersimpan untuk satu channel, atau null.
+ *
+ * Token didekripsi di sini; pemanggil bertanggung jawab TIDAK mengirim URL ini
+ * ke browser. Dashboard hanya butuh tahu "sudah ada / belum", bukan isinya.
+ */
+export async function getChannelWebhook(guildId: string, channelId: string): Promise<StoredWebhook | null> {
+  const row = await get<WebhookRow>(
+    'SELECT * FROM post_webhooks WHERE guild_id = ? AND channel_id = ?',
+    [guildId, channelId],
+  );
+  if (!row) return null;
+
+  const token = decryptSecret(row.token);
+  // Token tidak bisa didekripsi (DASHBOARD_TOKEN diganti): perlakukan sebagai
+  // belum ada supaya bot membuat webhook baru, bukan gagal terus-menerus.
+  if (!token) return null;
+
+  return {
+    channelId: row.channel_id,
+    webhookId: row.webhook_id,
+    url: `https://discord.com/api/webhooks/${row.webhook_id}/${token}`,
+  };
+}
+
+/** Simpan/ganti webhook untuk satu channel. Token dienkripsi lebih dulu. */
+export async function saveChannelWebhook(options: {
+  guildId: string;
+  channelId: string;
+  webhookId: string;
+  token: string;
+}): Promise<void> {
+  const encrypted = encryptSecret(options.token);
+  await run(
+    `INSERT INTO post_webhooks (channel_id, guild_id, webhook_id, token, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (channel_id) DO UPDATE SET
+       guild_id = excluded.guild_id,
+       webhook_id = excluded.webhook_id,
+       token = excluded.token,
+       updated_at = excluded.updated_at`,
+    [options.channelId, options.guildId, options.webhookId, encrypted, Date.now()],
+  );
+}
+
+/** Lupakan webhook (mis. sudah dihapus di Discord). */
+export async function deleteChannelWebhook(channelId: string): Promise<void> {
+  await run('DELETE FROM post_webhooks WHERE channel_id = ?', [channelId]);
+}

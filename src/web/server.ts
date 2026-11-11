@@ -57,8 +57,14 @@ import {
 } from '../db/repo.js';
 import { invalidateModerationCache } from '../features/moderation.js';
 import { listPanelChannels, PanelError, publishPanel, removePanel } from '../features/panel.js';
-import { deletePostMessage, PostSendError, sendOrUpdatePost } from '../features/custom-post-send.js';
-import { sanitizeBlocks } from '../features/custom-post.js';
+import {
+  deletePostMessage,
+  PostSendError,
+  sendOrUpdatePost,
+  sendOrUpdatePostViaWebhook,
+  webhookIdentityFor,
+} from '../features/custom-post-send.js';
+import { normalizeAccent, sanitizeBlocks } from '../features/custom-post.js';
 import { listGuildRoles } from '../features/role-buttons.js';
 import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
 import {
@@ -675,6 +681,8 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
           blocks: post.blocks,
           messageId: post.messageId,
           updatedAt: post.updatedAt,
+          accent: post.accent,
+          sender: post.sender,
         })),
         channels,
         botReady: Boolean(botClient?.isReady()),
@@ -1674,10 +1682,18 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       return;
     }
     const channelId = typeof payload.channelId === 'string' && payload.channelId.trim() ? payload.channelId.trim() : null;
+    const accent = payload.accent === undefined ? null : normalizeAccent(payload.accent);
+    const sender = payload.sender === 'webhook' ? 'webhook' : 'bot';
 
     // Blok dirapikan di repo (sanitizeBlocks). Hasil buangannya dikembalikan
     // supaya admin tahu apa yang tidak jadi dikirim, bukan disembunyikan.
-    const post = await createCustomPost(guildId, { name, channelId, blocks: payload.blocks });
+    const post = await createCustomPost(guildId, {
+      name,
+      channelId,
+      blocks: payload.blocks,
+      accent,
+      sender,
+    });
     const { dropped } = sanitizeBlocks(payload.blocks);
     sendJson(response, 200, { ok: true, post: { ...post } as unknown as Record<string, unknown>, dropped });
     return;
@@ -1709,13 +1725,28 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       }
       try {
         const roleButtons = await listRoleButtons(guildId, id);
-        const result = await sendOrUpdatePost({
-          client: botClient,
-          channelId: post.channelId,
-          messageId: post.messageId,
-          blocks: post.blocks,
-          roleButtons: roleButtons.map((b) => ({ id: b.id, label: b.label })),
-        });
+        // Dua jalur pengiriman, pilihan admin:
+        //   bot     -> pengirim bot (bisa tombol role)
+        //   webhook -> atas nama server (tidak bisa tombol role)
+        const result =
+          post.sender === 'webhook'
+            ? await sendOrUpdatePostViaWebhook({
+                client: botClient,
+                guildId,
+                channelId: post.channelId,
+                messageId: post.messageId,
+                blocks: post.blocks,
+                accent: post.accent ?? undefined,
+                identity: await webhookIdentityFor(botClient, guildId),
+              })
+            : await sendOrUpdatePost({
+                client: botClient,
+                channelId: post.channelId,
+                messageId: post.messageId,
+                blocks: post.blocks,
+                accent: post.accent ?? undefined,
+                roleButtons: roleButtons.map((b) => ({ id: b.id, label: b.label })),
+              });
         await setCustomPostMessage(guildId, id, result.messageId);
         sendJson(response, 200, { ok: true, messageId: result.messageId, edited: result.edited });
       } catch (error) {
@@ -1749,6 +1780,8 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       const payload = await readJson(request, response);
       if (!payload) return;
       const post = await updateCustomPost(guildId, id, {
+        accent: payload.accent === undefined ? undefined : normalizeAccent(payload.accent),
+        sender: payload.sender === undefined ? undefined : payload.sender === 'webhook' ? 'webhook' : 'bot',
         name: payload.name === undefined ? undefined : String(payload.name).trim(),
         channelId:
           payload.channelId === undefined

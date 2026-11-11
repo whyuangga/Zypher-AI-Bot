@@ -472,6 +472,8 @@ const pages: Array<{ name: string; render: () => string }> = [
             ],
             messageId: '999',
             updatedAt: Date.now(),
+            accent: '#ff8800',
+            sender: 'webhook' as const,
           },
         ],
         channels: [channel],
@@ -805,6 +807,40 @@ await check(`${calledRoutes.size} endpoint literal ada di server`, () => {
 await check('rute server terbaca (pengaman tidak lolos karena kosong)', () => {
   assert.ok(serverSegments.size >= 8, `hanya ${serverSegments.size} rute terbaca — pola pengurai rusak`);
 });
+/* ---------- Gambar unggahan tidak boleh hilang saat disimpan ulang ---------- */
+
+await check('/pesan: gambar unggahan bertahan saat pesan lama disimpan ulang', async () => {
+  const target = mounted.find((page) => page.name === '/pesan?isi');
+  assert.ok(target, 'halaman /pesan?isi tidak ada');
+
+  // Dua bug nyata yang pernah lolos, keduanya membuat gambar hilang tanpa
+  // peringatan saat admin membuka pesan lama lalu menekan Simpan:
+  //   1. loadExisting() hanya menyalin kind/value/url, field data dibuang
+  //   2. payloadBlocks() menyaring blok yang value-nya kosong, padahal gambar
+  //      unggahan punya value kosong dan gambarnya di field data
+  const hasil = await target.page.evaluate(`
+    (function () {
+      blocks = [{ kind: 'text', value: 'Halo' }, { kind: 'image', value: '', data: 'data:image/png;base64,AAAA' }];
+      renderBlocks();
+      var payload = payloadBlocks();
+      var gambar = payload.filter(function (b) { return b.kind === 'image'; });
+      // Pratinjau memakai <img> yang dibuat lewat createElement di dalam
+      // renderPreview(); DOM tiruan pengaman ini tidak menyimpan anak elemen,
+      // jadi yang diperiksa hasil susunan blok — bukan isi DOM.
+      return {
+        jumlah: gambar.length,
+        adaData: gambar.length > 0 && Boolean(gambar[0].data),
+        pratinjauDipanggil: typeof renderPreview === 'function',
+      };
+    })()
+  `);
+
+  const info = hasil as { jumlah: number; adaData: boolean; pratinjauDipanggil: boolean };
+  assert.equal(info.jumlah, 1, 'gambar ikut terkirim saat disimpan');
+  assert.equal(info.adaData, true, 'data gambar tidak dibuang');
+  assert.equal(info.pratinjauDipanggil, true, 'fungsi pratinjau tersedia');
+});
+
 /* ---------- Uji diri: pengaman harus benar-benar menangkap bug ---------- */
 console.log('\nUji diri pengaman');
 

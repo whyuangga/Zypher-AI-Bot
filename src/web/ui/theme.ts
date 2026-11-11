@@ -1140,6 +1140,35 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   background: rgba(255, 255, 255, 0.07);
   margin: 2px 0;
 }
+/* Baris tombol: Discord menampilkan maksimum 5 tombol sejajar. */
+.preview-container .pc-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.preview-container .pc-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+}
+/* Tombol link: abu-abu, seperti Discord. */
+.preview-container .pc-button-link {
+  background: #4e5058;
+}
+/* Tombol role: biru primer — beda warna supaya admin tahu ini tombol yang
+   memanggil bot, bukan tautan. */
+.preview-container .pc-button-role {
+  background: #5865f2;
+}
+.preview-wrap {
+  padding: 4px 0 8px;
+}
 .preview-container .pc-image {
   display: block;
   width: 100%;

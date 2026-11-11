@@ -433,6 +433,45 @@ await test('posting: tombol role tersimpan, terurut, dan bisa dicari', async () 
   assert.equal(await repo.findRoleButton('g-lain-pg', baru.buttons[0]!.id), null, 'terisolasi per server');
 });
 
+await test('posting: webhook tersimpan terenkripsi per channel', async () => {
+  const guild = 'g-hook-pg';
+  const channel = '1400000000000000009';
+
+  assert.equal(await repo.getChannelWebhook(guild, channel), null, 'belum ada');
+
+  await repo.saveChannelWebhook({
+    guildId: guild,
+    channelId: channel,
+    webhookId: '111111111111111111',
+    token: 'T'.repeat(68),
+  });
+
+  const tersimpan = await repo.getChannelWebhook(guild, channel);
+  assert.ok(tersimpan, 'terbaca kembali');
+  assert.equal(tersimpan!.webhookId, '111111111111111111');
+  assert.ok(tersimpan!.url.endsWith('T'.repeat(68)), 'token terdekripsi utuh untuk dipakai');
+
+  // Isi kolom di database TIDAK boleh memuat token asli.
+  const baris = await driver.get<{ token: string }>(
+    'SELECT token FROM post_webhooks WHERE channel_id = ?',
+    [channel],
+  );
+  assert.ok(baris && !baris.token.includes('TTTT'), 'token tidak tersimpan sebagai teks biasa');
+
+  // Simpan ulang = ganti, bukan duplikat (channel_id adalah primary key).
+  await repo.saveChannelWebhook({
+    guildId: guild,
+    channelId: channel,
+    webhookId: '222222222222222222',
+    token: 'U'.repeat(68),
+  });
+  const diganti = await repo.getChannelWebhook(guild, channel);
+  assert.equal(diganti!.webhookId, '222222222222222222', 'webhook diganti');
+
+  await repo.deleteChannelWebhook(channel);
+  assert.equal(await repo.getChannelWebhook(guild, channel), null, 'bisa dilupakan');
+});
+
 /* ------------------------------------------------------------------ */
 
 await driver.close();

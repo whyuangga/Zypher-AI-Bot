@@ -34,6 +34,39 @@ export interface PostBlock {
    * disusun dari sini).
    */
   url?: string;
+  /**
+   * Gambar yang DIUNGGAH dari komputer, disimpan sebagai data URI base64.
+   *
+   * Kenapa tidak langsung URL saja: Discord membutuhkan `attachment://nama`
+   * untuk gambar unggahan, sedangkan data URI ditolak di komponen V2. Jadi
+   * kalau `data` terisi, pengirim mengubahnya menjadi lampiran, dan blok
+   * hanya menyimpan data aslinya.
+   *
+   * Tidak ikut dikirim ke Discord apa adanya.
+   */
+  data?: string;
+}
+
+/** Warna aksen bawaan — sama dengan brand sambutan. */
+export const DEFAULT_ACCENT = '#6d8cff';
+
+/**
+ * Warna aksen pesan: pilihan admin, kalau tidak ada pakai bawaan.
+ *
+ * Dibatasi ke 6 digit hex dan dikembalikan dalam bentuk `#rrggbb` supaya bisa
+ * dipakai langsung sebagai CSS (pratinjau) maupun diubah jadi angka (Discord).
+ */
+export function normalizeAccent(value: unknown): string {
+  if (typeof value !== 'string') return DEFAULT_ACCENT;
+  const raw = value.trim();
+  const withHash = raw.startsWith('#') ? raw : `#${raw}`;
+  if (!/^#[0-9a-f]{6}$/i.test(withHash)) return DEFAULT_ACCENT;
+  return withHash.toLowerCase();
+}
+
+/** `#6d8cff` -> `0x6d8cff` untuk ContainerBuilder. */
+export function accentToNumber(value: unknown): number {
+  return Number.parseInt(normalizeAccent(value).slice(1), 16);
 }
 
 /** Batas dari Discord, bukan pilihan kita. */
@@ -120,6 +153,24 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
     }
 
     if (kind === 'image') {
+      // Gambar unggahan: data URI base64 dari dashboard. Discord menolak data
+      // URI di komponen V2, jadi pengirim mengubahnya jadi lampiran lebih
+      // dulu — di sini hanya bentuknya yang diperiksa.
+      const data = typeof item.data === 'string' ? item.data.trim() : '';
+      if (data) {
+        if (!/^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/i.test(data)) {
+          dropped.push('gambar unggahan (format harus PNG, JPG, atau WebP)');
+          continue;
+        }
+        if (images >= LIMITS.imagesInGallery * LIMITS.rowsPerMessage) {
+          dropped.push('gambar melebihi batas');
+          continue;
+        }
+        images += 1;
+        out.push({ kind: 'image', value: '', data });
+        continue;
+      }
+
       const url = value.trim();
       if (!isHttpUrl(url)) {
         dropped.push(`gambar "${url.slice(0, 40)}" (URL harus http/https)`);
@@ -217,6 +268,20 @@ export function defaultPostName(index: number): string {
 export interface BuiltPost {
   components: unknown[];
   flags: number;
+  /**
+   * Lampiran gambar unggahan, kalau ada.
+   *
+   * Discord menolak data URI di komponen V2, jadi gambar unggahan harus
+   * dikirim sebagai lampiran dan dirujuk lewat attachment://<nama>.
+   */
+  files: AttachmentLike[];
+}
+
+/** Bentuk minimal lampiran — pemanggil yang membuat AttachmentBuilder asli. */
+export interface AttachmentLike {
+  dataUri: string;
+  /** Nama file yang dipakai di attachment:// — harus sama persis. */
+  name: string;
 }
 
 export function buildPostPayload(
@@ -239,13 +304,22 @@ export function buildPostPayload(
     roleButtons?: Array<{ id: number; label: string }>;
     /** Pembuat customId — disuntik supaya modul ini tetap murni. */
     roleButtonId?: (id: number) => string;
+    /** Pembuat warna aksen (angka) dari hex — disuntik supaya tetap murni. */
+    accentToNumber?: (hex: string) => number;
+    /** Warna aksen pilihan admin; kalau kosong, `deps.accent`. */
+    accentHex?: string;
   },
 ): BuiltPost | null {
-  const isi = blocks.filter((b) => b.kind !== 'divider' || blocks.length > 1);
-  if (!isi.some((b) => b.kind === 'text' || b.kind === 'image')) return null;
+  if (!blocks.some((b) => b.kind === 'text' || b.kind === 'image')) return null;
 
   const container = new deps.ContainerBuilder();
-  if (deps.accent !== undefined) container.setAccentColor(deps.accent);
+  const accent = deps.accentHex && deps.accentToNumber
+    ? deps.accentToNumber(deps.accentHex)
+    : deps.accent;
+  if (accent !== undefined) container.setAccentColor(accent);
+
+  // Gambar unggahan dikumpulkan dulu, lalu dikirim sebagai lampiran.
+  const files: AttachmentLike[] = [];
 
   let tombolTertunda: PostBlock[] = [];
 
@@ -283,9 +357,17 @@ export function buildPostPayload(
       continue;
     }
     if (block.kind === 'image') {
+      // Unggahan: rujuk lampiran. Nama file dibuat berurutan dan hanya berisi
+      // huruf/angka supaya tidak ada karakter aneh di dalam URL lampiran.
+      let url = block.value;
+      if (block.data) {
+        const name = `post-image-${files.length + 1}.png`;
+        files.push({ dataUri: block.data, name });
+        url = `attachment://${name}`;
+      }
       container.addMediaGalleryComponents(
         new deps.MediaGalleryBuilder().addItems(
-          new deps.MediaGalleryItemBuilder().setURL(block.value),
+          new deps.MediaGalleryItemBuilder().setURL(url),
         ),
       );
     }
@@ -312,5 +394,5 @@ export function buildPostPayload(
     }
   }
 
-  return { components: [container], flags: 1 << 15 };
+  return { components: [container], flags: 1 << 15, files };
 }

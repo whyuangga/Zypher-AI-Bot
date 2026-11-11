@@ -38,12 +38,26 @@ mengirim pesan baru dan menyimpan ID yang baru.
 | Blok | Isi | Catatan |
 |---|---|---|
 | **Teks** | teks biasa | mendukung format Discord (`**tebal**`, `_miring_`, `> kutipan`) |
-| **Gambar** | satu URL `http(s)://…` | tampil selebar pesan |
+| **Gambar** | URL `http(s)://…` **atau unggah dari komputer** | PNG/JPG/WebP, maksimal 4 MB |
 | **Tombol** | label + URL tujuan | hanya **tombol link**; membuka tautan, tidak memberi role |
 | **Pemisah** | garis | pemisah antar bagian |
 
 Teks kecil: baris yang diawali `-#` (mis. `-# dibuat oleh admin`) tampil kecil dan
 redup di Discord. Ini cara membuat catatan kaki.
+
+### Pratinjau, warna, dan pengirim
+
+Di atas kartu pratinjau ada tiga hal yang bisa diubah:
+
+| Kontrol | Arti |
+|---|---|
+| **Pratinjau** | kartu di atas kartu Tombol ambil role — ikut berubah saat kamu mengetik, lengkap dengan urutan blok dan batas 5 tombol per baris |
+| **Warna aksen** | garis warna di kiri kartu; ada tombol **Bawaan** untuk kembali ke `#6d8cff` |
+| **Pengirim** | **Bot** (bisa tombol role) atau **Atas nama server** (lewat webhook) |
+
+Pratinjau digambar dari **data blok yang sama** yang dikirim ke Discord, jadi
+yang kamu lihat bukan tebakan. Teks dimasukkan sebagai teks biasa (bukan HTML),
+jadi isi pesan tidak bisa menyuntik elemen ke halaman dashboard.
 
 ### Batas yang dipakai bot
 
@@ -130,7 +144,32 @@ ditemukan walaupun admin mengubah isi teks di atasnya. Tombol link dari blok
 
 ---
 
-## 5. Catatan teknis
+## 5. Mengirim atas nama server (webhook)
+
+Memilih pengirim **Atas nama server** membuat pesan tampil dengan nama dan logo
+server, bukan sebagai bot. Ini hanya bisa lewat **webhook** — bot tidak bisa
+menyamarkan dirinya sebagai server.
+
+**Yang dibutuhkan:** izin **Manage Webhooks** untuk bot di channel tujuan.
+
+| Hal | Bagaimana ditangani |
+|---|---|
+| Token webhook | **dienkripsi** (AES-256-GCM) sebelum disimpan; kuncinya diturunkan dari `DASHBOARD_TOKEN` |
+| Token di browser | tidak pernah dikirim, bahkan tersamar |
+| Webhook baru | dibuat sekali per channel, lalu dipakai ulang |
+| Webhook dihapus orang | bot mendeteksi dan membuat yang baru, tidak gagal terus |
+| Tombol ambil role | **tidak bisa** dipakai di pesan webhook — ditolak dengan penjelasan |
+
+**Kenapa tombol role tidak bisa:** Discord mengirim klik tombol ke aplikasi
+*pengirim* komponen. Kalau pesan dikirim webhook, tidak ada aplikasi kita di
+sana, sehingga tombolnya akan diam saat diklik. Karena itu bot menolaknya lebih
+awal, bukan mengirim tombol yang tidak berfungsi.
+
+**Batas keamanan enkripsi, jujur:** enkripsi ini melindungi dari pembacaan file
+atau cadangan database. Kalau `DASHBOARD_TOKEN` diganti, token webhook lama
+tidak bisa dibuka lagi — bot akan membuat webhook baru otomatis.
+
+## 6. Catatan teknis
 
 - Isi disimpan sebagai JSON di tabel `custom_posts` (`blocks`), berlaku untuk
   SQLite maupun Postgres.

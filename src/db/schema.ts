@@ -206,6 +206,8 @@ CREATE TABLE IF NOT EXISTS custom_posts (
   channel_id TEXT,
   blocks     TEXT NOT NULL,
   message_id TEXT,
+  accent     TEXT,
+  sender     TEXT,
   updated_at INTEGER NOT NULL
 );
 
@@ -221,6 +223,17 @@ CREATE TABLE IF NOT EXISTS post_role_buttons (
   label    TEXT NOT NULL,
   mode     TEXT NOT NULL DEFAULT 'toggle',
   position INTEGER NOT NULL DEFAULT 0
+);
+
+-- ---------- webhook per channel (pesan atas nama server) ----------
+-- Token menyimpan bagian RAHASIA dari URL webhook, dalam bentuk terenkripsi
+-- (lihat src/features/webhook-secret.ts). Tidak pernah dikirim ke browser.
+CREATE TABLE IF NOT EXISTS post_webhooks (
+  channel_id TEXT PRIMARY KEY,
+  guild_id   TEXT NOT NULL,
+  webhook_id TEXT NOT NULL,
+  token      TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
 );
 `;
 
@@ -414,6 +427,8 @@ CREATE TABLE IF NOT EXISTS custom_posts (
   channel_id TEXT,
   blocks     TEXT NOT NULL,
   message_id TEXT,
+  accent     TEXT,
+  sender     TEXT,
   updated_at BIGINT NOT NULL
 );
 
@@ -426,4 +441,13 @@ CREATE TABLE IF NOT EXISTS post_role_buttons (
   mode     TEXT NOT NULL DEFAULT 'toggle',
   position INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS post_webhooks (
+  channel_id TEXT PRIMARY KEY,
+  guild_id   TEXT NOT NULL,
+  webhook_id TEXT NOT NULL,
+  token      TEXT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+
 `;

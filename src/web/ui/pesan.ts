@@ -17,15 +17,6 @@ import { appShell, pageHead, type PageKey } from './shell.js';
 import type { PageContext } from './pages.js';
 import type { PostBlock } from '../../features/custom-post.js';
 
-export interface PostRowView {
-  id: number;
-  name: string;
-  channelId: string | null;
-  blocks: PostBlock[];
-  messageId: string | null;
-  updatedAt: number;
-}
-
 export interface RoleOptionView {
   id: string;
   name: string;
@@ -33,6 +24,19 @@ export interface RoleOptionView {
   position: number;
   /** null = role bisa dibagi; selain itu alasannya. */
   blockedBy: string | null;
+}
+
+export interface PostRowView {
+  id: number;
+  name: string;
+  channelId: string | null;
+  blocks: PostBlock[];
+  messageId: string | null;
+  updatedAt: number;
+  /** Warna aksen `#rrggbb`; null = bawaan. */
+  accent: string | null;
+  /** `webhook` = tampil atas nama server. */
+  sender: 'bot' | 'webhook';
 }
 
 export interface PesanPageOptions extends PageContext {
@@ -159,6 +163,28 @@ export function pesanPage(options: PesanPageOptions): string {
     <p class="hint" id="blockHint">Teks mendukung format Discord; baris diawali <code>-#</code> menjadi teks kecil.</p>
   </div>
 
+  <div class="grid cols-2" style="gap:12px">
+    <div>
+      <label class="field" for="postAccent">Warna aksen</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="color" id="postAccent" value="#6d8cff" style="width:48px;height:38px;padding:2px;border-radius:8px;border:1px solid var(--line);background:var(--panel)">
+        <span class="hint" id="accentText">#6d8cff</span>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="resetAccent()">Bawaan</button>
+      </div>
+    </div>
+    <div>
+      <label class="field" for="postSender">Pengirim</label>
+      <span class="select-shell full">
+        <select id="postSender">
+          <option value="bot">Bot (bisa tombol ambil role)</option>
+          <option value="webhook">Atas nama server (butuh Manage Webhooks)</option>
+        </select>
+        ${icon('chevron', 15)}
+      </span>
+      <p class="hint">Lewat webhook, pesan tampil dengan nama &amp; logo server — tapi tombol ambil role tidak bisa dipakai.</p>
+    </div>
+  </div>
+
   <div class="notice">${icon('alert', 16)}<span>Blok <b>Tombol</b> di atas adalah tombol <b>link</b> (membuka URL). Untuk tombol yang memberi role, pakai kartu <b>Tombol ambil role</b> di bawah.</span></div>
 
   <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -166,6 +192,12 @@ export function pesanPage(options: PesanPageOptions): string {
     <button class="btn btn-ghost" type="button" id="postSend" onclick="sendPost()" ${options.botReady ? '' : 'disabled title="Bot offline"'}>${icon('external', 16)} Kirim ke Discord</button>
   </div>
 </div>`,
+  });
+
+  const previewCard = card({
+    title: 'Pratinjau',
+    hint: 'tampil seperti di Discord',
+    body: `<div id="previewHost" class="preview-wrap"></div>`,
   });
 
   const roleCard = card({
@@ -211,6 +243,7 @@ export function pesanPage(options: PesanPageOptions): string {
     actions: badge(`${options.posts.length} pesan`, 'brand'),
   })}
 <div class="grid cols-2">${listCard}${editorCard}</div>
+${previewCard}
 ${roleCard}
 <script>
 const GUILD = ${jsonForScript(options.guildId)};
@@ -293,14 +326,14 @@ function renderBlocks() {
       ta.rows = Math.min(10, Math.max(2, lineCount(block.value)));
       ta.value = block.value;
       ta.placeholder = 'Tulis isi pesan…';
-      ta.oninput = function () { blocks[index].value = ta.value; };
+      ta.oninput = function () { blocks[index].value = ta.value; renderPreview(); };
       row.appendChild(ta);
     } else {
       var input = document.createElement('input');
       input.type = 'text';
       input.value = block.value;
       input.placeholder = block.kind === 'image' ? 'https://…/gambar.png' : 'Label tombol';
-      input.oninput = function () { blocks[index].value = input.value; };
+      input.oninput = function () { blocks[index].value = input.value; renderPreview(); };
       row.appendChild(input);
       if (block.kind === 'button') {
         var url = document.createElement('input');
@@ -310,9 +343,63 @@ function renderBlocks() {
         url.oninput = function () { blocks[index].url = url.value; };
         row.appendChild(url);
       }
+      if (block.kind === 'image') {
+        // Unggah dari komputer: hasilnya data URI yang disimpan di blok.
+        // Discord menolak data URI mentah, jadi pengirim mengubahnya jadi
+        // lampiran — di dashboard cukup ditampilkan sebagai gambar biasa.
+        var baris = document.createElement('div');
+        baris.style.display = 'flex';
+        baris.style.gap = '8px';
+        baris.style.alignItems = 'center';
+
+        var file = document.createElement('input');
+        file.type = 'file';
+        file.accept = 'image/png,image/jpeg,image/webp';
+        file.onchange = function () { unggahGambar(index, file); };
+        baris.appendChild(file);
+
+        if (block.data) {
+          var kecil = document.createElement('img');
+          kecil.src = block.data;
+          kecil.alt = 'pratinjau unggahan';
+          kecil.style.cssText = 'height:40px;border-radius:6px';
+          baris.appendChild(kecil);
+
+          var hapus = document.createElement('button');
+          hapus.className = 'btn-ghost btn-sm';
+          hapus.type = 'button';
+          hapus.textContent = 'Pakai URL';
+          hapus.onclick = function () { blocks[index].data = ''; renderBlocks(); };
+          baris.appendChild(hapus);
+        }
+        row.appendChild(baris);
+      }
     }
     host.appendChild(row);
   });
+  renderPreview();
+}
+
+/** Batas unggahan gambar (sama dengan banner). */
+var MAKS_GAMBAR = 4 * 1024 * 1024;
+
+function unggahGambar(index, input) {
+  var file = input.files && input.files[0];
+  if (!file) return;
+  if (file.size > MAKS_GAMBAR) {
+    toast('Gambar terlalu besar (maksimal 4 MB)', true);
+    input.value = '';
+    return;
+  }
+  var pembaca = new FileReader();
+  pembaca.onload = function () {
+    blocks[index].data = String(pembaca.result);
+    blocks[index].value = '';
+    renderBlocks();
+    renderPreview();
+  };
+  pembaca.onerror = function () { toast('Gagal membaca gambar', true); };
+  pembaca.readAsDataURL(file);
 }
 
 function addBlock(kind) {
@@ -332,9 +419,17 @@ function moveBlock(index, delta) {
   renderBlocks();
 }
 
+/**
+ * Blok yang benar-benar dikirim ke server.
+ *
+ * Gambar unggahan punya value KOSONG (gambarnya ada di field data), jadi
+ * penyaringan tidak boleh hanya melihat value — kalau iya, setiap penyimpanan
+ * membuang gambar yang baru saja diunggah admin.
+ */
 function payloadBlocks() {
   return blocks.filter(function (b) {
     if (b.kind === 'divider') return true;
+    if (b.kind === 'image') return Boolean(b.data || String(b.value || '').trim());
     return String(b.value || '').trim().length > 0;
   });
 }
@@ -353,7 +448,13 @@ async function savePost(andSend) {
     var result = await api(path, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: name, channelId: channelId, blocks: isi }),
+      body: JSON.stringify({
+        name: name,
+        channelId: channelId,
+        blocks: isi,
+        accent: accentNow(),
+        sender: (document.getElementById('postSender') || {}).value || 'bot',
+      }),
     });
     if (result.dropped && result.dropped.length) {
       toast('Sebagian blok dibuang: ' + result.dropped[0], true);
@@ -400,6 +501,8 @@ function loadExisting() {
       name: p.name,
       channelId: p.channelId,
       blocks: p.blocks,
+      accent: p.accent,
+      sender: p.sender,
     })),
   )};
   var id = Number(new URLSearchParams(location.search).get('id'));
@@ -409,8 +512,19 @@ function loadExisting() {
   editingId = found.id;
   document.getElementById('postName').value = found.name;
   document.getElementById('postChannel').value = found.channelId || '';
+  if (found.accent) {
+    var warna = document.getElementById('postAccent');
+    if (warna) warna.value = found.accent;
+  }
+  if (found.sender) {
+    var pengirim = document.getElementById('postSender');
+    if (pengirim) pengirim.value = found.sender;
+  }
   blocks = found.blocks.map(function (b) {
-    return { kind: b.kind, value: b.value || '', url: b.url || '' };
+    // Field data WAJIB ikut. Tanpa ini, membuka pesan lama lalu menyimpan akan
+    // membuang gambar unggahannya — pesan yang sudah rapi berubah jadi tanpa
+    // gambar tanpa ada peringatan apa pun.
+    return { kind: b.kind, value: b.value || '', url: b.url || '', data: b.data || '' };
   });
   var send = document.getElementById('postSend');
   if (send) send.textContent = 'Simpan & kirim ulang';
@@ -419,6 +533,131 @@ function loadExisting() {
   renderBlocks();
 }
 
+
+/* ---------------- Pratinjau ---------------- */
+
+/** Warna aksen aktif. */
+var ACCENT_DEFAULT = '#6d8cff';
+
+function accentNow() {
+  var el = document.getElementById('postAccent');
+  return (el && el.value) || ACCENT_DEFAULT;
+}
+
+function resetAccent() {
+  var el = document.getElementById('postAccent');
+  if (el) el.value = ACCENT_DEFAULT;
+  renderPreview();
+}
+
+/**
+ * Gambar pratinjau dari blok yang sedang disusun.
+ *
+ * Semua isi dimasukkan lewat textContent / atribut, TIDAK lewat innerHTML.
+ * Alasan: teks blok berasal dari admin dan bisa berisi apa saja; pratinjau
+ * tidak boleh menjadi jalan masuk HTML ke halaman dashboard.
+ */
+function renderPreview() {
+  var host = document.getElementById('previewHost');
+  if (!host) return;
+  host.innerHTML = '';
+
+  var kartu = document.createElement('div');
+  kartu.className = 'preview-container';
+  kartu.style.borderLeftColor = accentNow();
+
+  var isi = blocks.filter(function (b) {
+    if (b.kind === 'divider') return true;
+    if (b.kind === 'image') return Boolean(b.data || b.value);
+    return String(b.value || '').trim().length > 0;
+  });
+
+  if (isi.length === 0 || !isi.some(function (b) { return b.kind === 'text' || b.kind === 'image'; })) {
+    var kosong = document.createElement('div');
+    kosong.className = 'pc-line pc-small';
+    kosong.textContent = 'Belum ada isi — pesan kosong tidak bisa dikirim.';
+    kartu.appendChild(kosong);
+    host.appendChild(kartu);
+    return;
+  }
+
+  var tertunda = [];
+  function flushTombol() {
+    for (var i = 0; i < tertunda.length; i += 5) {
+      var baris = document.createElement('div');
+      baris.className = 'pc-row';
+      tertunda.slice(i, i + 5).forEach(function (t) {
+        var b = document.createElement('span');
+        b.className = 'pc-button pc-button-link';
+        b.textContent = t.value;
+        baris.appendChild(b);
+      });
+      kartu.appendChild(baris);
+    }
+    tertunda = [];
+  }
+
+  isi.forEach(function (blok) {
+    if (blok.kind === 'button') { tertunda.push(blok); return; }
+    if (tertunda.length) flushTombol();
+
+    if (blok.kind === 'divider') {
+      var sep = document.createElement('div');
+      sep.className = 'pc-sep';
+      kartu.appendChild(sep);
+      return;
+    }
+    if (blok.kind === 'image') {
+      if (blok.data) {
+        var img = document.createElement('img');
+        img.src = blok.data;
+        img.className = 'pc-image';
+        img.alt = 'gambar unggahan';
+        kartu.appendChild(img);
+      } else {
+        var jauh = document.createElement('img');
+        jauh.src = blok.value;
+        jauh.className = 'pc-image';
+        jauh.alt = '';
+        jauh.onerror = function () {
+          jauh.replaceWith(salinanTeks('[ gambar tidak bisa dimuat ]'));
+        };
+        kartu.appendChild(jauh);
+      }
+      return;
+    }
+    // Teks: -# di awal = teks kecil di Discord.
+    var kecil = /^\s*-#/.test(blok.value);
+    var teks = kecil ? blok.value.replace(/^\s*-#\s*/, '') : blok.value;
+    var el = document.createElement('div');
+    el.className = 'pc-line' + (kecil ? ' pc-small' : '');
+    el.textContent = teks;
+    kartu.appendChild(el);
+  });
+  if (tertunda.length) flushTombol();
+
+  // Tombol role: baris paling bawah, sama seperti pesan sungguhan.
+  for (var i = 0; i < roleButtons.length; i += 5) {
+    var barisRole = document.createElement('div');
+    barisRole.className = 'pc-row';
+    roleButtons.slice(i, i + 5).forEach(function (r) {
+      var b = document.createElement('span');
+      b.className = 'pc-button pc-button-role';
+      b.textContent = r.label || '(tanpa label)';
+      barisRole.appendChild(b);
+    });
+    kartu.appendChild(barisRole);
+  }
+
+  host.appendChild(kartu);
+}
+
+function salinanTeks(isi) {
+  var el = document.createElement('div');
+  el.className = 'pc-line pc-small';
+  el.textContent = isi;
+  return el;
+}
 
 /* ---------------- Tombol ambil role ---------------- */
 
@@ -430,6 +669,7 @@ function roleById(id) {
 function renderRoleButtons() {
   var host = document.getElementById('roleList');
   if (!host) return;
+  renderPreview();
   host.innerHTML = '';
   if (roleButtons.length === 0) {
     var kosong = document.createElement('p');
@@ -472,7 +712,7 @@ function renderRoleButtons() {
     del.type = 'button';
     del.title = 'Hapus tombol';
     del.textContent = '×';
-    del.onclick = function () { roleButtons.splice(index, 1); renderRoleButtons(); };
+    del.onclick = function () { roleButtons.splice(index, 1); renderRoleButtons(); renderPreview(); };
     tools.appendChild(del);
     head.appendChild(tools);
     row.appendChild(head);
@@ -481,7 +721,7 @@ function renderRoleButtons() {
     input.type = 'text';
     input.value = tombol.label || '';
     input.placeholder = 'Label tombol, mis. Ambil role Gamer';
-    input.oninput = function () { roleButtons[index].label = input.value; };
+    input.oninput = function () { roleButtons[index].label = input.value; renderPreview(); };
     row.appendChild(input);
 
     if (role && role.blockedBy) {
@@ -493,6 +733,7 @@ function renderRoleButtons() {
     }
     host.appendChild(row);
   });
+  renderPreview();
 }
 
 function addRoleButton() {
@@ -536,9 +777,21 @@ function loadRoleButtonsFor(postId) {
   });
 }
 
+// Pemantau perubahan warna aksen — pratinjau ikut berubah saat digeser.
+(function pantauWarna() {
+  var el = document.getElementById('postAccent');
+  if (!el) return;
+  el.addEventListener('input', function () {
+    var teks = document.getElementById('accentText');
+    if (teks) teks.textContent = el.value;
+    renderPreview();
+  });
+})();
+
 loadExisting();
 renderBlocks();
 renderRoleButtons();
+renderPreview();
 </script>`;
 
   return appShell({

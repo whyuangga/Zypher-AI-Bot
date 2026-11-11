@@ -12,6 +12,7 @@
  */
 import {
   ActionRowBuilder,
+  AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
   ContainerBuilder,
@@ -19,13 +20,15 @@ import {
   MediaGalleryItemBuilder,
   SeparatorBuilder,
   TextDisplayBuilder,
+  WebhookClient,
   type Client,
   type Message,
   type TextChannel,
 } from 'discord.js';
-import { buildPostPayload, type PostBlock } from './custom-post.js';
+import { accentToNumber, buildPostPayload, type PostBlock } from './custom-post.js';
 import { roleButtonId } from './role-buttons.js';
-import { logger } from '../lib/logger.js';
+import { deleteChannelWebhook, getChannelWebhook, saveChannelWebhook } from '../db/repo.js';
+import { errorMessage, logger } from '../lib/logger.js';
 
 /** Error yang pesannya aman ditampilkan ke admin. */
 export class PostSendError extends Error {}
@@ -33,7 +36,8 @@ export class PostSendError extends Error {}
 function buildPayload(
   blocks: PostBlock[],
   roleButtons: Array<{ id: number; label: string }> = [],
-): { components: ContainerBuilder[]; flags: number } | null {
+  accentHex?: string,
+): { components: ContainerBuilder[]; flags: number; files: AttachmentBuilder[] } | null {
   const built = buildPostPayload(blocks, {
     ContainerBuilder,
     TextDisplayBuilder,
@@ -46,11 +50,21 @@ function buildPayload(
     // Warna aksen sengaja bisa diatur pemanggil kelak; hari ini memakai warna
     // brand yang sama dengan sambutan supaya pesan bot terlihat satu keluarga.
     accent: 0x6d8cff,
+    accentHex,
+    accentToNumber,
     roleButtons,
     roleButtonId,
   });
   if (!built) return null;
-  return { components: built.components as ContainerBuilder[], flags: built.flags };
+
+  // Data URI -> lampiran sungguhan. Discord menolak data URI mentah di
+  // komponen V2, jadi langkah ini wajib, bukan pilihan.
+  const files = built.files.map((file) => {
+    const base64 = file.dataUri.slice(file.dataUri.indexOf(',') + 1);
+    return new AttachmentBuilder(Buffer.from(base64, 'base64'), { name: file.name });
+  });
+
+  return { components: built.components as ContainerBuilder[], flags: built.flags, files };
 }
 
 async function resolveChannel(client: Client, channelId: string): Promise<TextChannel> {
@@ -78,14 +92,21 @@ export async function sendOrUpdatePost(options: {
   client: Client;
   /** Tombol ambil role milik pesan ini (opsional). */
   roleButtons?: Array<{ id: number; label: string }>;
+  /** Warna aksen `#rrggbb` pilihan admin. */
+  accent?: string;
   channelId: string;
   messageId: string | null;
   blocks: PostBlock[];
 }): Promise<SendResult> {
-  const payload = buildPayload(options.blocks, options.roleButtons);
+  const built = buildPayload(options.blocks, options.roleButtons, options.accent);
+  const payload = built;
   if (!payload) {
     throw new PostSendError('Pesan masih kosong — isi minimal satu teks atau gambar.');
   }
+  // Saat memperbarui pesan, lampiran lama harus dibuang dulu: kalau tidak,
+  // Discord menyimpan gambar lama DAN gambar baru, sehingga pesan terus
+  // bertambah lampiran setiap kali admin menekan "Simpan & kirim ulang".
+  const editPayload = { ...payload, attachments: [] as [] };
 
   const channel = await resolveChannel(options.client, options.channelId);
 
@@ -93,7 +114,7 @@ export async function sendOrUpdatePost(options: {
   if (options.messageId) {
     const lama = await channel.messages.fetch(options.messageId).catch((): null => null);
     if (lama) {
-      await lama.edit(payload);
+      await lama.edit(editPayload);
       return { messageId: lama.id, edited: true };
     }
     logger.info(`Pesan kustom ${options.messageId} sudah tidak ada di channel — mengirim baru.`);
@@ -116,4 +137,156 @@ export async function deletePostMessage(options: {
   if (!pesan) return false;
   await pesan.delete().catch(() => undefined);
   return true;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Kirim lewat webhook (pesan atas nama server)                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Identitas pengirim webhook: diambil dari server Discord itu sendiri.
+ *
+ * Dibuat helper supaya dashboard dan pengirim tidak perlu tahu bentuk objek
+ * guild discord.js.
+ */
+export async function webhookIdentityFor(client: Client, guildId: string): Promise<WebhookIdentity> {
+  const guild = await client.guilds.fetch(guildId).catch(() => null);
+  if (!guild) return { username: 'Server', avatarURL: null };
+  return {
+    username: guild.name,
+    avatarURL: guild.iconURL({ size: 256 }) ?? null,
+  };
+}
+
+/** Nama & avatar pengirim saat memakai webhook — diisi pemanggil dari server. */
+export interface WebhookIdentity {
+  username: string;
+  avatarURL?: string | null;
+}
+
+/**
+ * Ambil webhook untuk channel, atau buat baru kalau belum ada.
+ *
+ * Kenapa webhook, bukan bot biasa: hanya webhook yang bisa membuat pesan
+ * tampil atas nama server sendiri. Konsekuensinya bot butuh izin
+ * **Manage Webhooks**, dan token webhook harus disimpan (terenkripsi).
+ *
+ * Kalau webhook yang tersimpan ternyata sudah dihapus di Discord (orang lain
+ * membersihkannya, atau channel-nya dihapus lalu dibuat ulang), bot membuat
+ * yang baru alih-alih gagal terus.
+ */
+export async function ensureChannelWebhook(options: {
+  client: Client;
+  guildId: string;
+  channelId: string;
+  identity: WebhookIdentity;
+  /** Pakai ulang webhook yang tersimpan kalau ada. */
+  reuse?: boolean;
+}): Promise<{ id: string; token: string }> {
+  const channel = await options.client.channels.fetch(options.channelId).catch(() => null);
+  if (!channel) {
+    throw new PostSendError('Channel tidak ditemukan. Pastikan ID-nya benar dan bot ada di server.');
+  }
+  if (!channel.isTextBased() || channel.isDMBased()) {
+    throw new PostSendError('Channel itu bukan channel teks di server.');
+  }
+  const textChannel = channel as TextChannel;
+
+  if (options.reuse !== false) {
+    const saved = await getChannelWebhook(options.guildId, options.channelId);
+    if (saved) {
+      // Periksa ke Discord bahwa webhook-nya benar-benar masih ada.
+      //
+      // Versi pertama memakai `webhook.fetchMessage('1')` lalu menebak dari
+      // teks galat. Itu rapuh: pesan galat bisa berubah, dan perbedaannya
+      // halus — "Unknown Webhook" (webhook hilang) vs "Unknown Message"
+      // (webhook sah, pesannya saja yang tidak ada). Sekarang dicek langsung
+      // lewat jalur bot, yang mengembalikan objek atau null tanpa menebak.
+      const masihAda = await textChannel
+        .fetchWebhooks()
+        .then((hooks) => hooks.has(saved.webhookId))
+        .catch(() => true); // Discord sedang bermasalah: anggap masih ada, jangan buat duplikat
+      if (masihAda) return { id: saved.webhookId, token: saved.url.split('/').pop() ?? '' };
+      await deleteChannelWebhook(options.channelId);
+      logger.warn(`Webhook lama untuk channel ${options.channelId} sudah tidak ada — membuat baru.`);
+    }
+  }
+
+  const webhook = await textChannel
+    .createWebhook({
+      name: options.identity.username.slice(0, 80),
+      avatar: options.identity.avatarURL ?? undefined,
+      reason: 'Pesan /pesan dari dashboard Zypher',
+    })
+    .catch((error: unknown) => {
+      // Penyebab paling sering: izin Manage Webhooks belum diberikan.
+      if (/Missing Permissions|50013/i.test(errorMessage(error))) {
+        throw new PostSendError(
+          'Bot tidak bisa membuat webhook di channel itu. Beri izin **Manage Webhooks** ke bot, lalu coba lagi.',
+        );
+      }
+      throw new PostSendError(`Gagal membuat webhook: ${errorMessage(error).slice(0, 160)}`);
+    });
+
+  await saveChannelWebhook({
+    guildId: options.guildId,
+    channelId: options.channelId,
+    webhookId: webhook.id,
+    token: webhook.token!,
+  });
+
+  return { id: webhook.id, token: webhook.token! };
+}
+
+/**
+ * Kirim atau perbarui pesan lewat webhook.
+ *
+ * Perhatikan: pesan webhook tidak bisa membawa tombol INTERAKTIF yang diproses
+ * bot kita. Discord mengirim interaksi tombol ke aplikasi pemilik komponen;
+ * untuk pesan webhook, komponen dikirim oleh webhook itu sendiri. Karena itu
+ * pesan yang memakai webhook dan punya tombol role akan ditolak lebih awal
+ * dengan penjelasan — bukan mengirim tombol yang diam saat diklik.
+ */
+export async function sendOrUpdatePostViaWebhook(options: {
+  client: Client;
+  guildId: string;
+  channelId: string;
+  messageId: string | null;
+  blocks: PostBlock[];
+  roleButtons?: Array<{ id: number; label: string }>;
+  accent?: string;
+  identity: WebhookIdentity;
+}): Promise<SendResult> {
+  if ((options.roleButtons ?? []).length > 0) {
+    throw new PostSendError(
+      'Pesan lewat webhook tidak bisa memakai tombol ambil role — Discord hanya mengirim interaksi tombol ke aplikasi pengirim. Matikan mode webhook untuk pesan ini, atau hapus tombol role-nya.',
+    );
+  }
+
+  const built = buildPayload(options.blocks, [], options.accent);
+  if (!built) {
+    throw new PostSendError('Pesan masih kosong — isi minimal satu teks atau gambar.');
+  }
+
+  const hook = await ensureChannelWebhook(options);
+  const webhook = new WebhookClient({ id: hook.id, token: hook.token });
+
+  const body = {
+    ...built,
+    username: options.identity.username.slice(0, 80),
+    ...(options.identity.avatarURL ? { avatarURL: options.identity.avatarURL } : {}),
+  };
+
+  try {
+    if (options.messageId) {
+      const edited = await webhook
+        .editMessage(options.messageId, { ...body, attachments: [] })
+        .catch((): null => null);
+      if (edited) return { messageId: options.messageId, edited: true };
+    }
+    const sent = await webhook.send(body);
+    return { messageId: sent.id, edited: false };
+  } catch (error) {
+    throw new PostSendError(`Gagal mengirim lewat webhook: ${errorMessage(error).slice(0, 160)}`);
+  }
 }

@@ -123,8 +123,8 @@ di database (berguna untuk admin yang mau melihat keseluruhan).
 ### Uji tanpa server Postgres
 
 ```bash
-npm run smoke # 364 test, jalur SQLite
-npm run smoke:pg   # 19 test, jalur Postgres lewat pg-mem (in-memory)
+npm run smoke # 370 test, jalur SQLite
+npm run smoke:pg   # 20 test, jalur Postgres lewat pg-mem (in-memory)
 ```
 
 `smoke:pg` membuat database Postgres palsu di memori, menjalankan skema asli, lalu menguji

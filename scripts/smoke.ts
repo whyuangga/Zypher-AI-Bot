@@ -5765,6 +5765,252 @@ await testAsync('pesan: data rusak di database tidak membuat halaman gagal', asy
   assert.equal(parseBlocks('[{"kind":"text","value":"Halo"}]')[0]?.value, 'Halo', 'JSON sah terbaca');
 });
 
+await testAsync('pesan: warna aksen divalidasi, bukan dipercaya', async () => {
+  const { normalizeAccent, accentToNumber, DEFAULT_ACCENT } = await import(
+    '../src/features/custom-post.js'
+  );
+
+  // Bentuk sah diterima dalam dua penulisan.
+  assert.equal(normalizeAccent('#FF8800'), '#ff8800', 'huruf besar dinormalkan');
+  assert.equal(normalizeAccent('ff8800'), '#ff8800', 'tanpa # tetap diterima');
+
+  // Semua bentuk aneh jatuh ke bawaan — bukan warna acak atau #NaN.
+  for (const aneh of ['', '   ', '#GGG', '#ff88', 'merah', 'rgb(1,2,3)', '#ff88001', null, 42]) {
+    assert.equal(normalizeAccent(aneh), DEFAULT_ACCENT, `"${String(aneh)}" -> bawaan`);
+  }
+
+  // Angka untuk ContainerBuilder.
+  assert.equal(accentToNumber('#ff8800'), 0xff8800);
+  assert.equal(accentToNumber('bukan-warna'), 0x6d8cff);
+});
+
+await testAsync('pesan: gambar unggahan jadi lampiran, bukan data URI', async () => {
+  const { sanitizeBlocks, buildPostPayload } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+
+  const png =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+  // Yang bukan gambar sungguhan ditolak.
+  const jahat = sanitizeBlocks([
+    { kind: 'image', value: '', data: 'data:text/html;base64,PHNjcmlwdD4=' },
+    { kind: 'image', value: '', data: 'data:image/png;base64,bukan base64!!' },
+  ]);
+  assert.equal(jahat.blocks.length, 0, 'data URI non-gambar ditolak');
+  assert.equal(jahat.dropped.length, 2, 'alasannya dilaporkan');
+
+  const { blocks } = sanitizeBlocks([
+    { kind: 'image', value: '', data: png },
+    { kind: 'image', value: '', data: png },
+  ]);
+  assert.equal(blocks.length, 2, 'dua unggahan diterima');
+
+  const built = buildPostPayload(blocks, {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+  });
+  assert.ok(built);
+  // Dua gambar SAMA harus jadi dua lampiran bernama berbeda — kalau namanya
+  // sama, Discord hanya menampilkan satu.
+  assert.deepEqual(built.files.map((f) => f.name), ['post-image-1.png', 'post-image-2.png']);
+
+  const json = JSON.stringify(
+    (built.components[0] as { toJSON: () => unknown }).toJSON(),
+  );
+  assert.ok(!json.includes('base64'), 'data URI tidak ikut terkirim');
+  assert.ok(json.includes('attachment://post-image-1.png'), 'merujuk lampiran');
+});
+
+await testAsync('pesan: pratinjau mengikuti urutan & batas tombol Discord', async () => {
+  const { buildPostPreview } = await import('../src/features/post-preview.js');
+
+  const preview = buildPostPreview(
+    [
+      { kind: 'text', value: 'Judul' },
+      { kind: 'divider', value: '' },
+      { kind: 'text', value: '-# catatan kecil' },
+      { kind: 'image', value: 'https://contoh.test/a.png' },
+      ...Array.from({ length: 7 }, (_, i) => ({
+        kind: 'button' as const,
+        value: `T${i + 1}`,
+        url: 'https://contoh.test',
+      })),
+    ],
+    {
+      accent: '#ff8800',
+      roleButtons: [{ id: 1, label: 'Gamer' }],
+    },
+  );
+
+  assert.equal(preview.accentColor, '#ff8800');
+  // Tujuh tombol tidak boleh jadi satu baris: Discord memotongnya 5 per baris.
+  const barisTombol = preview.blocks.filter((b) => b.kind === 'buttons');
+  assert.deepEqual(
+    barisTombol.map((b) => (b.kind === 'buttons' ? b.buttons.length : 0)),
+    [5, 2, 1],
+    'tombol link 5+2, lalu tombol role',
+  );
+
+  // Tombol role selalu blok TERAKHIR.
+  const terakhir = preview.blocks[preview.blocks.length - 1]!;
+  assert.equal(terakhir.kind, 'buttons');
+  assert.equal(terakhir.kind === 'buttons' ? terakhir.buttons[0]!.role : false, true);
+
+  // Teks -# dikenali sebagai teks kecil.
+  const kecil = preview.blocks.find((b) => b.kind === 'text' && b.small);
+  assert.ok(kecil, 'teks -# jadi teks kecil');
+
+  // Hanya pemisah = kosong, dan Discord akan menolaknya.
+  assert.equal(buildPostPreview([{ kind: 'divider', value: '' }]).empty, true);
+  assert.equal(buildPostPreview([{ kind: 'text', value: 'isi' }]).empty, false);
+});
+
+await testAsync('webhook: dibuat sekali, dipakai ulang, dibuat lagi kalau hilang', async () => {
+  const { ensureChannelWebhook } = await import('../src/features/custom-post-send.js');
+  const repo = await import('../src/db/repo.js');
+
+  const G = 'g-webhook-uji';
+  const C = '1400000000000000099';
+  const TOKEN = 'X'.repeat(68);
+
+  let dibuat = 0;
+  let hookAda = true;
+  const client = {
+    channels: {
+      async fetch() {
+        return {
+          id: C,
+          isTextBased: () => true,
+          isDMBased: () => false,
+          async fetchWebhooks() {
+            return hookAda ? new Map([['hook-1', {}]]) : new Map();
+          },
+          async createWebhook(options: { name: string }) {
+            dibuat += 1;
+            return { id: `hook-${dibuat}`, token: TOKEN, name: options.name };
+          },
+        };
+      },
+    },
+  } as unknown as import('discord.js').Client;
+
+  const identity = { username: 'Zypher Server', avatarURL: null };
+
+  // Pertama: dibuat.
+  const a = await ensureChannelWebhook({ client, guildId: G, channelId: C, identity });
+  assert.equal(dibuat, 1);
+  assert.equal(a.id, 'hook-1');
+
+  // Kedua: DIPAKAI ULANG. Ini yang mencegah channel penuh webhook baru setiap
+  // kali admin menekan kirim.
+  const b = await ensureChannelWebhook({ client, guildId: G, channelId: C, identity });
+  assert.equal(dibuat, 1, 'tidak membuat webhook kedua');
+  assert.equal(b.id, 'hook-1');
+
+  // Token tersimpan terenkripsi, tidak sebagai teks biasa.
+  const tersimpan = await repo.getChannelWebhook(G, C);
+  assert.ok(tersimpan, 'webhook tersimpan');
+  assert.ok(tersimpan!.url.endsWith(TOKEN), 'token bisa dipakai lagi');
+
+  // Webhook dihapus orang di Discord: bot membuat yang baru, tidak menyerah.
+  hookAda = false;
+  const c = await ensureChannelWebhook({ client, guildId: G, channelId: C, identity });
+  assert.equal(dibuat, 2, 'membuat ulang saat webhook hilang');
+  assert.equal(c.id, 'hook-2');
+
+  // Tanpa izin Manage Webhooks: pesan yang berguna, bukan galat mentah.
+  const clientTanpaIzin = {
+    channels: {
+      async fetch() {
+        return {
+          id: 'c-lain',
+          isTextBased: () => true,
+          isDMBased: () => false,
+          async fetchWebhooks() {
+            return new Map();
+          },
+          async createWebhook() {
+            throw new Error('Missing Permissions');
+          },
+        };
+      },
+    },
+  } as unknown as import('discord.js').Client;
+
+  await assert.rejects(
+    () =>
+      ensureChannelWebhook({
+        client: clientTanpaIzin,
+        guildId: G,
+        channelId: 'c-lain',
+        identity,
+      }),
+    (error: unknown) => /Manage Webhooks/.test((error as Error).message),
+    'izin kurang dijelaskan',
+  );
+});
+
+await testAsync('webhook: tombol role ditolak SEBELUM menyentuh Discord', async () => {
+  const { sendOrUpdatePostViaWebhook, PostSendError } = await import(
+    '../src/features/custom-post-send.js'
+  );
+
+  // Client kosong: kalau penolakannya benar, Discord tidak pernah disentuh,
+  // jadi tidak ada properti client yang dibaca.
+  await assert.rejects(
+    () =>
+      sendOrUpdatePostViaWebhook({
+        client: {} as never,
+        guildId: '1',
+        channelId: '2',
+        messageId: null,
+        blocks: [{ kind: 'text', value: 'isi' }],
+        roleButtons: [{ id: 1, label: 'Gamer' }],
+        identity: { username: 'Server', avatarURL: null },
+      }),
+    (error: unknown) =>
+      error instanceof PostSendError && /tombol ambil role/i.test((error as Error).message),
+    'pesan webhook + tombol role ditolak dengan penjelasan',
+  );
+});
+
+await testAsync('webhook: token disimpan terenkripsi, tidak terbaca di database', async () => {
+  const { encryptSecret, decryptSecret, isEncrypted, maskWebhookUrl } = await import(
+    '../src/features/webhook-secret.js'
+  );
+
+  const token = 'AbCdEf-Token_Rahasia_Sekali';
+  const enc = encryptSecret(token);
+
+  // Inti perlindungannya: token tidak boleh terbaca dari isi kolom.
+  assert.ok(isEncrypted(enc), 'ditandai terenkripsi');
+  assert.ok(!enc.includes(token) && !enc.includes('AbCdEf'), 'token tidak terlihat');
+  assert.equal(decryptSecret(enc), token, 'bisa dibuka kembali oleh bot');
+
+  // Database lama berisi token teks biasa harus tetap terbaca.
+  assert.equal(decryptSecret(token), token, 'token lama tetap jalan');
+  assert.equal(isEncrypted(token), false);
+
+  // Enkripsi dua kali memberi hasil berbeda (IV acak) tapi sama-sama sah.
+  const lain = encryptSecret(token);
+  assert.notEqual(lain, enc, 'IV acak');
+  assert.equal(decryptSecret(lain), token);
+
+  // Data yang diubah ditolak (AES-GCM mendeteksi perubahan).
+  assert.equal(decryptSecret(`${enc.slice(0, -4)}AAAA`), '', 'data rusak ditolak');
+
+  // Tampilan untuk log tidak membocorkan token.
+  const url = 'https://discord.com/api/webhooks/123456789012345678/AbCdEf-Token_Rahasia';
+  assert.ok(!maskWebhookUrl(url).includes('AbCdEf'), 'token tidak muncul di log');
+  assert.ok(maskWebhookUrl(url).includes('123456789012345678'), 'id webhook tetap terbaca');
+});
+
 await testAsync('pesan: tombol role menolak role di atas bot atau member', async () => {
   const { roleBlocker, memberCanToggle, parseRoleButtonId, roleButtonId } = await import(
     '../src/features/role-buttons.js'
@@ -6149,6 +6395,8 @@ await testAsync('pesan: isi blok tidak bisa keluar dari tag <script>', async () 
         blocks: [{ kind: 'text', value: evil }],
         messageId: null,
         updatedAt: Date.now(),
+        accent: null,
+        sender: 'bot' as const,
       },
     ],
     channels: [],
