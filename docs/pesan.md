@@ -144,6 +144,41 @@ Yang perlu diketahui:
 - Kalau unduhan gagal (URL mati, berkas terlalu besar), pesan **tetap terkirim**
   tanpa berkas itu, dan dashboard memberi tahu berkas mana yang gagal.
 
+### Import / ekspor JSON
+
+Panel **Import / ekspor JSON** (dilipat di bawah editor) memindahkan susunan
+pesan ke server lain atau menyimpan cadangan sebelum mengubah banyak hal.
+
+Contoh berkasnya:
+
+```json
+{
+  "format": "zypher-post",
+  "version": 1,
+  "name": "Rules",
+  "accent": "#6d8cff",
+  "sender": "bot",
+  "blocks": [
+    { "kind": "text", "value": "Hey, welcome!" },
+    { "kind": "container", "accent": "#58b9ff" },
+    { "kind": "text", "value": "### What is this?" }
+  ]
+}
+```
+
+Yang perlu diketahui:
+
+| Hal | Perilaku |
+|---|---|
+| **Channel tujuan** | sengaja **tidak** ikut — ID channel berbeda di tiap server |
+| **Berkas unggahan** | data base64 tidak ikut (bisa puluhan MB); pakai URL agar portabel |
+| **Hasil impor** | selalu jadi **pesan baru**, tidak menimpa pesan lama |
+| **Blok tak dikenal** | dibuang, jumlahnya dilaporkan — bukan gagal senyap |
+| **JSON rusak** | editor tidak berubah sama sekali, hanya muncul peringatan |
+
+Server tetap menyaring ulang setiap kali pesan disimpan, jadi JSON yang diimpor
+tidak bisa menyelipkan blok yang tidak sah.
+
 ### Naik, turun, salin, hapus
 
 Setiap blok punya empat tombol di kanan atas: **↑** naik, **↓** turun,

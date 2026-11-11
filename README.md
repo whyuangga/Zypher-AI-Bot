@@ -356,7 +356,8 @@ atau tombol di samping teks, **blok Tutup kartu** yang mengeluarkan teks & tombo
 dari container (pembuka polos di atas, baris tombol di bawah — seperti pesan
 Discohook), **aksesori di komponen mana pun** (tombol link atau thumbnail pada
 teks & gambar), **blok File** (lampiran PDF/zip dari URL atau unggahan, dengan
-spoiler), **naik/turun/salin/hapus** tiap blok, dan **penghitung batas komponen** yang menunjukkan
+spoiler), **naik/turun/salin/hapus** tiap blok, **import/ekspor JSON** (pindah susunan
+pesan antar server), dan **penghitung batas komponen** yang menunjukkan
 sisa kuota sebelum Discord menolak. Ada **pratinjau hidup**, **warna aksen** bebas,
 **unggah gambar**, dan pilihan pengirim: lewat bot, atau **atas nama server**
 (webhook — tokennya dienkripsi, butuh izin *Manage Webhooks*). Tombol **ambil

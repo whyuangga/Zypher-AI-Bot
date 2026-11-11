@@ -867,6 +867,85 @@ await check('/pesan: gambar unggahan bertahan saat pesan lama disimpan ulang', a
   assert.equal(info.pratinjauDipanggil, true, 'fungsi pratinjau tersedia');
 });
 
+/* ---------- Import / ekspor JSON ---------- */
+
+await check('pesan: ekspor dan impor JSON mempertahankan semua field', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  assert.ok(html.includes('exportJson'), 'tombol ekspor ada di halaman');
+  assert.ok(html.includes('importJson'), 'tombol impor ada di halaman');
+  assert.ok(html.includes('jsonText'), 'kotak JSON ada di halaman');
+
+  const page = mountPage(html, 'uji-json');
+
+  // Blok dengan SEMUA fitur: aksesori teks, container berwarna, spoiler, berkas.
+  const hasil = (await page.evaluate(`
+    (function () {
+      blocks = [
+        { kind: 'text', value: 'Pembuka', accessoryLabel: 'Buka', url: 'https://a.test' },
+        { kind: 'container', value: '', accent: '#58b9ff' },
+        { kind: 'image', value: 'https://img.test/a.png', spoiler: true },
+        { kind: 'close', value: '' },
+        { kind: 'file', value: 'https://a.test/p.pdf', name: 'panduan.pdf', spoiler: true }
+      ];
+      renderBlocks();
+      document.getElementById('postName').value = 'Rules';
+      exportJson();
+      var json = document.getElementById('jsonText').value;
+
+      blocks = [];
+      document.getElementById('jsonText').value = json;
+      importJson();
+      var pulih = blocks;
+      return {
+        panjang: json.length,
+        versi: JSON.parse(json).version,
+        format: JSON.parse(json).format,
+        jenis: pulih.map(function (b) { return b.kind; }).join(','),
+        aksesori: pulih[0].accessoryLabel + ' ' + pulih[0].url,
+        spoilerGambar: pulih[2].spoiler,
+        namaBerkas: pulih[4].name,
+        spoilerBerkas: pulih[4].spoiler,
+        namaPesanan: document.getElementById('postName').value
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.ok(Number(hasil.panjang) > 200, 'JSON terisi');
+  assert.equal(hasil.versi, 1, 'versi format ikut');
+  assert.equal(hasil.format, 'zypher-post', 'penanda format ikut');
+  assert.equal(hasil.jenis, 'text,container,image,close,file', 'semua jenis blok pulih');
+  assert.equal(hasil.aksesori, 'Buka https://a.test', 'aksesori teks pulih');
+  assert.equal(hasil.spoilerGambar, true, 'spoiler gambar pulih');
+  assert.equal(hasil.namaBerkas, 'panduan.pdf', 'nama berkas pulih');
+  assert.equal(hasil.spoilerBerkas, true, 'spoiler berkas pulih');
+  assert.equal(hasil.namaPesanan, 'Rules', 'nama pesan pulih');
+});
+
+await check('pesan: impor JSON rusak tidak merusak editor', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-json-rusak');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      blocks = [{ kind: 'text', value: 'aman' }];
+      document.getElementById('jsonText').value = '{bukan json}';
+      importJson();
+      var setelahRusak = blocks.length;
+
+      document.getElementById('jsonText').value = JSON.stringify({
+        format: 'zypher-post',
+        blocks: [{ kind: 'aneh', value: 'x' }, { kind: 'text', value: 'sah' }]
+      });
+      importJson();
+      return { setelahRusak: setelahRusak, setelahAsing: blocks.length, jenis: blocks[0].kind };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.setelahRusak, 1, 'JSON rusak tidak mengubah blok');
+  assert.equal(hasil.setelahAsing, 1, 'jenis asing dibuang, teks sah disimpan');
+  assert.equal(hasil.jenis, 'text', 'blok sah yang tersisa');
+});
+
 /* ---------- Uji diri: pengaman harus benar-benar menangkap bug ---------- */
 console.log('\nUji diri pengaman');
 

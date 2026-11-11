@@ -183,7 +183,6 @@ export function pesanPage(options: PesanPageOptions): string {
       <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('divider')">${icon('menu', 15)} Pemisah</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('container')">${icon('sliders', 15)} Container</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('section')">${icon('users', 15)} Section</button>
-      <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('image')">${icon('image', 15)} Gambar</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('file')">${icon('download', 15)} File</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('close')">${icon('logout', 15)} Tutup kartu</button>
     </div>
@@ -193,6 +192,19 @@ export function pesanPage(options: PesanPageOptions): string {
       <span id="usageWarn" class="usage-warn"></span>
     </div>
     <p class="hint" id="blockHint">Teks mendukung format Discord; baris diawali <code>-#</code> menjadi teks kecil. <b>Container</b> memulai kartu baru (blok sesudahnya masuk ke kartu itu), <b>Section</b> menaruh gambar kecil atau tombol di samping teks.</p>
+
+    <details class="json-panel">
+      <summary>${icon('file', 15)} Import / ekspor JSON</summary>
+      <div class="json-isi">
+        <p class="hint" style="margin:0">Untuk memindahkan susunan pesan ke server lain, atau menyimpan cadangan sebelum mengubah banyak hal. Channel tujuan sengaja <b>tidak</b> ikut — ID channel berbeda di tiap server.</p>
+        <div class="json-aksi">
+          <button class="btn btn-ghost btn-sm" type="button" onclick="exportJson()">${icon('upload', 15)} Ekspor</button>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="importJson()">${icon('download', 15)} Impor</button>
+          <span class="hint" id="jsonStatus" style="margin:0"></span>
+        </div>
+        <textarea id="jsonText" rows="8" spellcheck="false" placeholder="Klik Ekspor untuk mengisi, atau tempel JSON di sini lalu klik Impor."></textarea>
+      </div>
+    </details>
   </div>
 
   <div class="grid cols-2" style="gap:12px">
@@ -537,6 +549,172 @@ function buatEditorFile(index) {
 
   bungkus.appendChild(buatSakelar(index, 'spoiler', 'Sembunyikan sebagai spoiler'));
   return bungkus;
+}
+
+
+/**
+ * Versi format JSON. Dinaikkan kalau bentuk blok berubah dan impor lama perlu
+ * diterjemahkan. Tanpa ini, berkas cadangan lama akan gagal tanpa penjelasan.
+ */
+var JSON_VERSION = 1;
+
+/**
+ * Ekspor susunan pesan ke JSON.
+ *
+ * Yang diekspor: nama, warna aksen, pengirim, dan semua blok. Yang TIDAK:
+ * channel tujuan (ID channel berbeda di tiap server) dan data berkas unggahan
+ * (base64 bisa puluhan MB, dan tidak berguna di server lain).
+ */
+
+/**
+ * Sanitasi RINGAN untuk JSON yang diimpor.
+ *
+ * Bukan pengganti sanitizer di server — server tetap menyaring ulang setiap
+ * kali pesan disimpan, dan itulah yang menentukan. Tujuan versi ini hanya
+ * menjaga editor tetap waras: membuang blok yang jenisnya tidak dikenal dan
+ * merapikan nilai yang jelas salah, supaya admin melihat hasil impor yang
+ * masuk akal, bukan daftar blok yang berantakan.
+ */
+function sanitizeImported(input) {
+  var sah = Object.keys(LABEL);
+  var hasil = [];
+  var dibuang = [];
+  if (!Array.isArray(input)) return { blocks: hasil, dropped: ['isinya bukan daftar'] };
+
+  for (var i = 0; i < input.length; i += 1) {
+    var b = input[i];
+    if (!b || typeof b !== 'object') {
+      dibuang.push('blok ke-' + (i + 1) + ' bukan objek');
+      continue;
+    }
+    var kind = typeof b.kind === 'string' ? b.kind : '';
+    if (sah.indexOf(kind) === -1) {
+      dibuang.push('jenis blok tidak dikenal: ' + String(kind).slice(0, 20));
+      continue;
+    }
+    // Blok isi tanpa apa pun tidak berguna; blok struktur tetap diterima.
+    var nilai = typeof b.value === 'string' ? b.value : '';
+    var data = typeof b.data === 'string' ? b.data : '';
+    if (kind === 'text' && !nilai.trim()) {
+      dibuang.push('teks kosong');
+      continue;
+    }
+    if ((kind === 'image' || kind === 'file') && !nilai.trim() && !data) {
+      dibuang.push(kind + ' tanpa gambar/berkas');
+      continue;
+    }
+    hasil.push(normalBlock(b));
+  }
+  return { blocks: hasil, dropped: dibuang };
+}
+
+function exportJson() {
+  var isi = payloadBlocks();
+  if (isi.length === 0) return toast('Belum ada isi untuk diekspor', true);
+  var data = {
+    format: 'zypher-post',
+    version: JSON_VERSION,
+    name: (document.getElementById('postName') || {}).value || '',
+    accent: accentNow(),
+    sender: (document.getElementById('postSender') || {}).value || 'bot',
+    blocks: isi,
+  };
+  var teks = JSON.stringify(data, null, 2);
+  var kotak = document.getElementById('jsonText');
+  if (kotak) kotak.value = teks;
+  var status = document.getElementById('jsonStatus');
+  if (status) status.textContent = '✅ Siap — ' + isi.length + ' blok (' + Math.round(teks.length / 1024) + ' KB)';
+
+  // Salin ke papan klip kalau browser mengizinkan; kalau tidak, admin masih
+  // bisa memilih teks di kotak. Kegagalan menyalin bukan alasan menggagalkan
+  // ekspor, jadi tidak ada error yang ditampilkan.
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(teks).then(function () {
+      var st = document.getElementById('jsonStatus');
+      if (st) st.textContent = '✅ Tersalin ke papan klip — ' + isi.length + ' blok';
+    }, function () {});
+  }
+}
+
+/**
+ * Impor JSON ke editor.
+ *
+ * Memakai sanitizer yang SAMA dengan penyimpanan di server, jadi JSON yang
+ * rusak atau berisi jenis blok asing tidak bisa menyusup ke editor. Blok yang
+ * dibuang dilaporkan ke admin, bukan hilang diam-diam.
+ */
+function importJson() {
+  var kotak = document.getElementById('jsonText');
+  var status = document.getElementById('jsonStatus');
+  var teks = kotak ? String(kotak.value || '').trim() : '';
+  if (!teks) return toast('Tempel JSON dulu di kotak', true);
+
+  var data;
+  try {
+    data = JSON.parse(teks);
+  } catch (error) {
+    toast('JSON tidak valid: ' + error.message, true);
+    return;
+  }
+  if (!data || !Array.isArray(data.blocks)) {
+    toast('JSON tidak dikenali — harus punya bagian "blocks" berupa daftar', true);
+    return;
+  }
+  if (data.format && data.format !== 'zypher-post') {
+    toast('Berkas ini bukan ekspor halaman /pesan', true);
+    return;
+  }
+
+  var bersih = sanitizeImported(data.blocks);
+  if (bersih.blocks.length === 0) {
+    toast('Tidak ada blok yang bisa dipakai: ' + (bersih.dropped[0] || 'isinya kosong'), true);
+    return;
+  }
+
+  blocks = bersih.blocks;
+  if (data.name) document.getElementById('postName').value = String(data.name).slice(0, 120);
+  if (data.accent) document.getElementById('postAccent').value = data.accent;
+  if (data.sender) {
+    var pengirim = document.getElementById('postSender');
+    if (pengirim) pengirim.value = data.sender;
+  }
+  editingId = null; // hasil impor = pesan baru, bukan menimpa yang lama
+  renderBlocks();
+  renderPreview();
+
+  var pesan = '✅ ' + bersih.blocks.length + ' blok dimuat — tekan Simpan untuk menyimpan sebagai pesan baru';
+  if (bersih.dropped.length) pesan += '. ' + bersih.dropped.length + ' blok dibuang: ' + bersih.dropped[0];
+  if (status) status.textContent = pesan;
+  toast(pesan);
+}
+
+
+/**
+ * Bentuk baku satu blok di editor.
+ *
+ * Semua field yang dikenal ikut dimuat. Kalau ada field yang tertinggal di
+ * sini, membuka pesan lama (atau mengimpor JSON) lalu menyimpannya akan
+ * MENGHAPUS field itu tanpa peringatan — bug yang sudah pernah terjadi pada
+ * warna container dan akan terjadi lagi pada spoiler/berkas kalau tidak
+ * dirawat di satu tempat.
+ */
+function normalBlock(b) {
+  return {
+    kind: b.kind,
+    value: b.value || '',
+    url: b.url || '',
+    data: b.data || '',
+    accent: b.accent || '',
+    thumbnail: b.thumbnail || '',
+    accessoryLabel: b.accessoryLabel || '',
+    spacing: b.spacing || '',
+    // Aksesori blok teks/gambar (hasil impor maupun data tersimpan).
+    accessoryUrl: b.accessoryUrl || '',
+    // Berkas: nama unduhan dan penanda spoiler.
+    name: b.name || '',
+    spoiler: Boolean(b.spoiler),
+    blockId: b.blockId || '',
+  };
 }
 
 function renderBlocks() {
@@ -944,23 +1122,9 @@ function loadExisting() {
     var pengirim = document.getElementById('postSender');
     if (pengirim) pengirim.value = found.sender;
   }
-  blocks = found.blocks.map(function (b) {
-    // Field data WAJIB ikut. Tanpa ini, membuka pesan lama lalu menyimpan akan
-    // membuang gambar unggahannya — pesan yang sudah rapi berubah jadi tanpa
-    // gambar tanpa ada peringatan apa pun.
-    return {
-      kind: b.kind,
-      value: b.value || '',
-      url: b.url || '',
-      data: b.data || '',
-      // Field struktur ikut dimuat: tanpa ini, membuka pesan lama lalu
-      // menyimpan akan menghapus warna container dan aksesori section.
-      accent: b.accent || '',
-      thumbnail: b.thumbnail || '',
-      accessoryLabel: b.accessoryLabel || '',
-      spacing: b.spacing || '',
-    };
-  });
+  // normalBlock memuat SEMUA field yang dikenal, termasuk spoiler dan nama
+  // berkas — dulu daftarnya ditulis ulang di sini dan dua field itu tertinggal.
+  blocks = found.blocks.map(normalBlock);
   var send = document.getElementById('postSend');
   if (send) send.textContent = 'Simpan & kirim ulang';
   loadRoleButtonsFor(found.id);

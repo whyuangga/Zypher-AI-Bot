@@ -1199,6 +1199,59 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
  * Ditumpuk vertikal dengan garis pemisah tipis supaya jelas bahwa keduanya
  * milik blok yang sama, bukan blok baru.
  */
+/*
+ * Panel import/ekspor JSON.
+ *
+ * Sengaja dilipat (<details>) supaya tidak mendominasi halaman: fitur ini
+ * dipakai sesekali, bukan tiap kali menyusun pesan.
+ */
+.json-panel {
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.015);
+}
+.json-panel > summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text, #dbdee1);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+}
+.json-panel > summary::-webkit-details-marker {
+  display: none;
+}
+.json-panel > summary::after {
+  content: '▾';
+  margin-left: auto;
+  opacity: 0.6;
+  font-size: 11px;
+}
+.json-panel[open] > summary::after {
+  content: '▴';
+}
+.json-isi {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.json-aksi {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.json-isi textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  resize: vertical;
+  width: 100%;
+}
+
 .block-aksesori {
   display: grid;
   gap: 6px;
