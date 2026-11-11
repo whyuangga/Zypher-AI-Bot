@@ -597,6 +597,14 @@ export interface AgentSettings {
   busyMute: boolean;
   /** Jeda minimum antar balasan, supaya bot tidak mendominasi. */
   cooldownSeconds: number;
+  /**
+   * Tahan sapaan otomatis malam hari (23:00–06:00 WIB).
+   *
+   * Balasan ke mention/reply tetap jalan — yang ditahan hanya sapaan
+   * "pemecah sepi", karena menyapa channel kosong jam 3 pagi tidak ada
+   * gunanya dan mengganggu notifikasi.
+   */
+  quietHours: boolean;
   updatedAt: number;
 }
 
@@ -607,6 +615,7 @@ export const AGENT_DEFAULTS = {
   reactImages: true,
   busyMute: true,
   cooldownSeconds: 90,
+  quietHours: true,
 } as const;
 
 interface AgentRow {
@@ -619,6 +628,7 @@ interface AgentRow {
   react_images: number | boolean;
   busy_mute: number | boolean;
   cooldown_seconds: number;
+  quiet_hours: number | boolean | null;
   updated_at: number;
 }
 
@@ -645,6 +655,9 @@ export async function getAgentSettings(guildId: string): Promise<AgentSettings> 
     reactImages: Boolean(row.react_images),
     busyMute: Boolean(row.busy_mute),
     cooldownSeconds: Number(row.cooldown_seconds),
+    // NULL = database lama sebelum kolom ini ada; anggap mati supaya
+    // pembaruan tidak diam-diam mengubah perilaku server yang sudah jalan.
+    quietHours: row.quiet_hours === null ? false : Boolean(row.quiet_hours),
     updatedAt: Number(row.updated_at),
   };
 }
@@ -656,8 +669,8 @@ export async function saveAgentSettings(
   const current = await getAgentSettings(guildId);
   const next = { ...current, ...patch };
   await run(
-    `INSERT INTO agent (guild_id, channel_id, gallery_channel_id, quiet_minutes, max_per_hour, react_emoji, react_images, busy_mute, cooldown_seconds, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO agent (guild_id, channel_id, gallery_channel_id, quiet_minutes, max_per_hour, react_emoji, react_images, busy_mute, cooldown_seconds, quiet_hours, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (guild_id) DO UPDATE SET
        channel_id = excluded.channel_id,
        gallery_channel_id = excluded.gallery_channel_id,
@@ -667,6 +680,7 @@ export async function saveAgentSettings(
        react_images = excluded.react_images,
        busy_mute = excluded.busy_mute,
        cooldown_seconds = excluded.cooldown_seconds,
+       quiet_hours = excluded.quiet_hours,
        updated_at = excluded.updated_at`,
     [
       guildId,
@@ -678,6 +692,7 @@ export async function saveAgentSettings(
       next.reactImages ? 1 : 0,
       next.busyMute ? 1 : 0,
       next.cooldownSeconds,
+      next.quietHours ? 1 : 0,
       Date.now(),
     ],
   );

@@ -27,7 +27,10 @@ import {
   MEMORY_TURNS,
   QUIET_MAX_CHARS,
   QUIET_SYSTEM_PROMPT,
+  buildAntiRepeatBlock,
   channelRole,
+  isQuietHour,
+  pickQuietAngle,
   shouldBreakSilence,
   type AgentState,
   type MemoryTurn,
@@ -342,14 +345,23 @@ export function agentRoleInstruction(role: 'chat' | 'gallery'): string {
  * Dipisah supaya dashboard bisa menunjukkan **kalimat apa yang akan dicoba**
  * dan pengujian memakai teks yang sama dengan timer sungguhan.
  */
-export function buildQuietPrompt(guildName: string): string {
-  return [
+export function buildQuietPrompt(
+  guildName: string,
+  options: { angle?: string; recent?: readonly string[] } = {},
+): string {
+  const lines = [
     `Kamu anggota komunitas di server "${guildName}".`,
     'Channel sedang sepi — tidak ada yang mengobrol cukup lama.',
     'Buat satu kalimat pembuka ringan untuk mengajak ngobrol (bukan pengumuman, bukan promosi).',
     'Jangan menyebut dirimu bot atau AI. Maksimal 100 karakter.',
-    'Balas HANYA dengan kalimatnya.',
-  ].join('\n');
+  ];
+  // Sudut acak supaya sapaan tidak selalu berpola sama.
+  if (options.angle) lines.push(`Ide sudut obrolan kali ini: ${options.angle}`);
+  // Larangan mengulang kalimat bot sebelumnya di channel yang sama.
+  const antiRepeat = buildAntiRepeatBlock(options.recent ?? []);
+  if (antiRepeat) lines.push(antiRepeat.trim());
+  lines.push('Balas HANYA dengan kalimatnya.');
+  return lines.join('\n');
 }
 
 export interface AgentReplyPreviewOptions {
@@ -425,6 +437,13 @@ function humanMinutes(totalMinutes: number): string {
  * rusak padahal memang belum waktunya.
  */
 function explainQuietSkip(settings: AgentSettings, state: AgentState, now: number): string | null {
+  if (settings.quietHours && isQuietHour(now)) {
+    return (
+      'Sekarang jam tenang malam (23:00–06:00 WIB) — bot tidak menyapa channel sendiri. ' +
+      'Balasan ke mention tetap jalan. Matikan "Jam tenang malam" kalau tidak ingin ditahan.'
+    );
+  }
+
   const lastTrace = state.traces[state.traces.length - 1];
   const lastActivity = Math.max(lastTrace?.at ?? 0, state.lastReplyAt);
 
@@ -519,9 +538,15 @@ export async function previewQuietBreak(options: {
     reason = `Tanpa data channel dari bot yang berjalan, waktu sapaan tidak bisa dinilai. Contoh kalimat untuk ambang ${settings.quietMinutes} menit:`;
   }
 
+  // Sudut acak + larangan mengulang kalimat bot sebelumnya di channel ini.
+  // `state.turns` menyimpan beberapa giliran terakhir di memori bot.
+  const recentReplies = (state?.turns ?? [])
+    .filter((turn) => turn.role === 'bot')
+    .map((turn) => turn.text);
+
   const result = await askModel(
     QUIET_SYSTEM_PROMPT,
-    buildQuietPrompt(guildName),
+    buildQuietPrompt(guildName, { angle: pickQuietAngle(), recent: recentReplies }),
     0.9,
     config.ai.brevityTokens,
     'pemecah sepi',

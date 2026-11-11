@@ -14,7 +14,9 @@ import {
   formatNumber,
   initials,
   relativeTime,
+  resourcePanel,
   statCard,
+  type ResourcePanelData,
 } from './base.js';
 import { appShell, pageHead, SHARED_JS, type PageKey } from './shell.js';
 import { STYLE } from './theme.js';
@@ -107,6 +109,13 @@ export interface DashboardData extends PageContext {
   model: string;
   /** Label engine database, mis. "SQLite" atau "PostgreSQL" */
   storage?: string;
+  /**
+   * Pemakaian CPU/memori/jaringan/disk proses ini.
+   *
+   * Opsional: kalau pembacaan gagal di hosting (cgroup aneh, /proc tidak ada),
+   * halaman tetap tampil tanpa panel ini alih-alih error 500.
+   */
+  resources?: ResourcePanelData | null;
 }
 
 export function ringkasanPage(data: DashboardData): string {
@@ -121,6 +130,17 @@ export function ringkasanPage(data: DashboardData): string {
     hint: 'pesan AI yang tersimpan',
     body: activityChart(data.series),
   });
+
+  // Panel sumber daya hanya dirender kalau datanya ada. Hosting yang tidak
+  // mengizinkan baca cgroup tetap mendapat halaman utuh, bukan kartu kosong.
+  const resourcesCard = data.resources
+    ? card({
+        title: 'Pemakaian server',
+        hint: 'proses ini & batas container',
+        body: resourcePanel(data.resources),
+        bodyClass: 'res-card',
+      })
+    : '';
 
   const statusCard = card({
     title: 'Status sistem',
@@ -205,11 +225,11 @@ export function ringkasanPage(data: DashboardData): string {
         ? `${esc(data.guildName)} · <span class="mono">${esc(data.guildId)}</span>`
         : `Server <span class="mono">${esc(data.guildId || '—')}</span>`
     } · data langsung dari ${esc(data.storage ?? 'SQLite')} bot`,
-    actions: `<a class="btn-primary" href="/dokumen">${icon('upload', 16)} Upload dokumen</a>`,
   })}
 ${stats}
-<div class="grid cols-2 mt">${chartCard}${statusCard}</div>
-<div class="grid cols-2 mt">${roomsCard}${docsCard}</div>`;
+<div class="grid cols-2 mt">${chartCard}${resourcesCard}</div>
+<div class="grid cols-2 mt">${statusCard}${docsCard}</div>
+<div class="mt">${roomsCard}</div>`;
 
   return appShell({ title: 'Ringkasan', guildId: data.guildId, guildName: data.guildName, active: 'ringkasan', body, counts: data.counts, status: data.status });
 }
@@ -1485,6 +1505,8 @@ export interface AgentPageOptions extends PageContext {
     galleryChannelId: string | null;
     quietMinutes: number;
     maxPerHour: number;
+    /** Tahan sapaan otomatis 23:00–06:00 WIB. */
+    quietHours: boolean;
     reactEmoji: boolean;
     reactImages: boolean;
     busyMute: boolean;
@@ -1570,6 +1592,10 @@ export function agentPage(options: AgentPageOptions): string {
     <input type="checkbox" id="agentImages" ${options.agent.reactImages ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
     <span>Komentari gambar &amp; video (butuh Vision aktif)</span>
   </label>
+  <label class="check-row" ${CHECK_ROW}>
+    <input type="checkbox" id="agentQuietHours" ${options.agent.quietHours ? 'checked' : ''} style="width:16px;height:16px;accent-color:var(--accent)">
+    <span>Jam tenang malam (23:00&ndash;06:00 WIB) <span class="hint">— jangan menyapa channel kosong saat orang tidur; balasan ke mention tetap jalan</span></span>
+  </label>
 
   <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
     <button class="btn-primary" type="button" onclick="saveAgent()">${icon('check', 16)} Simpan agent</button>
@@ -1638,6 +1664,7 @@ export function agentPage(options: AgentPageOptions): string {
   <div class="kv"><span>Satu member ngobrol sendiri</span><b>Dibalas, dengan jeda</b></div>
   <div class="kv"><span>Beberapa member aktif bersamaan</span><b>Diam — tidak menyela</b></div>
   <div class="kv"><span>Channel ngobrol sepi</span><b>Menyapa sekali</b></div>
+  <div class="kv"><span>Channel ngobrol sepi, jam 23:00–06:00</span><b>${options.agent.quietHours ? 'Ditahan' : 'Tetap menyapa'}</b></div>
   <div class="kv"><span>Kiriman foto/video di galeri</span><b>Dikomentari</b></div>
   <div class="kv"><span>Teks biasa di galeri</span><b>Diabaikan</b></div>
   <div class="kv"><span>Pesan dari bot lain</span><b>Tidak pernah dibalas</b></div>
@@ -1685,6 +1712,7 @@ async function saveAgent() {
     busyMute: document.getElementById('agentBusy').checked,
     reactEmoji: document.getElementById('agentEmoji').checked,
     reactImages: document.getElementById('agentImages').checked,
+    quietHours: document.getElementById('agentQuietHours').checked,
   }, 'Pengaturan agent disimpan.');
 }
 

@@ -117,6 +117,9 @@ CREATE TABLE IF NOT EXISTS agent (
   react_images     INTEGER NOT NULL DEFAULT 1,
   busy_mute        INTEGER NOT NULL DEFAULT 1,
   cooldown_seconds INTEGER NOT NULL DEFAULT 90,
+  -- 1 = jangan sapaan otomatis malam hari (23:00-06:00 WIB). Balasan ke
+  -- mention tetap jalan; hanya sapaan pemecah sepi yang ditahan.
+  quiet_hours      INTEGER NOT NULL DEFAULT 1,
   updated_at       INTEGER NOT NULL
 );
 
@@ -293,6 +296,7 @@ CREATE TABLE IF NOT EXISTS agent (
   react_images     INTEGER NOT NULL DEFAULT 1,
   busy_mute        INTEGER NOT NULL DEFAULT 1,
   cooldown_seconds INTEGER NOT NULL DEFAULT 90,
+  quiet_hours      INTEGER NOT NULL DEFAULT 1,
   updated_at       BIGINT NOT NULL
 );
 

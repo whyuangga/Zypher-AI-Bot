@@ -8,7 +8,7 @@ Yang bisa dilakukan:
 
 | Halaman | Isi |
 |---|---|
-| `/` | 3 kartu statistik, **grafik aktivitas 7 hari**, status sistem, sesi DM terbaru, dokumen terbaru |
+| `/` | 3 kartu statistik, **grafik aktivitas 7 hari**, **pemakaian server** (CPU/memori/jaringan/disk), status sistem, sesi DM terbaru, dokumen terbaru |
 | `/panel` | Kelola panel "Chat via DM": kirim ke satu channel, ganti channel, hapus, atau matikan tombolnya |
 | `/dokumen` | Upload dokumen RAG (file atau tempel teks), daftar dokumen, hapus dokumen, **uji pencarian** |
 | `/keyword` | Tambah & hapus template jawaban owner (FAQ, harga, aturan) |
@@ -142,6 +142,36 @@ Kalau panel menampilkan port tertentu (mis. `25566` di tab Startup/Network), tul
 - Semua notifikasi muncul sebagai *toast* di kanan bawah.
 
 > Grafik memakai zona waktu **Asia/Jakarta**, jadi batang "Hari ini" mengikuti tanggal WIB — bukan UTC server.
+
+---
+
+## Panel "Pemakaian server"
+
+Di bawah grafik **Aktivitas 7 hari** ada panel berisi empat meter: **CPU**,
+**Memori**, **Jaringan**, dan **Disk**. Isinya pemakaian **proses bot/dashboard
+ini**, bukan seluruh mesin.
+
+| Baris | Sumber angka | Catatan |
+|---|---|---|
+| CPU | delta waktu CPU proses ÷ waktu dinding, dibagi jatah inti | sampel 120 ms; range 0–100% |
+| Memori | RSS proses + batas container | batas dari cgroup (Pterodactyl), bukan RAM host |
+| Jaringan | `/proc/<pid>/net/dev` | kumulatif sejak bot hidup (bukan B/s) |
+| Disk | `statfs` folder kerja | partisi tempat `data/` berada |
+
+**Kenapa memakai cgroup.** Di Pterodactyl, `os.totalmem()` melaporkan RAM
+mesin induk — dashboard akan menulis "96 MB dari 64 GB" padahal batas
+container-nya 612 MB. Karena itu `/sys/fs/cgroup/memory.max` (v2) atau
+`memory.limit_in_bytes` (v1) dibaca lebih dulu; `os.totalmem()` hanya cadangan.
+Bila batas container terpakai, sub-baris memori menulis **(batas container)**.
+
+**Kalau angka tidak terbaca**, baris itu menampilkan **"—"** dengan garis
+putus-putus, bukan **0%**. Dua hal itu berbeda: 0% berarti "tidak terpakai",
+"—" berarti "tidak diketahui". Kartu panel disembunyikan seluruhnya kalau
+pembacaan gagal total (mis. `/proc` tidak tersedia), dan alasannya masuk log —
+halaman Ringkasan tetap tampil utuh.
+
+> Angka ini berguna untuk menjawab "apakah saya mendekati batas hosting?", bukan
+> untuk profiling. Untuk itu pakai panel hosting atau `node --inspect`.
 
 ---
 
@@ -321,6 +351,9 @@ Halaman sendiri, sengaja terpisah dari sambutan karena yang diatur bukan
   diabaikan. Isi satu channel di kedua kolom akan ditolak.
 - Batas per jam (gabungan kedua channel), jeda minimum, dan sakelar "diam saat
   ramai".
+- **Jam tenang malam (23:00–06:00 WIB)** — bot berhenti menyapa channel sendiri
+  saat orang tidur. Balasan ke mention/reply **tetap jalan**; yang ditahan hanya
+  sapaan pemecah sepi. Bisa dimatikan kalau server memang ramai malam.
 
 Panel **Tes percakapan** punya dua tingkat:
 

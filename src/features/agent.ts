@@ -22,6 +22,7 @@ import {
   QUIET_MAX_CHARS,
   QUIET_SYSTEM_PROMPT,
   channelRole,
+  pickQuietAngle,
   emptyState,
   pushTurn,
   recordReply,
@@ -341,10 +342,13 @@ export async function handleQuietChannel(
   if (!channel || !channel.isTextBased() || channel.isDMBased() || !channel.isSendable()) return false;
 
   try {
+    // Sudut acak + larangan mengulang kalimat bot sebelumnya, sama seperti
+    // pratinjau di dashboard — supaya yang diuji = yang dikirim.
+    const recent = entry.state.turns.filter((turn) => turn.role === 'bot').map((turn) => turn.text);
     const result = await chat({
       messages: [
         { role: 'system', content: QUIET_SYSTEM_PROMPT },
-        { role: 'user', content: buildQuietPrompt(channel.guild.name) },
+        { role: 'user', content: buildQuietPrompt(channel.guild.name, { angle: pickQuietAngle(), recent }) },
       ],
       maxTokens: config.ai.brevityTokens,
       temperature: 0.9,

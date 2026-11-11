@@ -756,19 +756,90 @@ await testAsync('navigasi dashboard tidak punya menu Memori & Transkrip', async 
   assert.ok(!html.includes('href="/transkrip"'), 'menu Transkrip masih ada');
 });
 
-await testAsync('tombol Upload dokumen di Ringkasan hanya pintasan ke /dokumen', async () => {
+await testAsync('Ringkasan: tombol Upload dokumen di header sudah dihapus', async () => {
   const pages = await readFile('src/web/ui/pages.ts', 'utf8');
-
-  // Tombol ini pernah ditanya "fungsinya apa?" — jawabannya: pintasan, bukan
-  // form. Dikunci supaya tidak diam-diam berubah jadi form kedua yang membuat
-  // admin bingung harus upload di mana.
-  assert.ok(
-    pages.includes('<a class=\"btn-primary\" href=\"/dokumen\">${icon(\'upload\', 16)} Upload dokumen</a>'),
-    'tombol berupa tautan ke halaman dokumen',
+  const ringkasan = pages.slice(
+    pages.indexOf('export function ringkasanPage'),
+    pages.indexOf('export function dokumenPage'),
   );
-  // Input file hanya boleh ada di halaman Dokumen, bukan Ringkasan.
-  const ringkasan = pages.slice(pages.indexOf('export function ringkasanPage'), pages.indexOf('export function dokumenPage'));
+
+  // User meminta tombol besar di header Ringkasan dihapus: halaman itu bukan
+  // tempat upload, dan tombolnya cuma melempar orang ke halaman lain.
+  assert.equal(
+    ringkasan.includes('<a class=\"btn-primary\" href=\"/dokumen\">${icon(\'upload\', 16)} Upload dokumen</a>'),
+    false,
+    'tombol header sudah tidak ada',
+  );
+  // Input file tetap hanya di halaman Dokumen.
   assert.equal(ringkasan.includes('type=\"file\"'), false, 'Ringkasan tidak punya input file');
+  // Pintasan di keadaan kosong masih boleh — itu bagian alur, bukan header.
+  assert.ok(ringkasan.includes('Belum ada dokumen'), 'keadaan kosong tetap ada');
+});
+
+await testAsync('Ringkasan: panel pemakaian server muncul setelah Aktivitas 7 hari', async () => {
+  const { ringkasanPage } = await import('../src/web/ui/pages.js');
+  const html = ringkasanPage({
+    guildId: 'g-res',
+    guildName: 'Server Uji',
+    status: { online: true, mode: 'standalone', uptimeSeconds: 120 },
+    stats: { rooms: 0, documents: 0, chunks: 0, keywords: 0, messages: 0 },
+    rooms: [],
+    documents: [],
+    series: [],
+    ragEnabled: true,
+    embedModel: null,
+    model: 'test',
+    resources: {
+      cpuPercent: 12.5,
+      memoryUsed: 96 * 1024 * 1024,
+      memoryTotal: 612 * 1024 * 1024,
+      memoryFromCgroup: true,
+      networkIn: 2048,
+      networkOut: 1024,
+      diskUsed: 184 * 1024 * 1024,
+      diskTotal: 1024 * 1024 * 1024,
+      uptimeSeconds: 120,
+      inContainer: true,
+    },
+  } as never);
+
+  assert.ok(html.includes('Pemakaian server'), 'kartu sumber daya ada');
+  for (const label of ['CPU', 'Memori', 'Jaringan', 'Disk']) {
+    assert.ok(html.includes(`> ${label}</span>`), `baris ${label} ada`);
+  }
+  // Urutan yang diminta user: di bawah Aktivitas 7 hari.
+  const aktivitas = html.indexOf('Aktivitas 7 hari');
+  const sumberDaya = html.indexOf('Pemakaian server');
+  const status = html.indexOf('Status sistem');
+  assert.ok(aktivitas >= 0 && sumberDaya > aktivitas, 'di bawah Aktivitas 7 hari');
+  assert.ok(status > sumberDaya, 'status sistem setelah panel sumber daya');
+
+  // Angka harus dari data, bukan karangan.
+  assert.ok(html.includes('96 MB'), 'memori terpakai dari data');
+  assert.ok(html.includes('612 MB'), 'batas container dari data');
+  assert.ok(html.includes('12,5%'), 'persen CPU terformat id-ID');
+  assert.ok(html.includes('batas container'), 'menjelaskan asal batas memori');
+});
+
+await testAsync('Ringkasan: tanpa data sumber daya, kartunya hilang (bukan 0%)', async () => {
+  const { ringkasanPage } = await import('../src/web/ui/pages.js');
+  const html = ringkasanPage({
+    guildId: 'g-res2',
+    guildName: 'Server Uji',
+    status: { online: false, mode: 'dashboard', uptimeSeconds: 1 },
+    stats: { rooms: 0, documents: 0, chunks: 0, keywords: 0, messages: 0 },
+    rooms: [],
+    documents: [],
+    series: [],
+    ragEnabled: false,
+    embedModel: null,
+    model: 'test',
+    resources: null,
+  } as never);
+
+  // Klaim "0%" dan "tidak bisa dibaca" berbeda — kalau gagal, sembunyikan.
+  assert.equal(html.includes('Pemakaian server'), false, 'panel tidak dirender');
+  assert.ok(html.includes('Aktivitas 7 hari'), 'halaman tetap utuh');
 });
 
 await testAsync('halaman dashboard tidak menyebut channel arsip transkrip', async () => {
@@ -1704,6 +1775,7 @@ const agentSettings = (patch: Record<string, unknown> = {}) => ({
   reactImages: true,
   busyMute: true,
   cooldownSeconds: 90,
+  quietHours: true,
   updatedAt: 0,
   ...patch,
 });
@@ -3125,6 +3197,125 @@ await testAsync('pemecah sepi: prompt pratinjau identik dengan bot asli', async 
     'prompt tidak lagi ditulis ulang di agent.ts',
   );
   assert.ok(preview.includes('shouldBreakSilence'), 'pratinjau memakai keputusan timer yang sama');
+});
+
+await testAsync('pemecah sepi: tidak mengulang kalimat yang sama', async () => {
+  const { buildAntiRepeatBlock, pickQuietAngle, QUIET_ANGLES } = await import('../src/features/agent-core.js');
+  const { buildQuietPrompt } = await import('../src/features/preview.js');
+
+  // Tanpa riwayat: tidak ada blok larangan (jangan menulis kalimat kosong).
+  assert.equal(buildAntiRepeatBlock([]), '', 'kosong kalau belum ada riwayat');
+
+  const block = buildAntiRepeatBlock(['Sepi banget ya', 'Halo semua']);
+  assert.ok(block.includes('Sepi banget ya'), 'menyebut kalimat lama');
+  assert.ok(block.includes('Halo semua'), 'menyebut semua kalimat lama');
+  assert.match(block, /JANGAN/, 'instruksi tegas');
+
+  // Maksimal 5 kalimat terakhir — prompt tidak boleh membengkak.
+  const many = buildAntiRepeatBlock(['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7']);
+  assert.equal(many.includes('a1'), false, 'yang lama dibuang');
+  assert.ok(many.includes('a7'), 'yang terbaru dipakai');
+
+  // Prompt lengkap memuat sudut + larangan mengulang.
+  const prompt = buildQuietPrompt('Server Uji', { angle: 'Tanya lagi pada sibuk apa', recent: ['Sepi banget'] });
+  assert.ok(prompt.includes('Tanya lagi pada sibuk apa'), 'sudut masuk ke prompt');
+  assert.ok(prompt.includes('Sepi banget'), 'riwayat masuk ke prompt');
+
+  // Sudut selalu diambil dari daftar, dan bisa bervariasi.
+  assert.ok(QUIET_ANGLES.length >= 5, 'cukup banyak sudut');
+  assert.equal(pickQuietAngle(() => 0), QUIET_ANGLES[0]);
+  assert.equal(pickQuietAngle(() => 0.999), QUIET_ANGLES[QUIET_ANGLES.length - 1]);
+  const picks = new Set(Array.from({ length: 40 }, () => pickQuietAngle()));
+  assert.ok(picks.size >= 3, `sudut bervariasi (dapat ${picks.size})`);
+});
+
+await testAsync('pemecah sepi: bot asli & pratinjau sama-sama pakai sudut acak', async () => {
+  const agent = await readFile('src/features/agent.ts', 'utf8');
+  const preview = await readFile('src/features/preview.ts', 'utf8');
+  // Kalau hanya salah satu yang memakai, pratinjau kembali bukan cermin bot.
+  assert.ok(agent.includes('pickQuietAngle'), 'bot asli memakai sudut acak');
+  assert.ok(preview.includes('pickQuietAngle'), 'pratinjau memakai sudut acak');
+  assert.ok(agent.includes('buildQuietPrompt(channel.guild.name, { angle'), 'bot meneruskan sudut');
+  assert.ok(preview.includes('buildQuietPrompt(guildName, { angle'), 'pratinjau meneruskan sudut');
+});
+
+await testAsync('jam tenang malam menahan sapaan 23:00–06:00 WIB', async () => {
+  const { emptyState, isQuietHour, shouldBreakSilence } = await import('../src/features/agent-core.js');
+
+  // Zona waktu WIB, bukan zona server (hosting biasanya UTC).
+  const at = (iso: string) => new Date(iso).getTime();
+  assert.equal(isQuietHour(at('2026-11-09T23:30:00+07:00')), true, '23:30 tenang');
+  assert.equal(isQuietHour(at('2026-11-09T03:00:00+07:00')), true, '03:00 tenang');
+  assert.equal(isQuietHour(at('2026-11-09T06:00:00+07:00')), false, '06:00 sudah boleh');
+  assert.equal(isQuietHour(at('2026-11-09T12:00:00+07:00')), false, 'siang boleh');
+  assert.equal(isQuietHour(at('2026-11-09T22:59:00+07:00')), false, '22:59 masih boleh');
+
+  // Channel sunyi 2 jam sebelum waktu uji (trace dibuat relatif, bukan jam
+  // tetap — trace setelah `now` akan dianggap "masa depan" dan tidak sepi).
+  const idleSince = (now: number) => ({ ...emptyState(), traces: [{ userId: 'u1', at: now - 2 * 60 * 60_000 }] });
+
+  const malamAt = at('2026-11-09T23:30:00+07:00');
+  const malam = shouldBreakSilence(
+    agentSettings({ cooldownSeconds: 0 }) as never,
+    idleSince(malamAt),
+    malamAt,
+  );
+  assert.equal(malam, false, 'ditahan saat jam tenang');
+
+  // Saklar dimatikan -> kembali menyapa.
+  const mati = shouldBreakSilence(
+    agentSettings({ cooldownSeconds: 0, quietHours: false }) as never,
+    idleSince(malamAt),
+    malamAt,
+  );
+  assert.equal(mati, true, 'menyapa kalau jam tenang dimatikan');
+
+  // Siang hari tetap menyapa seperti biasa.
+  const siangAt = at('2026-11-09T12:00:00+07:00');
+  const siang = shouldBreakSilence(
+    agentSettings({ cooldownSeconds: 0 }) as never,
+    idleSince(siangAt),
+    siangAt,
+  );
+  assert.equal(siang, true, 'siang tetap menyapa');
+});
+
+await testAsync('jam tenang: pratinjau menjelaskan alasannya', async () => {
+  const { previewQuietBreak } = await import('../src/features/preview.js');
+  const { emptyState } = await import('../src/features/agent-core.js');
+
+  const hasil = await previewQuietBreak({
+    settings: agentSettings({ cooldownSeconds: 0 }) as never,
+    guildName: 'Komunitas Zypher',
+    state: {
+      ...emptyState(),
+      traces: [{ userId: 'u1', at: new Date('2026-11-09T23:30:00+07:00').getTime() - 2 * 60 * 60_000 }],
+    },
+    now: new Date('2026-11-09T23:30:00+07:00').getTime(),
+  });
+
+  assert.equal(hasil.wouldFire, false, 'tidak menyapa');
+  assert.ok(hasil.reason.includes('jam tenang'), 'alasan disebut');
+  assert.ok(hasil.reason.includes('23:00'), 'jamnya jelas');
+  assert.ok(hasil.reason.includes('mention'), 'menjelaskan batasnya');
+});
+
+await testAsync('jam tenang: tersimpan & bisa diatur dari dashboard', async () => {
+  const { getAgentSettings, saveAgentSettings } = await import('../src/db/repo.js');
+  await saveAgentSettings(GUILD, { quietHours: true });
+  assert.equal((await getAgentSettings(GUILD)).quietHours, true, 'bisa dinyalakan');
+  await saveAgentSettings(GUILD, { quietHours: false });
+  assert.equal((await getAgentSettings(GUILD)).quietHours, false, 'bisa dimatikan');
+
+  const pages = await readFile('src/web/ui/pages.ts', 'utf8');
+  assert.ok(pages.includes('id="agentQuietHours"'), 'ada checkbox di halaman agent');
+  assert.ok(pages.includes('quietHours: document.getElementById'), 'ikut terkirim saat simpan');
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(server.includes('quietHours: bool(payload.quietHours'), 'API menerimanya');
+  const schema = await readFile('src/db/schema.ts', 'utf8');
+  assert.ok(schema.includes('quiet_hours'), 'kolom DB ada');
+  const migrate = await readFile('src/db/index.ts', 'utf8');
+  assert.ok(migrate.includes('ALTER TABLE agent ADD COLUMN quiet_hours'), 'database lama ikut dimigrasi');
 });
 
 await testAsync('pemecah sepi: bisa dikirim nyata ke channel', async () => {

@@ -232,19 +232,45 @@ bisa mencoba gaya lain, melihat hasilnya, baru menekan Simpan.
 | Tombol | Yang terjadi |
 |---|---|
 | **Tes balasan** | Balasan untuk pesan contoh, bisa dipilih mode ngobrol atau mode galeri |
-| **Tes pemecah sepi** | Kalimat yang akan dipakai saat channel sepi — sekaligus memberi tahu kalau fitur itu tidak akan jalan (channel belum dipilih / ambang 0 menit) |
+| **Tes pemecah sepi** | Kalimat yang akan dipakai saat channel sepi — sekaligus memberi tahu kalau fitur itu tidak akan jalan (channel belum dipilih / ambang 0 menit / masih jam tenang) |
+| **Kirim tes ke channel** | Benar-benar mengirim **satu** pesan berisi kutipan pesan uji + balasan bot |
+| **Kirim pemecah sepi ke channel** | Benar-benar mengirim kalimat pemecah sepi ke channel ngobrol |
+| **Paksa tulis** (centang) | Menulis kalimat pemecah sepi walau timer belum waktunya |
 
 Di halaman agent, pengaturan yang dipakai adalah yang **sudah tersimpan**, karena
 hasilnya bergantung pada channel, jeda, dan batas per jam. Kalau channel yang
 diuji belum diatur, hasilnya diberi catatan supaya tidak bingung kenapa di server
 sungguhan bot diam.
 
-### Yang penting: tidak ada yang dikirim
+### Pratinjau vs kirim nyata
 
-Semua tombol tes hanya **mengembalikan teks** ke browser. Tidak ada pesan ke
+Tombol **Tes ...** hanya **mengembalikan teks** ke browser: tidak ada pesan ke
 channel, tidak ada DM, tidak ada mention. Ini dijaga test otomatis
 (`pratinjau: tidak ada modul pratinjau yang mengirim ke Discord`) yang membaca
 kode `src/features/preview.ts` dan menolak adanya `.send(`.
+
+Tombol **Kirim ... ke channel** melakukan kebalikannya: memakai `channel.send()`
+lewat `src/features/test-send.ts`, dengan penanda "pesan uji" dan
+`allowedMentions: { parse: [] }` supaya tidak ada yang ter-tag. Butuh bot online
+di proses yang sama — kalau dashboard berdiri sendiri, tombolnya dinonaktifkan.
+
+### Pemecah sepi: pratinjau = timer sungguhan
+
+`previewQuietBreak()` memakai `shouldBreakSilence()` dan `QUIET_SYSTEM_PROMPT`
+yang **sama** dengan timer di `handleQuietChannel()`. Kalau belum waktunya,
+dashboard menuliskan sisa waktunya (mis. "baru sunyi 5 menit, ambang 45 menit —
+sekitar 40 menit lagi") alih-alih menghasilkan sapaan palsu.
+
+Bot juga menyimpan kalimat sapaan terakhirnya di memori channel dan mengirimnya
+ke prompt sebagai larangan mengulang (`buildAntiRepeatBlock`), ditambah **sudut
+obrolan acak** (`QUIET_ANGLES`) supaya sapaan tidak selalu berbentuk
+"Sepi banget ya…". Keduanya juga berlaku di pratinjau.
+
+### Jam tenang malam
+
+Sapaan otomatis ditahan antara **23:00–06:00 WIB** (`isQuietHour()`,
+`quiet_hours` di tabel `agent`). Balasan ke mention/reply tetap jalan. Waktu
+diambil dengan zona **Asia/Jakarta**, bukan zona server — hosting umumnya UTC.
 
 Supaya hasil tes tidak pernah menyimpang dari perilaku bot, prompt sambutan,
 prompt perpisahan, aturan gaya agent, dan prompt pemecah sepi **hanya ada di satu
@@ -437,7 +463,7 @@ Tiga penyebab yang sudah diperbaiki:
 ## Uji tanpa Discord
 
 ```bash
-npm run smoke     # 274 test, termasuk logika agent, sambutan & perpisahan
+npm run smoke     # 281 test, termasuk logika agent, sambutan & perpisahan
 ```
 
 Test yang relevan: `agent:` (channel, ramai, jatah per jam, cooldown, sepi),

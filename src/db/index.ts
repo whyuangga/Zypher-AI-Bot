@@ -60,6 +60,11 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
     'ALTER TABLE welcome ADD COLUMN banner_bytes TEXT',
     'ALTER TABLE goodbye ADD COLUMN banner_mime TEXT',
     'ALTER TABLE goodbye ADD COLUMN banner_bytes TEXT',
+    // Jam tenang malam: jangan menyapa channel otomatis saat orang tidur.
+    // Default 1 (aktif) mengikuti referensi, tapi baris lama ikut jadi aktif
+    // hanya setelah kolom ini ditambahkan — perilaku lama tidak berubah
+    // sampai admin menyimpan pengaturan agent lagi.
+    'ALTER TABLE agent ADD COLUMN quiet_hours INTEGER',
   ];
 
   for (const statement of statements) {

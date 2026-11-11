@@ -319,6 +319,17 @@ await test('agent: gallery_channel_id ada di Postgres', async () => {
   assert.equal((await repo.getAgentSettings(guild)).galleryChannelId, null);
 });
 
+await test('agent: quiet_hours ada di Postgres', async () => {
+  const repo = await import('../src/db/repo.js');
+  const guild = 'g-agent-quiet-pg';
+
+  await repo.saveAgentSettings(guild, { quietHours: true });
+  assert.equal((await repo.getAgentSettings(guild)).quietHours, true, 'bisa dinyalakan');
+
+  await repo.saveAgentSettings(guild, { quietHours: false });
+  assert.equal((await repo.getAgentSettings(guild)).quietHours, false, 'bisa dimatikan');
+});
+
 /* ------------------------------------------------------------------ */
 
 await driver.close();

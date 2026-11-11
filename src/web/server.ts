@@ -55,6 +55,7 @@ import {
   SAMPLE_MEMBER_NAME,
 } from '../features/preview.js';
 import { channelState } from '../features/agent.js';
+import { readResourceUsage } from './resources.js';
 import { normalizeDisplayMode } from '../features/display-mode.js';
 import { cardRendererAvailable, chromiumPath, renderWelcomeCard } from '../features/welcome-card.js';
 import {
@@ -471,6 +472,12 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         model: config.ai.model,
         storage: dialect() === 'pg' ? 'PostgreSQL' : 'SQLite',
         series: guildId ? await messagesPerDay(guildId, 7) : await messagesPerDay('', 7),
+        // Dibaca dengan `catch`: kalau cgroup/proc tidak bisa dibaca di hosting,
+        // panelnya hilang — halaman Ringkasan tetap tampil utuh.
+        resources: await readResourceUsage({ workDir: process.cwd() }).catch((error: unknown) => {
+          logger.warn(`Gagal membaca pemakaian sumber daya — ${errorMessage(error)}`);
+          return null;
+        }),
         status: dashboardStatus(),
         counts: await navCounts(guildId),
       }),
@@ -560,6 +567,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
           reactImages: agent.reactImages,
           busyMute: agent.busyMute,
           cooldownSeconds: agent.cooldownSeconds,
+          quietHours: agent.quietHours,
         },
         channels,
         botOnline: status.online,
@@ -1080,6 +1088,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       busyMute: bool(payload.busyMute, current.busyMute),
       reactEmoji: bool(payload.reactEmoji, current.reactEmoji),
       reactImages: bool(payload.reactImages, current.reactImages),
+      quietHours: bool(payload.quietHours, current.quietHours),
     });
 
     sendJson(response, 200, { ok: true, agent: await getAgentSettings(guildId) });
