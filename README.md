@@ -65,7 +65,7 @@ platform Discord yang tidak bisa dilewati bot. Karena itu fitur room/thread diha
 | 🧠 **Memori jangka panjang** | AI otomatis menyimpan fakta penting lewat *tool calling*, plus perintah manual `/ingat`. Memori dipakai lagi di sesi berikutnya; `/konsolidasi` menggabungkan memori yang berulang. |
 | 👋 **Sambutan & perpisahan** | Sapaan yang **digenerate AI per orang** — pakai nama panggilan + waktu setempat, jadi kalimatnya beda tiap member (bukan template seragam). Bentuk pesannya bisa dipilih — **kartu PNG**, **Components V2**, **embed**, atau **teks biasa** (dua terakhir yang bisa me-ping) — dikirim lewat DM atau channel. Bot lain yang bergabung juga disapa. Saat member keluar, bot mengucapkan **salam perpisahan** dengan nada sopan. Lihat [docs/sambutan-agent.md](docs/sambutan-agent.md). |
 | 🗣️ **AI Agent di channel** | Di **dua** channel: bot ikut ngobrol seperti anggota komunitas di channel ngobrol (balas mention/reply, tanggapi emoji/sticker, menyapa saat sepi), dan **mengomentari gambar & video** di channel galeri. **Diam saat obrolan ramai**, dibatasi N balasan per jam, dan riwayat obrolannya **hanya di memori** — tidak ditulis ke database. |
-| 🖥️ **Dashboard web** | `/`, `/panel`, `/sambutan`, `/agent`, `/dokumen`, `/keyword`, `/moderasi`, `/pengaturan` (8 halaman) — gaya editorial gelap ([pratinjau](docs/screenshots/README.md)), **toggle fitur AI per server** (RAG, Auto Memory, tombol chat DM khusus admin, Suara balasan AI). Sidebar kiri, grafik aktivitas 7 hari, **panel pemakaian server** (CPU/memori/jaringan/disk, sadar batas container Pterodactyl), kartu statistik per server. **Zona waktu WIB/WITA/WIT** bisa dipilih per server — memengaruhi jam di prompt, jam tenang malam agent, sapaan pagi/siang/sore, grafik harian, dan jam di transkrip. Nama server tampil di topbar (bukan ID mentah), dan panel "Chat via DM" bisa dikirim, dipindah, atau dimatikan dari `/panel`. **Dashboard tidak menyimpan isi percakapan maupun memori member.** |
+| 🖥️ **Dashboard web** | `/`, `/panel`, `/sambutan`, `/pesan`, `/agent`, `/dokumen`, `/keyword`, `/moderasi`, `/pengaturan` (9 halaman) — gaya editorial gelap ([pratinjau](docs/screenshots/README.md)), **toggle fitur AI per server** (RAG, Auto Memory, tombol chat DM khusus admin, Suara balasan AI). Sidebar kiri, grafik aktivitas 7 hari, **panel pemakaian server** (CPU/memori/jaringan/disk, sadar batas container Pterodactyl), kartu statistik per server. **Zona waktu WIB/WITA/WIT** bisa dipilih per server — memengaruhi jam di prompt, jam tenang malam agent, sapaan pagi/siang/sore, grafik harian, dan jam di transkrip. Nama server tampil di topbar (bukan ID mentah), dan panel "Chat via DM" bisa dikirim, dipindah, atau dimatikan dari `/panel`. **Dashboard tidak menyimpan isi percakapan maupun memori member.** |
 | 📚 **Dokumen RAG** | Upload `.txt`/`.md`/`.csv`/`.json`/`.pdf`/`.docx` (maks 8 MB) lewat `/dokumen tambah` atau dashboard. AI menjawab dari isi dokumen dan menyebut sumbernya (`📚 Sumber: faq.md — bagian 3`). Ada **uji pencarian** di halaman Dokumen (tombol Cari) untuk melihat potongan mana yang akan dipakai AI beserta skornya — sama seperti `/dokumen cari`. Pencarian BM25 bawaan — **tanpa API key tambahan**. |
 | 🔑 **Keyword kustom** | Admin menulis jawaban acuan; AI memakainya sebagai **fakta** dan menyusun ulang kalimatnya agar **bervariasi setiap kali** (bukan copy-paste). |
 | 🎭 **Persona per server** | Mis. "kamu guru bahasa Inggris yang sabar" — berlaku untuk semua chat yang memakai server itu sebagai konteks. |
@@ -348,6 +348,25 @@ dashboard — tanpa menunggu ada member bergabung dan tanpa mengirim pesan apa p
 
 Panduan lengkap: **[docs/sambutan-agent.md](docs/sambutan-agent.md)**.
 
+Butuh pesan sendiri (rules, pengumuman, info server, **ambil role**)? Pakai
+halaman [`/pesan`](docs/pesan.md) — susun blok teks/gambar/tombol, kirim sekali,
+lalu perbarui tanpa kirim ulang. Satu pesan bisa berisi **beberapa container**
+(masing-masing dengan warna aksen sendiri), **section** yang menaruh gambar kecil
+atau tombol di samping teks, **blok Tutup kartu** yang mengeluarkan teks & tombol
+dari container (pembuka polos di atas, baris tombol di bawah — seperti pesan
+Discohook), **aksesori di komponen mana pun** (tombol link atau thumbnail pada
+teks & gambar), **blok File** (lampiran PDF/zip dari URL atau unggahan, dengan
+spoiler), **naik/turun/salin/hapus** tiap blok, **import/ekspor JSON** (pindah susunan
+pesan antar server), dan **penghitung batas komponen** yang menunjukkan
+sisa kuota sebelum Discord menolak. Ada **pratinjau hidup**, **warna aksen** bebas,
+**unggah gambar**, dan pilihan pengirim: lewat bot, atau **atas nama server**
+(webhook — tokennya dienkripsi, butuh izin *Manage Webhooks*). Tombol **ambil
+role** memberi role hanya dengan klik, lengkap dengan **emoji** dan **warna**
+tombol (biru/abu/hijau/merah); untuk role yang banyak tersedia **menu dropdown**
+sampai 25 pilihan, dengan opsi **hanya satu pilihan** yang otomatis mencabut
+role lain di menu yang sama — cocok untuk menu warna nama atau platform. Bot
+butuh izin **Manage Roles** dan posisinya harus di atas role yang dibagikan.
+
 ### `/reset` atau `/akhiri`?
 
 Dua-duanya menghapus riwayat, tapi hasilnya beda:
@@ -468,8 +487,8 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke # 347 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
-npm run smoke:pg       # 16 test jalur Postgres (pg-mem, tanpa server database)
+npm run smoke # 385 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
+npm run smoke:pg       # 21 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # 15 pemeriksaan rantai fallback provider (server tiruan)
 npm run test:ui        # 75 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
 npm run test:browser   # uji klik sungguhan di Chromium (butuh dashboard hidup)
@@ -622,6 +641,7 @@ docs/models.md               # ID model gratis per provider + rekomendasi
 docs/rag.md                  # dokumen pengetahuan AI (RAG)
 docs/dashboard.md            # dashboard web: setup, halaman, keamanan
 docs/sambutan-agent.md       # sambutan, perpisahan, AI Agent, banner & pratinjau
+docs/pesan.md               # pesan container: susun sendiri, kirim & perbarui
 docs/postgres.md             # Postgres, migrasi data, multi-shard
 docs/moderation.md           # moderasi otomatis + log pelanggaran
 docs/vision-voice.md         # vision gambar, STT/TTS, /ucap

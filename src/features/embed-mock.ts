@@ -51,15 +51,35 @@ export interface EmbedMock {
   fields: Array<{ name: string; value: string; inline: boolean }>;
 }
 
+/**
+ * Satu blok di dalam container, DALAM URUTAN ASLINYA.
+ *
+ * Dulu bentuk ini memisahkan `lines` dan `imageUrls` lalu pratinjau menggambar
+ * semua teks lebih dulu, baru semua gambar. Akibatnya pratinjau berbohong
+ * tentang urutan sebenarnya: teks yang di Discord muncul SETELAH gambar ikut
+ * tergambar di atasnya. Sekarang satu daftar berurutan, jadi tidak mungkin
+ * melenceng lagi.
+ */
+export type ContainerBlock =
+  | { kind: 'text'; text: string }
+  | { kind: 'small'; text: string }
+  | { kind: 'image'; url: string }
+  /**
+   * Section (tipe 9): teks dan thumbnail-nya SATU blok, bukan dua.
+   *
+   * Dulu thumbnail dikirim sebagai blok terpisah sesudah teks, sehingga
+   * pratinjau menggambarnya di baris sendiri di kanan bawah — padahal Discord
+   * menampilkannya DI SAMPING teks. Kalau satu kesatuan, tidak mungkin
+   * melenceng.
+   */
+  | { kind: 'section'; text: string; thumbnailUrl: string | null }
+  | { kind: 'separator' };
+
 export interface ContainerMock {
   /** Warna garis aksen di kiri kartu (`#6d8cff`), null = bawaan. */
   accentColor: string | null;
-  /** Baris-baris teks berurutan, dipisah formatnya. */
-  lines: MockLine[];
-  /** Gambar di dalam Media Gallery. */
-  imageUrls: string[];
-  /** true = ada pemisah garis antar bagian. */
-  separators: number;
+  /** Blok berurutan persis seperti yang dikirim ke Discord. */
+  blocks: ContainerBlock[];
 }
 
 /** Batas atas isi pratinjau — melindungi halaman dari payload raksasa. */
@@ -133,7 +153,8 @@ export function embedToMock(source: EmbedBuilder | { toJSON?: () => unknown; dat
  *
  * Struktur JSON komponen dibaca apa adanya karena itulah yang dikirim ke
  * Discord. Tipe komponen yang dipakai di proyek ini: 17 = container,
- * 10 = text display, 12 = media gallery, 14 = separator.
+ * 10 = text display, 12 = media gallery, 14 = separator, 9 = section,
+ * 11 = thumbnail.
  */
 export function containerToMock(
   source: ContainerBuilder | { toJSON?: () => unknown } | null,
@@ -144,9 +165,7 @@ export function containerToMock(
   // Hanya container yang bisa dipratinjau.
   if (raw.type !== undefined && raw.type !== 17) return null;
 
-  const lines: MockLine[] = [];
-  const imageUrls: string[] = [];
-  let separators = 0;
+  const blocks: ContainerBlock[] = [];
 
   const walk = (items: unknown[]): void => {
     for (const item of items) {
@@ -157,7 +176,7 @@ export function containerToMock(
       if (type === 10 && typeof node.content === 'string') {
         // Konvensi Discord: baris diawali `-#` = teks kecil (footer).
         const text = node.content.slice(0, MAX_TEXT);
-        lines.push({ kind: /^\s*-#\s/.test(text) ? 'small' : 'text', text });
+        blocks.push({ kind: /^\s*-#\s/.test(text) ? 'small' : 'text', text });
         continue;
       }
       if (type === 12 && Array.isArray(node.items)) {
@@ -169,12 +188,31 @@ export function containerToMock(
           const entry = media as Record<string, unknown>;
           const url =
             readUrl(entry.media) ?? readUrl(entry) ?? (typeof entry.url === 'string' ? entry.url : null);
-          if (url) imageUrls.push(url);
+          if (url) blocks.push({ kind: 'image', url });
         }
         continue;
       }
+      // Section (9): teks + thumbnail (11) di kanan. Bentuk inilah yang dipakai
+      // sambutan supaya avatar tidak jadi kotak selebar penuh di tengah.
+      //
+      // Teks di dalamnya digabung menjadi SATU blok bersama thumbnail-nya:
+      // Discord menampilkan keduanya berdampingan, bukan bertumpuk.
+      if (type === 9 && Array.isArray(node.components)) {
+        const isi = node.components
+          .map((child) =>
+            child && typeof child === 'object' && (child as Record<string, unknown>).type === 10
+              ? String((child as Record<string, unknown>).content ?? '')
+              : '',
+          )
+          .filter(Boolean)
+          .join('\n');
+        const accessory = node.accessory as Record<string, unknown> | undefined;
+        const thumb = accessory && accessory.type === 11 ? readUrl(accessory.media) : null;
+        if (isi) blocks.push({ kind: 'section', text: isi.slice(0, MAX_TEXT), thumbnailUrl: thumb });
+        continue;
+      }
       if (type === 14) {
-        separators += 1;
+        blocks.push({ kind: 'separator' });
         continue;
       }
       // Container bersarang / action row: turun satu tingkat.
@@ -183,13 +221,11 @@ export function containerToMock(
   };
 
   if (Array.isArray(raw.components)) walk(raw.components);
-  if (lines.length === 0 && imageUrls.length === 0) return null;
+  if (blocks.length === 0) return null;
 
   return {
     accentColor: colorToCss(raw.accent_color ?? raw.accentColor),
-    lines,
-    imageUrls,
-    separators,
+    blocks,
   };
 }
 

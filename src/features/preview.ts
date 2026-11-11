@@ -325,8 +325,9 @@ async function shapePreview(options: {
       // Mention di pratinjau selalu ditampilkan: admin perlu melihat bahwa
       // mention memang ikut di `content`, di luar embed.
       mentionUser: true,
-      // Avatar di container: pratinjau memakai URL, bukan lampiran.
+      // Avatar & banner di container: pratinjau memakai URL, bukan lampiran.
       containerAvatarUrl: options.mode === 'container' ? avatarUrl : null,
+      containerBannerUrl: options.mode === 'container' ? options.bannerDataUri ?? null : null,
     });
 
     const embedMock = payload.embeds[0] ? embedToMock(payload.embeds[0]) : null;
@@ -337,10 +338,25 @@ async function shapePreview(options: {
     if (embedMock && options.bannerDataUri) {
       embedMock.imageUrl = options.bannerDataUri;
     }
-    if (containerMock && options.bannerDataUri) {
-      // Media Gallery kontainer hanya berisi avatar (kalau ada); banner asli
-      // masuk ke daftar gambar supaya terlihat di bawah teks.
-      containerMock.imageUrls.push(options.bannerDataUri);
+    // Banner: komponennya memakai rujukan bertanda `attachment://banner`
+    // (data URI ditolak Discord), dan di sini rujukan itu diganti gambar
+    // sungguhan supaya terlihat di browser. Mengganti — bukan menambah —
+    // supaya banner tidak muncul dua kali seperti dulu.
+    if (containerMock) {
+      for (const block of containerMock.blocks) {
+        // Rujukan bertanda dari `container-card.ts` — data URI tidak boleh
+        // dikirim ke Discord, jadi di pratinjau saja diganti gambar aslinya.
+        if (block.kind === 'image' && block.url === 'attachment://preview-banner' && options.bannerDataUri) {
+          block.url = options.bannerDataUri;
+        } else if (
+          block.kind === 'section' &&
+          block.thumbnailUrl &&
+          block.thumbnailUrl === 'attachment://preview-avatar' &&
+          avatarUrl
+        ) {
+          block.thumbnailUrl = avatarUrl;
+        }
+      }
     }
 
     return { contentText: payload.content, embedMock, containerMock };

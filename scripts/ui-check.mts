@@ -367,6 +367,7 @@ const {
   agentPage,
   moderasiPage,
 } = await import('../src/web/ui/pages.js');
+const { pesanPage } = await import('../src/web/ui/pesan.js');
 
 const pages: Array<{ name: string; render: () => string }> = [
   { name: '/login', render: () => loginPage() },
@@ -435,6 +436,77 @@ const pages: Array<{ name: string; render: () => string }> = [
         model: null,
         defaultModel: 'gpt-uji',
         stats: { rooms: 0, messages: 0, documents: 0 },
+      } as never),
+  },
+  {
+    name: '/pesan',
+    render: () =>
+      pesanPage({
+        ...base,
+        posts: [],
+        channels: [channel],
+        botReady: true,
+        roles: [
+          { id: '9001', name: 'Gamer', color: '#6d8cff', position: 3, blockedBy: null },
+          { id: '9002', name: 'Admin', color: '#ff5555', position: 20, blockedBy: 'bot-posisi' },
+        ],
+        hasManageRoles: true,
+        roleButtons: {},
+        roleMenus: {},
+      } as never),
+  },
+  {
+    // Varian berisi: menguji mode ubah (?id=) memuat blok dan nama dengan benar.
+    name: '/pesan?isi',
+    render: () =>
+      pesanPage({
+        ...base,
+        posts: [
+          {
+            id: 1,
+            name: 'Rules',
+            channelId: channel.id,
+            blocks: [
+              { kind: 'text', value: 'Aturan server' },
+              { kind: 'divider', value: '' },
+              { kind: 'button', value: 'Gabung', url: 'https://discord.gg/x' },
+              { kind: 'container', accent: '#58b9ff' },
+              { kind: 'text', value: '### Kartu kedua' },
+              { kind: 'section', value: 'Teks section', accessoryLabel: 'Buka', url: 'https://x.test' },
+              { kind: 'divider', spacing: 'large' },
+              { kind: 'text', value: 'Teks beraksesori', accessoryLabel: 'Unduh', url: 'https://x.test/a' },
+              { kind: 'image', value: 'https://img.test/a.png', spoiler: true },
+              { kind: 'close', value: '' },
+              { kind: 'file', value: 'https://x.test/panduan.pdf', name: 'panduan.pdf', spoiler: true },
+            ],
+            messageId: '999',
+            updatedAt: Date.now(),
+            accent: '#ff8800',
+            sender: 'webhook' as const,
+          },
+        ],
+        channels: [channel],
+        botReady: true,
+        roles: [{ id: '9001', name: 'Gamer', color: '#6d8cff', position: 3, blockedBy: null }],
+        hasManageRoles: true,
+        roleButtons: {
+          1: [{ id: 5, roleId: '9001', label: 'Ambil role Gamer', mode: 'toggle', emoji: '🎮', style: 'success' }],
+        },
+        roleMenus: {
+          1: [
+            {
+              id: 2,
+              placeholder: 'Pilih warna',
+              minValues: 1,
+              maxValues: 1,
+              exclusive: true,
+              options: [
+                { roleId: '9001', label: 'Gamer', emoji: '🎮', description: 'Suka main' },
+                { roleId: '9002', label: 'Admin', emoji: null, description: null },
+              ],
+            },
+          ],
+        },
       } as never),
   },
   { name: '/dokumen', render: () => dokumenPage({ ...base, documents: [], embedModel: null } as never) },
@@ -761,6 +833,119 @@ await check(`${calledRoutes.size} endpoint literal ada di server`, () => {
 await check('rute server terbaca (pengaman tidak lolos karena kosong)', () => {
   assert.ok(serverSegments.size >= 8, `hanya ${serverSegments.size} rute terbaca — pola pengurai rusak`);
 });
+/* ---------- Gambar unggahan tidak boleh hilang saat disimpan ulang ---------- */
+
+await check('/pesan: gambar unggahan bertahan saat pesan lama disimpan ulang', async () => {
+  const target = mounted.find((page) => page.name === '/pesan?isi');
+  assert.ok(target, 'halaman /pesan?isi tidak ada');
+
+  // Dua bug nyata yang pernah lolos, keduanya membuat gambar hilang tanpa
+  // peringatan saat admin membuka pesan lama lalu menekan Simpan:
+  //   1. loadExisting() hanya menyalin kind/value/url, field data dibuang
+  //   2. payloadBlocks() menyaring blok yang value-nya kosong, padahal gambar
+  //      unggahan punya value kosong dan gambarnya di field data
+  const hasil = await target.page.evaluate(`
+    (function () {
+      blocks = [{ kind: 'text', value: 'Halo' }, { kind: 'image', value: '', data: 'data:image/png;base64,AAAA' }];
+      renderBlocks();
+      var payload = payloadBlocks();
+      var gambar = payload.filter(function (b) { return b.kind === 'image'; });
+      // Pratinjau memakai <img> yang dibuat lewat createElement di dalam
+      // renderPreview(); DOM tiruan pengaman ini tidak menyimpan anak elemen,
+      // jadi yang diperiksa hasil susunan blok — bukan isi DOM.
+      return {
+        jumlah: gambar.length,
+        adaData: gambar.length > 0 && Boolean(gambar[0].data),
+        pratinjauDipanggil: typeof renderPreview === 'function',
+      };
+    })()
+  `);
+
+  const info = hasil as { jumlah: number; adaData: boolean; pratinjauDipanggil: boolean };
+  assert.equal(info.jumlah, 1, 'gambar ikut terkirim saat disimpan');
+  assert.equal(info.adaData, true, 'data gambar tidak dibuang');
+  assert.equal(info.pratinjauDipanggil, true, 'fungsi pratinjau tersedia');
+});
+
+/* ---------- Import / ekspor JSON ---------- */
+
+await check('pesan: ekspor dan impor JSON mempertahankan semua field', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  assert.ok(html.includes('exportJson'), 'tombol ekspor ada di halaman');
+  assert.ok(html.includes('importJson'), 'tombol impor ada di halaman');
+  assert.ok(html.includes('jsonText'), 'kotak JSON ada di halaman');
+
+  const page = mountPage(html, 'uji-json');
+
+  // Blok dengan SEMUA fitur: aksesori teks, container berwarna, spoiler, berkas.
+  const hasil = (await page.evaluate(`
+    (function () {
+      blocks = [
+        { kind: 'text', value: 'Pembuka', accessoryLabel: 'Buka', url: 'https://a.test' },
+        { kind: 'container', value: '', accent: '#58b9ff' },
+        { kind: 'image', value: 'https://img.test/a.png', spoiler: true },
+        { kind: 'close', value: '' },
+        { kind: 'file', value: 'https://a.test/p.pdf', name: 'panduan.pdf', spoiler: true }
+      ];
+      renderBlocks();
+      document.getElementById('postName').value = 'Rules';
+      exportJson();
+      var json = document.getElementById('jsonText').value;
+
+      blocks = [];
+      document.getElementById('jsonText').value = json;
+      importJson();
+      var pulih = blocks;
+      return {
+        panjang: json.length,
+        versi: JSON.parse(json).version,
+        format: JSON.parse(json).format,
+        jenis: pulih.map(function (b) { return b.kind; }).join(','),
+        aksesori: pulih[0].accessoryLabel + ' ' + pulih[0].url,
+        spoilerGambar: pulih[2].spoiler,
+        namaBerkas: pulih[4].name,
+        spoilerBerkas: pulih[4].spoiler,
+        namaPesanan: document.getElementById('postName').value
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.ok(Number(hasil.panjang) > 200, 'JSON terisi');
+  assert.equal(hasil.versi, 1, 'versi format ikut');
+  assert.equal(hasil.format, 'zypher-post', 'penanda format ikut');
+  assert.equal(hasil.jenis, 'text,container,image,close,file', 'semua jenis blok pulih');
+  assert.equal(hasil.aksesori, 'Buka https://a.test', 'aksesori teks pulih');
+  assert.equal(hasil.spoilerGambar, true, 'spoiler gambar pulih');
+  assert.equal(hasil.namaBerkas, 'panduan.pdf', 'nama berkas pulih');
+  assert.equal(hasil.spoilerBerkas, true, 'spoiler berkas pulih');
+  assert.equal(hasil.namaPesanan, 'Rules', 'nama pesan pulih');
+});
+
+await check('pesan: impor JSON rusak tidak merusak editor', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-json-rusak');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      blocks = [{ kind: 'text', value: 'aman' }];
+      document.getElementById('jsonText').value = '{bukan json}';
+      importJson();
+      var setelahRusak = blocks.length;
+
+      document.getElementById('jsonText').value = JSON.stringify({
+        format: 'zypher-post',
+        blocks: [{ kind: 'aneh', value: 'x' }, { kind: 'text', value: 'sah' }]
+      });
+      importJson();
+      return { setelahRusak: setelahRusak, setelahAsing: blocks.length, jenis: blocks[0].kind };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.setelahRusak, 1, 'JSON rusak tidak mengubah blok');
+  assert.equal(hasil.setelahAsing, 1, 'jenis asing dibuang, teks sah disimpan');
+  assert.equal(hasil.jenis, 'text', 'blok sah yang tersisa');
+});
+
 /* ---------- Uji diri: pengaman harus benar-benar menangkap bug ---------- */
 console.log('\nUji diri pengaman');
 

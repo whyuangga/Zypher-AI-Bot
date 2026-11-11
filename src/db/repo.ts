@@ -1,6 +1,15 @@
 import { all, get, insert, run } from './index.js';
 import { config } from '../config.js';
 import { normalizeTimeZone } from '../lib/timezone.js';
+import { parseBlocks, sanitizeBlocks, type PostBlock } from '../features/custom-post.js';
+import { decryptSecret, encryptSecret } from '../features/webhook-secret.js';
+import {
+  sanitizeRoleButtons,
+  sanitizeRoleMenu,
+  type RoleButtonInput,
+  type RoleButtonMode,
+  type RoleMenuInput,
+} from '../features/role-buttons.js';
 import {
   modeFromLegacySettings,
   normalizeDisplayMode,
@@ -1403,4 +1412,489 @@ export async function setPanelEnabled(guildId: string, enabled: boolean): Promis
     [guildId, enabled ? 1 : 0, now, enabled ? 1 : 0, now],
   );
   return getPanel(guildId);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Pesan container buatan admin (halaman /pesan)                      */
+/* ------------------------------------------------------------------ */
+
+export interface CustomPost {
+  id: number;
+  /** Blok berurutan; sudah dirapikan oleh `parseBlocks()`. */
+  blocks: PostBlock[];
+  name: string;
+  channelId: string | null;
+  /** ID pesan Discord yang sudah dikirim (null = belum pernah dikirim). */
+  messageId: string | null;
+  /** Warna aksen `#rrggbb`; null = bawaan. */
+  accent: string | null;
+  /** `webhook` = tampil atas nama server; selain itu lewat bot. */
+  sender: 'bot' | 'webhook';
+  updatedAt: number;
+}
+
+interface CustomPostRow {
+  id: number | string;
+  guild_id: string;
+  name: string;
+  channel_id: string | null;
+  blocks: string;
+  message_id: string | null;
+  accent?: string | null;
+  sender?: string | null;
+  updated_at: number | string;
+}
+
+function toCustomPost(row: CustomPostRow): CustomPost {
+  return {
+    id: Number(row.id),
+    name: row.name,
+    channelId: row.channel_id,
+    blocks: parseBlocks(row.blocks),
+    messageId: row.message_id,
+    accent: row.accent ?? null,
+    sender: row.sender === 'webhook' ? 'webhook' : 'bot',
+    updatedAt: Number(row.updated_at),
+  };
+}
+
+/** Semua pesan milik satu server, terbaru lebih dulu. */
+export async function listCustomPosts(guildId: string): Promise<CustomPost[]> {
+  // Dibatasi: pesan container adalah dokumen panjang, dan halaman /pesan
+  // menanam semua isinya ke HTML. 200 pesan x 3500 karakter sudah ~700 KB —
+  // batas ini menjaga halaman tetap ringan tanpa memotong pemakaian wajar.
+  const rows = await all<CustomPostRow>(
+    'SELECT * FROM custom_posts WHERE guild_id = ? ORDER BY updated_at DESC LIMIT 200',
+    [guildId],
+  );
+  return rows.map(toCustomPost);
+}
+
+export async function getCustomPost(guildId: string, id: number): Promise<CustomPost | null> {
+  const row = await get<CustomPostRow>('SELECT * FROM custom_posts WHERE guild_id = ? AND id = ?', [
+    guildId,
+    id,
+  ]);
+  return row ? toCustomPost(row) : null;
+}
+
+/**
+ * Buat pesan baru.
+ *
+ * Blok dirapikan LEBIH DULU lewat `sanitizeBlocks()`, jadi yang tersimpan
+ * selalu bentuk yang mungkin dikirim Discord — bukan input mentah dashboard.
+ */
+export async function createCustomPost(
+  guildId: string,
+  input: {
+    name: string;
+    channelId: string | null;
+    blocks: unknown;
+    accent?: string | null;
+    sender?: 'bot' | 'webhook';
+  },
+): Promise<CustomPost> {
+  const blocks = sanitizeBlocks(input.blocks).blocks;
+  const id = await insert(
+    `INSERT INTO custom_posts (guild_id, name, channel_id, blocks, message_id, accent, sender, updated_at)
+     VALUES (?, ?, ?, ?, NULL, ?, ?, ?)`,
+    [
+      guildId,
+      input.name.slice(0, 120),
+      input.channelId,
+      JSON.stringify(blocks),
+      input.accent ?? null,
+      input.sender ?? 'bot',
+      Date.now(),
+    ],
+  );
+  return (await getCustomPost(guildId, id))!;
+}
+
+/** Perbarui isi pesan. `message_id` dipertahankan supaya bisa diedit di Discord. */
+export async function updateCustomPost(
+  guildId: string,
+  id: number,
+  input: {
+    name?: string;
+    channelId?: string | null;
+    blocks?: unknown;
+    accent?: string | null;
+    sender?: 'bot' | 'webhook';
+  },
+): Promise<CustomPost | null> {
+  const current = await getCustomPost(guildId, id);
+  if (!current) return null;
+
+  const blocks = input.blocks === undefined ? current.blocks : sanitizeBlocks(input.blocks).blocks;
+  await run(
+    'UPDATE custom_posts SET name = ?, channel_id = ?, blocks = ?, accent = ?, sender = ?, updated_at = ? WHERE guild_id = ? AND id = ?',
+    [
+      (input.name ?? current.name).slice(0, 120),
+      input.channelId === undefined ? current.channelId : input.channelId,
+      JSON.stringify(blocks),
+      input.accent === undefined ? current.accent : input.accent,
+      input.sender ?? current.sender,
+      Date.now(),
+      guildId,
+      id,
+    ],
+  );
+  return getCustomPost(guildId, id);
+}
+
+/** Simpan ID pesan Discord setelah berhasil dikirim. */
+export async function setCustomPostMessage(
+  guildId: string,
+  id: number,
+  messageId: string | null,
+): Promise<void> {
+  await run('UPDATE custom_posts SET message_id = ?, updated_at = ? WHERE guild_id = ? AND id = ?', [
+    messageId,
+    Date.now(),
+    guildId,
+    id,
+  ]);
+}
+
+export async function deleteCustomPost(guildId: string, id: number): Promise<void> {
+  await run('DELETE FROM custom_posts WHERE guild_id = ? AND id = ?', [guildId, id]);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Tombol ambil role (halaman /pesan)                                 */
+/* ------------------------------------------------------------------ */
+
+export interface RoleButton {
+  id: number;
+  postId: number;
+  roleId: string;
+  label: string;
+  mode: RoleButtonMode;
+  /** Emoji tombol (unicode atau `<:nama:id>`), atau null. */
+  emoji: string | null;
+  /** primary/secondary/success/danger. */
+  style: string;
+  position: number;
+}
+
+interface RoleButtonRow {
+  id: number | string;
+  guild_id: string;
+  post_id: number | string;
+  role_id: string;
+  label: string;
+  mode: string;
+  emoji: string | null;
+  style: string | null;
+  position: number | string;
+}
+
+function toRoleButton(row: RoleButtonRow): RoleButton {
+  return {
+    id: Number(row.id),
+    postId: Number(row.post_id),
+    roleId: row.role_id,
+    label: row.label,
+    mode: row.mode === 'give' ? 'give' : 'toggle',
+    // Baris lama (sebelum kolom ini ada) bernilai NULL. Tombolnya tetap
+    // berfungsi, hanya tanpa emoji dan dengan warna bawaan.
+    emoji: row.emoji ?? null,
+    style: row.style ?? 'primary',
+    position: Number(row.position),
+  };
+}
+
+/** Tombol role milik satu pesan, urut sesuai posisi di pesan. */
+export async function listRoleButtons(guildId: string, postId: number): Promise<RoleButton[]> {
+  const rows = await all<RoleButtonRow>(
+    'SELECT * FROM post_role_buttons WHERE guild_id = ? AND post_id = ? ORDER BY position ASC, id ASC',
+    [guildId, postId],
+  );
+  return rows.map(toRoleButton);
+}
+
+/**
+ * Ganti SELURUH tombol role satu pesan.
+ *
+ * Kenapa hapus-lalu-tulis, bukan sinkronisasi per baris: urutan tombol adalah
+ * hal yang admin atur, dan mencocokkan "baris lama mana yang jadi baris baru"
+ * hanya menambah kerumitan tanpa manfaat. Jumlahnya paling banyak 25.
+ *
+ * `id` sengaja dibuat ulang. customId tombol lama jadi tidak berlaku lagi —
+ * itu yang diinginkan: tombol yang sudah dihapus dari dashboard tidak boleh
+ * masih bisa memberi role kalau ada orang yang masih memegang pesan lamanya.
+ */
+export async function replaceRoleButtons(
+  guildId: string,
+  postId: number,
+  input: unknown,
+): Promise<{ buttons: RoleButton[]; dropped: string[] }> {
+  const { buttons, dropped } = sanitizeRoleButtons(input);
+  await run('DELETE FROM post_role_buttons WHERE guild_id = ? AND post_id = ?', [guildId, postId]);
+
+  let position = 0;
+  for (const button of buttons) {
+    await insert(
+      `INSERT INTO post_role_buttons (guild_id, post_id, role_id, label, mode, emoji, style, position)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        guildId,
+        postId,
+        button.roleId,
+        button.label,
+        button.mode,
+        button.emoji ?? null,
+        button.style ?? 'primary',
+        position,
+      ],
+    );
+    position += 1;
+  }
+
+  return { buttons: await listRoleButtons(guildId, postId), dropped };
+}
+
+/** Cari tombol role dari customId — dipakai bot saat tombol diklik. */
+export async function findRoleButton(
+  guildId: string,
+  buttonId: number,
+): Promise<RoleButton | null> {
+  const row = await get<RoleButtonRow>(
+    'SELECT * FROM post_role_buttons WHERE guild_id = ? AND id = ?',
+    [guildId, buttonId],
+  );
+  return row ? toRoleButton(row) : null;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Select menu role (halaman /pesan)                                  */
+/* ------------------------------------------------------------------ */
+
+export interface RoleMenu {
+  id: number;
+  postId: number;
+  placeholder: string;
+  minValues: number;
+  maxValues: number;
+  exclusive: boolean;
+  options: RoleMenuOption[];
+}
+
+export interface RoleMenuOption {
+  id: number;
+  roleId: string;
+  label: string;
+  emoji: string | null;
+  description: string | null;
+}
+
+interface RoleMenuRow {
+  id: number | string;
+  post_id: number | string;
+  placeholder: string;
+  min_values: number | string;
+  max_values: number | string;
+  exclusive: number | string;
+}
+
+interface RoleOptionRow {
+  id: number | string;
+  menu_id: number | string;
+  role_id: string;
+  label: string;
+  emoji: string | null;
+  description: string | null;
+}
+
+/** Semua dropdown role milik satu pesan, lengkap dengan pilihannya. */
+export async function listRoleMenus(guildId: string, postId: number): Promise<RoleMenu[]> {
+  const menus = await all<RoleMenuRow>(
+    'SELECT * FROM post_role_menus WHERE guild_id = ? AND post_id = ? ORDER BY position ASC, id ASC',
+    [guildId, postId],
+  );
+  if (menus.length === 0) return [];
+
+  /*
+   * Kenapa satu query untuk semua pilihan, bukan satu query per menu: jumlah
+   * menu paling banyak beberapa, tapi halaman /pesan memuat SEMUA pesan.
+   * Pola N+1 di sini akan terasa saat daftar pesan panjang.
+   */
+  const options = await all<RoleOptionRow>(
+    `SELECT * FROM post_role_options
+      WHERE menu_id IN (${menus.map(() => '?').join(', ')})
+      ORDER BY position ASC, id ASC`,
+    menus.map((menu) => Number(menu.id)),
+  );
+
+  const byMenu = new Map<number, RoleMenuOption[]>();
+  for (const row of options) {
+    const menuId = Number(row.menu_id);
+    const list = byMenu.get(menuId) ?? [];
+    list.push({
+      id: Number(row.id),
+      roleId: row.role_id,
+      label: row.label,
+      emoji: row.emoji,
+      description: row.description,
+    });
+    byMenu.set(menuId, list);
+  }
+
+  return menus.map((row) => ({
+    id: Number(row.id),
+    postId: Number(row.post_id),
+    placeholder: row.placeholder,
+    minValues: Number(row.min_values),
+    maxValues: Number(row.max_values),
+    exclusive: Number(row.exclusive) === 1,
+    options: byMenu.get(Number(row.id)) ?? [],
+  }));
+}
+
+/**
+ * Ganti dropdown role satu pesan.
+ *
+ * Sama seperti `replaceRoleButtons`: hapus lalu tulis ulang. Kalau input tidak
+ * menghasilkan menu yang sah, semua menu pesan itu ikut terhapus — itu memang
+ * yang diinginkan, karena admin barusan menghapus menunya di dashboard.
+ */
+export async function replaceRoleMenus(
+  guildId: string,
+  postId: number,
+  input: unknown,
+): Promise<{ menus: RoleMenu[]; dropped: string[] }> {
+  const dropped: string[] = [];
+  const source = Array.isArray(input) ? input : input == null ? [] : [input];
+  const menus: RoleMenuInput[] = [];
+
+  for (const raw of source) {
+    const menu = sanitizeRoleMenu(raw);
+    if (menu) {
+      menus.push(menu);
+    } else if (raw && typeof raw === 'object') {
+      dropped.push('menu role tanpa pilihan yang sah');
+    }
+  }
+  if (menus.length > 5) {
+    dropped.push(`${menus.length - 5} menu role dilewati (maksimal 5 per pesan)`);
+    menus.length = 5;
+  }
+
+  await run('DELETE FROM post_role_options WHERE menu_id IN (SELECT id FROM post_role_menus WHERE guild_id = ? AND post_id = ?)', [
+    guildId,
+    postId,
+  ]);
+  await run('DELETE FROM post_role_menus WHERE guild_id = ? AND post_id = ?', [guildId, postId]);
+
+  let position = 0;
+  for (const menu of menus) {
+    const menuId = await insert(
+      `INSERT INTO post_role_menus (guild_id, post_id, placeholder, min_values, max_values, exclusive, position)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        guildId,
+        postId,
+        menu.placeholder,
+        menu.minValues,
+        menu.maxValues,
+        menu.exclusive ? 1 : 0,
+        position,
+      ],
+    );
+    let optionPosition = 0;
+    for (const option of menu.options) {
+      await insert(
+        `INSERT INTO post_role_options (menu_id, role_id, label, emoji, description, position)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [menuId, option.roleId, option.label, option.emoji ?? null, option.description ?? null, optionPosition],
+      );
+      optionPosition += 1;
+    }
+    position += 1;
+  }
+
+  return { menus: await listRoleMenus(guildId, postId), dropped };
+}
+
+/** Cari dropdown dari customId — dipakai bot saat member memilih opsi. */
+export async function findRoleMenu(guildId: string, menuId: number): Promise<RoleMenu | null> {
+  const row = await get<RoleMenuRow>(
+    'SELECT * FROM post_role_menus WHERE guild_id = ? AND id = ?',
+    [guildId, menuId],
+  );
+  if (!row) return null;
+  const menus = await listRoleMenus(guildId, Number(row.post_id));
+  return menus.find((menu) => menu.id === menuId) ?? null;
+}
+
+export type { RoleButtonInput, RoleMenuInput };
+
+/* ------------------------------------------------------------------ */
+/*  Webhook per channel (pesan atas nama server)                       */
+/* ------------------------------------------------------------------ */
+
+export interface StoredWebhook {
+  channelId: string;
+  webhookId: string;
+  /** URL lengkap hasil dekripsi. HANYA untuk memanggil Discord. */
+  url: string;
+}
+
+interface WebhookRow {
+  channel_id: string;
+  guild_id: string;
+  webhook_id: string;
+  token: string;
+  updated_at: number | string;
+}
+
+/**
+ * Webhook yang tersimpan untuk satu channel, atau null.
+ *
+ * Token didekripsi di sini; pemanggil bertanggung jawab TIDAK mengirim URL ini
+ * ke browser. Dashboard hanya butuh tahu "sudah ada / belum", bukan isinya.
+ */
+export async function getChannelWebhook(guildId: string, channelId: string): Promise<StoredWebhook | null> {
+  const row = await get<WebhookRow>(
+    'SELECT * FROM post_webhooks WHERE guild_id = ? AND channel_id = ?',
+    [guildId, channelId],
+  );
+  if (!row) return null;
+
+  const token = decryptSecret(row.token);
+  // Token tidak bisa didekripsi (DASHBOARD_TOKEN diganti): perlakukan sebagai
+  // belum ada supaya bot membuat webhook baru, bukan gagal terus-menerus.
+  if (!token) return null;
+
+  return {
+    channelId: row.channel_id,
+    webhookId: row.webhook_id,
+    url: `https://discord.com/api/webhooks/${row.webhook_id}/${token}`,
+  };
+}
+
+/** Simpan/ganti webhook untuk satu channel. Token dienkripsi lebih dulu. */
+export async function saveChannelWebhook(options: {
+  guildId: string;
+  channelId: string;
+  webhookId: string;
+  token: string;
+}): Promise<void> {
+  const encrypted = encryptSecret(options.token);
+  await run(
+    `INSERT INTO post_webhooks (channel_id, guild_id, webhook_id, token, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (channel_id) DO UPDATE SET
+       guild_id = excluded.guild_id,
+       webhook_id = excluded.webhook_id,
+       token = excluded.token,
+       updated_at = excluded.updated_at`,
+    [options.channelId, options.guildId, options.webhookId, encrypted, Date.now()],
+  );
+}
+
+/** Lupakan webhook (mis. sudah dihapus di Discord). */
+export async function deleteChannelWebhook(channelId: string): Promise<void> {
+  await run('DELETE FROM post_webhooks WHERE channel_id = ?', [channelId]);
 }

@@ -1056,6 +1056,372 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   height: 20px;
 }
 
+/* --- Editor blok halaman Pesan --- */
+.block-list {
+  display: grid;
+  gap: 10px;
+}
+.block-row {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  display: grid;
+  gap: 8px;
+}
+.block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.block-kind {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+.block-tools {
+  display: flex;
+  gap: 4px;
+}
+.block-divider {
+  height: 1px;
+  background: var(--line-strong);
+  margin: 2px 0;
+}
+.sep {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 18px 0 14px;
+}
+
+.subhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-1);
+  margin-bottom: 10px;
+}
+
+/* Baris kecil berisi emoji + pilihan gaya di tiap tombol role. */
+.role-style-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.role-emoji {
+  width: 76px;
+  flex: 0 0 auto;
+  text-align: center;
+}
+
+/* Warna tombol role di pratinjau — sama dengan palet Discord. */
+.pc-button-role.style-secondary { background: #4e5058; }
+.pc-button-role.style-success { background: #248046; }
+.pc-button-role.style-danger { background: #da373c; }
+
+/* Dropdown role di pratinjau. */
+/* Penghitung batas komponen: angka kecil, bukan kotak besar. */
+.usage-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-track {
+  flex: 1 1 120px;
+  min-width: 90px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.usage-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--brand, #8fb0ff);
+  transition: width .15s ease;
+}
+
+.usage-fill.warn { background: #ffb454; }
+.usage-fill.over { background: #ff6b6b; }
+.usage-warn { color: #ffb454; }
+
+/* Section: teks kiri, aksesori kecil di kanan. */
+.pc-section {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-top: 6px;
+}
+
+/*
+ * Komponen di LUAR kartu (top-level).
+ *
+ * Di Discord, teks pembuka dan baris tombol seperti di pesan Discohook tidak
+ * punya border maupun latar — ia hanya menumpang di pesan. Pratinjau harus
+ * sama: tanpa border, tanpa latar, supaya admin tidak mengira itu kartu.
+ */
+.preview-outside {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px 2px 4px;
+}
+/* Penanda tipis batas kartu — hanya di pratinjau, tidak dikirim ke Discord. */
+.pc-outside-hint {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6b7280;
+  opacity: 0.75;
+  padding-top: 2px;
+}
+.preview-outside .pc-line { color: #dbdee1; }
+.preview-outside .pc-line.pc-small { color: #949ba4; }
+
+/*
+ * Aksesori di editor blok: tombol link dan thumbnail.
+ *
+ * Ditumpuk vertikal dengan garis pemisah tipis supaya jelas bahwa keduanya
+ * milik blok yang sama, bukan blok baru.
+ */
+/*
+ * Panel import/ekspor JSON.
+ *
+ * Sengaja dilipat (<details>) supaya tidak mendominasi halaman: fitur ini
+ * dipakai sesekali, bukan tiap kali menyusun pesan.
+ */
+.json-panel {
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.015);
+}
+.json-panel > summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text, #dbdee1);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+}
+.json-panel > summary::-webkit-details-marker {
+  display: none;
+}
+.json-panel > summary::after {
+  content: '▾';
+  margin-left: auto;
+  opacity: 0.6;
+  font-size: 11px;
+}
+.json-panel[open] > summary::after {
+  content: '▴';
+}
+.json-isi {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.json-aksi {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.json-isi textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  resize: vertical;
+  width: 100%;
+}
+
+.block-aksesori {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.09);
+}
+.block-aksesori-judul {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted, #8a8f98);
+}
+.block-aksesori input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Editor blok File */
+.block-file {
+  display: grid;
+  gap: 6px;
+}
+.block-file-unggah {
+  font-size: 12px;
+  color: var(--muted, #8a8f98);
+}
+
+/* Berkas di pratinjau: kartu unduhan di dasar pesan. */
+.pc-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #2b2d31;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+  padding: 10px 12px;
+  max-width: 340px;
+}
+.pc-file-ikon {
+  font-size: 20px;
+  line-height: 1;
+}
+.pc-file-isi {
+  min-width: 0;
+}
+.pc-file-nama {
+  font-size: 13px;
+  font-weight: 600;
+  color: #58b9ff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pc-file-ket {
+  font-size: 11px;
+  color: var(--muted, #8a8f98);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Spoiler: disamarkan, sama seperti perilaku Discord. */
+.pc-spoiler {
+  filter: blur(14px);
+}
+.pc-file-spoiler .pc-file-nama,
+.pc-file-spoiler .pc-file-ket {
+  filter: blur(6px);
+}
+
+.pc-section-text { flex: 1 1 auto; min-width: 0; }
+.pc-section-aksesori { flex: 0 0 auto; display: flex; align-items: center; }
+
+.pc-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 8px;
+  display: block;
+}
+
+/* Pemisah berjarak besar — Discord menyebutnya spacing 2. */
+.pc-sep-large { margin: 16px 0; }
+
+.pc-select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: #1e1f22;
+  border: 1px solid #2b2d31;
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: #b5bac1;
+  font-size: 13.5px;
+  margin-top: 6px;
+}
+
+.pc-select svg { flex: 0 0 auto; opacity: .8; }
+
+.pc-select-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  font-size: 13px;
+  color: #dbdee1;
+  border-top: 1px solid #2b2d31;
+}
+
+.pc-select-opt .pc-opt-desc {
+  color: #949ba4;
+  font-size: 11.5px;
+  margin-left: 4px;
+}
+
+/* Satu pilihan menu di editor: baris role + emoji + keterangan. */
+.menu-opt {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--bg-2);
+}
+
+.menu-opt-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.menu-opt-head .role-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.menu-flags {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.block-add {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.role-mode {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}
+.list-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
 /* --- Container (Components V2) --- */
 .preview-container {
   border-radius: 4px;
@@ -1085,6 +1451,35 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   background: rgba(255, 255, 255, 0.07);
   margin: 2px 0;
 }
+/* Baris tombol: Discord menampilkan maksimum 5 tombol sejajar. */
+.preview-container .pc-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.preview-container .pc-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+}
+/* Tombol link: abu-abu, seperti Discord. */
+.preview-container .pc-button-link {
+  background: #4e5058;
+}
+/* Tombol role: biru primer — beda warna supaya admin tahu ini tombol yang
+   memanggil bot, bukan tautan. */
+.preview-container .pc-button-role {
+  background: #5865f2;
+}
+.preview-wrap {
+  padding: 4px 0 8px;
+}
 .preview-container .pc-image {
   display: block;
   width: 100%;
@@ -1092,13 +1487,20 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   object-fit: cover;
   border-radius: 4px;
 }
-/* Avatar di container tampil sebagai gambar bulat kecil di atas teks —
-   Media Gallery di Discord tidak membulatkan, tapi bentuk persegi besar untuk
-   avatar 128px hanya memakan ruang tanpa menambah informasi. */
-.preview-container .pc-avatar {
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
+/* Section = teks + thumbnail BERDAMPINGAN, seperti Discord menampilkannya.
+   Kalau thumbnail digambar sebagai blok terpisah, ia jatuh ke bawah teks. */
+.preview-container .pc-section {
+  display: grid;
+  gap: 12px;
+  align-items: start;
+}
+.preview-container .pc-section.pc-has-thumb {
+  grid-template-columns: minmax(0, 1fr) 88px;
+}
+.preview-container .pc-thumb {
+  width: 88px;
+  height: 88px;
+  border-radius: 8px;
   object-fit: cover;
 }
 /* Keterangan kecil saat gambar dirujuk sebagai lampiran: di browser tidak ada

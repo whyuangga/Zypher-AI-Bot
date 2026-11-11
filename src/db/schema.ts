@@ -193,6 +193,77 @@ CREATE TABLE IF NOT EXISTS panels (
   enabled    INTEGER NOT NULL DEFAULT 1,
   updated_at INTEGER NOT NULL
 );
+
+-- ---------- pesan container buatan admin (halaman /pesan) ----------
+-- Menyimpan pesan bertema yang disusun dari dashboard: rules, ambil roles,
+-- pengumuman, dsb. Kolom blocks berisi JSON daftar blok berurutan, message_id
+-- menyimpan ID pesan yang sudah dikirim supaya bisa DIPERBARUI (bukan kirim
+-- ulang) saat isinya diubah.
+CREATE TABLE IF NOT EXISTS custom_posts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id   TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  channel_id TEXT,
+  blocks     TEXT NOT NULL,
+  message_id TEXT,
+  accent     TEXT,
+  sender     TEXT,
+  layout     TEXT,
+  updated_at INTEGER NOT NULL
+);
+
+-- ---------- tombol ambil role (tahap 3) ----------
+-- Satu baris = satu tombol. Role disimpan di sini, BUKAN di dalam customId:
+-- customId hanya membawa ID baris, jadi role bisa diganti tanpa mengirim ulang
+-- pesan, dan customId tetap pendek (batas Discord 100 karakter).
+CREATE TABLE IF NOT EXISTS post_role_buttons (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id TEXT NOT NULL,
+  post_id  INTEGER NOT NULL,
+  role_id  TEXT NOT NULL,
+  label    TEXT NOT NULL,
+  mode     TEXT NOT NULL DEFAULT 'toggle',
+  emoji    TEXT,
+  style    TEXT,
+  position INTEGER NOT NULL DEFAULT 0
+);
+
+-- ---------- webhook per channel (pesan atas nama server) ----------
+-- Token menyimpan bagian RAHASIA dari URL webhook, dalam bentuk terenkripsi
+-- (lihat src/features/webhook-secret.ts). Tidak pernah dikirim ke browser.
+-- ---------- menu role (select menu) ----------
+-- Satu baris = satu menu. Opsinya disimpan di post_role_options supaya
+-- jumlah role per menu tidak terbatas kolom.
+CREATE TABLE IF NOT EXISTS post_role_menus (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id    TEXT NOT NULL,
+  post_id     INTEGER NOT NULL,
+  placeholder TEXT NOT NULL,
+  min_values  INTEGER NOT NULL DEFAULT 1,
+  max_values  INTEGER NOT NULL DEFAULT 1,
+  exclusive   INTEGER NOT NULL DEFAULT 1,
+  position    INTEGER NOT NULL DEFAULT 0
+);
+
+-- Satu baris = satu pilihan di dalam menu. role_id WAJIB: pilihan tanpa role
+-- hanya akan menampilkan error saat diklik.
+CREATE TABLE IF NOT EXISTS post_role_options (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  menu_id INTEGER NOT NULL,
+  role_id TEXT NOT NULL,
+  label   TEXT NOT NULL,
+  emoji   TEXT,
+  description TEXT,
+  position    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS post_webhooks (
+  channel_id TEXT PRIMARY KEY,
+  guild_id   TEXT NOT NULL,
+  webhook_id TEXT NOT NULL,
+  token      TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 `;
 
 /**
@@ -377,4 +448,59 @@ CREATE TABLE IF NOT EXISTS panels (
   enabled    INTEGER NOT NULL DEFAULT 1,
   updated_at BIGINT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS custom_posts (
+  id         SERIAL PRIMARY KEY,
+  guild_id   TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  channel_id TEXT,
+  blocks     TEXT NOT NULL,
+  message_id TEXT,
+  accent     TEXT,
+  sender     TEXT,
+  layout     TEXT,
+  updated_at BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS post_role_buttons (
+  id       SERIAL PRIMARY KEY,
+  guild_id TEXT NOT NULL,
+  post_id  INTEGER NOT NULL,
+  role_id  TEXT NOT NULL,
+  label    TEXT NOT NULL,
+  mode     TEXT NOT NULL DEFAULT 'toggle',
+  emoji    TEXT,
+  style    TEXT,
+  position INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS post_role_menus (
+  id          SERIAL PRIMARY KEY,
+  guild_id    TEXT NOT NULL,
+  post_id     INTEGER NOT NULL,
+  placeholder TEXT NOT NULL,
+  min_values  INTEGER NOT NULL DEFAULT 1,
+  max_values  INTEGER NOT NULL DEFAULT 1,
+  exclusive   INTEGER NOT NULL DEFAULT 1,
+  position    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS post_role_options (
+  id          SERIAL PRIMARY KEY,
+  menu_id     INTEGER NOT NULL,
+  role_id     TEXT NOT NULL,
+  label       TEXT NOT NULL,
+  emoji       TEXT,
+  description TEXT,
+  position    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS post_webhooks (
+  channel_id TEXT PRIMARY KEY,
+  guild_id   TEXT NOT NULL,
+  webhook_id TEXT NOT NULL,
+  token      TEXT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+
 `;

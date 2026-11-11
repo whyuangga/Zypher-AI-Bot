@@ -2020,7 +2020,16 @@ await testAsync('agent: tidak pernah membalas pesan bot lain', async () => {
 
 await testAsync('agent: menyapa saat sepi hanya setelah batas waktu', async () => {
   const { shouldBreakSilence, recordTrace, emptyState } = await import('../src/features/agent-core.js');
-  const now = Date.now();
+  const { hourInZone } = await import('../src/lib/timezone.js');
+  // Jam DIPATOK, bukan Date.now().
+  //
+  // Test ini dulu memakai jam mesin, dan `quietHours` default menyala. Zona
+  // bawaannya WIB (UTC+7), jadi antara 16:00–22:59 UTC jam WIB sudah 23:00+
+  // — masuk jam tenang, sapaan ditahan, dan test gagal padahal kodenya benar.
+  // Hasilnya: CI hijau bila kebetulan jalan siang, merah bila jalan malam.
+  // 09:00 WIB dipilih supaya jauh dari batas jam tenang (23:00–06:00).
+  const now = Date.parse('2026-01-15T02:00:00.000Z');
+  assert.equal(hourInZone(now, 'Asia/Jakarta'), 9, 'prasyarat: 09:00 WIB, di luar jam tenang');
   const settings = agentSettings({ quietMinutes: 45, cooldownSeconds: 0 });
 
   // 10 menit lalu masih ada obrolan → belum sepi.
@@ -2657,7 +2666,7 @@ await testAsync('banner: dipakai di mode container lewat Media Gallery', async (
   const { buildContainerCard } = await import('../src/features/container-card.js');
 
   const dengan = buildContainerCard({
-    kind: 'welcome', text: 'Halo Sky', guildName: 'Z', memberCount: 5, bannerName: 'banner-x.png',
+    kind: 'welcome', text: 'Halo Sky', guildName: 'Z', memberCount: 5, banner: { name: 'banner-x.png' },
   });
   const json = JSON.stringify(dengan!.toJSON());
   assert.ok(json.includes('attachment://banner-x.png'), 'banner dirujuk lewat attachment://');
@@ -5684,11 +5693,1522 @@ await testAsync('embed-mock: container dibaca baris, aksen, dan teks kecilnya', 
 
   assert.ok(mock, 'container terbaca');
   assert.equal(mock!.accentColor, '#6d8cff', 'warna aksen terbaca');
-  assert.equal(mock!.lines.length, 2, 'dua baris teks');
-  assert.equal(mock!.lines[0]!.kind, 'text', 'baris pertama teks biasa');
-  assert.equal(mock!.lines[1]!.kind, 'small', 'baris -# jadi teks kecil');
-  assert.deepEqual(mock!.imageUrls, ['attachment://avatar.png'], 'rujukan lampiran terbaca');
-  assert.equal(mock!.separators, 1, 'pemisah terhitung');
+  // Blok disimpan BERURUTAN, jadi urutan gambar & teks tidak bisa tertukar.
+  assert.deepEqual(
+    mock!.blocks.map((b) => b.kind),
+    ['text', 'image', 'separator', 'small'],
+    'urutan blok sama dengan urutan komponen',
+  );
+  // Dulu ada jenis blok 'thumbnail' yang berdiri sendiri; sekarang thumbnail
+  // selalu menempel di dalam blok 'section'. Fixture ini punya galeri lepas
+  // (bukan Section), jadi yang diperiksa: tidak ada blok bernama 'thumbnail'.
+  assert.ok(
+    ['text', 'small', 'image', 'section', 'separator'].includes(mock!.blocks[0]!.kind),
+    'jenis blok hanya yang dikenal',
+  );
+  const teks = mock!.blocks[0];
+  assert.equal(teks!.kind === 'text' ? teks!.text : '', 'Halo Sky!', 'isi teks terbaca');
+  const kecil = mock!.blocks[3];
+  assert.equal(kecil!.kind === 'small' ? kecil!.text : '', '-# Member baru · Komunitas', 'teks kecil terbaca');
+  const gambar = mock!.blocks[1];
+  assert.equal(gambar!.kind === 'image' ? gambar!.url : '', 'attachment://avatar.png', 'rujukan lampiran terbaca');
+});
+
+/* ------------------------------------------------------------------ */
+/*  Pesan container buatan admin (halaman /pesan)                      */
+/* ------------------------------------------------------------------ */
+
+await testAsync('pesan: blok dirapikan, yang mustahil dikirim dibuang', async () => {
+  const { sanitizeBlocks } = await import('../src/features/custom-post.js');
+
+  const { blocks, dropped } = sanitizeBlocks([
+    { kind: 'text', value: '  Selamat datang  ' },
+    { kind: 'divider', value: '' },
+    { kind: 'divider', value: '' }, // dobel -> digabung
+    { kind: 'image', value: 'bukan-url' },
+    { kind: 'image', value: 'https://contoh.test/a.png' },
+    { kind: 'button', value: 'Gabung', url: 'https://discord.gg/x' },
+    { kind: 'button', value: 'Rusak', url: 'javascript:alert(1)' },
+    { kind: 'button', value: '', url: 'https://x.test' },
+    { kind: 'entah', value: 'x' },
+    { kind: 'text', value: '   ' },
+  ]);
+
+  assert.deepEqual(
+    blocks.map((b) => b.kind),
+    ['text', 'divider', 'image', 'button'],
+    'hanya blok yang sah tersisa',
+  );
+  assert.equal(blocks[0]!.kind === 'text' ? blocks[0]!.value : '', 'Selamat datang', 'teks dirapikan');
+  // javascript: adalah celah XSS klasik — harus ditolak, bukan diizinkan.
+  assert.ok(dropped.some((d) => d.includes('Rusak')), 'tombol ber-URL berbahaya dibuang');
+  assert.ok(dropped.some((d) => d.includes('jenis blok tidak dikenal')), 'jenis asing dilaporkan');
+  assert.equal(dropped.filter((d) => d.includes('gambar')).length, 1, 'gambar tanpa URL dibuang');
+});
+
+await testAsync('pesan: teks dipotong di batas satu pesan, bukan dibuang', async () => {
+  const { sanitizeBlocks, LIMITS } = await import('../src/features/custom-post.js');
+  const panjang = 'a'.repeat(LIMITS.totalText + 500);
+  const { blocks } = sanitizeBlocks([{ kind: 'text', value: panjang }]);
+  assert.equal(blocks.length, 1, 'tetap satu blok');
+  const isi = blocks[0]!.kind === 'text' ? blocks[0]!.value : '';
+  assert.equal(isi.length, LIMITS.totalText, 'dipotong tepat di batas');
+});
+
+await testAsync('pesan: data rusak di database tidak membuat halaman gagal', async () => {
+  const { parseBlocks } = await import('../src/features/custom-post.js');
+  // JSON rusak, kolom kosong, dan bentuk lama harus menghasilkan daftar kosong
+  // — bukan melempar, karena halaman /pesan tetap harus bisa dibuka.
+  for (const raw of ['{bukan json', '', null, undefined, 42, '{}']) {
+    assert.deepEqual(parseBlocks(raw), [], `input ${String(raw)} aman`);
+  }
+  assert.equal(parseBlocks('[{"kind":"text","value":"Halo"}]')[0]?.value, 'Halo', 'JSON sah terbaca');
+});
+
+await testAsync('pesan: warna aksen divalidasi, bukan dipercaya', async () => {
+  const { normalizeAccent, accentToNumber, DEFAULT_ACCENT } = await import(
+    '../src/features/custom-post.js'
+  );
+
+  // Bentuk sah diterima dalam dua penulisan.
+  assert.equal(normalizeAccent('#FF8800'), '#ff8800', 'huruf besar dinormalkan');
+  assert.equal(normalizeAccent('ff8800'), '#ff8800', 'tanpa # tetap diterima');
+
+  // Semua bentuk aneh jatuh ke bawaan — bukan warna acak atau #NaN.
+  for (const aneh of ['', '   ', '#GGG', '#ff88', 'merah', 'rgb(1,2,3)', '#ff88001', null, 42]) {
+    assert.equal(normalizeAccent(aneh), DEFAULT_ACCENT, `"${String(aneh)}" -> bawaan`);
+  }
+
+  // Angka untuk ContainerBuilder.
+  assert.equal(accentToNumber('#ff8800'), 0xff8800);
+  assert.equal(accentToNumber('bukan-warna'), 0x6d8cff);
+});
+
+await testAsync('pesan: gambar unggahan jadi lampiran, bukan data URI', async () => {
+  const { sanitizeBlocks, buildPostPayload } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+
+  const png =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+  // Yang bukan gambar sungguhan ditolak.
+  const jahat = sanitizeBlocks([
+    { kind: 'image', value: '', data: 'data:text/html;base64,PHNjcmlwdD4=' },
+    { kind: 'image', value: '', data: 'data:image/png;base64,bukan base64!!' },
+  ]);
+  assert.equal(jahat.blocks.length, 0, 'data URI non-gambar ditolak');
+  assert.equal(jahat.dropped.length, 2, 'alasannya dilaporkan');
+
+  const { blocks } = sanitizeBlocks([
+    { kind: 'image', value: '', data: png },
+    { kind: 'image', value: '', data: png },
+  ]);
+  assert.equal(blocks.length, 2, 'dua unggahan diterima');
+
+  const built = buildPostPayload(blocks, {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+  });
+  assert.ok(built);
+  // Dua gambar SAMA harus jadi dua lampiran bernama berbeda — kalau namanya
+  // sama, Discord hanya menampilkan satu.
+  assert.deepEqual(built.files.map((f) => f.name), ['post-image-1.png', 'post-image-2.png']);
+
+  const json = JSON.stringify(
+    (built.components[0] as { toJSON: () => unknown }).toJSON(),
+  );
+  assert.ok(!json.includes('base64'), 'data URI tidak ikut terkirim');
+  assert.ok(json.includes('attachment://post-image-1.png'), 'merujuk lampiran');
+});
+
+await testAsync('pesan: pratinjau mengikuti urutan & batas tombol Discord', async () => {
+  const { buildPostPreview } = await import('../src/features/post-preview.js');
+
+  const preview = buildPostPreview(
+    [
+      { kind: 'text', value: 'Judul' },
+      { kind: 'divider', value: '' },
+      { kind: 'text', value: '-# catatan kecil' },
+      { kind: 'image', value: 'https://contoh.test/a.png' },
+      ...Array.from({ length: 7 }, (_, i) => ({
+        kind: 'button' as const,
+        value: `T${i + 1}`,
+        url: 'https://contoh.test',
+      })),
+    ],
+    {
+      accent: '#ff8800',
+      roleButtons: [{ id: 1, label: 'Gamer' }],
+    },
+  );
+
+  assert.equal(preview.accentColor, '#ff8800');
+  // Tujuh tombol tidak boleh jadi satu baris: Discord memotongnya 5 per baris.
+  const barisTombol = preview.blocks.filter((b) => b.kind === 'buttons');
+  assert.deepEqual(
+    barisTombol.map((b) => (b.kind === 'buttons' ? b.buttons.length : 0)),
+    [5, 2, 1],
+    'tombol link 5+2, lalu tombol role',
+  );
+
+  // Tombol role selalu blok TERAKHIR.
+  const terakhir = preview.blocks[preview.blocks.length - 1]!;
+  assert.equal(terakhir.kind, 'buttons');
+  assert.equal(terakhir.kind === 'buttons' ? terakhir.buttons[0]!.role : false, true);
+
+  // Teks -# dikenali sebagai teks kecil.
+  const kecil = preview.blocks.find((b) => b.kind === 'text' && b.small);
+  assert.ok(kecil, 'teks -# jadi teks kecil');
+
+  // Hanya pemisah = kosong, dan Discord akan menolaknya.
+  assert.equal(buildPostPreview([{ kind: 'divider', value: '' }]).empty, true);
+  assert.equal(buildPostPreview([{ kind: 'text', value: 'isi' }]).empty, false);
+});
+
+await testAsync('webhook: dibuat sekali, dipakai ulang, dibuat lagi kalau hilang', async () => {
+  const { ensureChannelWebhook } = await import('../src/features/custom-post-send.js');
+  const repo = await import('../src/db/repo.js');
+
+  const G = 'g-webhook-uji';
+  const C = '1400000000000000099';
+  const TOKEN = 'X'.repeat(68);
+
+  let dibuat = 0;
+  let hookAda = true;
+  const client = {
+    channels: {
+      async fetch() {
+        return {
+          id: C,
+          isTextBased: () => true,
+          isDMBased: () => false,
+          async fetchWebhooks() {
+            return hookAda ? new Map([['hook-1', {}]]) : new Map();
+          },
+          async createWebhook(options: { name: string }) {
+            dibuat += 1;
+            return { id: `hook-${dibuat}`, token: TOKEN, name: options.name };
+          },
+        };
+      },
+    },
+  } as unknown as import('discord.js').Client;
+
+  const identity = { username: 'Zypher Server', avatarURL: null };
+
+  // Pertama: dibuat.
+  const a = await ensureChannelWebhook({ client, guildId: G, channelId: C, identity });
+  assert.equal(dibuat, 1);
+  assert.equal(a.id, 'hook-1');
+
+  // Kedua: DIPAKAI ULANG. Ini yang mencegah channel penuh webhook baru setiap
+  // kali admin menekan kirim.
+  const b = await ensureChannelWebhook({ client, guildId: G, channelId: C, identity });
+  assert.equal(dibuat, 1, 'tidak membuat webhook kedua');
+  assert.equal(b.id, 'hook-1');
+
+  // Token tersimpan terenkripsi, tidak sebagai teks biasa.
+  const tersimpan = await repo.getChannelWebhook(G, C);
+  assert.ok(tersimpan, 'webhook tersimpan');
+  assert.ok(tersimpan!.url.endsWith(TOKEN), 'token bisa dipakai lagi');
+
+  // Webhook dihapus orang di Discord: bot membuat yang baru, tidak menyerah.
+  hookAda = false;
+  const c = await ensureChannelWebhook({ client, guildId: G, channelId: C, identity });
+  assert.equal(dibuat, 2, 'membuat ulang saat webhook hilang');
+  assert.equal(c.id, 'hook-2');
+
+  // Tanpa izin Manage Webhooks: pesan yang berguna, bukan galat mentah.
+  const clientTanpaIzin = {
+    channels: {
+      async fetch() {
+        return {
+          id: 'c-lain',
+          isTextBased: () => true,
+          isDMBased: () => false,
+          async fetchWebhooks() {
+            return new Map();
+          },
+          async createWebhook() {
+            throw new Error('Missing Permissions');
+          },
+        };
+      },
+    },
+  } as unknown as import('discord.js').Client;
+
+  await assert.rejects(
+    () =>
+      ensureChannelWebhook({
+        client: clientTanpaIzin,
+        guildId: G,
+        channelId: 'c-lain',
+        identity,
+      }),
+    (error: unknown) => /Manage Webhooks/.test((error as Error).message),
+    'izin kurang dijelaskan',
+  );
+});
+
+await testAsync('webhook: tombol role ditolak SEBELUM menyentuh Discord', async () => {
+  const { sendOrUpdatePostViaWebhook, PostSendError } = await import(
+    '../src/features/custom-post-send.js'
+  );
+
+  // Client kosong: kalau penolakannya benar, Discord tidak pernah disentuh,
+  // jadi tidak ada properti client yang dibaca.
+  await assert.rejects(
+    () =>
+      sendOrUpdatePostViaWebhook({
+        client: {} as never,
+        guildId: '1',
+        channelId: '2',
+        messageId: null,
+        blocks: [{ kind: 'text', value: 'isi' }],
+        roleButtons: [{ id: 1, label: 'Gamer' }],
+        identity: { username: 'Server', avatarURL: null },
+      }),
+    (error: unknown) =>
+      error instanceof PostSendError && /tombol atau menu ambil role/i.test((error as Error).message),
+    'pesan webhook + tombol role ditolak dengan penjelasan',
+  );
+
+  // Menu dropdown juga komponen interaktif: nasibnya sama dengan tombol,
+  // karena yang mengirim komponen adalah webhook, bukan aplikasi bot.
+  await assert.rejects(
+    () =>
+      sendOrUpdatePostViaWebhook({
+        client: {} as never,
+        guildId: '1',
+        channelId: '2',
+        messageId: null,
+        blocks: [{ kind: 'text', value: 'isi' }],
+        roleMenus: [
+          {
+            id: 1,
+            placeholder: 'Pilih',
+            minValues: 1,
+            maxValues: 1,
+            options: [{ roleId: '333333333333333333', label: 'A' }],
+          },
+        ],
+        identity: { username: 'Server', avatarURL: null },
+      }),
+    (error: unknown) =>
+      error instanceof PostSendError && /tombol atau menu ambil role/i.test((error as Error).message),
+    'pesan webhook + menu role juga ditolak',
+  );
+});
+
+await testAsync('webhook: token disimpan terenkripsi, tidak terbaca di database', async () => {
+  const { encryptSecret, decryptSecret, isEncrypted, maskWebhookUrl } = await import(
+    '../src/features/webhook-secret.js'
+  );
+
+  const token = 'AbCdEf-Token_Rahasia_Sekali';
+  const enc = encryptSecret(token);
+
+  // Inti perlindungannya: token tidak boleh terbaca dari isi kolom.
+  assert.ok(isEncrypted(enc), 'ditandai terenkripsi');
+  assert.ok(!enc.includes(token) && !enc.includes('AbCdEf'), 'token tidak terlihat');
+  assert.equal(decryptSecret(enc), token, 'bisa dibuka kembali oleh bot');
+
+  // Database lama berisi token teks biasa harus tetap terbaca.
+  assert.equal(decryptSecret(token), token, 'token lama tetap jalan');
+  assert.equal(isEncrypted(token), false);
+
+  // Enkripsi dua kali memberi hasil berbeda (IV acak) tapi sama-sama sah.
+  const lain = encryptSecret(token);
+  assert.notEqual(lain, enc, 'IV acak');
+  assert.equal(decryptSecret(lain), token);
+
+  // Data yang diubah ditolak (AES-GCM mendeteksi perubahan).
+  assert.equal(decryptSecret(`${enc.slice(0, -4)}AAAA`), '', 'data rusak ditolak');
+
+  // Tampilan untuk log tidak membocorkan token.
+  const url = 'https://discord.com/api/webhooks/123456789012345678/AbCdEf-Token_Rahasia';
+  assert.ok(!maskWebhookUrl(url).includes('AbCdEf'), 'token tidak muncul di log');
+  assert.ok(maskWebhookUrl(url).includes('123456789012345678'), 'id webhook tetap terbaca');
+});
+
+await testAsync('pesan: tombol role menolak role di atas bot atau member', async () => {
+  const { roleBlocker, memberCanToggle, parseRoleButtonId, roleButtonId } = await import(
+    '../src/features/role-buttons.js'
+  );
+
+  const gamer = { id: '111', name: 'Gamer', position: 3 };
+
+  // Bot punya izin & posisinya di atas: boleh.
+  assert.equal(roleBlocker({ role: gamer, botHighestPosition: 10, hasManageRoles: true }), null);
+
+  // Tanpa Manage Roles: alasan paling sering, pesannya harus "bot-izin".
+  assert.equal(
+    roleBlocker({ role: gamer, botHighestPosition: 10, hasManageRoles: false }),
+    'bot-izin',
+  );
+
+  // Role di posisi yang sama dengan role tertinggi bot: Discord menolak,
+  // jadi kita juga harus menolak (posisi >= bot).
+  assert.equal(
+    roleBlocker({ role: { ...gamer, position: 10 }, botHighestPosition: 10, hasManageRoles: true }),
+    'bot-posisi',
+  );
+
+  // @everyone dan role terkelola integrasi tidak pernah bisa dibagikan.
+  assert.equal(
+    roleBlocker({ role: { ...gamer, isEveryone: true }, botHighestPosition: 10, hasManageRoles: true }),
+    'role-terlarang',
+  );
+  assert.equal(
+    roleBlocker({ role: { ...gamer, managed: true }, botHighestPosition: 10, hasManageRoles: true }),
+    'role-terlarang',
+  );
+
+  // INTI KEAMANAN: member biasa tidak boleh memberi role yang setara/lebih
+  // tinggi dari dirinya — kalau tidak, siapa pun bisa jadi moderator.
+  assert.equal(
+    memberCanToggle({
+      role: { ...gamer, position: 8 },
+      botHighestPosition: 10,
+      memberHighestPosition: 5,
+      hasManageRoles: true,
+    }),
+    'member-posisi',
+  );
+  // Role di bawah member: boleh.
+  assert.equal(
+    memberCanToggle({
+      role: gamer,
+      botHighestPosition: 10,
+      memberHighestPosition: 5,
+      hasManageRoles: true,
+    }),
+    null,
+  );
+
+  // customId: prefix dinamis, dan yang bukan angka ditolak.
+  assert.equal(roleButtonId(42), 'post-role:42');
+  assert.equal(parseRoleButtonId('post-role:42'), 42);
+  assert.equal(parseRoleButtonId('post-role:abc'), null);
+  assert.equal(parseRoleButtonId('post-role:'), null);
+  assert.equal(parseRoleButtonId('dm:start'), null);
+  assert.equal(parseRoleButtonId('post-role:0'), null);
+});
+
+await testAsync('pesan: tombol role - keputusan beri vs lepas', async () => {
+  const { planToggle } = await import('../src/features/role-button-handler.js');
+
+  const dasar = {
+    role: { id: '111', name: 'Gamer', position: 3 },
+    botHighestPosition: 10,
+    memberHighestPosition: 5,
+    hasManageRoles: true,
+  };
+
+  // Mode toggle: belum punya -> beri, sudah punya -> lepas.
+  assert.equal(
+    planToggle({ ...dasar, button: { id: 1, postId: 1, roleId: '111', label: 'Gamer', emoji: null, style: 'primary', mode: 'toggle', position: 0 }, memberHasRole: false }).action,
+    'give',
+  );
+  assert.equal(
+    planToggle({ ...dasar, button: { id: 1, postId: 1, roleId: '111', label: 'Gamer', emoji: null, style: 'primary', mode: 'toggle', position: 0 }, memberHasRole: true }).action,
+    'remove',
+  );
+
+  // Mode "hanya beri": klik kedua tidak melepas role.
+  const hanyaBeri = planToggle({
+    ...dasar,
+    button: { id: 1, postId: 1, roleId: '111', label: 'Gamer', emoji: null, style: 'primary', mode: 'give', position: 0 },
+    memberHasRole: true,
+  });
+  assert.equal(hanyaBeri.action, null, 'tidak melepas role');
+  assert.equal(hanyaBeri.blocker, 'sudah-punya');
+
+  // Blocker menang atas aksi: member di bawah role tidak boleh memberi.
+  const ditolak = planToggle({
+    ...dasar,
+    memberHighestPosition: 1,
+    button: { id: 1, postId: 1, roleId: '111', label: 'Gamer', emoji: null, style: 'primary', mode: 'toggle', position: 0 },
+    memberHasRole: false,
+  });
+  assert.equal(ditolak.action, null);
+  assert.equal(ditolak.blocker, 'member-posisi');
+});
+
+await testAsync('pesan: klik tombol role benar-benar memberi & melepas role', async () => {
+  // Memakai database smoke yang sudah terbuka (:memory:). JANGAN menutupnya:
+  // driver itu dipakai test-test sesudah ini — percobaan pertama menutupnya
+  // dan membuat puluhan test berikutnya gagal dengan "database is not open".
+  {
+    const repo = await import('../src/db/repo.js');
+    const { handleRoleButton } = await import('../src/features/role-button-handler.js');
+    const GUILD = '123456789012345678';
+    const ROLE = '900000000000000001';
+
+    const post = await repo.createCustomPost(GUILD, {
+      name: 'Ambil role',
+      channelId: null,
+      blocks: [{ kind: 'text', value: 'Pilih' }],
+    });
+
+    /** Jalankan satu klik dan kembalikan apa yang terjadi. */
+    const klik = async (options: {
+      buttonId: number;
+      punyaRole?: boolean;
+      izin?: boolean;
+      posisiBot?: number;
+      posisiMember?: number;
+    }) => {
+      const catatan = { add: [] as string[], remove: [] as string[], pesan: '' };
+      const interaction = {
+        isButton: () => true,
+        customId: `post-role:${options.buttonId}`,
+        guildId: GUILD,
+        deferred: false,
+        replied: false,
+        user: { id: '2', tag: 'uji#0001' },
+        member: {
+          roles: {
+            cache: { has: () => options.punyaRole ?? false },
+            highest: { position: options.posisiMember ?? 5 },
+            add: async (id: string) => void catatan.add.push(id),
+            remove: async (id: string) => void catatan.remove.push(id),
+          },
+        },
+        guild: {
+          id: GUILD,
+          roles: {
+            cache: new Map([[ROLE, { id: ROLE, name: 'Gamer', position: 3, managed: false }]]),
+            fetch: async () => ({ id: ROLE, name: 'Gamer', position: 3, managed: false }),
+          },
+          members: {
+            me: {
+              roles: { highest: { position: options.posisiBot ?? 10 } },
+              permissions: { has: () => options.izin ?? true },
+            },
+            fetchMe: async () => null,
+          },
+        },
+        reply: async (payload: { content: string }) => void (catatan.pesan = payload.content),
+        editReply: async (payload: { content: string }) => void (catatan.pesan = payload.content),
+      };
+      const ditangani = await handleRoleButton(interaction as never);
+      return { ...catatan, ditangani };
+    };
+
+    // 1. Belum punya -> role DIBERIKAN.
+    const toggle = await repo.replaceRoleButtons(GUILD, post.id, [
+      { label: 'Gamer', roleId: ROLE, mode: 'toggle' },
+    ]);
+    const id = toggle.buttons[0]!.id;
+
+    const a = await klik({ buttonId: id });
+    assert.deepEqual(a.add, [ROLE], 'role diberikan');
+    assert.deepEqual(a.remove, [], 'tidak ada yang dilepas');
+    assert.match(a.pesan, /sudah ditambahkan/);
+
+    // 2. Sudah punya -> role DILEPAS (mode toggle).
+    const b = await klik({ buttonId: id, punyaRole: true });
+    assert.deepEqual(b.remove, [ROLE], 'role dilepas');
+    assert.deepEqual(b.add, [], 'tidak menambah lagi');
+
+    // 3. Mode "hanya beri": sudah punya -> tidak melepas.
+    const hanyaBeri = await repo.replaceRoleButtons(GUILD, post.id, [
+      { label: 'Gamer', roleId: ROLE, mode: 'give' },
+    ]);
+    const c = await klik({ buttonId: hanyaBeri.buttons[0]!.id, punyaRole: true });
+    assert.deepEqual(c.remove, [], 'mode give tidak pernah melepas');
+
+    // 4. Tanpa izin Manage Roles -> tidak menyentuh role sama sekali.
+    // CATATAN: memakai ID dari `hanyaBeri`, bukan `id` lama — mengganti daftar
+    // tombol memang membatalkan customId sebelumnya (perilaku yang diinginkan,
+    // dan diuji di langkah 7).
+    const d = await klik({ buttonId: hanyaBeri.buttons[0]!.id, izin: false });
+    assert.deepEqual(d.add, [], 'tidak memberi tanpa izin');
+    assert.match(d.pesan, /Manage Roles/);
+
+    // 5. Role di atas posisi bot -> ditolak sebelum memanggil Discord.
+    const e = await klik({ buttonId: hanyaBeri.buttons[0]!.id, posisiBot: 1 });
+    assert.deepEqual(e.add, [], 'tidak memberi role di atas bot');
+    assert.match(e.pesan, /di bawah role ini/);
+
+    // 6. Member di bawah role -> ditolak (pencegahan eskalasi hak).
+    const f = await klik({ buttonId: hanyaBeri.buttons[0]!.id, posisiMember: 1 });
+    assert.deepEqual(f.add, [], 'member biasa tidak bisa menaikkan dirinya');
+
+    // 7. Tombol lama yang sudah diganti -> tidak berlaku.
+    const g = await klik({ buttonId: 999999 });
+    assert.match(g.pesan, /sudah tidak berlaku/);
+
+    // 8. customId bukan tombol role -> router tidak mengklaimnya.
+    assert.equal(g.ditangani, true, 'customId post-role selalu diklaim');
+  }
+});
+
+await testAsync('pesan: tombol role - input dashboard dirapikan', async () => {
+  const { sanitizeRoleButtons, buildRoleOptions } = await import('../src/features/role-buttons.js');
+
+  // Role sama dua kali: hanya satu yang dipakai (dua tombol untuk role yang
+  // sama membingungkan member).
+  const hasil = sanitizeRoleButtons([
+    { label: 'Gamer', roleId: '123456789012345678' },
+    { label: 'Gamer lagi', roleId: '123456789012345678' },
+    { label: 'Tanpa role' },
+    { label: 'Bukan angka', roleId: 'abc' },
+    { label: '', roleId: '987654321098765432' },
+  ]);
+  assert.equal(hasil.buttons.length, 1, 'hanya satu tombol sah');
+  assert.equal(hasil.buttons[0]!.roleId, '123456789012345678');
+  assert.equal(hasil.buttons[0]!.mode, 'toggle', 'mode bawaan toggle');
+  assert.equal(hasil.dropped.length, 4, 'sisanya dilaporkan');
+
+  // Opsi role untuk dropdown: @everyone disembunyikan, urut posisi tertinggi.
+  const opsi = buildRoleOptions({
+    roles: [
+      { id: '1', name: '@everyone', position: 0, isEveryone: true },
+      { id: '2', name: 'Gamer', position: 3, color: 0x6d8cff },
+      { id: '3', name: 'Admin', position: 20 },
+    ],
+    botHighestPosition: 10,
+    hasManageRoles: true,
+  });
+  assert.deepEqual(opsi.options.map((o) => o.name), ['Admin', 'Gamer'], 'urut & tanpa @everyone');
+  assert.equal(opsi.options[0]!.blockedBy, 'bot-posisi', 'Admin di atas bot -> diblokir');
+  assert.equal(opsi.options[1]!.blockedBy, null, 'Gamer bisa dibagi');
+  assert.equal(opsi.options[1]!.color, '#6d8cff', 'warna role diteruskan');
+});
+
+await testAsync('pesan: kirim memperbarui pesan lama, bukan mengirim ulang', async () => {
+  const { sendOrUpdatePost, deletePostMessage, PostSendError } = await import(
+    '../src/features/custom-post-send.js'
+  );
+
+  // Client tiruan: yang diuji adalah keputusan kirim-vs-edit, bukan Discord.
+  let kirim = 0;
+  let edit = 0;
+  const client = (pesanAda: boolean, channelAda = true) =>
+    ({
+      channels: {
+        async fetch(id: string) {
+          if (!channelAda) throw new Error('Unknown Channel');
+          return {
+            id,
+            isTextBased: () => true,
+            isDMBased: () => false,
+            async send() {
+              kirim += 1;
+              return { id: 'pesan-baru' };
+            },
+            messages: {
+              async fetch(messageId: string) {
+                if (!pesanAda) throw new Error('Unknown Message');
+                return {
+                  id: messageId,
+                  async edit() {
+                    edit += 1;
+                    return { id: messageId };
+                  },
+                  async delete() {
+                    return undefined;
+                  },
+                };
+              },
+            },
+          };
+        },
+      },
+    }) as unknown as import('discord.js').Client;
+
+  const blocks = [{ kind: 'text' as const, value: 'Halo' }];
+
+  // Pesan lama masih ada: harus EDIT. Ini inti janji halaman /pesan — member
+  // yang sudah menyimpan tautan ke pesan itu tetap menemukannya.
+  const a = await sendOrUpdatePost({ client: client(true), channelId: 'c1', messageId: 'lama', blocks });
+  assert.equal(a.edited, true, 'pesan lama diperbarui');
+  assert.equal(kirim, 0, 'tidak ada pesan baru dikirim');
+
+  // Pesan lama sudah dihapus orang: jangan menyerah, kirim baru.
+  const b = await sendOrUpdatePost({ client: client(false), channelId: 'c2', messageId: 'hilang', blocks });
+  assert.equal(b.edited, false, 'pesan baru dikirim');
+  assert.equal(kirim, 1, 'kirim baru terjadi sekali');
+
+  // Isi kosong: kesalahan yang bisa dipahami admin, bukan crash.
+  await assert.rejects(
+    () => sendOrUpdatePost({ client: client(true), channelId: 'c3', messageId: null, blocks: [{ kind: 'divider', value: '' }] }),
+    (error: unknown) => error instanceof PostSendError && /kosong/i.test((error as Error).message),
+    'isi kosong ditolak dengan pesan jelas',
+  );
+
+  // Channel hilang: pesan jelas, bukan "Unknown Channel" mentah.
+  await assert.rejects(
+    () => sendOrUpdatePost({ client: client(true, false), channelId: 'c4', messageId: null, blocks }),
+    (error: unknown) => error instanceof PostSendError,
+    'channel hilang jadi PostSendError',
+  );
+
+  // Hapus pesan: benar kalau berhasil, dan TIDAK melempar kalau channel hilang.
+  assert.equal(
+    await deletePostMessage({ client: client(true), channelId: 'c5', messageId: 'm5' }),
+    true,
+    'pesan terhapus',
+  );
+  assert.equal(
+    await deletePostMessage({ client: client(true, false), channelId: 'c6', messageId: 'm6' }),
+    false,
+    'channel hilang tidak melempar',
+  );
+});
+
+await testAsync('pesan: tombol role tampil di baris bawah sebagai tombol interaktif', async () => {
+  const { buildPostPayload } = await import('../src/features/custom-post.js');
+  const { roleButtonId } = await import('../src/features/role-buttons.js');
+  const d = await import('discord.js');
+
+  const built = buildPostPayload([{ kind: 'text', value: 'Pilih role' }], {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    roleButtons: Array.from({ length: 7 }, (_, i) => ({ id: i + 1, label: `R${i + 1}` })),
+    roleButtonId,
+  });
+  assert.ok(built, 'payload terbentuk');
+
+  const rows = (built.components[0] as { toJSON: () => { components: Array<{ type: number; components?: Array<Record<string, unknown>> }> } })
+    .toJSON()
+    .components.filter((c) => c.type === 1);
+
+  // 7 tombol -> dua ActionRow (5 + 2). Discord menolak lebih dari 5 per baris.
+  assert.deepEqual(rows.map((r) => r.components!.length), [5, 2], 'dibagi 5 per baris');
+
+  // Tombol role harus INTERAKTIF (style Primary = 1) dengan customId, bukan
+  // tombol link — kalau salah, klik member tidak akan sampai ke bot.
+  const semua = rows.flatMap((r) => r.components!);
+  for (const tombol of semua) {
+    assert.equal(tombol.style, 1, 'style Primary');
+    assert.match(String(tombol.custom_id), /^post-role:\d+$/, 'customId berprefix');
+    assert.equal(tombol.url, undefined, 'bukan tombol link');
+  }
+  // customId harus di bawah batas Discord (100 karakter) bahkan untuk ID besar.
+  assert.ok(roleButtonId(Number.MAX_SAFE_INTEGER).length < 100, 'customId pendek');
+});
+
+await testAsync('pesan: emoji & warna tombol role tersimpan dan sampai ke payload', async () => {
+  const { sanitizeRoleButtons } = await import('../src/features/role-buttons.js');
+
+  const { buttons, dropped } = sanitizeRoleButtons([
+    { label: 'Gamer', roleId: '111111111111111111', mode: 'toggle', emoji: '🎮', style: 'success' },
+    { label: 'Musik', roleId: '222222222222222222', mode: 'give', style: 'aneh' },
+    // Emoji berbentuk teks biasa bukan emoji — harus dibuang, bukan menggagalkan
+    // seluruh penyimpanan.
+    { label: 'Film', roleId: '333333333333333333', emoji: 'halo', style: 'danger' },
+    // Role dobel tetap ditolak.
+    { label: 'Gamer lagi', roleId: '111111111111111111', emoji: '🎮', style: 'primary' },
+  ]);
+
+  assert.equal(buttons.length, 3, 'tiga tombol sah');
+  assert.equal(buttons[0].emoji, '🎮');
+  assert.equal(buttons[0].style, 'success');
+  assert.equal(buttons[1].emoji, undefined, 'tanpa emoji = tidak ada properti');
+  assert.equal(buttons[1].style, 'primary', 'gaya asing kembali ke primary');
+  assert.equal(buttons[2].emoji, undefined, 'teks biasa bukan emoji');
+  assert.equal(buttons[2].style, 'danger');
+  assert.equal(dropped.length, 1, 'satu tombol dobel dibuang');
+});
+
+await testAsync('pesan: select menu role dibatasi & divalidasi sebelum disimpan', async () => {
+  const { sanitizeRoleMenu, MENU_LIMITS } = await import('../src/features/role-buttons.js');
+  const opsi = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ label: `Role ${i}`, roleId: String(400000000000000000n + BigInt(i)) }));
+
+  // Batas atas: 25 pilihan, sisanya dipotong.
+  const penuh = sanitizeRoleMenu({ placeholder: 'Pilih', options: opsi(30) });
+  assert.equal(penuh?.options.length, MENU_LIMITS.options, 'dipotong ke 25');
+
+  // Role dobel dalam satu menu hanya dihitung sekali.
+  const dobel = sanitizeRoleMenu({
+    placeholder: 'Pilih',
+    options: [
+      { label: 'A', roleId: '444444444444444444' },
+      { label: 'B', roleId: '444444444444444444' },
+    ],
+  });
+  assert.equal(dobel?.options.length, 1, 'role dobel dibuang');
+
+  // Tanpa pilihan sah = tidak ada menu sama sekali (bukan menu kosong).
+  assert.equal(sanitizeRoleMenu({ placeholder: 'Kosong', options: [] }), null);
+  assert.equal(sanitizeRoleMenu({ placeholder: 'Salah', options: [{ label: 'X', roleId: 'bukan-angka' }] }), null);
+
+  // Placeholder kosong diganti teks bawaan, dan terlalu panjang dipotong.
+  assert.equal(sanitizeRoleMenu({ options: opsi(1) })?.placeholder, 'Pilih role');
+  const panjang = sanitizeRoleMenu({ placeholder: 'x'.repeat(400), options: opsi(1) });
+  assert.equal(panjang?.placeholder.length, MENU_LIMITS.placeholder);
+
+  // min/max: string dari form diterima, urutan dibetulkan, batas dijaga.
+  assert.equal(sanitizeRoleMenu({ minValues: '1', maxValues: '3', options: opsi(4) })?.maxValues, 3);
+  const terbalik = sanitizeRoleMenu({ minValues: 3, maxValues: 1, options: opsi(4) });
+  assert.equal(terbalik?.minValues, 3);
+  assert.equal(terbalik?.maxValues, 3, 'maks dinaikkan ke min');
+  assert.equal(sanitizeRoleMenu({ maxValues: 99, options: opsi(2) })?.maxValues, 2, 'dibatasi jumlah pilihan');
+
+  // Eksklusif harus boolean sungguhan: string "true" bukan true.
+  assert.equal(sanitizeRoleMenu({ options: opsi(1) })?.exclusive, false, 'bawaan tidak eksklusif');
+  assert.equal(sanitizeRoleMenu({ exclusive: 'true', options: opsi(1) })?.exclusive, false);
+  assert.equal(sanitizeRoleMenu({ exclusive: true, options: opsi(1) })?.exclusive, true);
+});
+
+await testAsync('pesan: menu eksklusif mencabut role lain HANYA di menu yang sama', async () => {
+  const { planMenuSelection } = await import('../src/features/role-button-handler.js');
+  const menu = (exclusive: boolean, ids: string[]) => ({
+    exclusive,
+    options: ids.map((id) => ({ roleId: id, label: id, emoji: null, description: null })),
+  });
+  const tanpa = () => null;
+
+  // Kasus inti: sedang pegang A, memilih B -> A dilepas, B diberikan.
+  const ganti = planMenuSelection({
+    menu: menu(true, ['r1', 'r2', 'r3']),
+    selectedRoleIds: ['r2'],
+    heldRoleIds: ['r1'],
+    allow: tanpa,
+  });
+  assert.deepEqual(ganti.give, ['r2']);
+  assert.deepEqual(ganti.remove, ['r1']);
+
+  // Role di luar menu TIDAK boleh ikut dicabut.
+  const luar = planMenuSelection({
+    menu: menu(true, ['r1', 'r2']),
+    selectedRoleIds: ['r2'],
+    heldRoleIds: ['r1', 'staf'],
+    allow: tanpa,
+  });
+  assert.deepEqual(luar.remove, ['r1'], 'role staf tetap terpasang');
+
+  // Non-eksklusif: role lama dipertahankan.
+  const tambah = planMenuSelection({
+    menu: menu(false, ['r1', 'r2']),
+    selectedRoleIds: ['r2'],
+    heldRoleIds: ['r1'],
+    allow: tanpa,
+  });
+  assert.deepEqual(tambah.give, ['r2']);
+  assert.deepEqual(tambah.remove, []);
+
+  // Nilai yang tidak ada di menu diabaikan (menu sudah disusun ulang).
+  const asing = planMenuSelection({
+    menu: menu(false, ['r1']),
+    selectedRoleIds: ['r9'],
+    heldRoleIds: [],
+    allow: tanpa,
+  });
+  assert.deepEqual(asing.give, [], 'tidak memberi role asing');
+
+  // Sudah punya role yang dipilih: tidak ada perubahan apa pun.
+  const sama = planMenuSelection({
+    menu: menu(false, ['r1']),
+    selectedRoleIds: ['r1'],
+    heldRoleIds: ['r1'],
+    allow: tanpa,
+  });
+  assert.deepEqual(sama.give, []);
+  assert.deepEqual(sama.remove, []);
+
+  // Blocker dilaporkan, bukan diam-diam memberi role.
+  const ditolak = planMenuSelection({
+    menu: menu(false, ['r1']),
+    selectedRoleIds: ['r1'],
+    heldRoleIds: [],
+    allow: () => 'member-posisi' as const,
+  });
+  assert.deepEqual(ditolak.give, []);
+  assert.equal(ditolak.blocked[0]?.blocker, 'member-posisi');
+});
+
+await testAsync('pesan: select menu benar-benar dibentuk di payload', async () => {
+  const { buildPostPayload } = await import('../src/features/custom-post.js');
+  const { roleMenuId, roleButtonId } = await import('../src/features/role-buttons.js');
+  const d = await import('discord.js');
+
+  const built = buildPostPayload([{ kind: 'text', value: 'Halo' }], {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    StringSelectMenuBuilder: d.StringSelectMenuBuilder,
+    StringSelectMenuOptionBuilder: d.StringSelectMenuOptionBuilder,
+    roleButtonId,
+    roleMenuId,
+    roleButtons: [{ id: 1, label: 'Gamer', emoji: '🎮', style: 'success' }],
+    roleMenus: [
+      {
+        id: 7,
+        placeholder: 'Pilih warna',
+        minValues: 1,
+        maxValues: 1,
+        options: [
+          { label: 'Merah', value: '555555555555555555', emoji: '🔴' },
+          { label: 'Biru', value: '666666666666666666', description: 'Tenang' },
+        ],
+      },
+    ],
+  });
+  assert.ok(built, 'payload terbentuk');
+  type BarisJson = { type: number; components: Array<Record<string, any>> };
+  const rows = (built!.components[0] as { toJSON: () => { components: BarisJson[] } })
+    .toJSON()
+    .components.filter((c) => c.type === 1);
+  assert.equal(rows.length, 2, 'satu baris tombol + satu baris menu');
+
+  const tombol = rows[0].components[0];
+  assert.equal(tombol.style, 3, 'tombol hijau (Success)');
+  assert.equal(tombol.emoji.name, '🎮');
+
+  const menu = rows[1].components[0];
+  assert.equal(menu.type, 3, 'tipe StringSelect');
+  assert.equal(menu.custom_id, roleMenuId(7));
+  assert.equal(menu.placeholder, 'Pilih warna');
+  assert.equal(menu.min_values, 1);
+  assert.equal(menu.max_values, 1, 'maks tidak melebihi jumlah opsi');
+  assert.equal(menu.options.length, 2);
+  assert.equal(menu.options[1].description, 'Tenang');
+});
+
+await testAsync('pesan: jalur kirim benar-benar menyertakan select menu (bukan dilewati)', async () => {
+  // Penjaga regresi: penyusun payload MELEWATI menu tanpa error kalau
+  // `StringSelectMenuBuilder` tidak disuntikkan. Akibatnya admin melihat menu
+  // di dashboard dan di database, tapi pesan di Discord tidak pernah punya
+  // dropdown — tanpa satu pun pesan error. Test ini memakai client palsu dan
+  // memeriksa payload yang benar-benar dikirim.
+  const { sendOrUpdatePost } = await import('../src/features/custom-post-send.js');
+
+  const terkirim: Array<Record<string, any>> = [];
+  const channel = {
+    isTextBased: () => true,
+    isDMBased: () => false,
+    messages: { fetch: async () => null },
+    send: async (body: Record<string, any>) => {
+      terkirim.push(body);
+      return { id: 'pesan-baru' };
+    },
+  };
+
+  const hasil = await sendOrUpdatePost({
+    client: { channels: { fetch: async () => channel } } as never,
+    channelId: '123456789012345678',
+    messageId: null,
+    blocks: [{ kind: 'text', value: 'Pilih role' }],
+    roleButtons: [{ id: 1, label: 'Gamer', emoji: '🎮', style: 'success' }],
+    roleMenus: [
+      {
+        id: 4,
+        placeholder: 'Pilih warna',
+        minValues: 1,
+        maxValues: 1,
+        options: [
+          { roleId: '222222222222222222', label: 'Merah', emoji: '🔴' },
+          { roleId: '333333333333333333', label: 'Biru' },
+        ],
+      },
+    ],
+  });
+  assert.equal(hasil.messageId, 'pesan-baru');
+  assert.equal(terkirim.length, 1, 'satu payload dikirim');
+
+  type Baris = { type: number; components: Array<Record<string, any>> };
+  const rows = (
+    terkirim[0]!.components![0] as { toJSON: () => { components: Baris[] } }
+  )
+    .toJSON()
+    .components.filter((c) => c.type === 1);
+
+  assert.equal(rows.length, 2, 'baris tombol DAN baris menu hadir');
+  const select = rows[1]!.components[0]!;
+  assert.equal(select.type, 3, 'komponennya StringSelect');
+  assert.match(String(select.custom_id), /^post-menu:\d+$/);
+  assert.equal(select.options.length, 2, 'dua opsi ikut terkirim');
+  assert.equal(select.options[0].value, '222222222222222222', 'nilai opsi = role ID');
+});
+
+await testAsync('pesan: blok container menghasilkan beberapa container berwarna sendiri', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SectionBuilder: d.SectionBuilder,
+    ThumbnailBuilder: d.ThumbnailBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    accent: 0x6d8cff,
+    accentToNumber: (hex: string) => Number.parseInt(hex.slice(1), 16),
+  };
+
+  const { blocks } = sanitizeBlocks([
+    { kind: 'text', value: 'Di luar container' },
+    { kind: 'container', accent: '#58b9ff' },
+    { kind: 'text', value: '### What is this?' },
+    { kind: 'text', value: 'Isi pertama' },
+    { kind: 'container', accent: '#ff8800' },
+    { kind: 'text', value: '### Get started' },
+  ]);
+  const built = buildPostPayload(blocks, deps);
+  assert.ok(built, 'payload terbentuk');
+
+  type C = { type: number; accent_color?: number; components: Array<Record<string, any>> };
+  const json = (built!.components as Array<{ toJSON: () => C }>).map((c) => c.toJSON());
+
+  /*
+   * Sejak blok `close` ada, teks sebelum container pertama tampil DI LUAR
+   * kartu (top-level), bukan lagi dibungkus container bawaan. Itu yang membuat
+   * pesan bisa menyerupai Discohook: pembuka polos, lalu kartu-kartunya.
+   * Karena itu hasilnya 1 TextDisplay + 2 Container, bukan 3 Container.
+   */
+  assert.equal(json.length, 3, 'teks pembuka + dua container');
+  assert.equal(json[0]!.type, 10, 'teks pembuka di luar kartu');
+  assert.equal(json[1]!.accent_color, 0x58b9ff, 'warna container sendiri dipakai');
+  assert.equal(json[2]!.accent_color, 0xff8800);
+  assert.equal(json[1]!.components.length, 2);
+
+  // Pesan TANPA blok container harus tetap satu container — pesan lama tidak
+  // boleh berubah tampilannya gara-gara fitur baru ini.
+  const lama = buildPostPayload(
+    sanitizeBlocks([{ kind: 'text', value: 'Halo' }, { kind: 'button', value: 'Buka', url: 'https://a.test' }]).blocks,
+    deps,
+  );
+  const jsonLama = (lama!.components as Array<{ toJSON: () => C }>).map((c) => c.toJSON());
+  assert.equal(jsonLama.length, 1, 'tetap satu container');
+});
+
+await testAsync('pesan: section memakai SATU aksesori, tombol menang atas gambar', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SectionBuilder: d.SectionBuilder,
+    ThumbnailBuilder: d.ThumbnailBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+  };
+
+  type C = { components: Array<Record<string, any>> };
+  const ambilSection = (input: unknown) => {
+    const built = buildPostPayload(sanitizeBlocks(input).blocks, deps);
+    const json = (built!.components as Array<{ toJSON: () => C }>)[0]!.toJSON();
+    return json.components.find((c) => c.type === 9);
+  };
+
+  const denganGambar = ambilSection([
+    { kind: 'section', value: 'Teks', thumbnail: 'https://a.test/gambar.png' },
+  ]);
+  assert.equal(denganGambar?.accessory.type, 11, 'aksesori thumbnail (tipe 11)');
+  assert.equal(denganGambar?.accessory.media.url, 'https://a.test/gambar.png');
+  assert.equal(denganGambar?.components[0].content, 'Teks');
+
+  // Keduanya diisi: Discord menolak dua aksesori, jadi tombol yang dipakai.
+  const duaDua = ambilSection([
+    {
+      kind: 'section',
+      value: 'Teks',
+      thumbnail: 'https://a.test/gambar.png',
+      accessoryLabel: 'Buka',
+      url: 'https://b.test',
+    },
+  ]);
+  assert.equal(duaDua?.accessory.type, 2, 'aksesori tombol (tipe 2)');
+  assert.equal(duaDua?.accessory.label, 'Buka');
+  assert.equal(duaDua?.accessory.url, 'https://b.test');
+});
+
+await testAsync('pesan: pemisah berjarak besar memakai spacing 2', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+  };
+  const built = buildPostPayload(
+    sanitizeBlocks([{ kind: 'text', value: 'A' }, { kind: 'divider', spacing: 'large' }, { kind: 'text', value: 'B' }]).blocks,
+    deps,
+  );
+  type C = { components: Array<Record<string, any>> };
+  const json = (built!.components as Array<{ toJSON: () => C }>)[0]!.toJSON();
+  const sep = json.components.find((c) => c.type === 14);
+  assert.equal(sep?.spacing, 2, 'jarak besar');
+  assert.equal(sep?.divider, true);
+});
+
+await testAsync('pesan: blok tutup-kartu menaruh komponen di luar container', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    accent: 0x6d8cff,
+    accentToNumber: (hex: string) => parseInt(hex.slice(1), 16),
+  };
+
+  // Struktur pesan Discohook: pembuka polos, dua kartu berwarna, tombol penutup.
+  const blok = sanitizeBlocks([
+    { kind: 'text', value: 'Pembuka' },
+    { kind: 'close' },
+    { kind: 'container', accent: '#58b9ff' },
+    { kind: 'text', value: 'Kartu satu' },
+    { kind: 'container', accent: '#ff8800' },
+    { kind: 'text', value: 'Kartu dua' },
+    { kind: 'close' },
+    { kind: 'button', value: 'Situs', url: 'https://example.com' },
+  ]).blocks;
+  type C = { type: number; accent_color?: number; components?: Array<{ content?: string; label?: string }> };
+  const built = buildPostPayload(blok, deps);
+  assert.ok(built, 'pesan tidak boleh dianggap kosong');
+  const json = (built!.components as Array<{ toJSON: () => C }>).map((c) => c.toJSON());
+
+  // 10 = TextDisplay, 17 = Container, 1 = ActionRow
+  assert.deepEqual(
+    json.map((c) => c.type),
+    [10, 17, 17, 1],
+    'pembuka & tombol di luar kartu, dua kartu di tengah',
+  );
+  assert.equal(json[0]!.components, undefined, 'TextDisplay top-level tidak berisi komponen');
+  assert.equal(json[1]!.accent_color, 0x58b9ff, 'kartu pertama biru');
+  assert.equal(json[2]!.accent_color, 0xff8800, 'kartu kedua oranye');
+  assert.equal(json[3]!.components?.[0]!.label, 'Situs', 'label tombol penutup');
+});
+
+await testAsync('pesan: tanpa blok container tetap satu kartu (pesan lama aman)', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+  };
+  const built = buildPostPayload(
+    sanitizeBlocks([
+      { kind: 'text', value: 'Halo' },
+      { kind: 'text', value: 'Dunia' },
+      { kind: 'button', value: 'Situs', url: 'https://example.com' },
+    ]).blocks,
+    deps,
+  );
+  type C = { type: number; components?: Array<{ type: number }> };
+  const json = (built!.components as Array<{ toJSON: () => C }>).map((c) => c.toJSON());
+  assert.equal(json.length, 1, 'hanya satu container');
+  assert.equal(json[0]!.type, 17, 'komponennya container');
+});
+
+await testAsync('pesan: dua blok tutup-kartu berurutan tidak menggandakan komponen', async () => {
+  const { sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const { blocks, dropped } = sanitizeBlocks([
+    { kind: 'container' },
+    { kind: 'text', value: 'A' },
+    { kind: 'close' },
+    { kind: 'close' },
+    { kind: 'text', value: 'B' },
+  ]);
+  assert.deepEqual(dropped, [], 'tidak ada blok yang dibuang');
+  assert.equal(blocks.filter((b) => b.kind === 'close').length, 1, 'penutup ganda diringkas jadi satu');
+});
+
+await testAsync('pesan: teks beraksesori dikirim sebagai Section', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SectionBuilder: d.SectionBuilder,
+    ThumbnailBuilder: d.ThumbnailBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+  };
+  type C = { type: number; components: Array<Record<string, any>> };
+  const dalam = (input: unknown): Record<string, any> => {
+    const built = buildPostPayload(sanitizeBlocks(input).blocks, deps);
+    const json = (built!.components as Array<{ toJSON: () => C }>).map((c) => c.toJSON());
+    return json[0]!.components[0]!;
+  };
+
+  // Tombol link → Section, aksesori berupa tombol (tipe 2, gaya 5).
+  const tombol = dalam([{ kind: 'text', value: 'Halo', accessoryLabel: 'Buka', url: 'https://a.test' }]);
+  assert.equal(tombol.type, 9, 'teks bertombol jadi Section');
+  assert.equal(tombol.accessory.style, 5, 'tombol link');
+  assert.equal(tombol.accessory.label, 'Buka');
+
+  // Thumbnail → Section dengan aksesori thumbnail.
+  const thumb = dalam([{ kind: 'text', value: 'Halo', thumbnail: 'https://img.test/a.png' }]);
+  assert.equal(thumb.type, 9, 'teks bergambar jadi Section');
+  assert.equal(thumb.accessory.media.url, 'https://img.test/a.png');
+
+  // Tanpa aksesori → tetap TextDisplay, jadi pesan lama tidak berubah.
+  const polos = dalam([{ kind: 'text', value: 'Halo' }]);
+  assert.equal(polos.type, 10, 'teks polos tetap TextDisplay');
+});
+
+await testAsync('pesan: blok file jadi komponen File di luar kartu', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    FileBuilder: d.FileBuilder,
+  };
+  type C = { type: number; components?: Array<Record<string, any>>; file?: { url: string } };
+
+  const built = buildPostPayload(
+    sanitizeBlocks([
+      { kind: 'text', value: 'Unduh panduan:' },
+      { kind: 'file', value: 'https://a.test/panduan.pdf', name: 'panduan.pdf' },
+    ]).blocks,
+    deps,
+  );
+  assert.ok(built, 'payload terbentuk');
+  const json = (built!.components as Array<{ toJSON: () => C }>).map((c) => c.toJSON());
+  assert.deepEqual(
+    json.map((c) => c.type),
+    [17, 13],
+    'container untuk teks, File berdiri sendiri di luar kartu',
+  );
+  // Berkas diunduh saat kirim lalu dirujuk lewat attachment://.
+  assert.equal(json[1]!.file?.url, 'attachment://panduan.pdf');
+  assert.equal(built!.remoteFiles.length, 1, 'URL dicatat untuk diunduh saat kirim');
+  assert.equal(built!.remoteFiles[0]!.url, 'https://a.test/panduan.pdf');
+
+  // Berkas sendirian tetap dianggap pesan berisi (bukan kosong).
+  const sendiri = buildPostPayload(
+    sanitizeBlocks([{ kind: 'file', value: 'https://a.test/a.zip' }]).blocks,
+    deps,
+  );
+  assert.ok(sendiri, 'berkas sendirian tidak dianggap pesan kosong');
+});
+
+await testAsync('pesan: batas berkas dan spoiler dihormati', async () => {
+  const { sanitizeBlocks, measureBlocks, LIMITS } = await import('../src/features/custom-post.js');
+
+  // Lebih dari batas → dipotong dengan alasan, bukan error.
+  const banyak = sanitizeBlocks(
+    Array.from({ length: LIMITS.filesPerMessage + 2 }, (_, i) => ({ kind: 'file', value: `https://a.test/f${i}.pdf` })),
+  );
+  assert.equal(banyak.blocks.filter((b) => b.kind === 'file').length, LIMITS.filesPerMessage);
+  assert.ok(banyak.dropped.some((d) => d.includes('berkas melebihi batas')), 'alasan disebutkan');
+
+  // Spoiler dipertahankan pada gambar dan berkas.
+  const spoiler = sanitizeBlocks([
+    { kind: 'image', value: 'https://img.test/a.png', spoiler: true },
+    { kind: 'file', value: 'https://a.test/b.pdf', spoiler: true },
+  ]);
+  assert.equal(spoiler.blocks[0]!.spoiler, true);
+  assert.equal(spoiler.blocks[1]!.spoiler, true);
+
+  // Penghitung membawa jumlah berkas.
+  const ukur = measureBlocks(sanitizeBlocks([{ kind: 'file', value: 'https://a.test/c.pdf' }]).blocks);
+  assert.equal(ukur.files, 1);
+});
+
+await testAsync('pesan: penghitung batas komponen menghitung seperti Discord', async () => {
+  const { measureBlocks, sanitizeBlocks, LIMITS } = await import('../src/features/custom-post.js');
+  const ukur = (input: unknown) => measureBlocks(sanitizeBlocks(input).blocks);
+
+  assert.equal(ukur([]).total, 0, 'pesan kosong tidak memakai komponen');
+
+  // Teks + 2 tombol = 1 TextDisplay + 1 ActionRow.
+  const duaTombol = ukur([
+    { kind: 'text', value: 'Halo' },
+    { kind: 'button', value: 'A', url: 'https://a.test' },
+    { kind: 'button', value: 'B', url: 'https://b.test' },
+  ]);
+  assert.equal(duaTombol.total, 2);
+  assert.equal(duaTombol.topLevel, 1);
+
+  // 7 tombol = 2 baris.
+  const tujuh = ukur([
+    { kind: 'text', value: 'A' },
+    ...Array.from({ length: 7 }, (_, i) => ({ kind: 'button', value: `T${i}`, url: 'https://x.test' })),
+  ]);
+  assert.equal(tujuh.total, 3, '1 teks + 2 baris tombol');
+
+  // 41 blok teks = melewati batas 40.
+  const banyak = ukur(Array.from({ length: 41 }, (_, i) => ({ kind: 'text', value: `b${i}` })));
+  assert.equal(banyak.total, 41);
+  assert.equal(banyak.over, true);
+  assert.ok(banyak.masalah[0]?.includes(String(LIMITS.totalComponents)), 'menyebut batasnya');
+
+  // Container kosong tidak dihitung sebagai container yang dikirim.
+  const kosong = ukur([{ kind: 'text', value: 'A' }, { kind: 'container' }]);
+  assert.equal(kosong.topLevel, 1, 'container kosong dibuang');
+
+  // 11 container dipotong ke 10 oleh sanitizeBlocks, dengan alasan jelas.
+  const sebelas = sanitizeBlocks(
+    Array.from({ length: 11 }, (_, i) => [{ kind: 'container' }, { kind: 'text', value: `isi ${i}` }]).flat(),
+  );
+  assert.equal(sebelas.blocks.filter((b) => b.kind === 'container').length, 10);
+  assert.ok(sebelas.dropped.some((d) => d.includes('container ke-11')), 'alasan disebutkan');
+});
+
+await testAsync('pesan: isi blok tidak bisa keluar dari tag <script>', async () => {
+  const { pesanPage } = await import('../src/web/ui/pesan.js');
+
+  // Serangan klasik: tutup <script> lebih awal, lalu suntik HTML. Isi blok
+  // berasal dari admin, jadi tidak boleh dipercaya.
+  const evil = '</script><img src=x onerror="alert(1)">';
+  const html = pesanPage({
+    guildId: '123456789012345678',
+    guildName: 'Server',
+    status: { online: false, mode: 'standalone', uptimeSeconds: 1 },
+    posts: [
+      {
+        id: 1,
+        name: '</script><b>nama</b>',
+        channelId: null,
+        blocks: [{ kind: 'text', value: evil }],
+        messageId: null,
+        updatedAt: Date.now(),
+        accent: null,
+        sender: 'bot' as const,
+      },
+    ],
+    channels: [],
+    botReady: false,
+    roles: [],
+    hasManageRoles: false,
+    roleButtons: {},
+    roleMenus: {},
+  });
+
+  // Yang diperiksa: TIDAK ADA penutup script yang diikuti tag HTML.
+  assert.ok(!/<\/script>\s*<img/i.test(html), 'penutup script tidak bisa disuntik');
+  assert.ok(!html.includes('onerror="alert(1)"'), 'atribut onerror tidak muncul mentah');
+  // Dan isinya masih ada dalam bentuk aman, jadi admin tetap melihat teksnya.
+  assert.ok(html.includes('u003c/script'), 'isi di-encode, bukan dibuang');
+  // Nama pesan di daftar tetap harus ter-escape sebagai HTML biasa.
+  assert.ok(!html.includes('<b>nama</b>'), 'nama tidak dirender sebagai tag');
+});
+
+await testAsync('pesan: payload container berisi Section/ActionRow sesuai urutan', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const { blocks } = sanitizeBlocks([
+    { kind: 'text', value: 'Aturan server' },
+    { kind: 'divider' },
+    { kind: 'image', value: 'https://contoh.test/a.png' },
+    { kind: 'button', value: 'Gabung', url: 'https://discord.gg/x' },
+  ]);
+
+  const built = buildPostPayload(blocks, {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+  });
+  assert.ok(built, 'payload terbentuk');
+  const json = (built!.components[0] as { toJSON: () => { components: Array<Record<string, unknown>> } }).toJSON();
+  // 10 = teks, 14 = pemisah, 12 = galeri, 1 = action row (tombol)
+  assert.deepEqual(json.components.map((c) => c.type), [10, 14, 12, 1], 'urutan blok dijaga');
+  // Flag Components V2 wajib; tanpa itu Discord menganggap pesan kosong.
+  assert.equal(built!.flags, d.MessageFlags.IsComponentsV2, 'flag V2 dipasang');
+
+  const row = json.components[3] as { components: Array<Record<string, unknown>> };
+  assert.equal(row.components[0]!.label, 'Gabung', 'label tombol');
+  assert.equal(row.components[0]!.style, d.ButtonStyle.Link, 'tombol memakai gaya link');
+});
+
+await testAsync('pesan: pesan kosong tidak menghasilkan payload', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+  };
+  assert.equal(buildPostPayload([], deps), null, 'tanpa blok = null');
+  const hanyaGaris = sanitizeBlocks([{ kind: 'divider' }, { kind: 'button', value: 'a', url: 'https://x.test' }]);
+  assert.equal(
+    buildPostPayload(hanyaGaris.blocks, deps),
+    null,
+    'hanya pemisah + tombol = tidak ada isi, ditolak',
+  );
+});
+
+await testAsync('pesan: tombol dipecah maksimum 5 per baris', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const tombol = Array.from({ length: 7 }, (_, i) => ({
+    kind: 'button',
+    value: `Tombol ${i + 1}`,
+    url: `https://contoh.test/${i}`,
+  }));
+  const { blocks } = sanitizeBlocks([{ kind: 'text', value: 'Pilih role' }, ...tombol]);
+  const built = buildPostPayload(blocks, {
+    ContainerBuilder: d.ContainerBuilder, TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder, MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder, ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder, ButtonStyle: d.ButtonStyle,
+  });
+  const json = (built!.components[0] as { toJSON: () => { components: Array<Record<string, unknown>> } }).toJSON();
+  const rows = json.components.filter((c) => c.type === 1);
+  // Discord menolak lebih dari 5 tombol per ActionRow.
+  assert.equal(rows.length, 2, 'dua baris tombol');
+  assert.equal((rows[0] as { components: unknown[] }).components.length, 5, 'baris pertama 5 tombol');
+  assert.equal((rows[1] as { components: unknown[] }).components.length, 2, 'baris kedua 2 tombol');
+});
+
+await testAsync('container: banner di ATAS teks, avatar jadi thumbnail kanan', async () => {
+  const { buildContainerCard } = await import('../src/features/container-card.js');
+
+  const card = buildContainerCard({
+    kind: 'welcome',
+    text: 'Selamat datang Sky',
+    guildName: 'Komunitas Zypher',
+    memberCount: 7,
+    banner: { name: 'banner-abc.png' },
+    avatar: { name: 'avatar-abc.png' },
+  });
+  assert.ok(card, 'kartu terbentuk');
+
+  const json = card!.toJSON() as unknown as { components: Array<Record<string, unknown>> };
+  const types = json.components.map((c) => c.type);
+  // Urutan ini yang dilihat member: banner menyambut lebih dulu, lalu teks.
+  assert.equal(types[0], 12, 'blok pertama = MediaGallery (banner)');
+  assert.equal(types[1], 9, 'blok kedua = Section (teks + avatar)');
+
+  const banner = json.components[0] as { items: Array<{ media: { url: string } }> };
+  assert.equal(banner.items[0]!.media.url, 'attachment://banner-abc.png', 'banner dirujuk lampiran');
+
+  const section = json.components[1] as {
+    components: Array<{ type: number; content: string }>;
+    accessory: { type: number; media: { url: string } };
+  };
+  assert.equal(section.components[0]!.type, 10, 'di dalam Section ada TextDisplay');
+  // Thumbnail (11) = avatar kecil di KANAN teks. Dulu avatar jadi MediaGallery
+  // selebar penuh di tengah, sehingga tampak seperti kotak kosong besar.
+  assert.equal(section.accessory.type, 11, 'avatar memakai Thumbnail, bukan galeri penuh');
+  assert.equal(section.accessory.media.url, 'attachment://avatar-abc.png', 'avatar dirujuk lampiran');
+});
+
+await testAsync('container: tanpa avatar, teks dikirim tanpa Section', async () => {
+  const { buildContainerCard } = await import('../src/features/container-card.js');
+  const card = buildContainerCard({
+    kind: 'goodbye',
+    text: 'Sampai jumpa',
+    guildName: 'Z',
+    avatar: null,
+  });
+  const json = card!.toJSON() as unknown as { components: Array<Record<string, unknown>> };
+  assert.ok(
+    json.components.every((c) => c.type !== 9),
+    'tidak ada Section kosong saat avatar dimatikan',
+  );
+  assert.ok(json.components.some((c) => c.type === 10), 'teks tetap ada');
+});
+
+await testAsync('embed-mock: Section jadi SATU blok teks + thumbnail', async () => {
+  const { containerToMock } = await import('../src/features/embed-mock.js');
+
+  const mock = containerToMock({
+    toJSON: () => ({
+      type: 17,
+      components: [
+        { type: 12, items: [{ media: { url: 'attachment://banner' } }] },
+        {
+          type: 9,
+          components: [{ type: 10, content: 'Halo Sky!' }],
+          accessory: { type: 11, media: { url: 'attachment://avatar' } },
+        },
+        { type: 14 },
+      ],
+    }),
+  } as never);
+
+  assert.ok(mock, 'container terbaca');
+  assert.deepEqual(mock!.blocks.map((b) => b.kind), ['image', 'section', 'separator'], 'urutan blok');
+  const section = mock!.blocks[1];
+  assert.ok(section!.kind === 'section', 'blok kedua adalah section');
+  if (section!.kind === 'section') {
+    // Teks & thumbnail SATU blok: kalau dipisah, pratinjau menggambar avatar
+    // di baris sendiri di kanan bawah, padahal Discord menaruhnya di samping.
+    assert.equal(section!.text, 'Halo Sky!', 'teks section terbaca');
+    assert.equal(section!.thumbnailUrl, 'attachment://avatar', 'thumbnail section terbaca');
+  }
+});
+
+await testAsync('pratinjau: banner tidak digambar dua kali', async () => {
+  const { buildContainerCard } = await import('../src/features/container-card.js');
+  const { containerToMock } = await import('../src/features/embed-mock.js');
+
+  const card = buildContainerCard({
+    kind: 'welcome',
+    text: 'Halo',
+    guildName: 'Z',
+    banner: { name: 'banner-abc.png' },
+  });
+  const mock = containerToMock(card)!;
+  const gambar = mock.blocks.filter((b) => b.kind === 'image');
+  // Dulu banner dari disk ditambahkan lagi sebagai blok baru, sehingga
+  // pratinjau menampilkan dua banner sementara Discord menampilkan satu.
+  assert.equal(gambar.length, 1, 'tepat satu gambar banner');
+  assert.equal(
+    gambar[0]!.kind === 'image' ? gambar[0]!.url : '',
+    'attachment://banner-abc.png',
+    'rujukan lampiran, bukan URL tambahan',
+  );
 });
 
 await testAsync('embed-mock: colorToCss aman untuk nilai rusak', async () => {
@@ -5815,7 +7335,7 @@ await testAsync('pratinjau: mode container menghasilkan containerMock', async ()
     templateOnly: true,
   });
   assert.ok(result.containerMock, 'pratinjau container menghasilkan containerMock');
-  assert.ok(result.containerMock!.lines.length > 0, 'ada baris teks yang bisa digambar');
+  assert.ok(result.containerMock!.blocks.length > 0, 'ada blok yang bisa digambar');
   assert.equal(result.embedMock ?? null, null, 'mode container tidak memakai embed');
 });
 

@@ -87,6 +87,19 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
     // Kuota disk container (MB). NULL = tidak diatur, dan dashboard tidak
     // menebaknya dari partisi mesin induk.
     'ALTER TABLE guilds ADD COLUMN disk_quota_mb INTEGER',
+    // Warna aksen pesan /pesan. NULL = warna bawaan, jadi pesan yang sudah
+    // tersimpan sebelum kolom ini ada tetap tampil seperti sebelumnya.
+    'ALTER TABLE custom_posts ADD COLUMN accent TEXT',
+    // Pengirim pesan: 'bot' (bawaan) atau 'webhook' (atas nama server).
+    // NULL dibaca sebagai bot, jadi pesan lama tidak berubah perilakunya.
+    'ALTER TABLE custom_posts ADD COLUMN sender TEXT',
+    // Bentuk pesan: 'container' (bawaan, Components V2) atau 'embed' (klasik).
+    // NULL dibaca sebagai container, jadi pesan lama tidak berubah tampilan.
+    'ALTER TABLE custom_posts ADD COLUMN layout TEXT',
+    // Emoji & warna tombol role. NULL = tampilan lama (tanpa emoji, biru),
+    // jadi tombol yang dibuat sebelum fitur ini tetap terlihat sama.
+    'ALTER TABLE post_role_buttons ADD COLUMN emoji TEXT',
+    'ALTER TABLE post_role_buttons ADD COLUMN style TEXT',
   ];
 
   for (const statement of statements) {

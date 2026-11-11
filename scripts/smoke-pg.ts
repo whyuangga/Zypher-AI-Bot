@@ -344,6 +344,173 @@ await test('agent: quiet_hours ada di Postgres', async () => {
 });
 
 /* ------------------------------------------------------------------ */
+/*  Pesan container (tabel custom_posts)                               */
+/* ------------------------------------------------------------------ */
+
+console.log('\nPesan container');
+
+await test('posting: simpan, baca, perbarui, hapus', async () => {
+  const guild = 'g-posts-pg';
+
+  const dibuat = await repo.createCustomPost(guild, {
+    name: 'Rules',
+    channelId: '1400000000000000001',
+    blocks: [
+      { kind: 'text', value: 'Aturan server' },
+      { kind: 'divider' },
+      { kind: 'button', value: 'Gabung', url: 'https://discord.gg/x' },
+    ],
+  });
+  // `insert()` memakai RETURNING id di Postgres — kalau pemetaan itu salah,
+  // id akan NaN dan semua operasi berikutnya ikut gagal.
+  assert.ok(Number.isInteger(dibuat.id) && dibuat.id > 0, `id berupa angka, dapat ${dibuat.id}`);
+  assert.equal(dibuat.name, 'Rules');
+  assert.deepEqual(dibuat.blocks.map((b) => b.kind), ['text', 'divider', 'button']);
+  assert.equal(dibuat.messageId, null, 'belum pernah dikirim');
+
+  // Tahap "dikirim": ID pesan Discord disimpan supaya bisa diperbarui.
+  await repo.setCustomPostMessage(guild, dibuat.id, '999888777666555444');
+  const terkirim = await repo.getCustomPost(guild, dibuat.id);
+  assert.equal(terkirim!.messageId, '999888777666555444', 'ID pesan tersimpan');
+
+  const diubah = await repo.updateCustomPost(guild, dibuat.id, {
+    name: 'Rules v2',
+    blocks: [{ kind: 'text', value: 'Versi kedua' }],
+  });
+  assert.equal(diubah!.name, 'Rules v2');
+  assert.equal(diubah!.blocks.length, 1, 'blok lama diganti');
+  assert.equal(diubah!.messageId, '999888777666555444', 'ID pesan dipertahankan saat isi diubah');
+
+  await repo.deleteCustomPost(guild, dibuat.id);
+  assert.equal(await repo.getCustomPost(guild, dibuat.id), null, 'terhapus');
+});
+
+await test('posting: blok berbahaya dibuang sebelum disimpan', async () => {
+  const guild = 'g-posts-pg-jahat';
+  const dibuat = await repo.createCustomPost(guild, {
+    name: 'Uji',
+    channelId: null,
+    blocks: [
+      { kind: 'text', value: 'Aman' },
+      { kind: 'button', value: 'Jahat', url: 'javascript:alert(1)' },
+      { kind: 'image', value: 'bukan-url' },
+    ],
+  });
+  // Yang disimpan hanya bentuk yang mungkin dikirim Discord.
+  assert.deepEqual(dibuat.blocks.map((b) => b.kind), ['text'], 'hanya blok sah');
+});
+
+await test('posting: tombol role tersimpan, terurut, dan bisa dicari', async () => {
+  const guild = 'g-roles-pg';
+  const post = await repo.createCustomPost(guild, {
+    name: 'Ambil role',
+    channelId: '1400000000000000001',
+    blocks: [{ kind: 'text', value: 'Pilih role' }],
+  });
+
+  const hasil = await repo.replaceRoleButtons(guild, post.id, [
+    { label: 'Gamer', roleId: '111111111111111111' },
+    { label: 'Musik', roleId: '222222222222222222' },
+    { label: 'Gamer lagi', roleId: '111111111111111111' },
+  ]);
+  assert.deepEqual(hasil.buttons.map((b) => b.label), ['Gamer', 'Musik'], 'duplikat dibuang');
+  assert.equal(hasil.buttons[0]!.position, 0, 'urutan disimpan');
+  assert.equal(hasil.buttons[1]!.position, 1);
+
+  // Cari dari customId — jalur yang dipakai bot saat tombol diklik.
+  const dariKlik = await repo.findRoleButton(guild, hasil.buttons[1]!.id);
+  assert.equal(dariKlik!.label, 'Musik');
+  assert.equal(dariKlik!.roleId, '222222222222222222');
+
+  // Ganti seluruh daftar: ID lama harus HILANG, bukan menumpuk.
+  const baru = await repo.replaceRoleButtons(guild, post.id, [
+    { label: 'Artist', roleId: '333333333333333333' },
+  ]);
+  assert.equal(baru.buttons.length, 1);
+  assert.equal(await repo.findRoleButton(guild, hasil.buttons[0]!.id), null, 'tombol lama tidak berlaku');
+
+  // Server lain tidak bisa membaca tombol server ini.
+  assert.equal(await repo.findRoleButton('g-lain-pg', baru.buttons[0]!.id), null, 'terisolasi per server');
+});
+
+await test('posting: menu role + opsi tersimpan utuh di Postgres', async () => {
+  const guild = 'g-menu-pg';
+  const post = await repo.createCustomPost(guild, {
+    name: 'Menu role',
+    channelId: '1400000000000000002',
+    blocks: [{ kind: 'text', value: 'Pilih warna' }],
+  });
+
+  const hasil = await repo.replaceRoleMenus(guild, post.id, [
+    {
+      placeholder: 'Pilih warna',
+      minValues: 1,
+      maxValues: 1,
+      exclusive: true,
+      options: [
+        { label: 'Merah', roleId: '111111111111111111', emoji: '🔴', description: 'Merah' },
+        { label: 'Biru', roleId: '222222222222222222', emoji: '🔵' },
+      ],
+    },
+  ]);
+
+  assert.equal(hasil.menus.length, 1);
+  assert.equal(hasil.menus[0]!.exclusive, true, 'flag eksklusif tersimpan');
+  assert.equal(hasil.menus[0]!.options.length, 2);
+  assert.equal(hasil.menus[0]!.options[0]!.emoji, '🔴');
+  assert.equal(hasil.menus[0]!.options[1]!.description, null, 'keterangan kosong = null');
+
+  // Jalur klik: cari menu dari customId, lalu pastikan server lain ditolak.
+  const dariKlik = await repo.findRoleMenu(guild, hasil.menus[0]!.id);
+  assert.equal(dariKlik!.placeholder, 'Pilih warna');
+  assert.equal(await repo.findRoleMenu('g-lain-pg', hasil.menus[0]!.id), null, 'terisolasi per server');
+
+  // Ganti seluruh daftar: menu lama (beserta opsinya) harus hilang.
+  const baru = await repo.replaceRoleMenus(guild, post.id, []);
+  assert.equal(baru.menus.length, 0, 'menu lama dihapus');
+  assert.equal(await repo.listRoleMenus(guild, post.id).then((m) => m.length), 0);
+});
+
+await test('posting: webhook tersimpan terenkripsi per channel', async () => {
+  const guild = 'g-hook-pg';
+  const channel = '1400000000000000009';
+
+  assert.equal(await repo.getChannelWebhook(guild, channel), null, 'belum ada');
+
+  await repo.saveChannelWebhook({
+    guildId: guild,
+    channelId: channel,
+    webhookId: '111111111111111111',
+    token: 'T'.repeat(68),
+  });
+
+  const tersimpan = await repo.getChannelWebhook(guild, channel);
+  assert.ok(tersimpan, 'terbaca kembali');
+  assert.equal(tersimpan!.webhookId, '111111111111111111');
+  assert.ok(tersimpan!.url.endsWith('T'.repeat(68)), 'token terdekripsi utuh untuk dipakai');
+
+  // Isi kolom di database TIDAK boleh memuat token asli.
+  const baris = await driver.get<{ token: string }>(
+    'SELECT token FROM post_webhooks WHERE channel_id = ?',
+    [channel],
+  );
+  assert.ok(baris && !baris.token.includes('TTTT'), 'token tidak tersimpan sebagai teks biasa');
+
+  // Simpan ulang = ganti, bukan duplikat (channel_id adalah primary key).
+  await repo.saveChannelWebhook({
+    guildId: guild,
+    channelId: channel,
+    webhookId: '222222222222222222',
+    token: 'U'.repeat(68),
+  });
+  const diganti = await repo.getChannelWebhook(guild, channel);
+  assert.equal(diganti!.webhookId, '222222222222222222', 'webhook diganti');
+
+  await repo.deleteChannelWebhook(channel);
+  assert.equal(await repo.getChannelWebhook(guild, channel), null, 'bisa dilupakan');
+});
+
+/* ------------------------------------------------------------------ */
 
 await driver.close();
 

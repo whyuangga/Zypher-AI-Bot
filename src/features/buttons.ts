@@ -7,6 +7,8 @@ import {
 import { config } from '../config.js';
 import { getGuildSettings, getPanel } from '../db/repo.js';
 import { dmHelpEphemeral, startDmSession } from './dm.js';
+import { handleRoleButton } from './role-button-handler.js';
+import { parseRoleButtonId } from './role-buttons.js';
 import { errorMessage, logger } from '../lib/logger.js';
 
 async function resolveMember(interaction: ButtonInteraction): Promise<GuildMember | null> {
@@ -82,8 +84,19 @@ async function handleStartDm(interaction: ButtonInteraction): Promise<void> {
   }
 }
 
-/** Router semua button interaction milik bot. */
+/**
+ * Router semua button interaction milik bot.
+ *
+ * Tombol role memakai customId DINAMIS (`post-role:<id>`), jadi tidak bisa
+ * masuk `switch` di bawah — ID-nya dibuat saat pesan disusun. Karena itu
+ * prefix-nya diperiksa lebih dulu.
+ */
 export async function handleButton(interaction: ButtonInteraction): Promise<void> {
+  if (parseRoleButtonId(interaction.customId) !== null) {
+    await handleRoleButton(interaction);
+    return;
+  }
+
   switch (interaction.customId) {
     case 'dm:start':
       await handleStartDm(interaction);
