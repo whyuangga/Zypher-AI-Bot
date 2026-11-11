@@ -177,6 +177,7 @@ export async function welcomeMember(member: GuildMember): Promise<WelcomeOutcome
             bannerPath: settings.bannerPath,
             kicker: 'SELAMAT DATANG',
             filePrefix: 'selamat-datang',
+            detail: cardDetail('welcome', member.guild.name, member.guild.memberCount),
           },
           usedAi,
         )
@@ -432,6 +433,11 @@ async function buildCard(
     bannerPath: string | null;
     kicker: string;
     filePrefix: string;
+    /**
+     * Baris kecil di bawah nama. Ditentukan pemanggil karena hanya pemanggil
+     * yang tahu konteksnya: sambutan memakai jumlah member, perpisahan tidak.
+     */
+    detail: string;
   },
   usedAi: boolean,
 ): Promise<AttachmentBuilder | null> {
@@ -448,12 +454,7 @@ async function buildCard(
     avatarDataUri: avatar,
     bannerDataUri: banner,
     kicker: options.kicker,
-    // Baris kecil di bawah nama. Jumlah member hanya bermakna untuk sambutan:
-    // saat member keluar, angka yang tersisa sudah tidak mencerminkan dia.
-    detail:
-      options.kicker === 'SAMPAI JUMPA'
-        ? `Terima kasih dari ${member.guild.name}`
-        : `${member.guild.name} • member ke-${member.guild.memberCount.toLocaleString('id-ID')}`,
+    detail: options.detail,
   });
   if (!png) return null;
 
@@ -462,6 +463,30 @@ async function buildCard(
   return new AttachmentBuilder(png, { name: `${options.filePrefix}-${suffix}.png` });
 }
 
+
+/* ------------------------------------------------------------------ */
+/*  Baris detail kartu                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Baris kecil di bawah nama pada kartu.
+ *
+ * Sambutan dan perpisahan memakai kartu yang sama, tapi kalimatnya beda karena
+ * konteksnya beda — dan itu satu-satunya perbedaan yang boleh ada. Dulu baris
+ * ini ditulis ulang di empat tempat (produksi, pesan uji, dua pratinjau), jadi
+ * kartu di pratinjau bisa tampil tanpa detail padahal produksi memakainya.
+ * Sekarang semua jalur memanggil fungsi ini.
+ */
+export function cardDetail(kind: 'welcome' | 'goodbye', guildName: string, memberCount?: number | null): string {
+  if (kind === 'goodbye') {
+    // Member sudah keluar: jumlah member yang tersisa tidak lagi mewakilinya.
+    return `Terima kasih dari ${guildName}`;
+  }
+  const jumlah = typeof memberCount === 'number' && Number.isFinite(memberCount) ? memberCount : null;
+  return jumlah === null
+    ? guildName
+    : `${guildName} • member ke-${jumlah.toLocaleString('id-ID')}`;
+}
 
 /* ------------------------------------------------------------------ */
 /*  Salam perpisahan (goodbye)                                         */
@@ -528,6 +553,7 @@ export async function goodbyeMember(member: GuildMember): Promise<boolean> {
             bannerPath: settings.bannerPath,
             kicker: 'SAMPAI JUMPA',
             filePrefix: 'sampai-jumpa',
+            detail: cardDetail('goodbye', member.guild.name),
           },
           Boolean(greeting),
         )

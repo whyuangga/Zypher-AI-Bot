@@ -61,6 +61,7 @@ import { readResourceUsage } from './resources.js';
 import { TIME_ZONES } from '../lib/timezone.js';
 import { normalizeDisplayMode } from '../features/display-mode.js';
 import { cardRendererAvailable, chromiumPath, renderWelcomeCard } from '../features/welcome-card.js';
+import { cardDetail } from '../features/welcome.js';
 import {
   BannerError,
   bannerExists,
@@ -1469,7 +1470,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
               avatarDataUri: null,
               bannerDataUri: input.bannerDataUri ?? null,
               kicker: input.kicker,
-              detail: `Terima kasih dari ${input.guildName}`,
+              detail: cardDetail('goodbye', input.guildName),
             })
         : undefined,
     });
@@ -1519,6 +1520,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
               avatarDataUri: null,
               bannerDataUri: input.bannerDataUri ?? null,
               kicker: input.kicker,
+              // Baris detail harus sama dengan produksi; kalau dibiarkan kosong,
+              // kartu di pratinjau berbeda dari yang diterima member.
+              detail: cardDetail('welcome', guildName, botClient?.guilds.cache.get(guildId)?.memberCount),
             })
         : undefined,
     });

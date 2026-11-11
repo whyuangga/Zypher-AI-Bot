@@ -24,6 +24,7 @@ import {
   TextDisplayBuilder,
   MessageFlags,
 } from 'discord.js';
+import { cardDetail } from './welcome.js';
 
 /** Warna aksen per jenis pesan — sama dengan warna embed yang sudah dipakai. */
 const ACCENT = { welcome: 0x6d8cff, goodbye: 0x716c98 } as const;
@@ -91,9 +92,12 @@ export function buildContainerCard(options: ContainerCardOptions): ContainerBuil
 
     // Baris kaki memakai sintaks `-#` (teks kecil) — satu-satunya cara membuat
     // teks sekunder di dalam container, karena footer embed tidak tersedia.
-    const foot = options.memberCount
-      ? `-# ${options.guildName} • member ke-${options.memberCount}`
-      : `-# ${options.guildName}`;
+    //
+    // Isinya memakai cardDetail() yang sama dengan kartu PNG: dulu container
+    // menulis sendiri "member ke-N", sehingga salam perpisahan menyebut jumlah
+    // member yang tersisa — sedangkan kartu perpisahan tidak. Dua bentuk pesan
+    // untuk hal yang sama harus sepakat.
+    const foot = `-# ${cardDetail(options.kind, options.guildName, options.memberCount)}`;
     container
       .addSeparatorComponents(new SeparatorBuilder().setDivider(true))
       .addTextDisplayComponents(new TextDisplayBuilder().setContent(foot.slice(0, 200)));

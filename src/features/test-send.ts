@@ -36,6 +36,7 @@ import { readBannerDataUri, readBannerAttachment } from './banner.js';
 import { displayModeLabel, normalizeDisplayMode } from './display-mode.js';
 import { buildContainerCard, containerPayload } from './container-card.js';
 import { renderWelcomeCard } from './welcome-card.js';
+import { cardDetail } from './welcome.js';
 
 export class SendTestError extends Error {}
 
@@ -145,8 +146,8 @@ async function buildCard(options: {
   avatarUrl: string | null;
   kicker: string;
   filePrefix: string;
-  /** Jumlah member untuk baris "member ke-N" di kartu. */
-  memberCount?: number;
+  /** Baris kecil di bawah nama — konteksnya ditentukan pemanggil. */
+  detail: string;
 }): Promise<AttachmentBuilder | null> {
   const banner = await readBannerDataUri(options.bannerPath);
   let avatar: string | null = null;
@@ -169,9 +170,7 @@ async function buildCard(options: {
     avatarDataUri: avatar,
     bannerDataUri: banner,
     kicker: options.kicker,
-    detail: options.memberCount
-      ? `${options.guildName} • member ke-${options.memberCount.toLocaleString('id-ID')}`
-      : options.guildName,
+    detail: options.detail,
   });
   if (!png) return null;
   return new AttachmentBuilder(png, { name: `${options.filePrefix}-test.png` });
@@ -215,7 +214,7 @@ export async function sendWelcomeTest(
           avatarUrl: member.displayAvatarURL({ extension: 'png', size: 256 }),
           kicker: 'SELAMAT DATANG',
           filePrefix: 'selamat-datang',
-          memberCount: guild.memberCount,
+          detail: cardDetail('welcome', guild.name, guild.memberCount),
         })
       : null;
 
@@ -374,7 +373,8 @@ export async function sendGoodbyeTest(
           avatarUrl: member.displayAvatarURL({ extension: 'png', size: 256 }),
           kicker: 'SAMPAI JUMPA',
           filePrefix: 'sampai-jumpa',
-          memberCount: guild.memberCount,
+          // Pesan uji perpisahan harus terlihat seperti perpisahan sungguhan.
+          detail: cardDetail('goodbye', guild.name),
         })
       : null;
 

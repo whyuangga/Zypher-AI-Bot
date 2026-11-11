@@ -4162,7 +4162,7 @@ await testAsync('perpisahan: pratinjau merender kartu seperti sambutan', async (
     server.indexOf("'/api/preview/welcome'"),
   );
   assert.match(blok, /withCard,\s*\n/, 'withCard diteruskan apa adanya ke previewGoodbye');
-  assert.ok(blok.includes('Terima kasih dari'), 'baris detail kartu perpisahan');
+  assert.ok(blok.includes("cardDetail('goodbye'"), 'baris detail kartu perpisahan');
 });
 
 await testAsync('perpisahan: tidak pernah menyebut "member ke-N"', async () => {
@@ -4173,6 +4173,114 @@ await testAsync('perpisahan: tidak pernah menyebut "member ke-N"', async () => {
   const card = source.slice(source.indexOf('async function buildCard'));
   assert.ok(card.includes('Terima kasih dari'), 'kartu perpisahan memakai kalimat terima kasih');
   assert.ok(card.includes('member ke-'), 'sambutan tetap memakai jumlah member');
+});
+
+await testAsync('kartu: baris detail welcome & goodbye satu sumber', async () => {
+  // Dulu baris ini ditulis ulang di empat tempat (produksi, pesan uji, dua
+  // pratinjau). Akibatnya kartu di pratinjau bisa tampil tanpa detail, dan
+  // pesan uji perpisahan menampilkan "member ke-N" yang tidak dipakai produksi.
+  const { cardDetail } = await import('../src/features/welcome.js');
+
+  assert.equal(
+    cardDetail('welcome', 'Komunitas Zypher', 1284),
+    'Komunitas Zypher • member ke-1.284',
+    'sambutan memakai jumlah member berformat Indonesia',
+  );
+  assert.equal(cardDetail('welcome', 'Komunitas Zypher'), 'Komunitas Zypher', 'tanpa angka tetap rapi');
+  assert.equal(
+    cardDetail('goodbye', 'Komunitas Zypher', 1284),
+    'Terima kasih dari Komunitas Zypher',
+    'perpisahan TIDAK memakai jumlah member walau angkanya dikirim',
+  );
+
+  // Tidak boleh ada jalur yang menulis kalimatnya sendiri lagi.
+  for (const file of [
+    'src/features/welcome.ts',
+    'src/features/test-send.ts',
+    'src/web/server.ts',
+  ]) {
+    const source = await readFile(file, 'utf8');
+    assert.equal(
+      source.includes('member ke-${') && file !== 'src/features/welcome.ts',
+      false,
+      `${file} memakai cardDetail(), bukan menyusun kalimat sendiri`,
+    );
+  }
+});
+
+await testAsync('kartu: pratinjau & produksi memakai baris detail yang sama', async () => {
+  // Test ini mengunci SIMETRI, bukan isi satu file: apa pun yang dikirim
+  // produksi harus bisa ditiru pratinjau, karena admin memutuskan dari pratinjau.
+  const { previewWelcome, previewGoodbye } = await import('../src/features/preview.js');
+  const { WELCOME_DEFAULTS, GOODBYE_DEFAULTS } = await import('../src/db/repo.js');
+
+  const dipanggil: Array<{ detail?: string; kicker?: string }> = [];
+  const renderCard = async (input: { detail?: string; kicker?: string }) => {
+    dipanggil.push(input);
+    return Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+  };
+
+  await previewWelcome({
+    settings: { ...WELCOME_DEFAULTS, guildId: '1', useAi: false } as never,
+    name: 'Sky',
+    guildName: 'Komunitas Zypher',
+    templateOnly: true,
+    withCard: true,
+    renderCard,
+  });
+  await previewGoodbye({
+    settings: { ...GOODBYE_DEFAULTS, guildId: '1', useAi: false } as never,
+    name: 'Sky',
+    guildName: 'Komunitas Zypher',
+    templateOnly: true,
+    withCard: true,
+    renderCard,
+  });
+
+  assert.deepEqual(
+    dipanggil.map((d) => d.kicker),
+    ['SELAMAT DATANG', 'SAMPAI JUMPA'],
+    'judul kartu berbeda sesuai jenisnya',
+  );
+  // Renderer pratinjau boleh tidak mengirim detail (server yang mengisi), tapi
+  // server WAJIB memakai helper yang sama — diperiksa di bawah.
+  const server = await readFile('src/web/server.ts', 'utf8');
+  assert.ok(
+    server.includes("cardDetail('welcome'") && server.includes("cardDetail('goodbye'"),
+    'kedua endpoint pratinjau memakai cardDetail()',
+  );
+});
+
+await testAsync('kartu: pesan uji perpisahan tidak menampilkan member ke-N', async () => {
+  // Pesan uji adalah yang dilihat admin sebelum mempercayai fitur ini. Kalau di
+  // situ tertulis "member ke-12" untuk member yang baru keluar, pesannya bohong.
+  const source = await readFile('src/features/test-send.ts', 'utf8');
+  const sambutan = source.slice(source.indexOf('SELAMAT DATANG') - 400, source.indexOf('SELAMAT DATANG') + 400);
+  const perpisahan = source.slice(source.indexOf('SAMPAI JUMPA') - 400, source.indexOf('SAMPAI JUMPA') + 600);
+
+  assert.ok(sambutan.includes("cardDetail('welcome'"), 'pesan uji sambutan memakai detail sambutan');
+  assert.ok(perpisahan.includes("cardDetail('goodbye'"), 'pesan uji perpisahan memakai detail perpisahan');
+  assert.equal(
+    perpisahan.includes('member ke-'),
+    false,
+    'tidak ada "member ke-" di jalur perpisahan',
+  );
+});
+
+await testAsync('container: kaki kartu memakai detail yang sama dengan PNG', async () => {
+  // Mode Container punya baris kaki sendiri (`-# teks kecil`). Dulu baris itu
+  // ditulis manual dan selalu menyebut "member ke-N" — termasuk untuk salam
+  // perpisahan, padahal kartu PNG perpisahan tidak begitu.
+  const source = await readFile('src/features/container-card.ts', 'utf8');
+  assert.ok(
+    source.includes('cardDetail(options.kind'),
+    'kaki container memakai cardDetail(), bukan menyusun kalimat sendiri',
+  );
+  assert.equal(
+    /member ke-\$\{options\.memberCount\}/.test(source),
+    false,
+    'tidak ada kalimat "member ke-" yang ditulis ulang di container',
+  );
 });
 
 await testAsync('banner: API unggah & hapus ada untuk kedua fitur', async () => {
