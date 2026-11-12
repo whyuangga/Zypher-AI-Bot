@@ -24,7 +24,13 @@
  *   - Balasan pada aksi role TIDAK memakai kalimat tetap seperti dulu. Admin
  *     menentukan sendiri teksnya (opsional) — itu yang paling sering diminta
  *     saat memakai Discohook.
+ *
+ * Sejak penantian tahan-restart tersedia (lihat post-flow.ts), `wait`, `condition`,
+ * dan `variable` ikut didukung. Ketiganya tetap TIDAK boleh bergantung pada
+ * antrean yang rumit: flow yang menunggu disimpan sebagai sesi, lalu dilanjutkan
+ * timer — bukan ditahan di memori.
  */
+import { FLOW_LIMITS, isVariableName, normalizeComparator } from './post-flow.js';
 
 /* ------------------------------------------------------------------ */
 /*  Jenis aksi                                                         */
@@ -35,7 +41,16 @@
  * `reply` — balas pengklik (boleh hanya dia yang melihat).
  * `message` — kirim pesan lain dari daftar pesan tersimpan.
  */
-export const ACTION_KINDS = ['role', 'reply', 'message'] as const;
+export const ACTION_KINDS = [
+  'role',
+  'reply',
+  'message',
+  'wait',
+  'condition',
+  'variable',
+  'thread',
+  'delete',
+] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
 /** Apa yang dilakukan pada role. */
@@ -52,7 +67,21 @@ export const ACTION_KIND_LABEL: Record<ActionKind, string> = {
   role: 'Role — beri / lepas',
   reply: 'Balas pengklik',
   message: 'Kirim pesan tersimpan',
+  wait: 'Tunggu',
+  condition: 'Periksa syarat (berhenti bila tidak cocok)',
+  variable: 'Simpan variabel',
+  thread: 'Buat thread',
+  delete: 'Hapus pesan ini',
 };
+
+/**
+ * Aksi yang MENGHENTIKAN flow kalau gagal.
+ *
+ * Selain ini, kegagalan hanya dilaporkan lalu flow lanjut. Perbedaannya
+ * disengaja: role, syarat, dan hapus pesan mengubah keadaan yang membuat sisa
+ * aksi masuk akal atau tidak; gagal di situ berarti melanjutkan akan
+ * menyesatkan member.
+ */
 
 /** Satu aksi. Semua field opsional kecuali `kind`; sanitizer membuang yang kosong. */
 export interface PostAction {
@@ -80,6 +109,27 @@ export interface PostAction {
   toChannel?: boolean;
   /** Balasan tambahan sesudah pesan tersimpan terkirim (opsional). */
   followUp?: string;
+  /* --- kind = 'wait' --- */
+  /** Lama penantian dalam detik (1 .. FLOW_LIMITS.waitSeconds). */
+  seconds?: number;
+  /* --- kind = 'condition' --- */
+  /** Nama nilai yang diperiksa, mis. `member.name`, `selected`, `var.kode`. */
+  value?: string;
+  /** Pembanding; lihat COMPARATOR_LABEL di post-flow.ts. */
+  comparator?: string;
+  /** Nilai pembanding (diabaikan untuk `empty`/`notEmpty`). */
+  expected?: string;
+  /* --- kind = 'variable' --- */
+  /** Nama variabel (huruf/angka/underscore, diawali huruf). */
+  name?: string;
+  /* --- kind = 'thread' --- */
+  /** Nama thread (boleh memakai template). */
+  threadName?: string;
+  /** true = thread privat (hanya yang diundang). */
+  private?: boolean;
+  /* --- kind = 'delete' --- */
+  /** Apa yang dihapus. `pesan` = pesan pemilik komponen (bawaan). */
+  what?: 'pesan';
 }
 
 /** Batas yang dijaga sanitizer dan dasbor. */
@@ -155,6 +205,71 @@ export function sanitizeActions(input: unknown): { actions: PostAction[]; droppe
       continue;
     }
 
+    if (kind === 'wait') {
+      const detik = Math.trunc(Number(item.seconds));
+      if (!Number.isFinite(detik) || detik < 1) {
+        dropped.push('aksi tunggu tanpa durasi yang sah (minimal 1 detik)');
+        continue;
+      }
+      actions.push({ kind: 'wait', seconds: Math.min(detik, FLOW_LIMITS.waitSeconds) });
+      continue;
+    }
+
+    if (kind === 'variable') {
+      const name = asString(item.name).trim();
+      if (!isVariableName(name)) {
+        dropped.push('aksi variabel dengan nama tidak sah (huruf/angka/garis bawah, diawali huruf)');
+        continue;
+      }
+      const nilai = asString(item.value).slice(0, FLOW_LIMITS.variableValue);
+      actions.push({ kind: 'variable', name, value: nilai });
+      continue;
+    }
+
+    if (kind === 'condition') {
+      /*
+       * Nilai yang diperiksa HARUS disebut. Tanpa itu, syaratnya diam-diam
+       * selalu cocok dan admin mengira percabangannya bekerja.
+       */
+      const nama = asString(item.value).trim();
+      if (!/^[a-zA-Z][\w.]{0,63}$/.test(nama)) {
+        dropped.push('aksi syarat tanpa nilai yang diperiksa');
+        continue;
+      }
+      const comparator = normalizeComparator(item.comparator);
+      const expected = asString(item.expected).slice(0, FLOW_LIMITS.variableValue);
+      // `empty`/`notEmpty` tidak butuh pembanding; menyimpan `expected` kosong
+      // lebih jujur daripada memaksa admin mengetik sesuatu yang diabaikan.
+      if ((comparator === 'equals' || comparator === 'notEquals' || comparator === 'contains' || comparator === 'notContains')) {
+        if (!expected) {
+          dropped.push('aksi syarat membutuhkan nilai pembanding');
+          continue;
+        }
+      }
+      actions.push({
+        kind: 'condition',
+        value: nama,
+        comparator,
+        ...(expected ? { expected } : {}),
+      });
+      continue;
+    }
+
+    if (kind === 'thread') {
+      const threadName = asString(item.threadName).trim().slice(0, 100);
+      if (!threadName) {
+        dropped.push('aksi thread tanpa nama thread');
+        continue;
+      }
+      actions.push({ kind: 'thread', threadName, private: asBoolean(item.private) });
+      continue;
+    }
+
+    if (kind === 'delete') {
+      actions.push({ kind: 'delete', what: 'pesan' });
+      continue;
+    }
+
     // kind === 'message'
     const postId = Number(item.postId);
     if (!Number.isSafeInteger(postId) || postId <= 0) {
@@ -191,7 +306,12 @@ export function sanitizeActions(input: unknown): { actions: PostAction[]; droppe
 export type ActionStep =
   | { kind: 'role'; roleId: string; op: RoleActionOp }
   | { kind: 'reply'; text: string; hidden: boolean }
-  | { kind: 'message'; postId: number; toChannel: boolean; followUp?: string };
+  | { kind: 'message'; postId: number; toChannel: boolean; followUp?: string }
+  | { kind: 'wait'; seconds: number }
+  | { kind: 'condition'; value: string; comparator: string; expected?: string }
+  | { kind: 'variable'; name: string; value: string }
+  | { kind: 'thread'; threadName: string; private: boolean }
+  | { kind: 'delete' };
 
 export interface ActionPlan {
   /** Langkah yang dijalankan, urut. */
@@ -244,7 +364,51 @@ export function planActions(actions: PostAction[], options: { selfPostId?: numbe
         toChannel: action.toChannel !== false,
         ...(action.followUp ? { followUp: action.followUp } : {}),
       });
+      continue;
     }
+
+    if (action.kind === 'wait') {
+      steps.push({ kind: 'wait', seconds: action.seconds! });
+      continue;
+    }
+
+    if (action.kind === 'condition') {
+      steps.push({
+        kind: 'condition',
+        value: action.value!,
+        comparator: action.comparator ?? 'equals',
+        ...(action.expected ? { expected: action.expected } : {}),
+      });
+      continue;
+    }
+
+    if (action.kind === 'variable') {
+      steps.push({ kind: 'variable', name: action.name!, value: action.value ?? '' });
+      continue;
+    }
+
+    if (action.kind === 'thread') {
+      steps.push({
+        kind: 'thread',
+        threadName: action.threadName!,
+        private: action.private === true,
+      });
+      continue;
+    }
+
+    if (action.kind === 'delete') {
+      steps.push({ kind: 'delete' });
+    }
+  }
+
+  /*
+   * Aksi sesudah `delete` tidak akan pernah terlihat (pesannya sudah hilang),
+   * dan aksi sesudah `wait` harus dijalankan timer — bukan di dalam interaksi.
+   * Keduanya dilaporkan supaya admin tidak mengira semuanya jalan berurutan.
+   */
+  const posisiHapus = steps.findIndex((step) => step.kind === 'delete');
+  if (posisiHapus !== -1 && posisiHapus < steps.length - 1) {
+    skipped.push('aksi sesudah "hapus pesan" tidak akan terlihat — pesannya sudah hilang');
   }
 
   return { steps, skipped, firstReply };

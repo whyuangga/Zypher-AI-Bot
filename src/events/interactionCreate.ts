@@ -22,17 +22,36 @@ import { ownsGuild } from '../lib/shard.js';
  * Aksi per OPSI tidak didukung untuk select jenis user/role/channel: nilai
  * pilihannya berasal dari Discord dan tidak punya ID baris di database.
  */
-export function targetSelectTampilan(customId: string): { postId: number | null; target: string } | null {
+export function targetSelectTampilan(
+  customId: string,
+  values?: readonly string[],
+): { postId: number | null; target: string; fallbackTarget: string } | null {
   if (!customId.startsWith(CONTEXT_SELECT_PREFIX)) return null;
   const sisa = customId.slice(CONTEXT_SELECT_PREFIX.length);
   const bagian = sisa.split(':');
 
+  const rakit = (postId: number | null, jenis: string) => {
+    const fallbackTarget = `select:${jenis}`;
+    /*
+     * Aksi per PILIHAN hanya masuk akal untuk menu string: nilainya ditentukan
+     * admin, jadi bisa dipakai sebagai kunci. Untuk menu user/role/channel,
+     * nilainya ID Discord yang berubah-ubah — aksi per pilihan di sana tidak
+     * bisa disusun di dasbor.
+     */
+    const dipilih = (values ?? []).filter((v) => typeof v === 'string' && v.length > 0);
+    if (jenis === 'string' && dipilih.length === 1) {
+      // Target per pilihan; `select:<jenis>` tetap dipakai sebagai cadangan.
+      return { postId, target: `sel:${dipilih[0]!.slice(0, 100)}`, fallbackTarget };
+    }
+    return { postId, target: fallbackTarget, fallbackTarget };
+  };
+
   if (bagian.length === 2 && /^\d+$/.test(bagian[0]!) && /^[a-z]{2,20}$/.test(bagian[1]!)) {
-    return { postId: Number(bagian[0]), target: `select:${bagian[1]}` };
+    return rakit(Number(bagian[0]), bagian[1]!);
   }
   if (bagian.length === 1 && /^[a-z]{2,20}$/.test(bagian[0]!)) {
     // Bentuk lama: tanpa ID pesan, jadi aksi dicari lewat target saja.
-    return { postId: null, target: `select:${bagian[0]}` };
+    return rakit(null, bagian[0]!);
   }
   return null;
 }
@@ -102,8 +121,17 @@ export async function onInteractionCreate(interaction: Interaction, client?: Cli
         interaction.isMentionableSelectMenu() ||
         interaction.isChannelSelectMenu())
     ) {
-      const select = targetSelectTampilan(interaction.customId);
-      if (select && (await runComponentActions({ client, interaction, target: select.target, postId: select.postId }))) {
+      const select = targetSelectTampilan(interaction.customId, interaction.values);
+      if (
+        select &&
+        (await runComponentActions({
+          client,
+          interaction,
+          target: select.target,
+          fallbackTarget: select.fallbackTarget,
+          postId: select.postId,
+        }))
+      ) {
         return;
       }
     }

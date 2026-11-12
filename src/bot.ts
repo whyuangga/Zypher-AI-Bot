@@ -13,6 +13,9 @@ import { onGuildMemberAdd, onGuildMemberRemove } from './events/guildMemberAdd.j
 import { onInteractionCreate } from './events/interactionCreate.js';
 import { onMessageCreate } from './events/messageCreate.js';
 import { handleQuietChannel, pruneAgentState } from './features/agent.js';
+import { runDueFlowSessions } from './features/post-action-runner.js';
+import { runDueSchedules } from './features/post-scheduler.js';
+import { pruneFlowSessions } from './db/repo.js';
 import { getAgentSettings } from './db/repo.js';
 import { errorMessage, logger } from './lib/logger.js';
 import { startRateLimitJanitor } from './lib/ratelimit.js';
@@ -175,6 +178,61 @@ function startQuietWatcher(target: Client): void {
   quietTimer.unref?.();
 }
 
+/**
+ * Timer flow `/pesan` yang sedang menunggu (aksi "Tunggu").
+ *
+ * Beberapa keputusan di sini disengaja:
+ *
+ *   - Diperiksa tiap 15 detik, bukan tiap detik: penantian dijanjikan dalam
+ *     satuan detik/menit, dan query tiap detik hanya membebani database.
+ *     Konsekuensinya aksi bisa berjalan beberapa detik terlambat — itu
+ *     disebutkan di dokumentasi, bukan disembunyikan.
+ *   - Putaran PERTAMA dijalankan 5 detik sesudah bot hidup, supaya penantian
+ *     yang jatuh tempo saat bot mati (deploy) tidak menunggu 15 detik lagi.
+ *   - Pemangkasan sesi kedaluwarsa (lebih dari 30 hari) ikut di sini: pengingat
+ *     selama itu sudah tidak berguna, dan menjalankannya mendadak setelah bot
+ *     lama mati hanya membingungkan member.
+ */
+const FLOW_CHECK_MS = 15_000;
+const FLOW_PRUNE_MS = 6 * 60 * 60 * 1000;
+const FLOW_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+let flowTimer: NodeJS.Timeout | undefined;
+let pruneTimer: NodeJS.Timeout | undefined;
+
+function startFlowWatcher(target: Client): void {
+  const putaran = (): void => {
+    void (async () => {
+      try {
+        const jumlah = await runDueFlowSessions(target);
+        if (jumlah > 0) logger.info(`Flow /pesan: ${jumlah} penantian dilanjutkan.`);
+        // Jadwal kirim memakai putaran yang sama: dua timer terpisah hanya
+        // menambah keadaan yang harus dijelaskan saat ada masalah.
+        const terkirim = await runDueSchedules(target, config.discord.homeGuildId);
+        if (terkirim > 0) logger.info(`Jadwal /pesan: ${terkirim} pesan terkirim.`);
+      } catch (error) {
+        logger.warn('Pemeriksaan flow /pesan gagal', errorMessage(error));
+      }
+    })();
+  };
+
+  flowTimer = setInterval(putaran, FLOW_CHECK_MS);
+  flowTimer.unref?.();
+  // Sesi yang jatuh tempo selagi bot mati dijalankan segera, tanpa menunggu
+  // interval pertama.
+  const awal = setTimeout(putaran, 5_000);
+  awal.unref?.();
+
+  const pangkas = (): void => {
+    void pruneFlowSessions(Date.now() - FLOW_MAX_AGE_MS)
+      .then((jumlah) => {
+        if (jumlah > 0) logger.info(`Flow /pesan: ${jumlah} penantian kedaluwarsa dibuang.`);
+      })
+      .catch((error: unknown) => logger.warn('Gagal memangkas sesi flow', errorMessage(error)));
+  };
+  pruneTimer = setInterval(pangkas, FLOW_PRUNE_MS);
+  pruneTimer.unref?.();
+}
+
 // Bot diundang ke server: kalau bukan server rumah, tolak dengan sopan.
 client.on(Events.GuildCreate, (guild) => {
   if (guild.id === config.discord.homeGuildId) {
@@ -230,7 +288,10 @@ process.on('SIGTERM', () => void shutdown('SIGTERM'));
 startRateLimitJanitor();
 
 // Timer dipasang setelah login (butuh client yang sudah siap).
-client.once(Events.ClientReady, () => startQuietWatcher(client));
+client.once(Events.ClientReady, () => {
+  startQuietWatcher(client);
+  startFlowWatcher(client);
+});
 // Dashboard dinyalakan sebelum login Discord supaya tetap bisa dipakai memantau bot.
 // Client dioper supaya halaman Panel bisa mengirim/menghapus panel dari browser.
 startDashboard(client);

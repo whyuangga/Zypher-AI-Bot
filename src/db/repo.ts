@@ -1564,11 +1564,15 @@ export async function setCustomPostMessage(
 
 export async function deleteCustomPost(guildId: string, id: number): Promise<void> {
   /*
-   * Aksi ikut dibersihkan. Tanpa ini, barisnya tertinggal menunjuk tombol yang
-   * sudah tidak ada, dan `copyPostActions`/daftar aksi bisa memuat data hantu
-   * kalau server memakai ulang ID pesan.
+   * Aksi, jadwal, dan sesi flow ikut dibersihkan. Tanpa ini, barisnya
+   * tertinggal menunjuk tombol/pesan yang sudah tidak ada, dan
+   * `copyPostActions`/daftar aksi bisa memuat data hantu kalau server memakai
+   * ulang ID pesan. Jadwal yang tertinggal juga akan mencoba mengirim pesan
+   * yang sudah dihapus pada tiap putaran timer.
    */
   await run('DELETE FROM post_actions WHERE guild_id = ? AND post_id = ?', [guildId, id]);
+  await run('DELETE FROM post_schedules WHERE guild_id = ? AND post_id = ?', [guildId, id]);
+  await run('DELETE FROM post_flow_sessions WHERE guild_id = ? AND post_id = ?', [guildId, id]);
   await run('DELETE FROM custom_posts WHERE guild_id = ? AND id = ?', [guildId, id]);
 }
 
@@ -1992,8 +1996,22 @@ export async function replacePostActions(
      * (customId-nya hanya membawa jenis menu). Konsekuensinya aksi untuk jenis
      * yang sama dipakai bersama oleh semua select jenis itu di satu pesan —
      * itu disengaja: menunya memang tidak bisa dibedakan dari customId.
+     *
+     * `sel:<nilai>` menambahkan aksi per PILIHAN untuk menu string. Pilihan
+     * yang tidak punya aksi sendiri jatuh ke `select:<jenis>`.
      */
-    if (!/^(button|option):\d+$/.test(target) && !/^select:[a-z]{2,20}$/.test(target)) continue;
+    if (
+      !/^(button|option):\d+$/.test(target) &&
+      !/^select:[a-z]{2,20}$/.test(target) &&
+      /*
+       * `sel:<nilai>` = aksi untuk SATU pilihan menu string.
+       *
+       * Kuncinya nilai pilihan (bukan ID baris), karena itu yang dikirim balik
+       * Discord saat dipilih. Nilai panjang dipotong di 100 karakter — sama
+       * dengan batas nilai select Discord.
+       */
+      !/^sel:[\x20-\x7e]{1,100}$/.test(target)
+    ) continue;
     const { actions, dropped: buang } = sanitizeActions(source[target]);
     for (const alasan of buang) dropped.push(`${target}: ${alasan}`);
     let position = 0;
@@ -2047,6 +2065,284 @@ export async function copyPostActions(
 /** Hapus semua aksi satu pesan (dipanggil saat pesan dihapus). */
 export async function clearPostActions(guildId: string, postId: number): Promise<void> {
   await run('DELETE FROM post_actions WHERE guild_id = ? AND post_id = ?', [guildId, postId]);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Sesi flow yang menunggu                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Satu flow yang berhenti di aksi "Tunggu".
+ *
+ * `steps` adalah SISA langkah sesudah penantian, sudah dalam bentuk rencana
+ * (`ActionStep[]`) — bukan aksi mentah. Dengan begitu perubahan bentuk aksi di
+ * database tidak mengubah arti sesi yang sedang berjalan.
+ */
+export interface FlowSession {
+  id: number;
+  guildId: string;
+  postId: number;
+  channelId: string;
+  messageId: string | null;
+  userId: string;
+  userName: string;
+  serverName: string;
+  variables: Record<string, string>;
+  steps: unknown[];
+  dueAt: number;
+  createdAt: number;
+}
+
+interface FlowSessionRow {
+  id: number | string;
+  guild_id: string;
+  post_id: number | string;
+  channel_id: string;
+  message_id: string | null;
+  user_id: string;
+  user_name: string;
+  server_name: string;
+  variables: string;
+  payload: string;
+  due_at: number | string;
+  created_at: number | string;
+}
+
+function bacaSesi(row: FlowSessionRow): FlowSession {
+  let variables: Record<string, string> = {};
+  let steps: unknown[] = [];
+  try {
+    const v = JSON.parse(row.variables);
+    if (v && typeof v === 'object' && !Array.isArray(v)) variables = v as Record<string, string>;
+  } catch {
+    // Variabel rusak bukan alasan membuang sesi: langkahnya mungkin masih sah.
+  }
+  try {
+    const p = JSON.parse(row.payload);
+    if (Array.isArray(p)) steps = p;
+  } catch {
+    // Payload rusak = sesi tidak bisa dilanjutkan; pemanggil membuangnya.
+  }
+  return {
+    id: Number(row.id),
+    guildId: row.guild_id,
+    postId: Number(row.post_id),
+    channelId: row.channel_id,
+    messageId: row.message_id,
+    userId: row.user_id,
+    userName: row.user_name,
+    serverName: row.server_name,
+    variables,
+    steps,
+    dueAt: Number(row.due_at),
+    createdAt: Number(row.created_at),
+  };
+}
+
+/** Simpan flow yang berhenti menunggu. Mengembalikan ID sesinya. */
+export async function createFlowSession(input: {
+  guildId: string;
+  postId: number;
+  channelId: string;
+  messageId: string | null;
+  userId: string;
+  userName: string;
+  serverName: string;
+  variables: Record<string, string>;
+  steps: unknown[];
+  dueAt: number;
+}): Promise<number> {
+  return insert(
+    'INSERT INTO post_flow_sessions (guild_id, post_id, channel_id, message_id, user_id, user_name, server_name, variables, payload, due_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [
+      input.guildId,
+      input.postId,
+      input.channelId,
+      input.messageId,
+      input.userId,
+      input.userName,
+      input.serverName,
+      JSON.stringify(input.variables),
+      JSON.stringify(input.steps),
+      input.dueAt,
+      Date.now(),
+    ],
+  );
+}
+
+/**
+ * Sesi yang sudah waktunya dijalankan.
+ *
+ * `limit` kecil (bawaan 20) supaya satu putaran timer tidak memblokir event
+ * loop saat banyak penantian selesai bersamaan — mis. sesudah bot mati lama.
+ */
+export async function listDueFlowSessions(now: number, limit = 20): Promise<FlowSession[]> {
+  const rows = await all<FlowSessionRow>(
+    'SELECT * FROM post_flow_sessions WHERE due_at <= ? ORDER BY due_at ASC LIMIT ?',
+    [now, limit],
+  );
+  return rows.map(bacaSesi);
+}
+
+/** Hapus sesi — dipanggil SEBELUM menjalankan sisa langkah. */
+export async function deleteFlowSession(id: number): Promise<void> {
+  await run('DELETE FROM post_flow_sessions WHERE id = ?', [id]);
+}
+
+/** Jumlah sesi yang sedang menunggu (dipakai dasbor). */
+export async function countFlowSessions(guildId: string): Promise<number> {
+  const row = await get<{ jumlah: number | string }>(
+    'SELECT COUNT(*) AS jumlah FROM post_flow_sessions WHERE guild_id = ?',
+    [guildId],
+  );
+  return Number(row?.jumlah ?? 0);
+}
+
+/** Buang sesi milik pesan yang sudah dihapus. */
+export async function clearFlowSessionsForPost(guildId: string, postId: number): Promise<void> {
+  await run('DELETE FROM post_flow_sessions WHERE guild_id = ? AND post_id = ?', [guildId, postId]);
+}
+
+/**
+ * Buang sesi yang menunggu terlalu lama karena bot jarang hidup.
+ *
+ * Batas 30 hari: lebih dari itu, pengingatnya sudah tidak berguna dan
+ * menjalankannya mendadak justru membingungkan member.
+ */
+export async function pruneFlowSessions(olderThan: number): Promise<number> {
+  const hasil = await run('DELETE FROM post_flow_sessions WHERE due_at < ?', [olderThan]);
+  return Number((hasil as { changes?: number })?.changes ?? 0);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Jadwal kirim pesan                                                 */
+/* ------------------------------------------------------------------ */
+
+/** Batas jadwal, dipakai sanitizer dan dasbor. */
+export const SCHEDULE_LIMITS = {
+  /** Pengulangan paling rapat: 2 jam (mengikuti Discohook). */
+  minRepeatMinutes: 120,
+  /** Jumlah jadwal per pesan — jaring pengaman. */
+  perPost: 10,
+} as const;
+
+export interface PostSchedule {
+  id: number;
+  postId: number;
+  channelId: string;
+  dueAt: number;
+  repeatMinutes: number;
+  lastSentAt: number | null;
+}
+
+interface ScheduleRow {
+  id: number | string;
+  post_id: number | string;
+  channel_id: string;
+  due_at: number | string;
+  repeat_minutes: number | string;
+  last_sent_at: number | string | null;
+}
+
+function bacaJadwal(row: ScheduleRow): PostSchedule {
+  return {
+    id: Number(row.id),
+    postId: Number(row.post_id),
+    channelId: row.channel_id,
+    dueAt: Number(row.due_at),
+    repeatMinutes: Number(row.repeat_minutes),
+    lastSentAt: row.last_sent_at === null ? null : Number(row.last_sent_at),
+  };
+}
+
+/**
+ * Rapikan satu jadwal dari input dasbor.
+ *
+ * Tidak pernah melempar: jadwal yang tidak masuk akal DIBUANG dengan alasan,
+ * sama seperti blok dan aksi. `null` = tolak.
+ */
+export function sanitizeSchedule(input: unknown): { dueAt: number; repeatMinutes: number } | null {
+  if (!input || typeof input !== 'object') return null;
+  const item = input as Record<string, unknown>;
+  const dueAt = Number(item.dueAt);
+  if (!Number.isFinite(dueAt) || dueAt <= Date.now() - 60_000) return null;
+  const ulang = Math.trunc(Number(item.repeatMinutes) || 0);
+  const repeatMinutes = ulang <= 0 ? 0 : Math.max(SCHEDULE_LIMITS.minRepeatMinutes, ulang);
+  return { dueAt, repeatMinutes };
+}
+
+/** Semua jadwal satu pesan. */
+export async function listSchedules(guildId: string, postId: number): Promise<PostSchedule[]> {
+  const rows = await all<ScheduleRow>(
+    'SELECT * FROM post_schedules WHERE guild_id = ? AND post_id = ? ORDER BY due_at ASC',
+    [guildId, postId],
+  );
+  return rows.map(bacaJadwal);
+}
+
+/** Ganti seluruh jadwal satu pesan (dashboard mengirim daftar penuh). */
+export async function replaceSchedules(
+  guildId: string,
+  postId: number,
+  channelId: string,
+  input: unknown,
+): Promise<{ schedules: PostSchedule[]; dropped: string[] }> {
+  const dropped: string[] = [];
+  const daftar = Array.isArray(input) ? input : [];
+  await run('DELETE FROM post_schedules WHERE guild_id = ? AND post_id = ?', [guildId, postId]);
+
+  let jumlah = 0;
+  for (const raw of daftar) {
+    if (jumlah >= SCHEDULE_LIMITS.perPost) {
+      dropped.push(`jadwal melebihi batas ${SCHEDULE_LIMITS.perPost} per pesan`);
+      break;
+    }
+    const bersih = sanitizeSchedule(raw);
+    if (!bersih) {
+      dropped.push('jadwal tanpa waktu yang sah (harus di masa depan)');
+      continue;
+    }
+    await insert(
+      'INSERT INTO post_schedules (guild_id, post_id, channel_id, due_at, repeat_minutes, last_sent_at, created_at) VALUES (?, ?, ?, ?, ?, NULL, ?)',
+      [guildId, postId, channelId, bersih.dueAt, bersih.repeatMinutes, Date.now()],
+    );
+    jumlah += 1;
+  }
+  return { schedules: await listSchedules(guildId, postId), dropped };
+}
+
+/** Jadwal yang sudah waktunya dikirim. */
+export async function listDueSchedules(now: number, limit = 10): Promise<PostSchedule[]> {
+  const rows = await all<ScheduleRow>(
+    'SELECT * FROM post_schedules WHERE due_at <= ? ORDER BY due_at ASC LIMIT ?',
+    [now, limit],
+  );
+  return rows.map(bacaJadwal);
+}
+
+/**
+ * Tandai jadwal sudah dikirim.
+ *
+ * Untuk jadwal sekali-kirim, barisnya DIHAPUS (tidak ada gunanya disimpan).
+ * Untuk jadwal berulang, `due_at` digeser dan `last_sent_at` diisi — memakai
+ * waktu SEKARANG sebagai dasar, bukan jadwal lama, supaya bot yang mati
+ * berhari-hari tidak mengirim puluhan pesan susulan sekaligus.
+ */
+export async function markScheduleSent(schedule: PostSchedule, now = Date.now()): Promise<void> {
+  if (schedule.repeatMinutes <= 0) {
+    await run('DELETE FROM post_schedules WHERE id = ?', [schedule.id]);
+    return;
+  }
+  await run('UPDATE post_schedules SET due_at = ?, last_sent_at = ? WHERE id = ?', [
+    now + schedule.repeatMinutes * 60_000,
+    now,
+    schedule.id,
+  ]);
+}
+
+/** Hapus semua jadwal satu pesan (dipanggil saat pesan dihapus). */
+export async function clearSchedulesForPost(guildId: string, postId: number): Promise<void> {
+  await run('DELETE FROM post_schedules WHERE guild_id = ? AND post_id = ?', [guildId, postId]);
 }
 
 /* ------------------------------------------------------------------ */

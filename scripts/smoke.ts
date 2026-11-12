@@ -6351,7 +6351,7 @@ await testAsync('pesan: select menu membawa ID pesan supaya aksinya tidak tertuk
   assert.equal(idBaru, 'post-ctx:12:role', 'ID pesan ikut di customId');
   assert.deepEqual(
     targetSelectTampilan(idBaru),
-    { postId: 12, target: 'select:role' },
+    { postId: 12, target: 'select:role', fallbackTarget: 'select:role' },
     'router memisahkan ID pesan & jenis menu',
   );
 
@@ -6361,7 +6361,11 @@ await testAsync('pesan: select menu membawa ID pesan supaya aksinya tidak tertuk
     .toJSON()
     .components[0].components[0].custom_id;
   assert.equal(idLama, 'post-ctx:role', 'tanpa postId memakai bentuk pendek');
-  assert.deepEqual(targetSelectTampilan(idLama), { postId: null, target: 'select:role' });
+  assert.deepEqual(targetSelectTampilan(idLama), {
+    postId: null,
+    target: 'select:role',
+    fallbackTarget: 'select:role',
+  });
   assert.equal(targetSelectTampilan('post-ctx:')?.target, undefined, 'customId rusak ditolak');
 });
 
@@ -6434,6 +6438,456 @@ await testAsync('aksi: select berjenis sama di dua pesan tidak saling menjalanka
   // yang cocok dipakai, bukan error. Menu lama tetap bekerja.
   const lama = await repo.findActions(GUILD, 'select:role', null);
   assert.ok(lama, 'bentuk lama masih menemukan aksi');
+});
+
+await testAsync('flow: penantian, syarat, dan variabel dihitung tanpa server', async () => {
+  const flow = await import('../src/features/post-flow.js');
+
+  // Penantian: batas bawah & atas ditegakkan, bukan dipotong diam-diam.
+  assert.equal(flow.waitUntil(1000, 0), null, 'nol detik bukan penantian');
+  assert.equal(flow.waitUntil(1000, -5), null, 'durasi negatif ditolak');
+  assert.equal(flow.waitUntil(1000, 'abc'), null, 'durasi bukan angka ditolak');
+  assert.equal(flow.waitUntil(1000, 60), 61_000, '60 detik = satu menit');
+  assert.equal(flow.waitUntil(0, 10 ** 9), flow.FLOW_LIMITS.waitSeconds * 1000, 'dibatasi 7 hari');
+
+  // Jatuh tempo: angka maupun string (Postgres mengembalikan BIGINT as string).
+  assert.equal(flow.isDue({ dueAt: 100 }, 100), true);
+  assert.equal(flow.isDue({ dueAt: 100 }, 99), false);
+  assert.equal(flow.isDue({ dueAt: '100' }, 100), true, 'string dari Postgres diterima');
+  assert.equal(flow.isDue({ dueAt: null }, 10 ** 12), false, 'tanpa jadwal = tidak jatuh tempo');
+
+  // Pembanding.
+  const uji = (comparator: string, value: string, expected?: string) =>
+    flow.testCondition({ value, comparator: comparator as never, expected });
+  assert.equal(uji('equals', 'a', 'a'), true);
+  assert.equal(uji('notEquals', 'a', 'b'), true);
+  assert.equal(uji('contains', 'halo dunia', 'dunia'), true);
+  assert.equal(uji('contains', 'halo', ''), false, 'pembanding kosong tidak cocok dengan apa pun');
+  assert.equal(uji('notContains', 'halo', ''), true);
+  assert.equal(uji('empty', '   '), true);
+  assert.equal(uji('notEmpty', 'x'), true);
+
+  // Nama variabel: hanya bentuk yang aman dipakai di template.
+  assert.equal(flow.isVariableName('kode'), true);
+  assert.equal(flow.isVariableName('kode_2'), true);
+  assert.equal(flow.isVariableName('2kode'), false);
+  assert.equal(flow.isVariableName('kode salah'), false);
+
+  assert.equal(flow.describeWait(45), '45 detik');
+  assert.equal(flow.describeWait(300), '5 menit');
+  assert.equal(flow.describeWait(7200), '2 jam');
+  assert.equal(flow.describeWait(172800), '2 hari');
+});
+
+await testAsync('aksi: jenis baru divalidasi & aksi sesudah hapus dilaporkan', async () => {
+  const { sanitizeActions, planActions } = await import('../src/features/post-actions.js');
+
+  const { actions, dropped } = sanitizeActions([
+    { kind: 'wait', seconds: 300 },
+    { kind: 'variable', name: 'kode', value: '{member.id}' },
+    { kind: 'condition', value: 'selected', comparator: 'equals', expected: 'gamer' },
+    { kind: 'thread', threadName: 'Bantuan {member.name}' },
+    { kind: 'delete' },
+    // Tidak sah:
+    { kind: 'wait', seconds: 0 },
+    { kind: 'variable', name: '2salah' },
+    { kind: 'condition', value: '' },
+    { kind: 'condition', value: 'selected', comparator: 'equals' },
+    { kind: 'thread', threadName: '  ' },
+  ]);
+
+  assert.deepEqual(
+    actions.map((a) => a.kind).join(','),
+    'wait,variable,condition,thread,delete',
+    'lima jenis baru lolos',
+  );
+  assert.equal(actions[0]!.seconds, 300);
+  assert.equal(actions[1]!.name, 'kode');
+  assert.equal(actions[2]!.comparator, 'equals');
+  assert.equal(actions[3]!.private, false, 'thread publik sebagai bawaan');
+  assert.equal(dropped.length, 5, 'lima aksi tidak sah dilaporkan');
+
+  // `wait` dibatasi 7 hari, bukan ditolak.
+  const panjang = sanitizeActions([{ kind: 'wait', seconds: 10 ** 9 }]);
+  assert.equal(panjang.actions[0]!.seconds, 604800);
+
+  // Aksi sesudah "hapus pesan" tidak akan terlihat — harus dilaporkan.
+  const plan = planActions([
+    { kind: 'delete' },
+    { kind: 'message', postId: 3 },
+  ]);
+  assert.ok(
+    plan.skipped.some((alasan) => alasan.includes('hapus pesan')),
+    'aksi sesudah hapus pesan dilaporkan',
+  );
+});
+
+await testAsync('flow: sesi penantian tersimpan, jatuh tempo, & dilanjutkan', async () => {
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Flow uji',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Klik' }],
+  });
+
+  // Sesi yang SUDAH jatuh tempo harus muncul di daftar; yang belum, tidak.
+  const sekarang = Date.now();
+  const id = await repo.createFlowSession({
+    guildId: GUILD,
+    postId: post.id,
+    channelId: '999',
+    messageId: '111',
+    userId: '2',
+    userName: 'Wahyu',
+    serverName: 'Server Uji',
+    variables: { kode: 'abc' },
+    steps: [{ kind: 'reply', text: 'lanjutan' }],
+    dueAt: sekarang - 1000,
+  });
+  const belum = await repo.createFlowSession({
+    guildId: GUILD,
+    postId: post.id,
+    channelId: '999',
+    messageId: '111',
+    userId: '3',
+    userName: 'Besok',
+    serverName: 'Server Uji',
+    variables: {},
+    steps: [{ kind: 'reply', text: 'nanti' }],
+    dueAt: sekarang + 60_000,
+  });
+
+  const due = await repo.listDueFlowSessions(sekarang);
+  assert.equal(due.length, 1, 'hanya sesi yang jatuh tempo diambil');
+  assert.equal(due[0]!.id, id);
+  assert.equal(due[0]!.variables.kode, 'abc', 'variabel ikut tersimpan');
+  assert.equal((due[0]!.steps as Array<{ text: string }>)[0]!.text, 'lanjutan');
+
+  assert.equal(await repo.countFlowSessions(GUILD), 2);
+
+  // Dihapus SEBELUM dijalankan; kalau tidak, flow yang sama berjalan berulang.
+  await repo.deleteFlowSession(id);
+  assert.equal(await repo.countFlowSessions(GUILD), 1);
+  assert.equal((await repo.listDueFlowSessions(sekarang)).length, 0);
+
+  // Pemangkasan: yang jatuh temponya masih JAUH tidak boleh ikut terbuang oleh
+  // batas yang wajar (30 hari), sedangkan batas yang jauh di depan membuangnya.
+  await repo.pruneFlowSessions(sekarang - 10 ** 12);
+  assert.equal(await repo.countFlowSessions(GUILD), 1, 'batas lampau tidak membuang sesi yang masih menunggu');
+  await repo.pruneFlowSessions(sekarang + 10 ** 12);
+  assert.equal(await repo.countFlowSessions(GUILD), 0, 'batas jauh di depan membuang sesi kedaluwarsa');
+
+  // Menghapus pesan ikut membuang sesinya — jangan ada flow yatim.
+  await repo.createFlowSession({
+    guildId: GUILD,
+    postId: post.id,
+    channelId: '999',
+    messageId: '111',
+    userId: '2',
+    userName: 'Wahyu',
+    serverName: 'Server Uji',
+    variables: {},
+    steps: [],
+    dueAt: sekarang + 1000,
+  });
+  await repo.deleteCustomPost(GUILD, post.id);
+  assert.equal(await repo.countFlowSessions(GUILD), 0, 'sesi pesan terhapus ikut dibuang');
+  void belum;
+});
+
+await testAsync('jadwal: sanitizer, pengulangan minimal 2 jam, & geser setelah kirim', async () => {
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Jadwal uji',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Pengingat' }],
+  });
+
+  const depan = Date.now() + 60 * 60 * 1000;
+  const hasil = await repo.replaceSchedules(GUILD, post.id, '999', [
+    { dueAt: depan, repeatMinutes: 0 },
+    // 30 menit terlalu rapat -> dinaikkan ke batas, bukan ditolak.
+    { dueAt: depan + 1000, repeatMinutes: 30 },
+    // Waktu lampau tidak sah.
+    { dueAt: Date.now() - 10 * 60 * 1000, repeatMinutes: 0 },
+  ]);
+  assert.equal(hasil.schedules.length, 2, 'dua jadwal sah');
+  assert.equal(hasil.schedules[1]!.repeatMinutes, 120, 'pengulangan dinaikkan ke 2 jam');
+  assert.equal(hasil.dropped.length, 1, 'jadwal lampau dilaporkan');
+
+  // Jadwal sekali-kirim dihapus setelah dikirim.
+  const sekali = hasil.schedules.find((s) => s.repeatMinutes === 0)!;
+  await repo.markScheduleSent(sekali);
+  assert.equal((await repo.listSchedules(GUILD, post.id)).length, 1);
+
+  // Jadwal berulang digeser dari SEKARANG, bukan dari jadwal lama — bot yang
+  // mati berhari-hari tidak boleh memuntahkan pesan susulan.
+  const ulang = (await repo.listSchedules(GUILD, post.id))[0]!;
+  const sekarang = Date.now();
+  await repo.markScheduleSent(ulang, sekarang);
+  const sesudah = (await repo.listSchedules(GUILD, post.id))[0]!;
+  assert.equal(sesudah.dueAt, sekarang + 120 * 60_000, 'digeser dari waktu kirim sekarang');
+  assert.equal(sesudah.lastSentAt, sekarang);
+
+  // Menghapus pesan ikut membuang jadwalnya.
+  await repo.deleteCustomPost(GUILD, post.id);
+  assert.equal((await repo.listSchedules(GUILD, post.id)).length, 0);
+});
+
+await testAsync('flow: tunggu menyimpan sesi, syarat menghentikan, hapus menghapus pesan', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runComponentActions } = await import('../src/features/post-action-runner.js');
+  const GUILD = '123456789012345678';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Flow nyata',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Klik' }],
+  });
+  const tombol = await repo.replaceRoleButtons(GUILD, post.id, [
+    { label: 'Mulai', roleId: '900000000000000001', mode: 'toggle' },
+  ]);
+  const buttonId = tombol.buttons[0]!.id;
+
+  /** Interaksi tiruan: mencatat balasan, pesan yang dihapus, & thread. */
+  const buatInteraksi = () => {
+    const catatan = {
+      balasan: [] as string[],
+      hapus: 0,
+      thread: [] as string[],
+    };
+    const interaction = {
+      customId: `post-role:${buttonId}`,
+      guildId: GUILD,
+      channelId: '999',
+      message: {
+        id: '555',
+        delete: async () => {
+          catatan.hapus += 1;
+        },
+      },
+      deferred: false,
+      replied: false,
+      user: { id: '2', username: 'wahyu', globalName: 'Wahyu', tag: 'uji#0001' },
+      member: {
+        displayName: 'Wahyu',
+        roles: { cache: { has: () => false }, highest: { position: 20 } },
+        permissions: { has: () => true },
+      },
+      guild: {
+        id: GUILD,
+        name: 'Server Uji',
+        roles: { cache: new Map(), fetch: async () => null },
+        members: { me: { roles: { highest: { position: 10 } }, permissions: { has: () => true } }, fetchMe: async () => null },
+      },
+      reply: async (payload: { content: string }) => void catatan.balasan.push(payload.content),
+      followUp: async (payload: { content: string }) => void catatan.balasan.push(payload.content),
+    };
+    return { catatan, interaction };
+  };
+
+  const jalankan = async () => {
+    const { catatan, interaction } = buatInteraksi();
+    const ditangani = await runComponentActions({
+      client: {} as never,
+      interaction: interaction as never,
+      target: `button:${buttonId}`,
+      postId: post.id,
+    });
+    return { ...catatan, ditangani };
+  };
+
+  // 1. "Tunggu": sesi tersimpan, sisa langkah TIDAK dijalankan sekarang.
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      { kind: 'variable', name: 'sapa', value: 'Hai {member.name}' },
+      { kind: 'wait', seconds: 120 },
+      { kind: 'reply', text: 'pengingat untuk {var.sapa}' },
+    ],
+  });
+  const tunggu = await jalankan();
+  assert.equal(tunggu.ditangani, true);
+  assert.match(tunggu.balasan[0]!, /2 menit/, 'pengklik diberi tahu ada penantian');
+
+  const sesi = await repo.listDueFlowSessions(Date.now() + 10 * 60 * 1000);
+  const milikKita = sesi.filter((s) => s.postId === post.id);
+  assert.equal(milikKita.length, 1, 'sesi penantian tersimpan');
+  assert.equal(milikKita[0]!.variables.sapa, 'Hai Wahyu', 'variabel disimpan tanpa awalan var.');
+  assert.equal((milikKita[0]!.steps as Array<{ text?: string }>)[0]!.text, 'pengingat untuk {var.sapa}');
+  assert.equal(milikKita[0]!.userId, '2');
+
+  // 2. Syarat yang tidak cocok: berhenti, tidak menjalankan sisa aksi.
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      { kind: 'condition', value: 'selected', comparator: 'equals', expected: 'gamer' },
+      { kind: 'reply', text: 'TIDAK BOLEH' },
+    ],
+  });
+  const syarat = await jalankan();
+  assert.equal(syarat.balasan.length, 1);
+  assert.match(syarat.balasan[0]!, /Syarat/, 'alasan berhenti dijelaskan');
+  assert.notEqual(syarat.balasan[0], 'TIDAK BOLEH');
+
+  // 3. Syarat yang cocok: lanjut.
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      { kind: 'condition', value: 'member.name', comparator: 'equals', expected: 'Wahyu' },
+      { kind: 'reply', text: 'cocok' },
+    ],
+  });
+  const cocok = await jalankan();
+  assert.equal(cocok.balasan[0], 'cocok', 'syarat yang cocok melanjutkan flow');
+
+  // 4. Hapus pesan: pesan benar-benar dihapus, tanpa balasan "Selesai".
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [{ kind: 'delete' }],
+  });
+  const hapus = await jalankan();
+  assert.equal(hapus.hapus, 1, 'pesan pemicu dihapus');
+  assert.equal(hapus.balasan.length, 0, 'tidak ada balasan sia-sia sesudah pesan hilang');
+
+  // 5. Thread tanpa channel yang mendukung: gagal dengan penjelasan, bukan diam.
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [{ kind: 'thread', threadName: 'Bantuan' }],
+  });
+  const thread = await jalankan();
+  assert.equal(thread.balasan.length, 1);
+  assert.match(thread.balasan[0]!, /thread/i, 'kegagalan thread dijelaskan');
+});
+
+await testAsync('flow: aksi per pilihan select dipakai sebelum aksi seluruh menu', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runComponentActions } = await import('../src/features/post-action-runner.js');
+  const { targetSelectTampilan } = await import('../src/events/interactionCreate.js');
+  const GUILD = '123456789012345678';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Menu pilihan',
+    channelId: '999',
+    blocks: [
+      { kind: 'text', value: 'Pilih' },
+      { kind: 'select', selectKind: 'string', options: [{ label: 'Gamer', value: 'gamer' }, { label: 'Musik', value: 'musik' }] },
+    ],
+  });
+  await repo.replacePostActions(GUILD, post.id, {
+    'sel:gamer': [{ kind: 'reply', text: 'Kamu memilih gamer' }],
+    'select:string': [{ kind: 'reply', text: 'Pilihan lain' }],
+  });
+
+  // Router: pilihan tunggal memakai target `sel:<nilai>` + cadangan.
+  const customId = `post-ctx:${post.id}:string`;
+  const satu = targetSelectTampilan(customId, ['gamer'])!;
+  assert.equal(satu.target, 'sel:gamer');
+  assert.equal(satu.fallbackTarget, 'select:string');
+  // Banyak pilihan sekaligus tidak bisa dipetakan ke satu aksi.
+  assert.equal(targetSelectTampilan(customId, ['gamer', 'musik'])!.target, 'select:string');
+
+  const balasan: string[] = [];
+  const tekan = async (values: string[]) => {
+    const target = targetSelectTampilan(customId, values)!;
+    const interaction = {
+      customId,
+      guildId: GUILD,
+      channelId: '999',
+      deferred: false,
+      replied: false,
+      values,
+      user: { id: '2', username: 'wahyu', globalName: 'Wahyu', tag: 'uji#0001' },
+      member: {
+        displayName: 'Wahyu',
+        roles: { cache: { has: () => false }, highest: { position: 20 } },
+        permissions: { has: () => true },
+      },
+      guild: {
+        id: GUILD,
+        name: 'Server Uji',
+        roles: { cache: new Map(), fetch: async () => null },
+        members: { me: { roles: { highest: { position: 10 } }, permissions: { has: () => true } }, fetchMe: async () => null },
+      },
+      reply: async (payload: { content: string }) => void balasan.push(payload.content),
+      followUp: async (payload: { content: string }) => void balasan.push(payload.content),
+    };
+    return runComponentActions({
+      client: {} as never,
+      interaction: interaction as never,
+      target: target.target,
+      fallbackTarget: target.fallbackTarget,
+      postId: target.postId,
+    });
+  };
+
+  assert.equal(await tekan(['gamer']), true);
+  assert.deepEqual(balasan, ['Kamu memilih gamer'], 'aksi per pilihan dipakai');
+
+  await tekan(['musik']);
+  assert.deepEqual(balasan, ['Kamu memilih gamer', 'Pilihan lain'], 'pilihan tanpa aksi jatuh ke aksi menu');
+});
+
+await testAsync('pesan: endpoint jadwal dikenali router (bukan 404)', async () => {
+  /*
+   * Regresi nyata: `/api/posts/:id/schedules` sempat tidak masuk pola router,
+   * sehingga dashboard menerima "Tidak ditemukan" walaupun endpoint-nya sudah
+   * ditulis. Menyimpan jadwal dari dashboard adalah satu-satunya jalan
+   * memakainya, jadi kegagalannya harus tertangkap di sini.
+   */
+  const sumber = await readFile(new URL('../src/web/server.ts', import.meta.url), 'utf8');
+  /*
+   * Diperiksa dengan `includes`, bukan regex bersarang: pesan kegagalan
+   * assert.match mencetak seluruh source dan menenggelamkan laporan test.
+   */
+  assert.ok(sumber.includes('\\/roles|\\/schedules'), 'pola router menerima /schedules');
+  assert.ok(sumber.includes("postMatch[2] === '/schedules'"), 'ada cabang yang menangani jadwal');
+});
+
+await testAsync('pesan: teks blok bisa memakai template, dan tanpa konteks tetap apa adanya', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  // Deps lengkap seperti yang dipakai pemanggil sungguhan: tipe deps mensyaratkan
+  // semua builder, dan versi setengah jadi membuat build gagal padahal runtime-nya
+  // tidak apa-apa — persis jenis kesalahan yang tidak boleh lolos.
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SectionBuilder: d.SectionBuilder,
+    ThumbnailBuilder: d.ThumbnailBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    StringSelectMenuBuilder: d.StringSelectMenuBuilder,
+    StringSelectMenuOptionBuilder: d.StringSelectMenuOptionBuilder,
+    UserSelectMenuBuilder: d.UserSelectMenuBuilder,
+    RoleSelectMenuBuilder: d.RoleSelectMenuBuilder,
+    MentionableSelectMenuBuilder: d.MentionableSelectMenuBuilder,
+    ChannelSelectMenuBuilder: d.ChannelSelectMenuBuilder,
+  };
+  const blok = sanitizeBlocks([
+    { kind: 'container' },
+    { kind: 'text', value: 'Hai {member.name} di {server.name}! Pilihanmu {selected}. Sisa {tidak.dikenal}' },
+  ]).blocks;
+
+  const denganTemplate = buildPostPayload(blok, {
+    ...deps,
+    template: { 'member.name': 'Wahyu', 'server.name': 'Zypher', selected: 'gamer' },
+  });
+  const teks = JSON.stringify(denganTemplate!.components.map((c) => (c as unknown as { toJSON: () => unknown }).toJSON()));
+  assert.match(teks, /Hai Wahyu di Zypher/, 'template terisi');
+  assert.match(teks, /Pilihanmu gamer/);
+  assert.match(teks, /Sisa \{tidak\.dikenal\}/, 'token tak dikenal dibiarkan');
+
+  /*
+   * TANPA konteks, teks harus dikirim apa adanya. Ini yang menjaga pesan biasa
+   * buatan admin tidak berubah hanya karena fitur template ada.
+   */
+  const tanpa = buildPostPayload(blok, deps);
+  const teksTanpa = JSON.stringify(tanpa!.components.map((c) => (c as unknown as { toJSON: () => unknown }).toJSON()));
+  assert.match(teksTanpa, /\{member\.name\}/, 'tanpa konteks token dibiarkan');
 });
 
 await testAsync('pesan: klik tombol role benar-benar memberi & melepas role', async () => {

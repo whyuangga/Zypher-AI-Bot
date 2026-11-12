@@ -72,6 +72,13 @@ export interface PesanPageOptions extends PageContext {
    * dashboard dan bot tidak perlu tabel terjemahan.
    */
   postActions?: Record<number, Record<string, unknown[]>>;
+  /**
+   * Jadwal kirim per pesan (`dueAt` = waktu kirim berikutnya, epoch ms).
+   *
+   * Dikirim bersama daftar pesan supaya editor bisa menampilkan "dikirim
+   * otomatis tiap …" tanpa permintaan tambahan per pesan.
+   */
+  schedules?: Record<number, Array<{ dueAt: number; repeatMinutes: number; lastSentAt: number | null }>>;
 }
 
 /**
@@ -399,6 +406,38 @@ ${listCard}
 
 <div class="tab-pane" id="pane-role" role="tabpanel" aria-labelledby="tab-role" hidden>
   ${roleCard}
+  <div class="card" style="margin-top:14px">
+    <div class="card-head">
+      <div>
+        <div class="card-title">Jadwal kirim otomatis</div>
+        <div class="card-hint">Kirim ulang pesan ini pada waktu tertentu — sekali, atau berulang tiap beberapa jam.</div>
+      </div>
+    </div>
+    <div class="card-pad" style="padding-top:6px;display:grid;gap:10px">
+      <p class="hint" style="margin:0">
+        Jadwal memakai jam komputermu. Pesan dikirim sebagai pesan <b>baru</b> (bukan memperbarui yang lama).
+        Pengulangan paling rapat <b>2 jam</b>. Bot memeriksa tiap 15 detik, jadi waktunya bisa mundur beberapa detik.
+        Kalau bot mati saat waktunya tiba, pengiriman dilakukan begitu bot hidup lagi.
+      </p>
+      <div id="scheduleList" class="block-list"></div>
+      <div class="block-add">
+        <input type="datetime-local" id="scheduleDue" title="Waktu kirim" />
+        <span class="select-shell" style="max-width:220px">
+          <select id="scheduleRepeat">
+            <option value="0">Sekali kirim</option>
+            <option value="120">Ulang tiap 2 jam</option>
+            <option value="360">Ulang tiap 6 jam</option>
+            <option value="720">Ulang tiap 12 jam</option>
+            <option value="1440">Ulang tiap 24 jam</option>
+            <option value="10080">Ulang tiap 7 hari</option>
+          </select>
+        </span>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="tambahJadwal()">+ Tambah jadwal</button>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="simpanJadwal()">Simpan jadwal</button>
+      </div>
+      <p class="hint" id="scheduleStatus" style="margin:0"></p>
+    </div>
+  </div>
 </div>
 
 <div class="tab-pane" id="pane-impor" role="tabpanel" aria-labelledby="tab-impor" hidden>
@@ -432,6 +471,13 @@ var POST_ACTIONS = ${jsonForScript(options.postActions ?? {})};
  * ulang ke browser.
  */
 var POST_LIST = ${jsonForScript(options.posts.map((p) => ({ id: p.id, name: p.name })))};
+/**
+ * Jadwal kirim per pesan: { pesanId: [{ dueAt, repeatMinutes, lastSentAt }] }.
+ *
+ * Waktu dikirim sebagai epoch ms dan diformat di browser, supaya zona waktu
+ * yang dilihat admin sama dengan jam di komputernya — bukan zona server.
+ */
+var POST_SCHEDULES = ${jsonForScript(options.schedules ?? {})};
 /** Tombol role yang sedang disusun (belum disimpan). */
 var roleButtons = [];
 /** Aksi tombol/menu yang sedang disusun, per target. */
@@ -736,6 +782,19 @@ function buatEditorSelect(index) {
         renderPreview();
       };
       baris.appendChild(hapus);
+
+      /*
+       * Aksi untuk PILIHAN ini.
+       *
+       * Kuncinya nilai pilihan (bukan ID baris): itulah yang dikirim balik
+       * Discord saat member memilih. Kalau nilainya belum diisi, label dipakai
+       * — sama dengan yang dilakukan penyusun payload, jadi kuncinya cocok
+       * dengan yang diterima bot.
+       */
+      var targetPilihan = 'sel:' + (opsi.value || opsi.label || '');
+      if (targetPilihan !== 'sel:') {
+        baris.appendChild(kartuAksi(targetPilihan, 'pilihan ' + (opsi.label || '')));
+      }
 
       daftar.appendChild(baris);
     });
@@ -1670,6 +1729,14 @@ function buatItemEditor(block, index) {
     isi.appendChild(
       kartuAksi('select:' + (block.selectKind || 'string'), 'menu ' + selectJenisLabel(block)),
     );
+    if ((block.selectKind || 'string') === 'string') {
+      var ketPilihan = document.createElement('p');
+      ketPilihan.className = 'hint';
+      ketPilihan.style.margin = '0';
+      ketPilihan.textContent =
+        'Aksi di atas berlaku untuk SEMUA pilihan yang tidak punya aksi sendiri. Untuk aksi khusus satu pilihan, atur di daftar pilihan di atas.';
+      isi.appendChild(ketPilihan);
+    }
   } else if (block.kind === 'row') {
     /*
      * Row tidak punya isian: ia hanya pemisah. Penjelasan singkat dipakai
@@ -2055,6 +2122,7 @@ function loadExisting() {
   if (send) send.textContent = 'Simpan & kirim ulang';
   loadRoleButtonsFor(found.id);
   loadActionsFor(found.id);
+  muatJadwal();
   renderRoleButtons();
   renderBlocks();
 }
@@ -2703,6 +2771,11 @@ function susunAksi() {
     var daftar = (postActions[target] || []).filter(function (aksi) {
       if (aksi.kind === 'role') return Boolean(aksi.roleId);
       if (aksi.kind === 'reply') return Boolean(String(aksi.text || '').trim());
+      if (aksi.kind === 'wait') return Number(aksi.seconds) >= 1;
+      if (aksi.kind === 'condition') return Boolean(String(aksi.value || '').trim());
+      if (aksi.kind === 'variable') return /^[a-zA-Z][a-zA-Z0-9_]{0,31}$/.test(String(aksi.name || ''));
+      if (aksi.kind === 'thread') return Boolean(String(aksi.threadName || '').trim());
+      if (aksi.kind === 'delete') return true;
       return Boolean(Number(aksi.postId));
     });
     if (daftar.length > 0) hasil[target] = daftar;
@@ -3127,7 +3200,16 @@ function kartuAksi(target, judul) {
   var pilih = document.createElement('select');
   pilih.className = 'role-mode';
   pilih.id = 'aksiJenis-' + target.replace(/[^a-z0-9]/gi, '-');
-  [['role', 'Role — beri / lepas'], ['reply', 'Balas pengklik'], ['message', 'Kirim pesan tersimpan']].forEach(function (opt) {
+  [
+    ['role', 'Role — beri / lepas'],
+    ['reply', 'Balas pengklik'],
+    ['message', 'Kirim pesan tersimpan'],
+    ['wait', 'Tunggu'],
+    ['condition', 'Periksa syarat (berhenti bila tidak cocok)'],
+    ['variable', 'Simpan variabel'],
+    ['thread', 'Buat thread'],
+    ['delete', 'Hapus pesan ini']
+  ].forEach(function (opt) {
     var o = document.createElement('option');
     o.value = opt[0];
     o.textContent = opt[1];
@@ -3148,6 +3230,16 @@ function kartuAksi(target, judul) {
       aksiUntuk(target).push({ kind: 'role', roleId: role.id, op: 'toggle' });
     } else if (jenis === 'reply') {
       aksiUntuk(target).push({ kind: 'reply', text: 'Halo {member.name}, selesai!', hidden: true });
+    } else if (jenis === 'wait') {
+      aksiUntuk(target).push({ kind: 'wait', seconds: 300 });
+    } else if (jenis === 'condition') {
+      aksiUntuk(target).push({ kind: 'condition', value: 'member.name', comparator: 'notEmpty' });
+    } else if (jenis === 'variable') {
+      aksiUntuk(target).push({ kind: 'variable', name: 'pilihan', value: '{member.name}' });
+    } else if (jenis === 'thread') {
+      aksiUntuk(target).push({ kind: 'thread', threadName: 'Diskusi {member.name}', private: false });
+    } else if (jenis === 'delete') {
+      aksiUntuk(target).push({ kind: 'delete', what: 'pesan' });
     } else {
       var lain = POST_LIST.filter(function (p) { return editingId && p.id !== editingId; });
       if (lain.length === 0) return toast('Belum ada pesan lain yang bisa dikirim', true);
@@ -3161,7 +3253,10 @@ function kartuAksi(target, judul) {
   var bantuan = document.createElement('p');
   bantuan.className = 'hint';
   bantuan.style.margin = '0';
-  bantuan.textContent = 'Aksi dijalankan berurutan. Bisa memakai {member.name}, {member.mention}, {server.name}, {role}, dan {effect}. Kalau ada aksi role, kegagalannya menghentikan aksi berikutnya.';
+  bantuan.textContent =
+    'Aksi dijalankan berurutan. Bisa memakai {member.name}, {member.mention}, {member.id}, {server.name}, {role}, {effect}, {selected}, dan {var.nama}. ' +
+    'Aksi role yang gagal dan syarat yang tidak cocok MENGENTIKAN sisa aksi. ' +
+    'Aksi "Tunggu" menyimpan sisa aksi ke database, jadi penantian tetap berjalan walau bot restart.';
   bungkus.appendChild(bantuan);
 
   return bungkus;
@@ -3169,6 +3264,18 @@ function kartuAksi(target, judul) {
 
 /** Ringkasan satu aksi untuk daftar tertutup. */
 function ringkasAksi(aksi) {
+  if (aksi.kind === 'wait') return 'tunggu ' + jamAksi(Number(aksi.seconds) || 0);
+  if (aksi.kind === 'condition') {
+    var banding = {
+      equals: 'sama dengan', notEquals: 'tidak sama dengan',
+      contains: 'mengandung', notContains: 'tidak mengandung',
+      empty: 'kosong', notEmpty: 'tidak kosong'
+    }[aksi.comparator || 'equals'];
+    return 'syarat ' + aksi.value + ' ' + banding + (aksi.expected ? ' "' + aksi.expected + '"' : '');
+  }
+  if (aksi.kind === 'variable') return 'simpan ' + aksi.name + ' = "' + String(aksi.value || '').slice(0, 24) + '"';
+  if (aksi.kind === 'thread') return 'buat thread "' + String(aksi.threadName || '').slice(0, 30) + '"';
+  if (aksi.kind === 'delete') return 'hapus pesan ini';
   if (aksi.kind === 'role') {
     var role = roleById(aksi.roleId);
     var op = aksi.op === 'give' ? 'beri' : aksi.op === 'remove' ? 'lepas' : 'pasang/lepas';
@@ -3181,6 +3288,57 @@ function ringkasAksi(aksi) {
   return 'kirim "' + (tujuan ? tujuan.name : 'pesan #' + aksi.postId) + '"';
 }
 
+/** Label pendek tiap jenis aksi, dipakai di kepala baris aksi. */
+function jenisAksiLabel(jenis) {
+  return {
+    role: 'Role',
+    reply: 'Balasan',
+    message: 'Kirim pesan',
+    wait: 'Tunggu',
+    condition: 'Syarat',
+    variable: 'Variabel',
+    thread: 'Thread',
+    delete: 'Hapus pesan'
+  }[jenis] || jenis;
+}
+
+/**
+ * Durasi dalam bentuk yang bisa dibaca: "5 menit", "2 jam", "3 hari".
+ *
+ * Dipakai ringkasan aksi "Tunggu" dan jadwal kirim, supaya admin tidak perlu
+ * menghitung detik sendiri.
+ */
+function jamAksi(detik) {
+  if (detik < 60) return Math.round(detik) + ' detik';
+  if (detik < 3600) return Math.round(detik / 60) + ' menit';
+  if (detik < 86400) return Math.round(detik / 3600) + ' jam';
+  return Math.round(detik / 86400) + ' hari';
+}
+
+/** Format waktu lokal untuk daftar jadwal. */
+function waktuLokal(ms) {
+  var tanggal = new Date(Number(ms));
+  if (isNaN(tanggal.getTime())) return 'waktu tidak sah';
+  var dua = function (n) { return (n < 10 ? '0' : '') + n; };
+  return (
+    tanggal.getFullYear() + '-' + dua(tanggal.getMonth() + 1) + '-' + dua(tanggal.getDate()) +
+    ' ' + dua(tanggal.getHours()) + ':' + dua(tanggal.getMinutes())
+  );
+}
+
+/**
+ * Isian tanggal-jam lokal → epoch ms.
+ *
+ * Isian datetime-local memberi tanggal dan jam TANPA zona waktu. new Date
+ * membacanya sebagai waktu LOKAL, yang memang yang dimaksud admin. Mengubahnya
+ * ke UTC akan menggeser jadwal beberapa jam bagi pengguna WIB/WITA/WIT.
+ */
+function waktuDariInput(nilai) {
+  if (!nilai) return 0;
+  var ms = new Date(nilai).getTime();
+  return isNaN(ms) ? 0 : ms;
+}
+
 /** Satu baris aksi: semua isian yang dibutuhkan jenisnya. */
 function buatBarisAksi(target, nomor, aksi) {
   var daftar = aksiUntuk(target);
@@ -3191,7 +3349,7 @@ function buatBarisAksi(target, nomor, aksi) {
   head.className = 'aksi-baris-head';
   var label = document.createElement('span');
   label.className = 'aksi-jenis';
-  label.textContent = (nomor + 1) + '. ' + (aksi.kind === 'role' ? 'Role' : aksi.kind === 'reply' ? 'Balasan' : 'Kirim pesan');
+  label.textContent = (nomor + 1) + '. ' + jenisAksiLabel(aksi.kind);
   head.appendChild(label);
 
   var alat = document.createElement('div');
@@ -3272,6 +3430,155 @@ function buatBarisAksi(target, nomor, aksi) {
     return baris;
   }
 
+  if (aksi.kind === 'wait') {
+    var barisTunggu = document.createElement('div');
+    barisTunggu.className = 'role-style-row';
+    var detik = document.createElement('input');
+    detik.type = 'number';
+    detik.min = '1';
+    detik.max = String(604800);
+    detik.value = String(Math.max(1, Number(aksi.seconds) || 300));
+    detik.title = 'Lama penantian dalam detik (maksimal 7 hari)';
+    var satuan = document.createElement('select');
+    satuan.className = 'role-mode';
+    [['1', 'detik'], ['60', 'menit'], ['3600', 'jam'], ['86400', 'hari']].forEach(function (o) {
+      var opt = document.createElement('option');
+      opt.value = o[0];
+      opt.textContent = o[1];
+      satuan.appendChild(opt);
+    });
+    // Satuan dipilih otomatis dari nilai yang ada, supaya "300" tampil sebagai
+    // "5 menit" — bukan angka mentah yang harus dihitung admin.
+    var awal = Math.max(1, Number(aksi.seconds) || 300);
+    satuan.value = awal % 86400 === 0 ? '86400' : awal % 3600 === 0 ? '3600' : awal % 60 === 0 ? '60' : '1';
+    if (satuan.value === '1') detik.value = String(awal);
+    else detik.value = String(awal / Number(satuan.value));
+    var terapkan = function () {
+      var nilai = Math.max(1, Number(detik.value) || 1) * Number(satuan.value);
+      daftar[nomor].seconds = Math.min(604800, Math.round(nilai));
+    };
+    detik.oninput = terapkan;
+    satuan.onchange = function () {
+      // Nilai diisian dipertahankan sebagai ANGKA SATUAN, bukan detik: admin
+      // mengetik "5" lalu memilih "menit", dan itu memang 5 menit.
+      terapkan();
+    };
+    barisTunggu.appendChild(detik);
+    barisTunggu.appendChild(satuan);
+    baris.appendChild(barisTunggu);
+
+    var catatanTunggu = document.createElement('p');
+    catatanTunggu.className = 'hint';
+    catatanTunggu.style.margin = '0';
+    catatanTunggu.textContent =
+      'Sisa aksi disimpan ke database dan dilanjutkan timer, jadi penantian tetap berjalan walau bot restart. Waktunya tidak presisi detik.';
+    baris.appendChild(catatanTunggu);
+    return baris;
+  }
+
+  if (aksi.kind === 'condition') {
+    var nilai = document.createElement('input');
+    nilai.type = 'text';
+    nilai.value = aksi.value || 'member.name';
+    nilai.placeholder = 'member.name / selected / var.nama';
+    nilai.oninput = function () { daftar[nomor].value = nilai.value.slice(0, 64); };
+    baris.appendChild(nilai);
+
+    var banding = document.createElement('select');
+    banding.className = 'role-mode';
+    [
+      ['equals', 'sama dengan'],
+      ['notEquals', 'tidak sama dengan'],
+      ['contains', 'mengandung'],
+      ['notContains', 'tidak mengandung'],
+      ['empty', 'kosong'],
+      ['notEmpty', 'tidak kosong']
+    ].forEach(function (o) {
+      var opt = document.createElement('option');
+      opt.value = o[0];
+      opt.textContent = o[1];
+      if ((aksi.comparator || 'equals') === o[0]) opt.selected = true;
+      banding.appendChild(opt);
+    });
+    banding.onchange = function () {
+      daftar[nomor].comparator = banding.value;
+      segarkanAksi();
+    };
+    baris.appendChild(banding);
+
+    // Pembanding "kosong"/"tidak kosong" tidak butuh nilai — isiannya
+    // disembunyikan, bukan ditampilkan lalu diabaikan diam-diam.
+    if ((aksi.comparator || 'equals') !== 'empty' && (aksi.comparator || 'equals') !== 'notEmpty') {
+      var harap = document.createElement('input');
+      harap.type = 'text';
+      harap.value = aksi.expected || '';
+      harap.placeholder = 'Nilai pembanding';
+      harap.oninput = function () { daftar[nomor].expected = harap.value.slice(0, 500); };
+      baris.appendChild(harap);
+    }
+
+    var catatanSyarat = document.createElement('p');
+    catatanSyarat.className = 'hint';
+    catatanSyarat.style.margin = '0';
+    catatanSyarat.textContent =
+      'Kalau syarat TIDAK cocok, sisa aksi dihentikan dan pengklik diberi tahu. Percabangan dua jalur belum didukung.';
+    baris.appendChild(catatanSyarat);
+    return baris;
+  }
+
+  if (aksi.kind === 'variable') {
+    var namaVar = document.createElement('input');
+    namaVar.type = 'text';
+    namaVar.value = aksi.name || '';
+    namaVar.placeholder = 'nama variabel (huruf, angka, garis bawah)';
+    namaVar.oninput = function () { daftar[nomor].name = namaVar.value.slice(0, 32); };
+    baris.appendChild(namaVar);
+
+    var isiVar = document.createElement('input');
+    isiVar.type = 'text';
+    isiVar.value = aksi.value || '';
+    isiVar.placeholder = 'nilai, mis. {member.name} atau teks bebas';
+    isiVar.oninput = function () { daftar[nomor].value = isiVar.value.slice(0, 500); };
+    baris.appendChild(isiVar);
+
+    var catatanVar = document.createElement('p');
+    catatanVar.className = 'hint';
+    catatanVar.style.margin = '0';
+    catatanVar.textContent = 'Dipakai di aksi berikutnya sebagai {var.' + (aksi.name || 'nama') + '}.';
+    baris.appendChild(catatanVar);
+    return baris;
+  }
+
+  if (aksi.kind === 'thread') {
+    var namaThread = document.createElement('input');
+    namaThread.type = 'text';
+    namaThread.value = aksi.threadName || '';
+    namaThread.placeholder = 'Nama thread, mis. "Bantuan {member.name}"';
+    namaThread.oninput = function () { daftar[nomor].threadName = namaThread.value.slice(0, 100); };
+    baris.appendChild(namaThread);
+
+    var privatLabel = document.createElement('label');
+    privatLabel.className = 'menu-flags';
+    var cekPrivat = document.createElement('input');
+    cekPrivat.type = 'checkbox';
+    cekPrivat.checked = aksi.private === true;
+    cekPrivat.onchange = function () { daftar[nomor].private = cekPrivat.checked; };
+    privatLabel.appendChild(cekPrivat);
+    privatLabel.appendChild(document.createTextNode(' thread privat (hanya yang diundang)'));
+    baris.appendChild(privatLabel);
+    return baris;
+  }
+
+  if (aksi.kind === 'delete') {
+    var catatanHapus = document.createElement('p');
+    catatanHapus.className = 'hint';
+    catatanHapus.style.margin = '0';
+    catatanHapus.textContent =
+      'Pesan yang memuat komponen ini dihapus dari channel. Bot butuh izin Manage Messages; kegagalannya diberitahukan ke pengklik. Aksi sesudah ini tidak akan terlihat.';
+    baris.appendChild(catatanHapus);
+    return baris;
+  }
+
   // kind === 'message'
   var pilihPesan = document.createElement('select');
   pilihPesan.className = 'role-mode';
@@ -3314,6 +3621,114 @@ function buatBarisAksi(target, nomor, aksi) {
     renderPreview();
   });
 })();
+
+/* ---------------- Jadwal kirim ---------------- */
+
+/** Jadwal yang sedang disusun untuk pesan yang dibuka. */
+var jadwalPesan = [];
+
+/**
+ * Muat jadwal milik pesan yang sedang dibuka.
+ *
+ * Sumbernya data yang dikirim server bersama daftar pesan, jadi tidak perlu
+ * permintaan tambahan. Salinan dalam dipakai supaya batal menyimpan tidak
+ * mengubah data asli sebelum ditekan "Simpan jadwal".
+ */
+function muatJadwal() {
+  jadwalPesan = editingId ? JSON.parse(JSON.stringify(POST_SCHEDULES[editingId] || [])) : [];
+  renderJadwal();
+}
+
+/** Gambar daftar jadwal yang sedang disusun. */
+function renderJadwal() {
+  var host = document.getElementById('scheduleList');
+  if (!host) return;
+  host.innerHTML = '';
+  if (!editingId) {
+    var hint = document.createElement('p');
+    hint.className = 'hint';
+    hint.style.margin = '0';
+    hint.textContent = 'Simpan pesan dulu dan pilih channel tujuan sebelum menjadwalkan pengiriman.';
+    host.appendChild(hint);
+    return;
+  }
+  if (jadwalPesan.length === 0) {
+    var kosong = document.createElement('p');
+    kosong.className = 'hint';
+    kosong.style.margin = '0';
+    kosong.textContent = 'Belum ada jadwal.';
+    host.appendChild(kosong);
+    return;
+  }
+  jadwalPesan.forEach(function (jadwal, nomor) {
+    var baris = document.createElement('div');
+    baris.className = 'aksi-baris';
+
+    var head = document.createElement('div');
+    head.className = 'aksi-baris-head';
+    var label = document.createElement('span');
+    label.className = 'aksi-jenis';
+    label.textContent =
+      (nomor + 1) + '. ' + waktuLokal(jadwal.dueAt) +
+      (jadwal.repeatMinutes > 0 ? ' · ulang tiap ' + jamAksi(jadwal.repeatMinutes * 60) : ' · sekali') +
+      (jadwal.lastSentAt ? ' · terakhir ' + waktuLokal(jadwal.lastSentAt) : '');
+    head.appendChild(label);
+
+    var hapus = document.createElement('button');
+    hapus.className = 'btn-danger btn-sm btn-icon';
+    hapus.type = 'button';
+    hapus.title = 'Hapus jadwal';
+    hapus.textContent = '×';
+    hapus.onclick = function () {
+      jadwalPesan.splice(nomor, 1);
+      renderJadwal();
+    };
+    head.appendChild(hapus);
+    baris.appendChild(head);
+    host.appendChild(baris);
+  });
+}
+
+/** Tambah satu jadwal dari isian di bawah daftar. */
+function tambahJadwal() {
+  if (!editingId) return toast('Simpan pesan dulu sebelum menjadwalkan', true);
+  var due = waktuDariInput(document.getElementById('scheduleDue').value);
+  if (!due) return toast('Isi waktu kirimnya dulu', true);
+  if (due <= Date.now()) return toast('Waktu kirim harus di masa depan', true);
+  if (jadwalPesan.length >= 10) return toast('Maksimal 10 jadwal per pesan', true);
+  var ulang = Number(document.getElementById('scheduleRepeat').value) || 0;
+  jadwalPesan.push({ dueAt: due, repeatMinutes: ulang, lastSentAt: null });
+  renderJadwal();
+}
+
+/** Simpan daftar jadwal ke server. */
+async function simpanJadwal() {
+  if (!editingId) return toast('Simpan pesan dulu sebelum menjadwalkan', true);
+  var status = document.getElementById('scheduleStatus');
+  try {
+    var hasil = await api('/api/posts/' + editingId + '/schedules', {
+      method: 'PUT',
+      body: JSON.stringify({ schedules: jadwalPesan }),
+    });
+    POST_SCHEDULES[editingId] = JSON.parse(JSON.stringify(hasil.schedules || []));
+    muatJadwal();
+    if (status) {
+      status.textContent = hasil.dropped && hasil.dropped.length
+        ? 'Sebagian jadwal dibuang: ' + hasil.dropped[0]
+        : 'Jadwal disimpan.';
+    }
+    toast('Jadwal disimpan');
+  } catch (e) {
+    var pesan = (e && e.message) || 'Gagal menyimpan jadwal';
+    if (status) status.textContent = pesan;
+    toast(pesan, true);
+  }
+}
+
+/** Apakah pesan yang dibuka punya jadwal (dipakai penanda di daftar). */
+function jumlahJadwal(postId) {
+  return (POST_SCHEDULES[postId] || []).length;
+}
 
 /* ---------------- Tab halaman ---------------- */
 
@@ -3359,6 +3774,7 @@ function showPesanTab(key) {
 loadExisting();
 renderBlocks();
 renderRoleButtons();
+muatJadwal();
 renderPreview();
 </script>`;
 

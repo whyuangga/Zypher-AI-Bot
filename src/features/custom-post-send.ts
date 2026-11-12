@@ -61,6 +61,8 @@ async function buildPayload(
   roleMenus: SendRoleMenu[] = [],
   /** ID pesan /pesan — disisipkan ke customId select supaya aksi bisa dicari. */
   contextPostId?: number | null,
+  /** Nilai template teks (`{member.name}`, …). Kosong = apa adanya. */
+  template?: Record<string, string> | null,
 ): Promise<{
   components: ContainerBuilder[];
   flags: number;
@@ -115,6 +117,7 @@ async function buildPayload(
     })),
     roleMenuId,
     contextPostId,
+    template: template ?? null,
   });
   if (!built) return null;
 
@@ -226,6 +229,23 @@ export async function sendOrUpdatePost(options: {
   blocks: PostBlock[];
   /** ID pesan /pesan — dipakai untuk customId select menu. */
   postId?: number;
+  /**
+   * Kirim sebagai balasan pesan tertentu, bukan pesan channel baru.
+   *
+   * Dipakai aksi "kirim pesan" pada flow: Discohook menyebutnya nesting —
+   * tombol mengirim pesan berisi tombol lain, ditempel di bawah pesan asal
+   * supaya percakapannya tetap terlihat satu rangkaian.
+   *
+   * Pesan yang dikirim dengan cara ini TIDAK bisa diperbarui (tidak ada
+   * messageId tersimpan), jadi pemanggil selalu mengirim baru.
+   */
+  replyTo?: string;
+  /**
+   * Nilai template teks (`{member.name}`, `{server.name}`, …).
+   *
+   * Kosong = teks dikirim apa adanya, jadi pesan biasa tidak berubah.
+   */
+  template?: Record<string, string> | null;
 }): Promise<SendResult> {
   const built = await buildPayload(
     options.blocks,
@@ -233,6 +253,7 @@ export async function sendOrUpdatePost(options: {
     options.accent,
     options.roleMenus,
     options.postId ?? null,
+    options.template ?? null,
   );
   const payload = built;
   if (!payload) {
@@ -244,6 +265,22 @@ export async function sendOrUpdatePost(options: {
   const editPayload = { ...payload, attachments: [] as [] };
 
   const channel = await resolveChannel(options.client, options.channelId);
+
+  /*
+   * Balasan (nesting): selalu kirim BARU. Memperbarui pesan balasan bukan
+   * tujuan aksi ini, dan messageId balasan tidak pernah disimpan — jadi
+   * `options.messageId` sengaja diabaikan di jalur ini.
+   */
+  if (options.replyTo) {
+    const induk = await channel.messages.fetch(options.replyTo).catch((): null => null);
+    if (!induk) {
+      throw new PostSendError(
+        'Pesan induk untuk balasan sudah tidak ada di channel — kirim ulang pesannya dulu, atau matikan opsi "sebagai balasan".',
+      );
+    }
+    const balasan: Message = await induk.reply({ ...payload, allowedMentions: { repliedUser: false } });
+    return { messageId: balasan.id, edited: false, ...laporan(payload) };
+  }
 
   // Coba perbarui pesan lama lebih dulu.
   if (options.messageId) {

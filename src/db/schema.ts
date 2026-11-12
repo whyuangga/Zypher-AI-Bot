@@ -243,6 +243,56 @@ CREATE TABLE IF NOT EXISTS post_actions (
 
 CREATE INDEX IF NOT EXISTS idx_post_actions_post ON post_actions (guild_id, post_id);
 
+-- ---------- sesi flow yang sedang menunggu ----------
+-- Satu baris = satu flow yang berhenti di aksi "Tunggu".
+--
+-- Kenapa disimpan di database, bukan di memori: bot bisa restart kapan saja,
+-- dan penantian bisa sampai 7 hari. Tanpa tabel ini, semua penantian hilang
+-- diam-diam saat deploy — admin sudah menjanjikan pengingat yang tidak pernah
+-- datang.
+--
+-- payload menyimpan SISA langkah (JSON) supaya bentuk rencana aksi bisa
+-- berubah tanpa migrasi kolom.
+CREATE TABLE IF NOT EXISTS post_flow_sessions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id    TEXT NOT NULL,
+  post_id     INTEGER NOT NULL,
+  channel_id  TEXT NOT NULL,
+  message_id  TEXT,
+  user_id     TEXT NOT NULL,
+  user_name   TEXT NOT NULL,
+  server_name TEXT NOT NULL,
+  variables   TEXT NOT NULL DEFAULT '{}',
+  payload     TEXT NOT NULL,
+  due_at      BIGINT NOT NULL,
+  created_at  BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_flow_due ON post_flow_sessions (due_at);
+
+-- ---------- jadwal kirim pesan ----------
+-- Satu baris = satu pesan yang dijadwalkan terkirim.
+--
+-- repeat_minutes = 0 berarti sekali kirim; lebih dari 0 diulang tiap sekian
+-- menit. Batas bawah pengulangan 2 jam (120 menit) mengikuti Discohook: lebih
+-- rapat dari itu, kanal dipenuhi pesan yang sama.
+--
+-- last_sent_at menyimpan waktu kirim terakhir supaya bot yang restart tidak
+-- mengirim ulang pesan yang sudah terkirim, dan supaya jadwal berulang tidak
+-- menumpuk saat bot lama mati.
+CREATE TABLE IF NOT EXISTS post_schedules (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id       TEXT NOT NULL,
+  post_id        INTEGER NOT NULL,
+  channel_id     TEXT NOT NULL,
+  due_at         BIGINT NOT NULL,
+  repeat_minutes INTEGER NOT NULL DEFAULT 0,
+  last_sent_at   BIGINT,
+  created_at     BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_schedules_due ON post_schedules (due_at);
+
 -- ---------- webhook per channel (pesan atas nama server) ----------
 -- Token menyimpan bagian RAHASIA dari URL webhook, dalam bentuk terenkripsi
 -- (lihat src/features/webhook-secret.ts). Tidak pernah dikirim ke browser.
@@ -520,6 +570,38 @@ CREATE TABLE IF NOT EXISTS post_actions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_post_actions_post ON post_actions (guild_id, post_id);
+
+-- Sesi flow yang menunggu (lihat versi SQLite untuk penjelasannya).
+CREATE TABLE IF NOT EXISTS post_flow_sessions (
+  id          SERIAL PRIMARY KEY,
+  guild_id    TEXT NOT NULL,
+  post_id     INTEGER NOT NULL,
+  channel_id  TEXT NOT NULL,
+  message_id  TEXT,
+  user_id     TEXT NOT NULL,
+  user_name   TEXT NOT NULL,
+  server_name TEXT NOT NULL,
+  variables   TEXT NOT NULL DEFAULT '{}',
+  payload     TEXT NOT NULL,
+  due_at      BIGINT NOT NULL,
+  created_at  BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_flow_due ON post_flow_sessions (due_at);
+
+-- Jadwal kirim pesan (lihat versi SQLite untuk penjelasannya).
+CREATE TABLE IF NOT EXISTS post_schedules (
+  id             SERIAL PRIMARY KEY,
+  guild_id       TEXT NOT NULL,
+  post_id        INTEGER NOT NULL,
+  channel_id     TEXT NOT NULL,
+  due_at         BIGINT NOT NULL,
+  repeat_minutes INTEGER NOT NULL DEFAULT 0,
+  last_sent_at   BIGINT,
+  created_at     BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_schedules_due ON post_schedules (due_at);
 
 CREATE TABLE IF NOT EXISTS post_webhooks (
   channel_id TEXT PRIMARY KEY,

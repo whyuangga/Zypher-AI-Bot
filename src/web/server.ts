@@ -58,6 +58,8 @@ import {
   replaceRoleMenus,
   listPostActions,
   replacePostActions,
+  listSchedules,
+  replaceSchedules,
 } from '../db/repo.js';
 import { invalidateModerationCache } from '../features/moderation.js';
 import { listPanelChannels, PanelError, publishPanel, removePanel } from '../features/panel.js';
@@ -709,6 +711,26 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     /** Aksi komponen per pesan, dipakai editor untuk menggambar kartu aksi. */
     const aksiKomponen = postActions;
 
+    /**
+     * Jadwal kirim per pesan.
+     *
+     * Dimuat bersama daftar pesan supaya editor bisa menampilkan "dikirim
+     * otomatis tiap …" tanpa permintaan tambahan per pesan.
+     */
+    const jadwal: Record<number, Array<{ dueAt: number; repeatMinutes: number; lastSentAt: number | null }>> = {};
+    if (guildId) {
+      for (const post of posts) {
+        const daftar = await listSchedules(guildId, post.id).catch(() => []);
+        if (daftar.length > 0) {
+          jadwal[post.id] = daftar.map((satu) => ({
+            dueAt: satu.dueAt,
+            repeatMinutes: satu.repeatMinutes,
+            lastSentAt: satu.lastSentAt,
+          }));
+        }
+      }
+    }
+
     // Daftar role hanya tersedia saat bot online.
     const roleInfo =
       guildId && botClient?.isReady()
@@ -741,6 +763,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         roleButtons,
         roleMenus,
         postActions: aksiKomponen,
+        schedules: jadwal,
         status: dashboardStatus(),
         counts: await navCounts(guildId),
       }),
@@ -1851,7 +1874,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
 
-  const postMatch = /^\/api\/posts\/(\d+)(\/send|\/roles)?$/.exec(path);
+  const postMatch = /^\/api\/posts\/(\d+)(\/send|\/roles|\/schedules)?$/.exec(path);
   if (postMatch) {
     if (!guildId) {
       sendJson(response, 400, { error: 'Server belum dipilih.' });
@@ -1860,6 +1883,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     const id = Number(postMatch[1]);
     const isSend = postMatch[2] === '/send';
     const isRoles = postMatch[2] === '/roles';
+    const isSchedules = postMatch[2] === '/schedules';
 
     if (isSend && method === 'POST') {
       const post = await getCustomPost(guildId, id);
@@ -2020,6 +2044,24 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         actions: actionResult.actions,
         dropped: [...result.dropped, ...menuResult.dropped, ...actionResult.dropped],
       });
+      return;
+    }
+
+    /* Jadwal kirim: daftar penuh (null = hapus semua). */
+    if (isSchedules && method === 'PUT') {
+      const post = await getCustomPost(guildId, id);
+      if (!post) {
+        sendJson(response, 404, { error: 'Pesan tidak ditemukan.' });
+        return;
+      }
+      if (!post.channelId) {
+        sendJson(response, 400, { error: 'Pilih channel tujuan dulu — jadwal tanpa channel tidak bisa dikirim.' });
+        return;
+      }
+      const payload = await readJson(request, response);
+      if (!payload) return;
+      const hasil = await replaceSchedules(guildId, id, post.channelId, payload.schedules);
+      sendJson(response, 200, { ok: true, schedules: hasil.schedules, dropped: hasil.dropped });
       return;
     }
 

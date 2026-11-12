@@ -489,6 +489,11 @@ komponen itu dipakai — padanan sederhana dari *flow* Discohook.
 | **Role — beri / lepas** | ubah role pengklik: pasang/lepas bergantian, hanya beri, atau hanya lepas |
 | **Balas pengklik** | kirim teks sendiri, bisa hanya terlihat oleh yang menekan (ephemeral) |
 | **Kirim pesan tersimpan** | kirim salah satu pesan di daftar (mis. pesan aturan), lalu opsional satu kalimat susulan |
+| **Tunggu** | hentikan sisa aksi sekarang, lanjutkan otomatis setelah durasi tertentu (1 detik – 7 hari) |
+| **Periksa syarat** | bandingkan sebuah nilai; kalau tidak cocok, sisa aksi dihentikan |
+| **Simpan variabel** | simpan teks (boleh template) ke variabel `{var.nama}` untuk aksi berikutnya |
+| **Buat thread** | buat thread publik atau privat dari pesan ini |
+| **Hapus pesan ini** | hapus pesan yang memuat komponen itu (butuh *Manage Messages*) |
 
 Yang perlu diketahui:
 
@@ -502,6 +507,12 @@ Yang perlu diketahui:
   balasan pertama yang dipakai; balasan kedua dilewati dan dicatat di log.
   Karena itu aksi **kirim pesan** mengirim ke channel, bukan sebagai balasan.
 - **Maksimal 6 aksi per komponen** dan 40 aksi per pesan.
+- **Aksi "Tunggu" tahan restart.** Sisa aksinya disimpan ke tabel `post_flow_sessions` dan
+  dilanjutkan timer 15 detik. Artinya: waktunya bisa mundur beberapa detik, dan kalau bot
+  sedang mati saat waktunya tiba, aksinya berjalan begitu bot hidup lagi (bukan hilang).
+- **Aksi "Periksa syarat" hanya punya satu jalur.** Kalau syarat tidak cocok, flow berhenti
+  dengan penjelasan. Percabangan dua jalur ("kalau A lakukan X, kalau bukan lakukan Y")
+  belum ada — itu butuh langkah bertingkat, dan setengah jadi lebih membingungkan.
 - **Tanpa aksi, perilaku lama tetap jalan.** Tombol role yang belum diberi aksi
   masih memberi/melepas role dengan balasan baku, jadi pesan yang sudah
   terkirim tidak mendadak mati.
@@ -516,8 +527,17 @@ Balasan dan kalimat susulan bisa memakai nilai dari saat tombol ditekan:
 | `{member.mention}` | sebutan, mis. `@Wahyu` |
 | `{member.id}` | ID pengklik |
 | `{server.name}` | nama server |
-| `{role}` | nama role yang baru saja diubah |
+| `{role}` / `{role.name}` | nama role yang baru saja diubah |
 | `{effect}` | `ditambahkan` atau `dilepas` |
+| `{selected}` | pilihan yang dipilih di menu (satu pilihan; kosong untuk tombol) |
+| `{var.nama}` | variabel yang disimpan aksi **Simpan variabel** |
+
+Nama-nama ini sengaja sama dengan Discohook. Token yang tidak dikenal dibiarkan apa adanya.
+
+Nilai yang sama juga bisa dipakai di **teks pesan** yang dikirim sebagai aksi lanjutan
+(nesting) — jadi tombol "Buka aturan" bisa mengirim pesan yang menyapa `{member.name}`.
+Pesan biasa yang dikirim admin dari dashboard **tidak** diubah: tanpa konteks member, token
+dibiarkan apa adanya.
 
 Token yang tidak dikenal **dibiarkan apa adanya** (bukan dihapus), supaya salah
 tulis terlihat — bukan menghilang diam-diam seperti di template yang "pintar".
@@ -537,19 +557,45 @@ Contoh balasan paling sering dipakai:
   belum bisa diberi aksi berbeda seperti di Discohook (di sana tiap opsi punya
   flow sendiri); untuk aksi per pilihan, pakai **dropdown role**. Aksi per opsi
   pada select string butuh ID opsi tersimpan — itu pekerjaan lanjutan.
+- **Aksi per pilihan menu** bisa disusun untuk menu string: setiap pilihan punya kartu
+  aksi sendiri (kunci `sel:<nilai>`). Pilihan yang tidak punya aksi sendiri memakai aksi
+  `select:<jenis>` milik seluruh menu. Untuk menu user/role/channel tidak tersedia — nilainya
+  ID Discord yang berubah-ubah, jadi tidak bisa dijadikan kunci yang stabil.
+- **Aksi pada menu multi-pilih** hanya memakai aksi seluruh menu: satu klik bisa membawa
+  beberapa nilai, dan menjalankan beberapa aksi sekaligus tidak bisa dijelaskan urutannya.
 - Aksi **tidak bisa dipakai di pesan webhook**: Discord mengirim interaksi ke
   aplikasi pemilik komponen, dan pemilik pesan webhook adalah webhook itu
   sendiri. Bot menolaknya lebih awal dengan penjelasan.
-- Belum ada `Wait`, cabang bersyarat (`Check`), variabel buatan sendiri, atau
-  pembuatan thread. Alasannya ditulis di `src/features/post-actions.ts`:
-  aksi-aksi itu baru berguna kalau ada antrean tahan-restart dan percabangan,
-  dan menambahkannya setengah matang lebih membingungkan daripada tidak ada.
+- Yang **belum** ada dan alasannya:
+  - **Percabangan dua jalur** (Discohook: `Check` dengan jalur "kalau cocok / kalau tidak").
+    Saat ini syarat yang tidak cocok menghentikan flow. Percabangan butuh langkah
+    bertingkat + batas kedalaman yang bisa dijelaskan.
+  - **`Wait` sub-detik** dan penjadwalan presisi: timer berjalan tiap 15 detik.
+  - **Kirim pesan webhook dari flow** dan **backup/shortlink** (fitur Deluxe Discohook).
+  - **Thread forum** (hanya thread biasa yang didukung).
 
 ### Kenapa tombol role di baris paling bawah
 
 Tombol ini yang paling sering diklik member, jadi posisinya tetap dan mudah
 ditemukan walaupun admin mengubah isi teks di atasnya. Tombol link dari blok
 **Tombol** tetap di tempatnya sesuai urutan blok.
+
+### Jadwal kirim
+
+Tab **Role** punya panel **Jadwal kirim otomatis** untuk pesan yang sedang dibuka.
+
+| Hal | Bagaimana ditangani |
+|---|---|
+| Sekali / berulang | pilih "Sekali kirim" atau ulang tiap 2 jam – 7 hari; pengulangan lebih rapat dari 2 jam dinaikkan ke batas dan dilaporkan |
+| Pesan baru | jadwal **selalu** mengirim pesan baru, bukan memperbarui yang lama |
+| Jam | memakai jam komputermu (`datetime-local` dibaca sebagai waktu lokal, bukan UTC) |
+| Bot mati saat waktunya tiba | dikirim begitu bot hidup lagi |
+| Bot mati berhari-hari | jadwal berulang digeser dari waktu **kirim sekarang**, jadi tidak memuntahkan puluhan pesan susulan |
+| Pesan/channel hilang | jadwal dihentikan dan alasannya dicatat di log |
+| Batas | 10 jadwal per pesan; jadwal di masa lampau ditolak |
+
+Jadwal ikut terhapus saat pesannya dihapus, jadi tidak ada jadwal yatim yang mencoba
+mengirim pesan yang sudah tidak ada.
 
 ---
 
@@ -612,6 +658,7 @@ tidak bisa dibuka lagi — bot akan membuat webhook baru otomatis.
 | `DELETE` | `/api/posts/:id` | hapus dari dashboard |
 | `DELETE` | `/api/posts/:id?withMessage=1` | hapus dari dashboard **dan** dari Discord |
 | `PUT` | `/api/posts/:id/roles` | ganti seluruh tombol, menu ambil role, **dan** aksi komponen pesan (`{ buttons, menus, actions }`) |
+| `PUT` | `/api/posts/:id/schedules` | ganti seluruh jadwal kirim pesan (`{ schedules: [{ dueAt, repeatMinutes }] }`) |
 | `GET` | `/api/roles` | daftar role server + alasan tidak bisa dibagi |
 | `POST` | `/api/posts/import/discohook` | terjemahkan tautan/JSON Discohook jadi blok (`{ url }` atau `{ json }`) |
 
@@ -648,14 +695,28 @@ dikirim sebagai objek = mengganti seluruh aksi pesan itu.
       { "kind": "reply", "text": "✅ Role {role} sudah {effect}!", "hidden": true }
     ],
     "option:30": [{ "kind": "role", "roleId": "789...", "op": "give" }],
-    "select:role": [{ "kind": "reply", "text": "Menu role dipakai", "hidden": true }]
+    "select:role": [{ "kind": "reply", "text": "Menu role dipakai", "hidden": true }],
+    "sel:gamer": [{ "kind": "reply", "text": "Kamu memilih gamer" }],
+    "button:40": [
+      { "kind": "variable", "name": "kode", "value": "{member.id}" },
+      { "kind": "condition", "value": "var.kode", "comparator": "notEmpty" },
+      { "kind": "wait", "seconds": 300 },
+      { "kind": "reply", "text": "Pengingat untuk {member.name}" }
+    ]
   }
 }
 ```
 
-Target `button:<id>` dan `option:<id>` memakai ID baris yang dikembalikan
-endpoint ini; `select:<jenis>` untuk blok Select menu. Aksi yang tidak sah
-dibuang dan alasannya muncul di `dropped`.
+Target yang dikenali:
+
+| Kunci | Arti |
+|---|---|
+| `button:<id>` | satu tombol role |
+| `option:<id>` | satu pilihan dropdown role |
+| `select:<jenis>` | semua blok Select berjenis itu (cadangan) |
+| `sel:<nilai>` | satu pilihan blok Select string, berdasarkan nilainya |
+
+Aksi yang tidak sah dibuang dan alasannya muncul di `dropped`.
 
 ### Tabel database
 

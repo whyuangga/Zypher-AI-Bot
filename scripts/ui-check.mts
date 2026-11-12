@@ -1336,6 +1336,108 @@ await check('pesan: kartu aksi blok Select bisa dibuka & digambar ulang', async 
   assert.equal(page.errors.length, 0, `kartu aksi select error: ${page.errors.join('|')}`);
 });
 
+await check('pesan: lima jenis aksi baru bisa disusun & dikirim', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-aksi-jenis');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      editingId = 1;
+      POST_LIST = [{ id: 1, name: 'Ini' }, { id: 2, name: 'Lain' }];
+      ROLES = [];
+      postActions = {};
+      aksiTerbuka = 'button:7';
+
+      // Susun satu aksi tiap jenis lewat jalur yang dipakai tombol "+ Tambah".
+      var jenis = ['wait', 'condition', 'variable', 'thread', 'delete', 'reply', 'message', 'role'];
+      postActions['button:7'] = [];
+      pilihDanTambah = function (target, nilai) {
+        var daftar = aksiUntuk(target);
+        if (nilai === 'wait') daftar.push({ kind: 'wait', seconds: 300 });
+        else if (nilai === 'condition') daftar.push({ kind: 'condition', value: 'selected', comparator: 'equals', expected: 'gamer' });
+        else if (nilai === 'variable') daftar.push({ kind: 'variable', name: 'kode', value: '{member.id}' });
+        else if (nilai === 'thread') daftar.push({ kind: 'thread', threadName: 'Bantuan', private: true });
+        else if (nilai === 'delete') daftar.push({ kind: 'delete', what: 'pesan' });
+        else if (nilai === 'reply') daftar.push({ kind: 'reply', text: 'Halo {member.name}' });
+        else if (nilai === 'message') daftar.push({ kind: 'message', postId: 2, toChannel: true });
+        else daftar.push({ kind: 'role', roleId: '900', op: 'toggle' });
+      };
+      jenis.forEach(function (j) { pilihDanTambah('button:7', j); });
+
+      var label = aksiUntuk('button:7').map(function (a) { return jenisAksiLabel(a.kind); });
+      var ringkas = aksiUntuk('button:7').map(function (a) { return ringkasAksi(a); });
+      var muatan = susunAksi()['button:7'] || [];
+      return {
+        jumlah: aksiUntuk('button:7').length,
+        label: label.join(' | '),
+        ringkas: ringkas.join(' | '),
+        terkirim: muatan.map(function (a) { return a.kind; }).join(','),
+        // Durasi & waktu diformat untuk manusia, bukan angka mentah.
+        limaMenit: jamAksi(300),
+        waktu: waktuLokal(new Date(2026, 0, 2, 3, 4).getTime())
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.jumlah, 8, 'delapan aksi tersusun');
+  assert.match(String(hasil.label), /Tunggu \| Syarat \| Variabel \| Thread \| Hapus pesan/, 'label jenis baru ada');
+  assert.match(String(hasil.ringkas), /tunggu 5 menit/, 'durasi tunggu terbaca');
+  assert.match(String(hasil.ringkas), /syarat selected sama dengan "gamer"/);
+  assert.match(String(hasil.ringkas), /buat thread "Bantuan"/);
+  assert.equal(hasil.terkirim, 'wait,condition,variable,thread,delete,reply,message,role', 'semua jenis ikut dikirim');
+  assert.equal(hasil.limaMenit, '5 menit');
+  assert.equal(hasil.waktu, '2026-01-02 03:04', 'waktu lokal diformat dengan nol di depan');
+  assert.equal(page.errors.length, 0, `editor jenis aksi error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: panel jadwal kirim menyusun & menyimpan jadwal', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-jadwal');
+  const depan = Date.now() + 3 * 60 * 60 * 1000;
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      editingId = 1;
+      POST_SCHEDULES = {};
+      muatJadwal();
+
+      document.getElementById('scheduleDue').value = new Date(${depan}).toISOString().slice(0, 16);
+      document.getElementById('scheduleRepeat').value = '360';
+      tambahJadwal();
+
+      // Waktu lampau ditolak, bukan disimpan lalu tidak pernah terkirim.
+      var sebelum = jadwalPesan.length;
+      document.getElementById('scheduleDue').value = new Date(Date.now() - 60 * 60 * 1000).toISOString().slice(0, 16);
+      tambahJadwal();
+
+      return {
+        jumlah: jadwalPesan.length,
+        ditolak: jadwalPesan.length === sebelum,
+        ulang: jadwalPesan[0] ? jadwalPesan[0].repeatMinutes : 0,
+        target: editingId
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.jumlah, 1, 'satu jadwal tersusun');
+  assert.equal(hasil.ditolak, true, 'jadwal di masa lampau ditolak');
+  assert.equal(hasil.ulang, 360, 'pengulangan tersimpan');
+
+  // Simpan: harus memanggil endpoint jadwal, bukan endpoint lain.
+  const respons = (await page.evaluate(`
+    simpanJadwal().then(function () { return true; })
+  `)) as unknown;
+  assert.equal(respons, true);
+  const panggilan = page.fetches.filter((call) => call.path.includes('/schedules'));
+  assert.equal(panggilan.length, 1, 'satu permintaan ke endpoint jadwal');
+  assert.equal(panggilan[0]!.method, 'PUT');
+  assert.match(String(panggilan[0]!.path), /\/api\/posts\/1\/schedules/);
+  const body = panggilan[0]!.body as { schedules: Array<{ repeatMinutes: number }> };
+  assert.equal(body.schedules.length, 1, 'jadwal dikirim');
+  assert.equal(body.schedules[0]!.repeatMinutes, 360);
+  assert.equal(page.errors.length, 0, `panel jadwal error: ${page.errors.join('|')}`);
+});
+
 await check('pesan: tombol impor Discohook memanggil endpoint yang benar', async () => {
   const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
   assert.ok(html.includes('importDiscohook'), 'tombol tarik Discohook ada di halaman');

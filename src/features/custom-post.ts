@@ -1057,6 +1057,15 @@ export function buildPostPayload(
      * milik pesan lain bisa ikut dijalankan.
      */
     contextPostId?: number | null;
+    /**
+     * Nilai untuk template teks pesan (`{member.name}`, `{server.name}`, …).
+     *
+     * Kosong = teks dikirim apa adanya. Itu penting: pesan biasa yang dikirim
+     * admin dari dashboard TIDAK boleh tiba-tiba mengubah `{member.name}`
+     * menjadi kosong hanya karena fitur ini ada. Hanya pemanggil yang memang
+     * punya konteks member (flow, sambutan) yang mengisinya.
+     */
+    template?: Record<string, string> | null;
   },
 ): BuiltPost | null {
   /*
@@ -1064,6 +1073,22 @@ export function buildPostPayload(
    * yang hanya berisi ActionRow di dalam container tanpa teks), tapi section
    * yang hanya berisi gambar tetap sah — jadi ia ikut dihitung sebagai isi.
    */
+  /**
+   * Teks satu blok, sudah diisi template bila konteksnya ada.
+   *
+   * Token yang tidak dikenal DIBIARKAN apa adanya (bukan dihapus), sama seperti
+   * di aksi komponen: salah tulis harus terlihat, bukan menghilang diam-diam.
+   */
+  const isiTeks = (nilai: string): string => {
+    const nilaiTemplate = deps.template;
+    if (!nilaiTemplate) return nilai;
+    let hasil = nilai;
+    for (const [token, isi] of Object.entries(nilaiTemplate)) {
+      hasil = hasil.split(`{${token}}`).join(isi);
+    }
+    return hasil;
+  };
+
   const adaIsi = blocks.some(
     (b) =>
       b.kind === 'text' ||
@@ -1393,7 +1418,7 @@ export function buildPostPayload(
       );
       if (adaAksesori && deps.SectionBuilder) {
         const section = new deps.SectionBuilder();
-        section.addTextDisplayComponents(new deps.TextDisplayBuilder().setContent(block.value));
+        section.addTextDisplayComponents(new deps.TextDisplayBuilder().setContent(isiTeks(block.value)));
         tambahAksesori(section, block);
         tulis(section);
         continue;
@@ -1401,7 +1426,7 @@ export function buildPostPayload(
       if (adaAksesori && !deps.SectionBuilder) {
         dropped.push('aksesori teks dilewati (versi discord.js tidak mendukung Section)');
       }
-      tulis(new deps.TextDisplayBuilder().setContent(block.value));
+      tulis(new deps.TextDisplayBuilder().setContent(isiTeks(block.value)));
       continue;
     }
     if (block.kind === 'section') {
@@ -1409,7 +1434,7 @@ export function buildPostPayload(
       if (deps.SectionBuilder && deps.ThumbnailBuilder) {
         const section = new deps.SectionBuilder();
         section.addTextDisplayComponents(
-          new deps.TextDisplayBuilder().setContent(block.value || '\u200b'),
+          new deps.TextDisplayBuilder().setContent(isiTeks(block.value) || '\u200b'),
         );
         tambahAksesori(section, {
           ...block,
