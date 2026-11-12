@@ -6365,6 +6365,77 @@ await testAsync('pesan: select menu membawa ID pesan supaya aksinya tidak tertuk
   assert.equal(targetSelectTampilan('post-ctx:')?.target, undefined, 'customId rusak ditolak');
 });
 
+await testAsync('aksi: select berjenis sama di dua pesan tidak saling menjalankan aksi', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runComponentActions } = await import('../src/features/post-action-runner.js');
+  const GUILD = '123456789012345678';
+
+  // Dua pesan, keduanya punya menu role — kasus yang dulu tertukar.
+  const a = await repo.createCustomPost(GUILD, {
+    name: 'Menu A',
+    channelId: null,
+    blocks: [{ kind: 'text', value: 'A' }, { kind: 'select', selectKind: 'role' }],
+  });
+  const b = await repo.createCustomPost(GUILD, {
+    name: 'Menu B',
+    channelId: null,
+    blocks: [{ kind: 'text', value: 'B' }, { kind: 'select', selectKind: 'role' }],
+  });
+
+  await repo.replacePostActions(GUILD, a.id, {
+    'select:role': [{ kind: 'reply', text: 'BALASAN PESAN A', hidden: true }],
+  });
+  await repo.replacePostActions(GUILD, b.id, {
+    'select:role': [{ kind: 'reply', text: 'BALASAN PESAN B', hidden: true }],
+  });
+
+  const balasan: string[] = [];
+  const interaksi = (postId: number) => ({
+    customId: `post-ctx:${postId}:role`,
+    guildId: GUILD,
+    deferred: false,
+    replied: false,
+    user: { id: '2', username: 'wahyu', globalName: 'Wahyu', tag: 'uji#0001' },
+    member: {
+      displayName: 'Wahyu',
+      roles: { cache: { has: () => false }, highest: { position: 20 } },
+      permissions: { has: () => true },
+    },
+    guild: {
+      id: GUILD,
+      name: 'Server Uji',
+      roles: { cache: new Map(), fetch: async () => null },
+      members: { me: { roles: { highest: { position: 10 } }, permissions: { has: () => true } }, fetchMe: async () => null },
+    },
+    reply: async (payload: { content: string }) => void balasan.push(payload.content),
+    followUp: async (payload: { content: string }) => void balasan.push(payload.content),
+  });
+
+  // Meniru router: ID pesan dari customId diteruskan ke runner.
+  const { targetSelectTampilan } = await import('../src/events/interactionCreate.js');
+  const tekan = async (postId: number) => {
+    const customId = `post-ctx:${postId}:role`;
+    const target = targetSelectTampilan(customId)!;
+    return runComponentActions({
+      client: {} as never,
+      interaction: interaksi(postId) as never,
+      target: target.target,
+      postId: target.postId,
+    });
+  };
+
+  assert.equal(await tekan(b.id), true);
+  assert.deepEqual(balasan, ['BALASAN PESAN B'], 'hanya aksi pesan B yang jalan');
+
+  await tekan(a.id);
+  assert.deepEqual(balasan, ['BALASAN PESAN B', 'BALASAN PESAN A'], 'aksi pesan A tidak tertukar');
+
+  // Tanpa ID pesan (pesan lama), perilaku lama dipertahankan: aksi pertama
+  // yang cocok dipakai, bukan error. Menu lama tetap bekerja.
+  const lama = await repo.findActions(GUILD, 'select:role', null);
+  assert.ok(lama, 'bentuk lama masih menemukan aksi');
+});
+
 await testAsync('pesan: klik tombol role benar-benar memberi & melepas role', async () => {
   // Memakai database smoke yang sudah terbuka (:memory:). JANGAN menutupnya:
   // driver itu dipakai test-test sesudah ini — percobaan pertama menutupnya
