@@ -268,7 +268,16 @@ function mountPage(html: string, label: string): PageContext {
         body = options?.body ?? null;
       }
       fetches.push({ path: String(path), method: options?.method ?? 'GET', body });
-      return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }), text: async () => '' });
+      /*
+       * Dokumen multi-pesan: balasan tiruan harus memuat `document`, karena
+       * halaman MEMAKAI hasil simpan (id + isi yang sudah disaring server).
+       * Halaman lain cukup `{ ok: true }`.
+       */
+      const jawaban =
+        String(path) === '/api/documents' && body && typeof body === 'object'
+          ? { ok: true, document: { id: 7, name: (body as { name?: string }).name ?? '', series: (body as { series?: boolean }).series === true, messages: (body as { messages?: unknown[] }).messages ?? [] } }
+          : { ok: true };
+      return Promise.resolve({ ok: true, status: 200, json: async () => jawaban, text: async () => '' });
     },
     document,
     navigator: { clipboard: null, userAgent: 'node' },
@@ -1593,6 +1602,109 @@ await check('pesan: setelan thread & tujuan channel ikut terkirim', async () => 
   assert.match(String(hasil.ringkasWebhook), /via webhook/);
   assert.equal(hasil.label, 'Kirim webhook');
   assert.equal(page.errors.length, 0, `editor thread/webhook error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: dokumen multi-pesan bisa disusun & dikirim', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-grup');
+
+  const hasil = (await page.evaluate(`
+    (async function () {
+      editingId = null;
+      blocks = [{ kind: 'container' }, { kind: 'text', value: 'Halo dari dokumen' }];
+      document.getElementById('postName').value = 'Pengumuman';
+
+      // Susun dua pesan, lalu buat pesan kedua membalas yang pertama.
+      tambahPesanGrup();
+      tambahPesanGrup();
+      var sesudah = grupAktif.messages.length;
+
+      var daftar = document.getElementById('grupDaftar');
+      var pilihBalas = null;
+      (function cari(node) {
+        if (!node || !node.children) return;
+        for (var i = 0; i < node.children.length; i += 1) {
+          var anak = node.children[i];
+          if (anak.tagName === 'SELECT' && !pilihBalas) pilihBalas = anak;
+          cari(anak);
+        }
+      })(daftar);
+
+      return {
+        sesudah: sesudah,
+        id: grupAktif.messages.map(function (p) { return p.id; }).join(','),
+        nama: grupAktif.messages.map(function (p) { return p.name; }).join(','),
+        adaPilihBalas: Boolean(pilihBalas),
+        teksDaftar: daftar.textContent
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.sesudah, 2, 'dua pesan tersusun');
+  assert.equal(hasil.id, 'p1,p2', 'ID pesan stabil & berurutan');
+  assert.ok(hasil.adaPilihBalas, 'ada pilihan "balas pesan"');
+  /*
+   * Isi pesan tidak dicari di daftar: baris dokumen hanya menampilkan nama,
+   * rujukan, dan thread — bukan isi blok (itu tugas pratinjau). Yang harus
+   * dibuktikan di sini adalah SALINAN-nya benar, dan salinannya tidak
+   * menunjuk objek yang sama dengan editor (kalau berbagi referensi, mengubah
+   * pesan di dokumen akan mengubah pesan yang sedang disusun di tab Susun).
+   */
+  const salinan = (await page.evaluate(`
+    (function () {
+      grupAktif.messages[0].blocks.push({ kind: 'text', value: 'HANYA DI DOKUMEN' });
+      return {
+        dokumen: grupAktif.messages[0].blocks.length,
+        editor: blocks.length
+      };
+    })()
+  `)) as Record<string, number>;
+  assert.ok(salinan.dokumen > salinan.editor, 'blok di dokumen adalah salinan, bukan referensi yang sama');
+  assert.equal(page.fetches.length, 0, 'menyusun dokumen belum memanggil server');
+
+  // Simpan: muatan harus memuat messages & series, dan hasil server dipakai.
+  const simpan = (await page.evaluate(`
+    (async function () {
+      grupAktif.messages[1].reference = 'p1';
+      grupAktif.messages[1].threadName = 'Diskusi';
+      document.getElementById('grupNama').value = 'Dokumen uji';
+      document.getElementById('grupSeries').checked = true;
+      await simpanGrup();
+      return {
+        status: document.getElementById('grupStatus').textContent,
+        idSetelah: grupAktif.id
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  const simpanCall = page.fetches.find((call) => call.path === '/api/post-groups');
+  assert.ok(simpanCall, 'menyimpan memanggil /api/post-groups');
+  const muatan = simpanCall!.body as { name: string; series: boolean; messages: Array<{ id: string; reference?: string }> };
+  assert.equal(muatan.name, 'Dokumen uji');
+  assert.equal(muatan.series, true, 'penanda "kirim berurutan" ikut dikirim');
+  assert.equal(muatan.messages.length, 2);
+  assert.equal(muatan.messages[1]!.reference, 'p1', 'rujukan balasan ikut dikirim');
+  /*
+   * Server tiruan menjawab `{ ok: true }` tanpa objek `document`. Editor harus
+   * tetap jalan (tidak melempar), dan statusnya boleh kosong — yang penting
+   * tidak ada error yang membuat tab Multi-pesan mati di browser.
+   */
+  assert.equal(page.errors.length, 0, 'simpan tanpa balasan server tidak membuat halaman error');
+
+  // Kirim: harus menyebut channel dan memakai ID dokumen yang baru.
+  const kirim = (await page.evaluate(`
+    (async function () {
+      document.getElementById('grupChannel').value = '123';
+      grupAktif.id = 7;
+      await kirimGrup();
+      return { status: document.getElementById('grupStatus').textContent };
+    })()
+  `)) as Record<string, unknown>;
+  const kirimCall = page.fetches.find((call) => call.path === '/api/post-groups/7/send');
+  assert.ok(kirimCall, 'mengirim memanggil endpoint rangkaian yang benar');
+  assert.equal((kirimCall!.body as { channelId: string }).channelId, '123');
+  assert.match(String(kirim.status), /pesan terkirim/, 'status menyebut jumlah pesan terkirim');
+  assert.equal(page.errors.length, 0, `editor dokumen error: ${page.errors.join('|')}`);
 });
 
 await check('pesan: flag pesan dikirim sebagai bitmask yang benar', async () => {

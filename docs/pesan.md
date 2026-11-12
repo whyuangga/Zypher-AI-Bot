@@ -623,10 +623,55 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | `thread_name` (pesan menjadi awal thread) | ❌ |
 | Message flags: suppress embeds, suppress notifications | ✅ |
 | Message flags: voice message, `IS_COMPONENTS_V2` manual | ❌ (v2 diurus pengirim) |
-| Multi-pesan dalam satu backup (beberapa pesan, `reference`, `thread_id`) | ❌ satu pesan per dokumen |
+| Multi-pesan dalam satu backup (beberapa pesan, `reference`, `thread_id`) | ✅ tab **Multi-pesan** (`?tab=grup`): sampai 20 pesan per dokumen, `reference` antar pesan, nama thread per pesan, disimpan di `post_documents` |
 | Riwayat/undo revisi, impor backup, share link | ⚠️ impor JSON/URL ada; riwayat & share belum |
 | Jadwal kirim (sekali / berulang, cron) | ⚠️ sekali / tiap N jam (min. 2 jam); jadwal cron per hari/bulan belum |
 | Trigger event (member masuk/keluar) | ❌ (bot punya sambutan sendiri, bukan flow) |
+
+### Batch 3: multi-pesan (padanan `messages[]`)
+
+Discohook menyimpan BEBERAPA pesan dalam satu backup; flow dan aksi bisa
+mengirim salah satunya lewat `backupMessageIndex`, dan tiap pesan boleh
+`reference` ke pesan lain serta membuka thread sendiri. Sebelumnya di sini satu
+dokumen selalu satu pesan, sehingga dokumen hasil impor Discohook yang berisi
+lima pesan hanya bisa dilihat di layar: begitu halaman ditutup, empat pesan
+lainnya hilang.
+
+Yang sekarang ada (tab **Multi-pesan**):
+
+- **Sampai 20 pesan per dokumen**, disimpan di tabel `post_documents`
+  (payload JSON utuh, bukan kolom per field — bentuk blok dipakai bersama
+  editor satu-pesan, dan menyalinnya ke kolom akan menjadi dua sumber
+  kebenaran).
+- **`reference` antar pesan**: pesan bisa membalas pesan lain DI DALAM dokumen
+  yang sama. Rujukan ke pesan lain yang tidak ikut dikirim dilepas dengan
+  alasan, karena rujukan seperti itu membuat pengiriman gagal di tengah
+  rangkaian — pesan pertama terkirim, sisanya tidak.
+- **Urutan kirim dijamin**: pesan yang membalas selalu dikirim sesudah pesan
+  yang dibalas, walau urutannya terbalik di dokumen. Urutan yang sudah benar
+  tidak diubah.
+- **Rujukan melingkar** (A balas B, B balas A) dilepas dan dilaporkan: Discord
+  menetapkan rujukan saat pesan dibuat, jadi salah satu harus lebih dulu ada.
+- **Thread per pesan**: pesan yang menyebut nama thread langsung membuka thread
+  sesudah pesan itu terkirim.
+- **Kegagalan satu pesan tidak menghentikan sisanya**, tetapi dilaporkan per
+  pesan (nama + alasan). Rangkaian yang berhenti di tengah meninggalkan cerita
+  menggantung, dan admin tidak punya cara mengirim ulang satu pesan saja.
+- **Kirim berurutan** (centang di tab): pesan pertama biasa, sisanya balasan —
+  bentuk "postingan berantai" ala Discohook.
+
+Endpoint-nya `/api/post-groups` (bukan `/api/documents`, yang sudah dipakai
+dokumen RAG untuk halaman /dokumen — dua rute dengan nama sama berarti yang
+kedua tidak akan pernah tercapai, dan halaman Multi-pesan akan menampilkan
+daftar kosong tanpa satu pun error).
+
+Yang **masih** belum setara dari model multi-pesan Discohook:
+
+- `thread_id` untuk mengirim pesan KE thread yang sudah ada (di sini thread
+  selalu dibuat baru).
+- Mengirim satu pesan tertentu dari dokumen lewat aksi flow
+  (`backupMessageIndex`): aksi `message` di sini selalu mengirim pesan
+  `custom_posts`, bukan pesan ke-N sebuah dokumen.
 
 ### Batch 2 (tutup selisih berikutnya)
 

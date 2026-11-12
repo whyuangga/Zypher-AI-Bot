@@ -3,6 +3,7 @@ import { config } from '../config.js';
 import { normalizeTimeZone } from '../lib/timezone.js';
 import { parseBlocks, sanitizeBlocks, type PostBlock } from '../features/custom-post.js';
 import { decryptSecret, encryptSecret } from '../features/webhook-secret.js';
+import { sanitizeSeries, type SeriesMessage } from '../features/post-series.js';
 import {
   sanitizeRoleButtons,
   sanitizeRoleMenu,
@@ -1440,6 +1441,11 @@ export interface CustomPost {
    * notifikasi. 0 = tidak ada flag.
    */
   flags: number;
+  /**
+   * true = dokumen ini dikirim sebagai RANGKAIAN: pesan pertama biasa,
+   * sisanya jadi balasan berurutan. Padanan multi-pesan Discohook.
+   */
+  series: boolean;
   updatedAt: number;
 }
 
@@ -1453,6 +1459,7 @@ interface CustomPostRow {
   accent?: string | null;
   sender?: string | null;
   flags?: number | string | null;
+  series?: number | string | null;
   updated_at: number | string;
 }
 
@@ -1466,6 +1473,7 @@ function toCustomPost(row: CustomPostRow): CustomPost {
     accent: row.accent ?? null,
     sender: row.sender === 'webhook' ? 'webhook' : 'bot',
     flags: Number(row.flags ?? 0) || 0,
+    series: Number(row.series ?? 0) === 1,
     updatedAt: Number(row.updated_at),
   };
 }
@@ -1505,12 +1513,13 @@ export async function createCustomPost(
     accent?: string | null;
     sender?: 'bot' | 'webhook';
     flags?: number;
+    series?: boolean;
   },
 ): Promise<CustomPost> {
   const blocks = sanitizeBlocks(input.blocks).blocks;
   const id = await insert(
-    `INSERT INTO custom_posts (guild_id, name, channel_id, blocks, message_id, accent, sender, flags, updated_at)
-     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+    `INSERT INTO custom_posts (guild_id, name, channel_id, blocks, message_id, accent, sender, flags, series, updated_at)
+     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
     [
       guildId,
       input.name.slice(0, 120),
@@ -1519,6 +1528,7 @@ export async function createCustomPost(
       input.accent ?? null,
       input.sender ?? 'bot',
       input.flags ?? 0,
+      input.series === true ? 1 : 0,
       Date.now(),
     ],
   );
@@ -1536,6 +1546,7 @@ export async function updateCustomPost(
     accent?: string | null;
     sender?: 'bot' | 'webhook';
     flags?: number;
+    series?: boolean;
   },
 ): Promise<CustomPost | null> {
   const current = await getCustomPost(guildId, id);
@@ -1543,7 +1554,7 @@ export async function updateCustomPost(
 
   const blocks = input.blocks === undefined ? current.blocks : sanitizeBlocks(input.blocks).blocks;
   await run(
-    'UPDATE custom_posts SET name = ?, channel_id = ?, blocks = ?, accent = ?, sender = ?, flags = ?, updated_at = ? WHERE guild_id = ? AND id = ?',
+    'UPDATE custom_posts SET name = ?, channel_id = ?, blocks = ?, accent = ?, sender = ?, flags = ?, series = ?, updated_at = ? WHERE guild_id = ? AND id = ?',
     [
       (input.name ?? current.name).slice(0, 120),
       input.channelId === undefined ? current.channelId : input.channelId,
@@ -1551,6 +1562,7 @@ export async function updateCustomPost(
       input.accent === undefined ? current.accent : input.accent,
       input.sender ?? current.sender,
       input.flags === undefined ? current.flags : input.flags,
+      input.series === undefined ? (current.series ? 1 : 0) : input.series ? 1 : 0,
       Date.now(),
       guildId,
       id,
@@ -1585,6 +1597,123 @@ export async function deleteCustomPost(guildId: string, id: number): Promise<voi
   await run('DELETE FROM post_schedules WHERE guild_id = ? AND post_id = ?', [guildId, id]);
   await run('DELETE FROM post_flow_sessions WHERE guild_id = ? AND post_id = ?', [guildId, id]);
   await run('DELETE FROM custom_posts WHERE guild_id = ? AND id = ?', [guildId, id]);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Dokumen multi-pesan (`?grup=`)                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Satu dokumen berisi beberapa pesan.
+ *
+ * Kenapa disimpan sebagai JSON utuh: isinya memakai bentuk blok yang SAMA
+ * dengan pesan satu-dokumen (`PostBlock`), dan memecahnya ke kolom per field
+ * berarti dua sumber kebenaran yang cepat menyimpang begitu bentuk blok
+ * berubah. Yang disaring tetap di aplikasi (`sanitizeSeries`), bukan di SQL.
+ */
+export interface PostDocument {
+  id: number;
+  name: string;
+  /** true = pesan-pesannya dikirim sebagai rangkaian balasan. */
+  series: boolean;
+  messages: SeriesMessage[];
+  updatedAt: number;
+}
+
+interface PostDocumentRow {
+  id: number | string;
+  guild_id: string;
+  name: string;
+  series: number | string;
+  payload: string;
+  updated_at: number | string;
+}
+
+function toPostDocument(row: PostDocumentRow): PostDocument {
+  let messages: SeriesMessage[] = [];
+  try {
+    const isi = JSON.parse(row.payload) as unknown;
+    if (Array.isArray(isi)) messages = isi as SeriesMessage[];
+  } catch {
+    // Payload rusak (mis. sunting manual di database) tidak boleh membuat
+    // seluruh halaman /pesan gagal dibuka. Dokumen tampil kosong, dan admin
+    // bisa mengimpornya ulang.
+    messages = [];
+  }
+  return {
+    id: Number(row.id),
+    name: row.name,
+    series: Number(row.series) === 1,
+    messages,
+    updatedAt: Number(row.updated_at),
+  };
+}
+
+/** Semua dokumen milik satu server, terbaru lebih dulu. */
+export async function listPostDocuments(guildId: string): Promise<PostDocument[]> {
+  // Dibatasi seperti daftar pesan: dokumen panjang ikut ditanam ke HTML.
+  const rows = await all<PostDocumentRow>(
+    'SELECT * FROM post_documents WHERE guild_id = ? ORDER BY updated_at DESC LIMIT 100',
+    [guildId],
+  );
+  return rows.map(toPostDocument);
+}
+
+export async function getPostDocument(guildId: string, id: number): Promise<PostDocument | null> {
+  const row = await get<PostDocumentRow>('SELECT * FROM post_documents WHERE guild_id = ? AND id = ?', [
+    guildId,
+    id,
+  ]);
+  return row ? toPostDocument(row) : null;
+}
+
+/**
+ * Simpan dokumen multi-pesan (baru atau perbarui).
+ *
+ * `sanitizeSeries` dijalankan DI SINI, bukan hanya di API: repo adalah pintu
+ * terakhir sebelum data tersimpan, dan dokumen yang tidak sah akan membuat
+ * pengiriman gagal di tengah rangkaian — pesan pertama sudah terkirim,
+ * sisanya tidak.
+ */
+export async function savePostDocument(
+  guildId: string,
+  input: {
+    id?: number;
+    name: string;
+    series?: boolean;
+    messages: unknown;
+  },
+): Promise<{ document: PostDocument; dropped: string[]; warnings: string[] } | null> {
+  const bersih = sanitizeSeries(input.messages);
+  const nama = input.name.trim().slice(0, 120) || 'Dokumen';
+  const series = input.series === true ? 1 : 0;
+  const payload = JSON.stringify(bersih.messages);
+
+  if (input.id) {
+    const ada = await getPostDocument(guildId, input.id);
+    if (!ada) return null;
+    await run(
+      'UPDATE post_documents SET name = ?, series = ?, payload = ?, updated_at = ? WHERE guild_id = ? AND id = ?',
+      [nama, series, payload, Date.now(), guildId, input.id],
+    );
+    const dokumen = await getPostDocument(guildId, input.id);
+    return dokumen
+      ? { document: dokumen, dropped: bersih.dropped, warnings: bersih.warnings }
+      : null;
+  }
+
+  const id = await insert(
+    'INSERT INTO post_documents (guild_id, name, series, payload, updated_at) VALUES (?, ?, ?, ?, ?)',
+    [guildId, nama, series, payload, Date.now()],
+  );
+  const dokumen = await getPostDocument(guildId, id);
+  return dokumen
+    ? { document: dokumen, dropped: bersih.dropped, warnings: bersih.warnings }
+    : null;
+}
+
+export async function deletePostDocument(guildId: string, id: number): Promise<void> {
+  await run('DELETE FROM post_documents WHERE guild_id = ? AND id = ?', [guildId, id]);
 }
 
 /* ------------------------------------------------------------------ */

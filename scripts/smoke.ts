@@ -7167,6 +7167,143 @@ await testAsync('aksi: thread lengkap & kirim webhook divalidasi', async () => {
   assert.equal(thread!.slowmodeSeconds, 5);
 });
 
+await testAsync('multi-pesan: rujukan, urutan kirim, & dokumen tersimpan', async () => {
+  const series = await import('../src/features/post-series.js');
+
+  // Rujukan ke pesan yang tidak ada dibuang — kalau tidak, pengiriman gagal
+  // di tengah rangkaian (pesan pertama terkirim, sisanya tidak).
+  const bersih = series.sanitizeSeries([
+    { id: 'a', name: 'Pembuka', blocks: [{ kind: 'text', value: 'Halo' }] },
+    {
+      id: 'b',
+      name: 'Isi',
+      blocks: [{ kind: 'text', value: 'Isi kedua' }],
+      reference: 'a',
+      threadName: 'Diskusi',
+    },
+    { id: 'c', name: 'Hilang', blocks: [{ kind: 'text', value: 'x' }], reference: 'tidak-ada' },
+  ]);
+  /*
+   * Pesan yang rujukannya mati TETAP disimpan, hanya rujukannya yang dilepas:
+   * isi pesan sudah disusun admin, dan membuang seluruh pesan karena satu
+   * rujukan salah akan menghilangkan bagian cerita yang sah.
+   */
+  assert.equal(bersih.messages.length, 3, 'ketiga pesan tetap ada');
+  assert.equal(bersih.messages[2]!.reference, undefined, 'rujukan mati dilepas');
+  assert.equal(bersih.messages[1]!.reference, 'a', 'rujukan yang sah dipertahankan');
+  assert.equal(bersih.messages[1]!.threadName, 'Diskusi');
+  assert.equal(bersih.messages[0]!.reference, undefined, 'tanpa rujukan = pesan biasa');
+  assert.equal(
+    (bersih.messages[0]!.blocks[0] as { value: string }).value,
+    'Halo',
+    'blok dibersihkan tapi isinya tetap',
+  );
+  assert.ok(
+    bersih.dropped.some((alasan) => alasan.includes('tidak ada di dokumen')),
+    'rujukan mati dilaporkan',
+  );
+
+  // ID wajib unik & aman: ID ganda membuat rujukan menunjuk pesan yang salah.
+  const ganda = series.sanitizeSeries([
+    { id: 'a', blocks: [{ kind: 'text', value: '1' }] },
+    { id: 'a', blocks: [{ kind: 'text', value: '2' }] },
+    { id: 'spasi salah', blocks: [{ kind: 'text', value: '3' }] },
+  ]);
+  assert.equal(ganda.messages.length, 1, 'ID ganda & ID tidak sah dibuang');
+  assert.equal(ganda.dropped.length, 2);
+
+  // Pesan kosong & pesan yang membalas dirinya sendiri.
+  const kosong = series.sanitizeSeries([
+    { id: 'a', blocks: [] },
+    { id: 'b', blocks: [{ kind: 'text', value: 'isi' }], reference: 'b' },
+  ]);
+  assert.equal(kosong.messages.length, 1);
+  assert.equal(kosong.messages[0]!.reference, undefined, 'membalas diri sendiri dilepas');
+  assert.ok(kosong.dropped.some((alasan) => alasan.includes('kosong')));
+  assert.ok(kosong.dropped.some((alasan) => alasan.includes('dirinya sendiri')));
+
+  /*
+   * Urutan: pesan yang membalas HARUS dikirim sesudah yang dibalas, walau
+   * urutan di dokumen terbalik. Tanpa ini, pesan kedua akan menunggu induk
+   * yang belum ada dan terkirim tanpa rujukan.
+   */
+  const terbalik = series.resolveSendOrder([
+    { id: 'b', name: 'Balasan', blocks: [], reference: 'a' },
+    { id: 'a', name: 'Induk', blocks: [] },
+  ]);
+  assert.deepEqual(terbalik.ordered.map((satu) => satu.id).join(','), 'a,b', 'induk dikirim lebih dulu');
+  assert.equal(terbalik.warnings.length, 0);
+
+  // Urutan yang sudah benar TIDAK diubah: admin menyusun cerita, bukan urutan acak.
+  const wajar = series.resolveSendOrder([
+    { id: 'a', name: '1', blocks: [] },
+    { id: 'b', name: '2', blocks: [], reference: 'a' },
+    { id: 'c', name: '3', blocks: [] },
+  ]);
+  assert.deepEqual(wajar.ordered.map((satu) => satu.id).join(','), 'a,b,c');
+
+  // Rujukan melingkar tidak mungkin dikirim; dilepas & dilaporkan.
+  const melingkar = series.sanitizeSeries([
+    { id: 'a', blocks: [{ kind: 'text', value: '1' }], reference: 'b' },
+    { id: 'b', blocks: [{ kind: 'text', value: '2' }], reference: 'a' },
+  ]);
+  assert.equal(melingkar.messages.length, 2);
+  assert.equal(melingkar.messages[0]!.reference, undefined, 'rujukan melingkar dilepas');
+  assert.ok(melingkar.dropped.some((alasan) => alasan.includes('melingkar')));
+
+  // Ringkasan & penanda rangkaian.
+  assert.equal(series.describeSeries([]), 'belum ada pesan');
+  assert.equal(
+    series.describeSeries([
+      { id: 'a', name: '1', blocks: [] },
+      { id: 'b', name: '2', blocks: [], reference: 'a', threadName: 'T' },
+    ]),
+    '2 pesan · 1 berbalas · 1 thread',
+  );
+  assert.equal(series.hasReferences([{ id: 'a', name: '1', blocks: [] }]), false);
+  assert.equal(series.hasReferences([{ id: 'a', name: '1', blocks: [], reference: 'b' }]), true);
+
+  /* --- Dokumen tersimpan (database) --- */
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+  const disimpan = await repo.savePostDocument(GUILD, {
+    name: 'Pengumuman berurutan',
+    series: true,
+    messages: [
+      { id: 'p1', name: 'Pembuka', blocks: [{ kind: 'text', value: 'Halo' }] },
+      { id: 'p2', name: 'Isi', blocks: [{ kind: 'text', value: 'Kedua' }], reference: 'p1' },
+    ],
+  });
+  assert.ok(disimpan, 'dokumen tersimpan');
+  assert.equal(disimpan!.document.series, true);
+  assert.equal(disimpan!.document.messages.length, 2);
+
+  const dibaca = await repo.getPostDocument(GUILD, disimpan!.document.id);
+  assert.equal(dibaca?.messages[1]!.reference, 'p1', 'rujukan bertahan di database');
+
+  // Diperbarui: ID sama, isi baru.
+  const diperbarui = await repo.savePostDocument(GUILD, {
+    id: disimpan!.document.id,
+    name: 'Setelah diperbarui',
+    series: false,
+    messages: [{ id: 'p1', name: 'Tunggal', blocks: [{ kind: 'text', value: 'Baru' }] }],
+  });
+  assert.equal(diperbarui!.document.id, disimpan!.document.id, 'memperbarui, bukan membuat baru');
+  assert.equal(diperbarui!.document.series, false);
+  assert.equal(diperbarui!.document.messages.length, 1);
+
+  // Dokumen tidak sah tidak menghapus data lama (nama kosong tetap disimpan
+  // dengan nama cadangan, bukan melempar).
+  const tanpaPesan = await repo.savePostDocument(GUILD, { name: '', series: false, messages: [] });
+  assert.ok(tanpaPesan, 'dokumen kosong tetap bisa disimpan (untuk disusun bertahap)');
+  assert.equal(tanpaPesan!.document.messages.length, 0);
+  assert.equal(tanpaPesan!.document.name, 'Dokumen', 'nama kosong memakai cadangan');
+
+  await repo.deletePostDocument(GUILD, disimpan!.document.id);
+  assert.equal(await repo.getPostDocument(GUILD, disimpan!.document.id), null, 'dokumen terhapus');
+  await repo.deletePostDocument(GUILD, tanpaPesan!.document.id);
+});
+
 await testAsync('flow: syarat bertingkat dijalankan lewat cabang nyata', async () => {
   const repo = await import('../src/db/repo.js');
   const { runComponentActions } = await import('../src/features/post-action-runner.js');

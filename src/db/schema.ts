@@ -211,8 +211,32 @@ CREATE TABLE IF NOT EXISTS custom_posts (
   layout     TEXT,
   -- Bitmask flag pesan Discord (suppress embeds/notifikasi/voice). NULL = 0.
   flags      INTEGER,
+  -- true = kirim SELURUH pesan di dokumen ini berurutan sebagai satu
+  -- postingan: pesan pertama biasa, sisanya BALASAN ke pesan sebelumnya.
+  -- Padanan multi-pesan Discohook: rujukan balasan per pesan.
+  series     INTEGER,
   updated_at INTEGER NOT NULL
 );
+
+-- ---------- dokumen pesan berurutan (dibuka dengan ?grup=) ----------
+-- Satu baris = satu jalur URL yang bisa dibuka lagi. Sebelumnya dokumen
+-- hasil impor Discohook yang berisi >1 pesan hanya bisa dilihat di layar
+-- (editor cuma menyimpan satu pesan aktif), sehingga sisa pesannya hilang
+-- saat halaman ditutup. Sekarang isinya bisa disimpan dan dibuka lagi.
+--
+-- Isi pesan disimpan sebagai JSON UTUH, bukan kolom per field: bentuk blok
+-- dipakai bersama editor satu-pesan, dan menyalinnya ke kolom akan membuat
+-- dua sumber kebenaran yang cepat menyimpang.
+CREATE TABLE IF NOT EXISTS post_documents (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id   TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  series     INTEGER NOT NULL DEFAULT 0,
+  payload    TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_documents_guild ON post_documents (guild_id);
 
 -- ---------- tombol ambil role (tahap 3) ----------
 -- Satu baris = satu tombol. Role disimpan di sini, BUKAN di dalam customId:
@@ -528,8 +552,21 @@ CREATE TABLE IF NOT EXISTS custom_posts (
   layout     TEXT,
   -- Bitmask flag pesan Discord. NULL = 0.
   flags      INTEGER,
+  -- true = pesan-pesan dokumen ini dikirim berurutan sebagai balasan.
+  series     INTEGER,
   updated_at BIGINT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS post_documents (
+  id         SERIAL PRIMARY KEY,
+  guild_id   TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  series     INTEGER NOT NULL DEFAULT 0,
+  payload    TEXT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_documents_guild ON post_documents (guild_id);
 
 CREATE TABLE IF NOT EXISTS post_role_buttons (
   id       SERIAL PRIMARY KEY,

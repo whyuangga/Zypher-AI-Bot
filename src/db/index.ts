@@ -99,6 +99,8 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
     // Flag pesan Discord (suppress embeds/notifikasi). NULL = tidak ada flag,
     // jadi pesan yang dibuat sebelum kolom ini ada tetap dikirim seperti dulu.
     'ALTER TABLE custom_posts ADD COLUMN flags INTEGER',
+    // true = dokumen multi-pesan dikirim sebagai satu rangkaian balasan.
+    'ALTER TABLE custom_posts ADD COLUMN series INTEGER',
     // Emoji & warna tombol role. NULL = tampilan lama (tanpa emoji, biru),
     // jadi tombol yang dibuat sebelum fitur ini tetap terlihat sama.
     'ALTER TABLE post_role_buttons ADD COLUMN emoji TEXT',

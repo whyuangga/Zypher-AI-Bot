@@ -39,8 +39,29 @@ export interface PostRowView {
   sender: 'bot' | 'webhook';
 }
 
+/** Satu pesan di dalam dokumen multi-pesan (bentuk dari post-series.ts). */
+export interface SeriesMessageView {
+  id: string;
+  name: string;
+  blocks: PostBlock[];
+  reference?: string;
+  threadName?: string;
+  flags?: number;
+}
+
+/** Dokumen multi-pesan tersimpan (`?grup=`). */
+export interface PostDocumentView {
+  id: number;
+  name: string;
+  series: boolean;
+  messages: SeriesMessageView[];
+  updatedAt: number;
+}
+
 export interface PesanPageOptions extends PageContext {
   posts: PostRowView[];
+  /** Dokumen multi-pesan yang bisa dibuka lagi lewat `?grup=`. */
+  documents?: PostDocumentView[];
   channels: Array<{ id: string; name: string }>;
   /** Bot siap menerima perintah kirim. */
   botReady: boolean;
@@ -388,6 +409,7 @@ ${listCard}
   ${tabPesan('pratinjau', 'Pratinjau', false, 'tampil seperti di Discord')}
   ${tabPesan('role', 'Ambil role', false, 'tombol & menu')}
   ${tabPesan('impor', 'Impor', false, 'Discohook & JSON')}
+  ${tabPesan('grup', 'Multi-pesan', false, 'beberapa pesan, berbalas')}
   <span class="hint" style="margin:0 0 0 auto;align-self:center">Pindah tab tidak menghapus isian yang belum disimpan.</span>
 </div>
 
@@ -456,6 +478,41 @@ ${listCard}
   </div>
 </div>
 
+<div class="tab-pane" id="pane-grup" role="tabpanel" aria-labelledby="tab-grup" hidden>
+  <div class="pesan-layout">
+    <div class="pesan-sisi">
+      <div class="card">
+        <div class="subhead">${icon('file', 15)} Dokumen multi-pesan</div>
+        <p class="hint">Beberapa pesan dalam satu dokumen. Kalau <b>kirim berurutan</b> dicentang, pesan pertama dikirim biasa dan sisanya jadi <b>balasan</b> ke pesan sebelumnya — sama seperti <i>multi-pesan</i> di Discohook. Dokumen disimpan terpisah dari pesan satu-dokumen karena tombol role, jadwal, dan aksi komponen bekerja pada satu pesan.</p>
+        <div class="role-style-row">
+          <input id="grupNama" type="text" placeholder="Nama dokumen, mis. Pengumuman berurutan" />
+          <button class="btn btn-ghost btn-sm" type="button" onclick="tambahPesanGrup()">${icon('plus', 15)} Tambah pesan</button>
+        </div>
+        <label class="menu-flags"><input type="checkbox" id="grupSeries" /> kirim berurutan sebagai balasan</label>
+        <div class="role-style-row">
+          <span class="select-wrap">
+            <select id="grupChannel">
+              ${options.channels
+                .map((c) => `<option value="${esc(c.id)}">#${esc(c.name)}</option>`)
+                .join('')}
+            </select>
+            ${icon('chevron', 15)}
+          </span>
+          <button class="btn-primary btn-sm" type="button" id="grupSimpan" onclick="simpanGrup()">${icon('check', 15)} Simpan</button>
+          <button class="btn btn-ghost btn-sm" type="button" id="grupKirim" onclick="kirimGrup()" ${options.botReady ? '' : 'disabled'}>${icon('external', 15)} Kirim</button>
+        </div>
+        <div id="grupDaftar" class="block-list"></div>
+        <p class="hint" id="grupStatus" style="margin:0"></p>
+      </div>
+
+      <div class="card">
+        <div class="subhead">${icon('file', 15)} Dokumen tersimpan</div>
+        <div id="grupTersimpan" class="block-list"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="pesan-aksi">
   <button class="btn-primary" type="button" id="postSave" onclick="savePost()">${icon('check', 16)} Simpan</button>
   <button class="btn btn-ghost" type="button" id="postSend" onclick="sendPost()" ${options.botReady ? '' : 'disabled title="Bot offline"'}>${icon('external', 16)} Kirim ke Discord</button>
@@ -488,6 +545,10 @@ var POST_LIST = ${jsonForScript(options.posts.map((p) => ({ id: p.id, name: p.na
  * yang dilihat admin sama dengan jam di komputernya — bukan zona server.
  */
 var POST_SCHEDULES = ${jsonForScript(options.schedules ?? {})};
+/** Dokumen multi-pesan tersimpan (dibuka lewat ?grup=). */
+var DOKUMEN = ${jsonForScript(options.documents ?? [])};
+/** Dokumen yang sedang disusun (salinan; batal = tidak mengubah aslinya). */
+var grupAktif = { id: null, name: '', series: false, messages: [] };
 /** Tombol role yang sedang disusun (belum disimpan). */
 var roleButtons = [];
 /** Aksi tombol/menu yang sedang disusun, per target. */
@@ -4235,6 +4296,321 @@ function buatBarisAksi(target, nomor, aksi) {
   });
 })();
 
+/* ---------------- Dokumen multi-pesan (tab "Multi-pesan") ---------------- */
+
+/**
+ * Panggil API dengan metode apa pun.
+ *
+ * postJson bawaan hanya bisa POST, sedangkan dokumen butuh DELETE (hapus)
+ * dan POST dengan muatan berbeda. Dibuat pembungkus kecil di sini, bukan
+ * diubah di shell: halaman lain memakai postJson sebagai POST dan mengubah
+ * artinya akan membuat tombol di halaman lain mengirim metode yang salah.
+ */
+async function apiMetode(path, payload, method) {
+  try {
+    return await api(path, {
+      method: method,
+      headers: { 'content-type': 'application/json' },
+      ...(payload === undefined ? {} : { body: JSON.stringify(payload) })
+    });
+  } catch (error) {
+    toast('Gagal: ' + error.message, true);
+    return { ok: false, error: error.message };
+  }
+}
+
+/**
+ * Render daftar pesan di dokumen yang sedang disusun.
+ *
+ * Tiap baris memperlihatkan urutan, rujukan balasan, dan apakah pesan itu
+ * memulai thread — tiga hal yang paling menentukan bentuk rangkaiannya, dan
+ * yang paling tidak terlihat kalau hanya ditampilkan sebagai teks isi.
+ */
+function renderGrup() {
+  var host = document.getElementById('grupDaftar');
+  if (!host) return;
+  host.innerHTML = '';
+
+  var nama = document.getElementById('grupNama');
+  if (nama) nama.value = grupAktif.name || '';
+  var series = document.getElementById('grupSeries');
+  if (series) series.checked = grupAktif.series === true;
+
+  if (grupAktif.messages.length === 0) {
+    var kosong = document.createElement('p');
+    kosong.className = 'hint';
+    kosong.style.margin = '0';
+    kosong.textContent =
+      'Belum ada pesan. "Tambah pesan" menyalin isi pesan yang sedang dibuka di tab Susun — jadi susun isinya di sana, lalu tambahkan ke dokumen ini.';
+    host.appendChild(kosong);
+  }
+
+  grupAktif.messages.forEach(function (pesan, urutan) {
+    var baris = document.createElement('div');
+    baris.className = 'aksi-cabang-baris';
+
+    var teks = document.createElement('span');
+    teks.className = 'aksi-cabang-teks';
+    var rujukan = pesan.reference ? ' ↳ balasan "' + pesan.reference + '"' : '';
+    var thread = pesan.threadName ? ' 🧵 ' + pesan.threadName : '';
+    teks.textContent = (urutan + 1) + '. ' + pesan.name + rujukan + thread;
+    baris.appendChild(teks);
+
+    var pilihBalas = document.createElement('select');
+    pilihBalas.className = 'role-mode';
+    var opt0 = document.createElement('option');
+    opt0.value = '';
+    opt0.textContent = 'tanpa balasan';
+    pilihBalas.appendChild(opt0);
+    grupAktif.messages.forEach(function (lain) {
+      if (lain.id === pesan.id) return;
+      var o = document.createElement('option');
+      o.value = lain.id;
+      o.textContent = 'balas ' + lain.name;
+      if (pesan.reference === lain.id) o.selected = true;
+      pilihBalas.appendChild(o);
+    });
+    pilihBalas.onchange = function () {
+      if (pilihBalas.value) pesan.reference = pilihBalas.value;
+      else delete pesan.reference;
+      renderGrup();
+    };
+    baris.appendChild(pilihBalas);
+
+    var threadInput = document.createElement('input');
+    threadInput.type = 'text';
+    threadInput.value = pesan.threadName || '';
+    threadInput.placeholder = 'nama thread (opsional)';
+    threadInput.oninput = function () {
+      var isi = threadInput.value.trim().slice(0, 100);
+      if (isi) pesan.threadName = isi;
+      else delete pesan.threadName;
+    };
+    baris.appendChild(threadInput);
+
+    var naik = document.createElement('button');
+    naik.className = 'btn btn-ghost btn-sm btn-icon';
+    naik.type = 'button';
+    naik.textContent = '↑';
+    naik.title = 'Naikkan urutan';
+    naik.onclick = function () {
+      if (urutan === 0) return;
+      var tukar = grupAktif.messages[urutan - 1];
+      grupAktif.messages[urutan - 1] = pesan;
+      grupAktif.messages[urutan] = tukar;
+      renderGrup();
+    };
+    baris.appendChild(naik);
+
+    var hapus = document.createElement('button');
+    hapus.className = 'btn-danger btn-sm btn-icon';
+    hapus.type = 'button';
+    hapus.textContent = '×';
+    hapus.title = 'Hapus pesan dari dokumen';
+    hapus.onclick = function () {
+      grupAktif.messages.splice(urutan, 1);
+      /*
+       * Rujukan ke pesan yang baru dihapus ikut dilepas: kalau tidak, server
+       * akan melaporkannya sebagai "balasan menunjuk pesan yang tidak ada"
+       * dan admin bingung kenapa perubahan kecilnya ditolak.
+       */
+      grupAktif.messages.forEach(function (lain) {
+        if (lain.reference === pesan.id) delete lain.reference;
+      });
+      renderGrup();
+    };
+    baris.appendChild(hapus);
+
+    host.appendChild(baris);
+  });
+
+  renderGrupTersimpan();
+}
+
+/** Daftar dokumen tersimpan: bisa dibuka lagi, dikirim, atau dihapus. */
+function renderGrupTersimpan() {
+  var host = document.getElementById('grupTersimpan');
+  if (!host) return;
+  host.innerHTML = '';
+  if (DOKUMEN.length === 0) {
+    var kosong = document.createElement('p');
+    kosong.className = 'hint';
+    kosong.style.margin = '0';
+    kosong.textContent = 'Belum ada dokumen tersimpan.';
+    host.appendChild(kosong);
+    return;
+  }
+  DOKUMEN.forEach(function (dok) {
+    var baris = document.createElement('div');
+    baris.className = 'list-row';
+
+    var badan = document.createElement('div');
+    badan.className = 'list-body';
+    var judul = document.createElement('div');
+    judul.className = 'list-title';
+    judul.textContent = dok.name + (dok.series ? ' · berurutan' : '');
+    badan.appendChild(judul);
+    var meta = document.createElement('div');
+    meta.className = 'list-meta';
+    meta.textContent = dok.messages.length + ' pesan';
+    badan.appendChild(meta);
+    baris.appendChild(badan);
+
+    var aksi = document.createElement('div');
+    aksi.className = 'list-actions';
+
+    var buka = document.createElement('button');
+    buka.className = 'btn btn-ghost btn-sm';
+    buka.type = 'button';
+    buka.textContent = 'Buka';
+    buka.onclick = function () { bukaGrup(dok.id); };
+    aksi.appendChild(buka);
+
+    var hapus = document.createElement('button');
+    hapus.className = 'btn-danger btn-sm btn-icon';
+    hapus.type = 'button';
+    hapus.textContent = '×';
+    hapus.title = 'Hapus dokumen';
+    hapus.onclick = function () { hapusGrup(dok.id); };
+    aksi.appendChild(hapus);
+
+    baris.appendChild(aksi);
+    host.appendChild(baris);
+  });
+}
+
+/** Tambah satu pesan ke dokumen — isinya SALINAN dari editor yang sedang dibuka. */
+function tambahPesanGrup() {
+  if (grupAktif.messages.length >= 20) return toast('Maksimal 20 pesan per dokumen', true);
+  if (!blocks.length) return toast('Susun isi pesan dulu di tab Susun', true);
+  /*
+   * ID dibuat berurutan dan stabil di dokumen ini (p1, p2, dst). ID acak
+   * akan membuat rujukan yang sudah dipilih admin menunjuk ke tempat lain
+   * setiap kali dokumen disimpan ulang.
+   */
+  var nomor = 1;
+  while (grupAktif.messages.some(function (p) { return p.id === 'p' + nomor; })) nomor += 1;
+  grupAktif.messages.push({
+    id: 'p' + nomor,
+    name: 'Pesan ' + (grupAktif.messages.length + 1),
+    blocks: JSON.parse(JSON.stringify(blocks))
+  });
+  var empat = document.getElementById('grupNama');
+  if (empat && !grupAktif.name) grupAktif.name = (document.getElementById('postName').value || 'Dokumen').slice(0, 80);
+  renderGrup();
+}
+
+/** Simpan dokumen (baru atau perbarui yang sedang dibuka). */
+async function simpanGrup() {
+  var nama = (document.getElementById('grupNama').value || '').trim();
+  if (!nama) return toast('Nama dokumen wajib diisi', true);
+  if (grupAktif.messages.length === 0) return toast('Dokumen belum punya pesan', true);
+  var series = document.getElementById('grupSeries').checked;
+  var status = document.getElementById('grupStatus');
+  var tombol = document.getElementById('grupSimpan');
+  if (tombol) tombol.disabled = true;
+  try {
+    var hasil = await apiMetode('/api/post-groups', {
+      ...(grupAktif.id ? { id: grupAktif.id } : {}),
+      name: nama,
+      series: series,
+      messages: grupAktif.messages
+    }, 'POST');
+    if (!hasil.ok) {
+      toast(hasil.error || 'Gagal menyimpan dokumen', true);
+      if (status) status.textContent = hasil.error || '';
+      return;
+    }
+    /*
+     * Balasan tanpa objek dokumen berarti server menerima permintaan tetapi
+     * tidak mengembalikan dokumen (mis. versi server lebih lama). Dibedakan
+     * dari kegagalan biasa supaya halaman tidak melempar, dan admin tahu
+     * dokumennya mungkin tersimpan dengan bentuk yang tidak dikenal.
+     */
+    if (!hasil.document) {
+      toast('Server tidak mengembalikan dokumen — periksa daftar dokumen tersimpan', true);
+      return;
+    }
+    grupAktif = {
+      id: hasil.document.id,
+      name: hasil.document.name,
+      series: hasil.document.series,
+      messages: hasil.document.messages
+    };
+    DOKUMEN = DOKUMEN.filter(function (d) { return d.id !== grupAktif.id; });
+    DOKUMEN.unshift(hasil.document);
+    /*
+     * Bagian yang dibuang server DITAMPILKAN, bukan hanya toast: pesan yang
+     * hilang karena terlalu besar atau rujukan yang dilepas mengubah bentuk
+     * rangkaian, dan admin harus bisa membacanya lagi.
+     */
+    var catatan = [];
+    if (hasil.dropped && hasil.dropped.length) catatan.push('Dibuang: ' + hasil.dropped.join('; '));
+    if (hasil.warnings && hasil.warnings.length) catatan.push('Catatan: ' + hasil.warnings.join('; '));
+    if (status) status.textContent = catatan.join(' | ');
+    toast('Dokumen tersimpan');
+    renderGrup();
+  } finally {
+    if (tombol) tombol.disabled = false;
+  }
+}
+
+/** Kirim dokumen tersimpan ke channel yang dipilih. */
+async function kirimGrup() {
+  if (!grupAktif.id) return toast('Simpan dokumennya dulu', true);
+  var channelId = document.getElementById('grupChannel').value;
+  if (!channelId) return toast('Pilih channel tujuan', true);
+  var tombol = document.getElementById('grupKirim');
+  var status = document.getElementById('grupStatus');
+  if (tombol) tombol.disabled = true;
+  try {
+    var hasil = await apiMetode('/api/post-groups/' + grupAktif.id + '/send', { channelId: channelId }, 'POST');
+    if (!hasil.ok && !hasil.sent) {
+      toast(hasil.error || 'Gagal mengirim', true);
+      if (status) status.textContent = hasil.error || '';
+      return;
+    }
+    /*
+     * Laporan dikirim apa adanya: kalau tiga dari lima pesan terkirim, admin
+     * harus tahu yang mana yang gagal — bukan "berhasil" yang tidak benar.
+     */
+    var bagian = [(hasil.sent || []).length + ' pesan terkirim'];
+    if (hasil.threads && hasil.threads.length) bagian.push(hasil.threads.length + ' thread dibuat');
+    if (hasil.failed && hasil.failed.length) {
+      bagian.push('gagal: ' + hasil.failed.map(function (f) { return f.name + ' (' + f.error + ')'; }).join('; '));
+    }
+    if (status) status.textContent = bagian.join(' | ');
+    toast(hasil.failed && hasil.failed.length ? 'Sebagian pesan gagal — lihat catatan' : 'Terkirim', Boolean(hasil.failed && hasil.failed.length));
+  } finally {
+    if (tombol) tombol.disabled = false;
+  }
+}
+
+/** Buka dokumen tersimpan ke editor. */
+function bukaGrup(id) {
+  var dok = DOKUMEN.filter(function (d) { return d.id === id; })[0];
+  if (!dok) return toast('Dokumen tidak ada', true);
+  grupAktif = {
+    id: dok.id,
+    name: dok.name,
+    series: dok.series === true,
+    messages: JSON.parse(JSON.stringify(dok.messages))
+  };
+  renderGrup();
+  toast('Dokumen dibuka: ' + dok.name);
+}
+
+/** Hapus dokumen tersimpan. */
+async function hapusGrup(id) {
+  if (!(await askConfirm('Hapus dokumen?', 'Pesan yang sudah terkirim di Discord tidak ikut dihapus.', 'Hapus'))) return;
+  var hasil = await apiMetode('/api/post-groups/' + id, undefined, 'DELETE');
+  if (!hasil.ok) return toast(hasil.error || 'Gagal menghapus', true);
+  DOKUMEN = DOKUMEN.filter(function (d) { return d.id !== id; });
+  if (grupAktif.id === id) grupAktif = { id: null, name: '', series: false, messages: [] };
+  renderGrup();
+  toast('Dokumen dihapus');
+}
+
 /* ---------------- Jadwal kirim ---------------- */
 
 /** Jadwal yang sedang disusun untuk pesan yang dibuka. */
@@ -4358,7 +4734,7 @@ function jumlahJadwal(postId) {
  * saat tab terlihat memastikan gambarnya pas, bukan sisa dari keadaan lama.
  */
 function showPesanTab(key) {
-  var kunci = ['susun', 'pratinjau', 'role', 'impor'];
+  var kunci = ['susun', 'pratinjau', 'role', 'impor', 'grup'];
   for (var i = 0; i < kunci.length; i++) {
     var nama = kunci[i];
     var aktif = nama === key;
@@ -4381,12 +4757,13 @@ function showPesanTab(key) {
   var tersimpan = null;
   try { tersimpan = localStorage.getItem('zypher.tab.pesan'); } catch (e) {}
   var kunci = dariUrl || tersimpan;
-  if (kunci && ['susun', 'pratinjau', 'role', 'impor'].indexOf(kunci) !== -1) showPesanTab(kunci);
+  if (kunci && ['susun', 'pratinjau', 'role', 'impor', 'grup'].indexOf(kunci) !== -1) showPesanTab(kunci);
 })();
 
 loadExisting();
 renderBlocks();
 renderRoleButtons();
+renderGrup();
 muatJadwal();
 renderPreview();
 </script>`;

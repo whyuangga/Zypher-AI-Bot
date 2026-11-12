@@ -30,6 +30,7 @@ import {
   type TextChannel,
 } from 'discord.js';
 import { accentToNumber, buildPostPayload, type PostBlock } from './custom-post.js';
+import type { SeriesMessage } from './post-series.js';
 import { roleButtonId, roleMenuId } from './role-buttons.js';
 import { deleteChannelWebhook, getChannelWebhook, saveChannelWebhook } from '../db/repo.js';
 import { errorMessage, logger } from '../lib/logger.js';
@@ -303,6 +304,123 @@ export async function sendOrUpdatePost(options: {
 
   const sent: Message = await channel.send(payload);
   return { messageId: sent.id, edited: false, ...laporan(payload) };
+}
+
+/**
+ * Kirim BEBERAPA pesan sebagai satu rangkaian (multi-pesan).
+ *
+ * Aturan yang dipegang, dan alasannya:
+ *
+ *   1. **Urutan dihormati.** Pesan dikirim sesuai urutan yang sudah diputuskan
+ *      `resolveSendOrder` di post-series.ts — pesan yang membalas pesan lain
+ *      tidak mungkin dikirim lebih dulu.
+ *   2. **Pesan yang gagal tidak menghentikan sisanya**, tetapi DILAPORKAN.
+ *      Satu pesan berisi berkas yang sudah dihapus tidak boleh membuat lima
+ *      pesan lain hilang dari channel.
+ *   3. **Balasan memakai `reply` hanya bila induknya bagian dari rangkaian
+ *      ini.** Rujukan ke pesan Discord lain akan menghasilkan balasan tanpa
+ *      induk yang terlihat seperti kesalahan bot.
+ *   4. **Thread dimulai dari pesan yang menyebutnya**, sesudah pesan itu
+ *      terkirim — bukan dari pesan pertama dokumen.
+ *
+ * Mengembalikan ID pesan per `id` dokumen, supaya pemanggil bisa menyimpan
+ * atau menampilkannya.
+ */
+export async function sendPostSeries(options: {
+  client: Client;
+  channelId: string;
+  messages: SeriesMessage[];
+  /** ID pesan /pesan — dipakai customId komponen di semua pesan. */
+  postId?: number;
+  /** Nilai template teks ({member.name}, …). */
+  template?: Record<string, string> | null;
+  /** Berhenti kalau pemanggil membatalkan (mis. bot mati di tengah jalan). */
+  shouldStop?: () => boolean;
+}): Promise<{
+  sent: Array<{ id: string; messageId: string; name: string }>;
+  failed: Array<{ id: string; name: string; error: string }>;
+  threads: Array<{ id: string; threadId: string }>;
+}> {
+  const channel = await resolveChannel(options.client, options.channelId);
+  const sent: Array<{ id: string; messageId: string; name: string }> = [];
+  const failed: Array<{ id: string; name: string; error: string }> = [];
+  const threads: Array<{ id: string; threadId: string }> = [];
+  const idPesan = new Map<string, string>();
+
+  for (const pesan of options.messages) {
+    if (options.shouldStop?.()) break;
+
+    const built = await buildPayload(
+      pesan.blocks,
+      [],
+      undefined,
+      [],
+      options.postId ?? null,
+      options.template ?? null,
+    );
+    if (!built) {
+      failed.push({ id: pesan.id, name: pesan.name, error: 'pesan kosong' });
+      continue;
+    }
+    const payload = {
+      ...built,
+      ...(pesan.flags ? { flags: built.flags | pesan.flags } : {}),
+    };
+
+    try {
+      let terkirim: Message;
+      const induk = pesan.reference ? idPesan.get(pesan.reference) : undefined;
+      if (induk) {
+        const pesanInduk = await channel.messages.fetch(induk).catch((): null => null);
+        if (pesanInduk) {
+          terkirim = await pesanInduk.reply({
+            ...payload,
+            allowedMentions: { repliedUser: false },
+          });
+        } else {
+          /*
+           * Induk hilang (mis. dihapus orang lain di antara dua pesan).
+           * Pesannya TETAP dikirim sebagai pesan biasa dan itu dilaporkan —
+           * membuangnya berarti isi yang sudah disusun admin hilang diam-diam.
+           */
+          terkirim = await channel.send(payload);
+          failed.push({
+            id: pesan.id,
+            name: pesan.name,
+            error: 'pesan induk sudah tidak ada — dikirim tanpa balasan',
+          });
+        }
+      } else {
+        terkirim = await channel.send(payload);
+      }
+
+      idPesan.set(pesan.id, terkirim.id);
+      sent.push({ id: pesan.id, messageId: terkirim.id, name: pesan.name });
+
+      if (pesan.threadName) {
+        const thread = await terkirim
+          .startThread({ name: pesan.threadName.slice(0, 100) })
+          .catch((): null => null);
+        if (thread) threads.push({ id: pesan.id, threadId: thread.id });
+        else {
+          failed.push({
+            id: pesan.id,
+            name: pesan.name,
+            error: 'thread gagal dibuat (izin Create Public Threads?)',
+          });
+        }
+      }
+    } catch (error) {
+      /*
+       * Kegagalan satu pesan TIDAK menghentikan sisanya: rangkaian yang
+       * berhenti di tengah meninggalkan cerita yang menggantung, dan admin
+       * tidak punya cara mengirim ulang satu pesan saja.
+       */
+      failed.push({ id: pesan.id, name: pesan.name, error: errorMessage(error).slice(0, 160) });
+    }
+  }
+
+  return { sent, failed, threads };
 }
 
 /** Hapus pesan yang pernah dikirim, kalau masih ada. Diam kalau sudah hilang. */

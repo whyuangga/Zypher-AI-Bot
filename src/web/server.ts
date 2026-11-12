@@ -60,12 +60,17 @@ import {
   replacePostActions,
   listSchedules,
   replaceSchedules,
+  listPostDocuments,
+  getPostDocument,
+  savePostDocument,
+  deletePostDocument,
 } from '../db/repo.js';
 import { invalidateModerationCache } from '../features/moderation.js';
 import { listPanelChannels, PanelError, publishPanel, removePanel } from '../features/panel.js';
 import {
   deletePostMessage,
   PostSendError,
+  sendPostSeries,
   sendOrUpdatePost,
   sendOrUpdatePostViaWebhook,
   webhookIdentityFor,
@@ -769,6 +774,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         roleMenus,
         postActions: aksiKomponen,
         schedules: jadwal,
+        // Dokumen multi-pesan: dikirim sekalian supaya tab "Multi-pesan"
+        // bisa dibuka tanpa permintaan tambahan (sama seperti daftar pesan).
+        documents: guildId ? await listPostDocuments(guildId) : [],
         status: dashboardStatus(),
         counts: await navCounts(guildId),
       }),
@@ -1840,6 +1848,135 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
   }
 
   /** `?withMessage=1` saat DELETE = hapus juga pesan di Discord. */
+
+  /*
+   * ---------- dokumen multi-pesan (`?grup=`) ----------
+   *
+   *   GET    /api/post-groups          daftar dokumen
+   *   POST   /api/post-groups          simpan dokumen (baru / perbarui)
+   *   POST   /api/post-groups/:id/send kirim sebagai rangkaian
+   *   DELETE /api/post-groups/:id      hapus dokumen
+   *
+   * Kenapa endpoint terpisah dari /api/posts: dokumen bisa berisi sampai 20
+   * pesan, sedangkan satu baris `custom_posts` selalu satu pesan. Menggabung
+   * keduanya berarti setiap pembaca `custom_posts` harus tahu bentuk kedua —
+   * dan tombol role, jadwal, serta aksi komponen semuanya bekerja pada satu
+   * pesan.
+   *
+   * Nama `post-groups`, BUKAN `documents`: `/api/documents` sudah dipakai
+   * dokumen RAG untuk halaman /dokumen (dan didaftarkan lebih dulu), sehingga
+   * rute baru di sini tidak akan pernah tercapai — halaman Multi-pesan akan
+   * menampilkan daftar kosong tanpa satu pun error.
+   */
+  if (path === '/api/post-groups' && (method === 'GET' || method === 'POST')) {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    if (method === 'GET') {
+      sendJson(response, 200, { documents: await listPostDocuments(guildId) });
+      return;
+    }
+    const payload = await readJsonBody(request, response, 1024 * 1024);
+    if (!payload) return;
+    const nama = String(payload.name ?? '').trim();
+    if (!nama) {
+      sendJson(response, 400, { error: 'Nama dokumen wajib diisi.' });
+      return;
+    }
+    const id = payload.id === undefined ? undefined : Number(payload.id);
+    if (id !== undefined && (!Number.isSafeInteger(id) || id <= 0)) {
+      sendJson(response, 400, { error: 'ID dokumen tidak sah.' });
+      return;
+    }
+    const hasil = await savePostDocument(guildId, {
+      ...(id === undefined ? {} : { id }),
+      name: nama,
+      series: payload.series === true,
+      messages: payload.messages,
+    });
+    if (!hasil) {
+      sendJson(response, 404, { error: 'Dokumen tidak ditemukan.' });
+      return;
+    }
+    /*
+     * `dropped` ikut dikirim: pesan yang dibuang karena kosong, terlalu besar,
+     * atau rujukannya menunjuk pesan yang tidak ada. Tanpa ini admin mengira
+     * seluruh dokumen tersimpan apa adanya.
+     */
+    sendJson(response, 200, {
+      ok: true,
+      document: hasil.document,
+      ...(hasil.dropped.length ? { dropped: hasil.dropped } : {}),
+      ...(hasil.warnings.length ? { warnings: hasil.warnings } : {}),
+    });
+    return;
+  }
+
+  const docMatch = /^\/api\/post-groups\/(\d+)(\/send)?$/.exec(path);
+  if (docMatch) {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const docId = Number(docMatch[1]);
+    const dokumen = await getPostDocument(guildId, docId);
+    if (!dokumen) {
+      sendJson(response, 404, { error: 'Dokumen tidak ditemukan.' });
+      return;
+    }
+
+    if (method === 'DELETE' && !docMatch[2]) {
+      await deletePostDocument(guildId, docId);
+      sendJson(response, 200, { ok: true });
+      return;
+    }
+
+    if (method === 'POST' && docMatch[2] === '/send') {
+      const payload = await readJsonBody(request, response, 64 * 1024);
+      const channelId =
+        typeof payload?.channelId === 'string' && payload.channelId.trim()
+          ? payload.channelId.trim()
+          : null;
+      if (!channelId) {
+        sendJson(response, 400, { error: 'Pilih channel tujuan lebih dulu.' });
+        return;
+      }
+      if (!botClient?.isReady()) {
+        sendJson(response, 400, { error: 'Bot sedang offline di proses ini, jadi pesan tidak bisa dikirim.' });
+        return;
+      }
+      if (dokumen.messages.length === 0) {
+        sendJson(response, 400, { error: 'Dokumen ini belum punya pesan yang bisa dikirim.' });
+        return;
+      }
+      try {
+        const hasil = await sendPostSeries({
+          client: botClient,
+          channelId,
+          messages: dokumen.messages,
+          postId: docId,
+        });
+        sendJson(response, 200, {
+          ok: hasil.failed.length === 0,
+          sent: hasil.sent,
+          ...(hasil.failed.length ? { failed: hasil.failed } : {}),
+          ...(hasil.threads.length ? { threads: hasil.threads } : {}),
+        });
+      } catch (error) {
+        if (error instanceof PostSendError) {
+          sendJson(response, 400, { error: error.message });
+        } else {
+          logger.error('Gagal mengirim dokumen multi-pesan', errorMessage(error));
+          sendJson(response, 500, { error: 'Gagal mengirim ke Discord.' });
+        }
+      }
+      return;
+    }
+
+    sendJson(response, 405, { error: 'Metode tidak didukung untuk dokumen ini.' });
+    return;
+  }
 
   if (path === '/api/posts' && method === 'POST') {
     if (!guildId) {
