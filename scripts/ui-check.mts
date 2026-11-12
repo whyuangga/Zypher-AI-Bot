@@ -1604,6 +1604,44 @@ await check('pesan: setelan thread & tujuan channel ikut terkirim', async () => 
   assert.equal(page.errors.length, 0, `editor thread/webhook error: ${page.errors.join('|')}`);
 });
 
+await check('pesan: izin ping & nama thread ikut dikirim, bawaan tanpa ping', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-mention');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      var polos = allowedMentionsPesan();
+      document.getElementById('postMentionRoles').checked = true;
+      document.getElementById('postThreadName').value = 'Diskusi umum';
+      var dengan = allowedMentionsPesan();
+      return { polos: polos, dengan: dengan };
+    })()
+  `)) as { polos: { parse: string[] }; dengan: { parse: string[] } };
+
+  // Bawaan HARUS kosong: ini yang mencegah @everyone tidak sengaja terkirim.
+  assert.equal(hasil.polos.parse.join(','), '', 'bawaan tanpa ping sama sekali');
+  assert.equal(hasil.dengan.parse.join(','), 'roles', 'hanya jenis yang dicentang');
+
+  // Ikut dikirim saat Simpan (bukan hanya disimpan di variabel halaman).
+  await page.evaluate(`
+    (async function () {
+      blocks = [{ kind: 'text', value: 'Pengumuman' }];
+      document.getElementById('postName').value = 'Ping role';
+      if (typeof renderBlocks === 'function') renderBlocks();
+      await savePost();
+    })()
+  `);
+  const simpan = page.fetches.find((call) => call.path === '/api/posts' || /^\/api\/posts\/\d+$/.test(call.path));
+  assert.ok(simpan, 'Simpan memanggil /api/posts');
+  const muatan = simpan!.body as {
+    allowedMentions?: { parse: string[] };
+    threadName?: string;
+  };
+  assert.equal((muatan.allowedMentions?.parse ?? []).join(','), 'roles', 'izin ping ikut dikirim');
+  assert.equal(muatan.threadName, 'Diskusi umum', 'nama thread ikut dikirim');
+  assert.equal(page.errors.length, 0, `editor ping/thread error: ${page.errors.join('|')}`);
+});
+
 await check('pesan: dokumen multi-pesan bisa disusun & dikirim', async () => {
   const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
   const page = mountPage(html, 'uji-grup');

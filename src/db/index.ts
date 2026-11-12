@@ -101,6 +101,9 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
     'ALTER TABLE custom_posts ADD COLUMN flags INTEGER',
     // true = dokumen multi-pesan dikirim sebagai satu rangkaian balasan.
     'ALTER TABLE custom_posts ADD COLUMN series INTEGER',
+    // Izin ping (JSON) & nama thread. NULL = bawaan aman: tanpa ping/thread.
+    'ALTER TABLE custom_posts ADD COLUMN mentions TEXT',
+    'ALTER TABLE custom_posts ADD COLUMN thread_name TEXT',
     // Emoji & warna tombol role. NULL = tampilan lama (tanpa emoji, biru),
     // jadi tombol yang dibuat sebelum fitur ini tetap terlihat sama.
     'ALTER TABLE post_role_buttons ADD COLUMN emoji TEXT',

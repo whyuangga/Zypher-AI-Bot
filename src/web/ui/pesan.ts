@@ -318,6 +318,24 @@ export function pesanPage(options: PesanPageOptions): string {
     </label>
     <p class="hint">Sama seperti "Message Flags" di Discohook. Flag lain (Components V2) diurus bot dan tidak perlu diatur.</p>
   </div>
+  <div style="grid-column:1/-1">
+    <label class="field">Izinkan ping (allowed_mentions)</label>
+    <label class="menu-flags" style="margin-right:14px">
+      <input type="checkbox" id="postMentionUsers" /> sebut nama pengguna
+    </label>
+    <label class="menu-flags" style="margin-right:14px">
+      <input type="checkbox" id="postMentionRoles" /> ping role
+    </label>
+    <label class="menu-flags">
+      <input type="checkbox" id="postMentionEveryone" /> @everyone / @here
+    </label>
+    <p class="hint">Bawaannya <b>tanpa ping sama sekali</b>. Itu bukan kelalaian: pesan yang tidak sengaja berisi @everyone tidak bisa ditarik kembali, dan ping massal tidak bisa dibatalkan. Centang hanya yang memang dibutuhkan.</p>
+  </div>
+  <div style="grid-column:1/-1">
+    <label class="field" for="postThreadName">Nama thread (opsional)</label>
+    <input type="text" id="postThreadName" placeholder="mis. Diskusi {server.name}" />
+    <p class="hint">Kalau diisi, pesan ini langsung membuka thread dengan nama tersebut — sama seperti <code>thread_name</code> di Discohook. Gagal membuat thread TIDAK membatalkan pesannya; kegagalannya dilaporkan.</p>
+  </div>
 </div>`,
   });
 
@@ -894,6 +912,33 @@ function buatEditorSelect(index) {
   bungkus.appendChild(buatSakelar(index, 'selectDisabled', 'Nonaktif (tidak bisa dibuka)'));
 
   /*
+   * Pilihan bawaan (default_values) — hanya untuk select yang menunjuk
+   * entitas Discord. Select string DITOLAK Discord kalau diberi
+   * default_values, jadi isian ini tidak ditampilkan di sana alih-alih
+   * ditampilkan lalu diabaikan.
+   */
+  if ((blocks[index].selectKind || 'string') !== 'string') {
+    var isianDefault = document.createElement('input');
+    isianDefault.type = 'text';
+    isianDefault.value = (blocks[index].defaultValues || []).join(', ');
+    isianDefault.placeholder = 'ID pilihan bawaan, mis. 123456789012345678';
+    isianDefault.oninput = function () {
+      var id = isianDefault.value.split(',').map(function (t) { return t.trim(); })
+        .filter(function (t) { return /^[0-9]{5,25}$/.test(t); }).slice(0, 25);
+      if (id.length) blocks[index].defaultValues = id;
+      else delete blocks[index].defaultValues;
+    };
+    bungkus.appendChild(isianDefault);
+
+    var catatanDefault = document.createElement('p');
+    catatanDefault.className = 'hint';
+    catatanDefault.style.margin = '0';
+    catatanDefault.textContent =
+      'Pilihan yang sudah terpilih saat menu tampil (sama seperti default values di Discohook). Menu single-select hanya boleh punya satu — sisanya dibuang dan dilaporkan.';
+    bungkus.appendChild(catatanDefault);
+  }
+
+  /*
    * Catatan jujur soal fungsi menu ini.
    *
    * Discord hanya mengirim nilai select ke aplikasi pemilik komponen, dan akun
@@ -1236,6 +1281,11 @@ function normalBlock(b) {
         })
       : [],
     selectDisabled: Boolean(b.selectDisabled),
+    /*
+     * Pilihan bawaan. Disimpan sebagai daftar ID; tanpa ini mengimpor lalu
+     * menyimpan ulang akan menghapus pilihan bawaan yang sudah disusun.
+     */
+    defaultValues: Array.isArray(b.defaultValues) ? b.defaultValues.map(String) : [],
   };
 }
 
@@ -2075,6 +2125,8 @@ async function savePost(andSend) {
          * di sini tidak akan terlihat sampai pesannya diperiksa di Discord.
          */
         flags: flagPesan(),
+        allowedMentions: allowedMentionsPesan(),
+        threadName: ((document.getElementById('postThreadName') || {}).value || '').trim().slice(0, 100),
       }),
     });
     if (result.dropped && result.dropped.length) {
@@ -2225,6 +2277,22 @@ var ACCENT_DEFAULT = '#6d8cff';
  * Dihitung di satu tempat supaya penyimpanan dan pengiriman ulang tidak bisa
  * memakai angka yang berbeda.
  */
+/**
+ * Izin ping dari tiga centang.
+ *
+ * Isi kosong = tanpa ping apa pun, dan itu bawaan yang benar: pesan yang
+ * tidak sengaja berisi @everyone tidak bisa ditarik kembali. Daftar hanya
+ * menyebut jenis yang DICENTANG, jadi mencentang "ping role" tidak ikut
+ * mengizinkan ping pengguna.
+ */
+function allowedMentionsPesan() {
+  var parse = [];
+  if ((document.getElementById('postMentionUsers') || {}).checked) parse.push('users');
+  if ((document.getElementById('postMentionRoles') || {}).checked) parse.push('roles');
+  if ((document.getElementById('postMentionEveryone') || {}).checked) parse.push('everyone');
+  return { parse: parse };
+}
+
 function flagPesan() {
   var embeds = document.getElementById('postFlagEmbeds');
   var notif = document.getElementById('postFlagNotif');

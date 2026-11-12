@@ -1446,6 +1446,16 @@ export interface CustomPost {
    * sisanya jadi balasan berurutan. Padanan multi-pesan Discohook.
    */
   series: boolean;
+  /**
+   * Izin ping (`allowed_mentions`) — `parse` kosong berarti TANPA ping apa pun.
+   *
+   * Disimpan sebagai data, bukan dibiarkan kosong: pesan yang disusun untuk
+   * menyebut role tertentu tidak boleh diam-diam kehilangan izinnya saat
+   * diperbarui.
+   */
+  allowedMentions: { parse: Array<'users' | 'roles' | 'everyone'> };
+  /** Nama thread yang dibuka pesan ini (null = tanpa thread). */
+  threadName: string | null;
   updatedAt: number;
 }
 
@@ -1460,7 +1470,34 @@ interface CustomPostRow {
   sender?: string | null;
   flags?: number | string | null;
   series?: number | string | null;
+  mentions?: string | null;
+  thread_name?: string | null;
   updated_at: number | string;
+}
+
+/**
+ * Baca izin ping dari kolom teks.
+ *
+ * Nilai rusak/kosong dibaca sebagai "tanpa ping" — bukan sebagai "semua
+ * boleh". Arah salahnya sengaja dipilih: salah membaca ke arah aman hanya
+ * membuat ping tidak terjadi, sedangkan arah sebaliknya bisa memicu ping
+ * massal yang tidak bisa dibatalkan.
+ */
+function parseMentions(raw: string | null | undefined): { parse: Array<'users' | 'roles' | 'everyone'> } {
+  if (!raw) return { parse: [] };
+  try {
+    const isi = JSON.parse(raw) as { parse?: unknown };
+    const daftar = Array.isArray(isi.parse) ? isi.parse : [];
+    const sah: Array<'users' | 'roles' | 'everyone'> = [];
+    for (const satu of daftar) {
+      if (satu === 'users' || satu === 'roles' || satu === 'everyone') {
+        if (!sah.includes(satu)) sah.push(satu);
+      }
+    }
+    return { parse: sah };
+  } catch {
+    return { parse: [] };
+  }
 }
 
 function toCustomPost(row: CustomPostRow): CustomPost {
@@ -1474,6 +1511,8 @@ function toCustomPost(row: CustomPostRow): CustomPost {
     sender: row.sender === 'webhook' ? 'webhook' : 'bot',
     flags: Number(row.flags ?? 0) || 0,
     series: Number(row.series ?? 0) === 1,
+    allowedMentions: parseMentions(row.mentions),
+    threadName: row.thread_name?.trim() ? row.thread_name.trim().slice(0, 100) : null,
     updatedAt: Number(row.updated_at),
   };
 }
@@ -1514,12 +1553,14 @@ export async function createCustomPost(
     sender?: 'bot' | 'webhook';
     flags?: number;
     series?: boolean;
+    allowedMentions?: { parse?: Array<'users' | 'roles' | 'everyone'> };
+    threadName?: string | null;
   },
 ): Promise<CustomPost> {
   const blocks = sanitizeBlocks(input.blocks).blocks;
   const id = await insert(
-    `INSERT INTO custom_posts (guild_id, name, channel_id, blocks, message_id, accent, sender, flags, series, updated_at)
-     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
+    `INSERT INTO custom_posts (guild_id, name, channel_id, blocks, message_id, accent, sender, flags, series, mentions, thread_name, updated_at)
+     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
     [
       guildId,
       input.name.slice(0, 120),
@@ -1529,6 +1570,8 @@ export async function createCustomPost(
       input.sender ?? 'bot',
       input.flags ?? 0,
       input.series === true ? 1 : 0,
+      JSON.stringify(parseMentions(JSON.stringify({ parse: input.allowedMentions?.parse ?? [] }))),
+      input.threadName?.trim() ? input.threadName.trim().slice(0, 100) : null,
       Date.now(),
     ],
   );
@@ -1547,6 +1590,8 @@ export async function updateCustomPost(
     sender?: 'bot' | 'webhook';
     flags?: number;
     series?: boolean;
+    allowedMentions?: { parse?: Array<'users' | 'roles' | 'everyone'> };
+    threadName?: string | null;
   },
 ): Promise<CustomPost | null> {
   const current = await getCustomPost(guildId, id);
@@ -1554,7 +1599,7 @@ export async function updateCustomPost(
 
   const blocks = input.blocks === undefined ? current.blocks : sanitizeBlocks(input.blocks).blocks;
   await run(
-    'UPDATE custom_posts SET name = ?, channel_id = ?, blocks = ?, accent = ?, sender = ?, flags = ?, series = ?, updated_at = ? WHERE guild_id = ? AND id = ?',
+    'UPDATE custom_posts SET name = ?, channel_id = ?, blocks = ?, accent = ?, sender = ?, flags = ?, series = ?, mentions = ?, thread_name = ?, updated_at = ? WHERE guild_id = ? AND id = ?',
     [
       (input.name ?? current.name).slice(0, 120),
       input.channelId === undefined ? current.channelId : input.channelId,
@@ -1563,6 +1608,18 @@ export async function updateCustomPost(
       input.sender ?? current.sender,
       input.flags === undefined ? current.flags : input.flags,
       input.series === undefined ? (current.series ? 1 : 0) : input.series ? 1 : 0,
+      JSON.stringify(
+        parseMentions(
+          input.allowedMentions === undefined
+            ? JSON.stringify(current.allowedMentions)
+            : JSON.stringify({ parse: input.allowedMentions.parse ?? [] }),
+        ),
+      ),
+      input.threadName === undefined
+        ? current.threadName
+        : input.threadName?.trim()
+          ? input.threadName.trim().slice(0, 100)
+          : null,
       Date.now(),
       guildId,
       id,

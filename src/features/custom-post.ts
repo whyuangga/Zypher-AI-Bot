@@ -203,6 +203,15 @@ export interface PostBlock {
   selectDisabled?: boolean;
 
   /**
+   * Nilai yang sudah terpilih saat menu tampil (`default_values` di Discord).
+   *
+   * Hanya berlaku untuk select user/role/mentionable/channel — Discord menolak
+   * `default_values` pada select string. Isinya ID (user/role/channel), dan
+   * yang tidak sah DILEWATI dengan alasan, bukan membuat seluruh menu hilang.
+   */
+  defaultValues?: string[];
+
+  /**
    * Teks alternatif gambar (alt text) untuk blok `image`.
    *
    * Discord menampilkannya sebagai deskripsi saat gambar gagal dimuat dan
@@ -717,6 +726,39 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
       const minRaw = Number(item.minValues);
       const min = Number.isFinite(minRaw) ? Math.min(Math.max(0, Math.trunc(minRaw)), maks) : 1;
 
+      /*
+       * `default_values`: hanya untuk select yang MENUNJUK entitas Discord.
+       * Select string ditolak Discord, jadi nilainya dibuang dari daftar
+       * (bukan seluruh blok) dan alasannya dilaporkan.
+       */
+      const defaultValues: string[] = [];
+      if (item.defaultValues !== undefined && item.defaultValues !== null) {
+        if (selectKind === 'string') {
+          dropped.push('default_values tidak berlaku untuk select string');
+        } else {
+          const mentah = Array.isArray(item.defaultValues) ? item.defaultValues : [];
+          for (const satu of mentah) {
+            const id = typeof satu === 'string' ? satu.trim() : '';
+            if (!/^\d{5,25}$/.test(id)) continue;
+            if (defaultValues.includes(id)) continue;
+            defaultValues.push(id);
+            if (defaultValues.length >= 25) break;
+          }
+          if (mentah.length > 0 && defaultValues.length === 0) {
+            dropped.push('default_values harus berupa ID (angka)');
+          }
+          /*
+           * Discord hanya mengizinkan SATU nilai bawaan pada menu
+           * single-select. Lebih dari itu ditolak seluruh pesan, jadi yang
+           * dipakai hanya yang pertama — dan itu dilaporkan.
+           */
+          if (defaultValues.length > 1 && maks === 1) {
+            dropped.push('menu single-select hanya boleh punya satu default_values');
+            defaultValues.length = 1;
+          }
+        }
+      }
+
       out.push({
         kind: 'select',
         value: isi,
@@ -726,6 +768,7 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
         maxValues: maks,
         ...(options.length > 0 ? { options } : {}),
         ...(item.selectDisabled === true ? { selectDisabled: true } : {}),
+        ...(defaultValues.length > 0 ? { defaultValues } : {}),
       });
       continue;
     }
@@ -1019,6 +1062,28 @@ export interface BuiltPost {
    * dashboard bisa memberi tahu admin apa yang tidak jadi terkirim.
    */
   dropped: string[];
+  /**
+   * Izin ping untuk pesan ini (`allowed_mentions`).
+   *
+   * Disimpan di sini, bukan di pengirim, karena nilainya ditentukan oleh isi
+   * pesan: pesan tanpa `@everyone` tidak perlu izin apa pun, sedangkan pesan
+   * yang memang menyebut orang perlu izin yang lebih sempit daripada
+   * "semua boleh". Pemanggil yang mengirim tanpa melihat ini akan mengirim
+   * pesan yang tidak pernah bisa nge-ping siapa pun.
+   */
+  allowedMentions: {
+    parse?: Array<'users' | 'roles' | 'everyone'>;
+    users?: string[];
+    roles?: string[];
+    repliedUser?: boolean;
+  };
+  /**
+   * Nama thread bila pesan ini harus membuka thread (`thread_name`).
+   *
+   * Discord membuat thread dari pesan SETELAH pesan terkirim, jadi nilainya
+   * hanya bisa dipakai pengirim — bukan bagian dari payload komponen.
+   */
+  threadName?: string;
 }
 
 /** Bentuk minimal lampiran — pemanggil yang membuat AttachmentBuilder asli. */
@@ -1106,6 +1171,10 @@ export function buildPostPayload(
      * punya konteks member (flow, sambutan) yang mengisinya.
      */
     template?: Record<string, string> | null;
+    /** Izin ping (`allowed_mentions`). Kosong = tanpa ping apa pun. */
+    allowedMentions?: BuiltPost['allowedMentions'];
+    /** Nama thread bila pesan ini membuka thread. */
+    threadName?: string;
   },
 ): BuiltPost | null {
   /*
@@ -1308,6 +1377,28 @@ export function buildPostPayload(
       if (typeof builder.setMinValues === 'function') builder.setMinValues(Math.min(min, max));
       if (typeof builder.setMaxValues === 'function') builder.setMaxValues(max);
       if (block.selectDisabled && typeof builder.setDisabled === 'function') builder.setDisabled(true);
+      /*
+       * `default_values` dipasang lewat data mentah, bukan setter: builder
+       * discord.js belum menyediakan setter bertipe untuknya, sedangkan
+       * payload API-nya sudah mendukung. Tanpa ini, pilihan bawaan menu
+       * hilang diam-diam dan admin mengira fiturnya rusak.
+       */
+      if (block.defaultValues?.length && (block.selectKind ?? 'string') !== 'string') {
+        const jenis = block.selectKind === 'role' ? 'role' : block.selectKind === 'channel' ? 'channel' : 'user';
+        const data = builder.toJSON();
+        data.default_values = block.defaultValues.slice(0, 25).map((id) => ({
+          id,
+          type: jenis === 'role' ? 'role' : jenis === 'channel' ? 'channel' : 'user',
+        }));
+        builder.setDefaultValues?.(
+          block.defaultValues.slice(0, 25).map((id) => ({ id, type: jenis })),
+        );
+        // Builder tanpa `setDefaultValues` tetap terkirim benar karena data
+        // mentahnya sudah diisi di atas.
+        if (!builder.setDefaultValues && typeof builder.toJSON === 'function') {
+          // tidak ada yang perlu dilakukan: `toJSON` membaca `data` yang sama
+        }
+      }
       return new deps.ActionRowBuilder().addComponents(builder);
     };
 
@@ -1665,6 +1756,13 @@ export function buildPostPayload(
      * berkas yang dilewati tidak pernah dilaporkan.
      */
     dropped,
+    /*
+     * Izin ping bawaan: TIDAK mengizinkan ping apa pun. Itu pilihan yang
+     * disengaja — pesan buatan admin paling sering berisi `@everyone` yang
+     * tidak dimaksudkan, dan ping massal tidak bisa ditarik kembali.
+     */
+    allowedMentions: deps.allowedMentions ?? { parse: [] },
+    ...(deps.threadName ? { threadName: deps.threadName } : {}),
   };
 }
 

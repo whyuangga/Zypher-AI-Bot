@@ -29,7 +29,7 @@ import {
   type Message,
   type TextChannel,
 } from 'discord.js';
-import { accentToNumber, buildPostPayload, type PostBlock } from './custom-post.js';
+import { accentToNumber, buildPostPayload, type BuiltPost, type PostBlock } from './custom-post.js';
 import type { SeriesMessage } from './post-series.js';
 import { roleButtonId, roleMenuId } from './role-buttons.js';
 import { deleteChannelWebhook, getChannelWebhook, saveChannelWebhook } from '../db/repo.js';
@@ -64,12 +64,19 @@ async function buildPayload(
   contextPostId?: number | null,
   /** Nilai template teks (`{member.name}`, …). Kosong = apa adanya. */
   template?: Record<string, string> | null,
+  /** Izin ping & nama thread: bagian dari isi pesan, bukan komponen. */
+  extra?: {
+    allowedMentions?: { parse?: Array<'users' | 'roles' | 'everyone'>; users?: string[]; roles?: string[]; repliedUser?: boolean };
+    threadName?: string;
+  },
 ): Promise<{
   components: ContainerBuilder[];
   flags: number;
   files: AttachmentBuilder[];
   droppedFiles: string[];
   dropped: string[];
+  allowedMentions: BuiltPost['allowedMentions'];
+  threadName?: string;
 } | null> {
   const built = buildPostPayload(blocks, {
     ContainerBuilder,
@@ -119,6 +126,8 @@ async function buildPayload(
     roleMenuId,
     contextPostId,
     template: template ?? null,
+    ...(extra?.allowedMentions ? { allowedMentions: extra.allowedMentions } : {}),
+    ...(extra?.threadName ? { threadName: extra.threadName } : {}),
   });
   if (!built) return null;
 
@@ -165,6 +174,8 @@ async function buildPayload(
     files,
     droppedFiles,
     dropped: built.dropped,
+    allowedMentions: built.allowedMentions,
+    ...(built.threadName ? { threadName: built.threadName } : {}),
   };
 }
 
@@ -249,6 +260,10 @@ export async function sendOrUpdatePost(options: {
    * Kosong = teks dikirim apa adanya, jadi pesan biasa tidak berubah.
    */
   template?: Record<string, string> | null;
+  /** Izin ping (allowed_mentions). Kosong = tanpa ping apa pun. */
+  allowedMentions?: BuiltPost['allowedMentions'];
+  /** Nama thread bila pesan ini membuka thread (thread_name). */
+  threadName?: string;
 }): Promise<SendResult> {
   const built = await buildPayload(
     options.blocks,
@@ -257,6 +272,10 @@ export async function sendOrUpdatePost(options: {
     options.roleMenus,
     options.postId ?? null,
     options.template ?? null,
+    {
+      ...(options.allowedMentions ? { allowedMentions: options.allowedMentions } : {}),
+      ...(options.threadName ? { threadName: options.threadName } : {}),
+    },
   );
   if (!built) {
     throw new PostSendError('Pesan masih kosong — isi minimal satu teks atau gambar.');
@@ -288,7 +307,10 @@ export async function sendOrUpdatePost(options: {
         'Pesan induk untuk balasan sudah tidak ada di channel — kirim ulang pesannya dulu, atau matikan opsi "sebagai balasan".',
       );
     }
-    const balasan: Message = await induk.reply({ ...payload, allowedMentions: { repliedUser: false } });
+    const balasan: Message = await induk.reply({
+      ...payload,
+      allowedMentions: { ...payload.allowedMentions, repliedUser: false },
+    });
     return { messageId: balasan.id, edited: false, ...laporan(payload) };
   }
 
@@ -302,8 +324,26 @@ export async function sendOrUpdatePost(options: {
     logger.info(`Pesan kustom ${options.messageId} sudah tidak ada di channel — mengirim baru.`);
   }
 
+  /*
+   * `threadName` dipakai lewat opsi kanal (`send` lalu `startThread`), bukan
+   * payload: Discord membuat thread SESUDAH pesan ada, jadi tidak ada field
+   * payload untuk itu. Kalau gagal, pesannya tetap terkirim dan kegagalannya
+   * dilaporkan — membuang pesan hanya karena thread gagal akan menghilangkan
+   * isi yang sudah disusun admin.
+   */
   const sent: Message = await channel.send(payload);
-  return { messageId: sent.id, edited: false, ...laporan(payload) };
+  const dropped = [...payload.dropped];
+  if (payload.threadName) {
+    const thread = await sent
+      .startThread({ name: payload.threadName.slice(0, 100) })
+      .catch((): null => null);
+    if (!thread) dropped.push('thread tidak bisa dibuat (izin Create Public Threads?)');
+  }
+  return {
+    messageId: sent.id,
+    edited: false,
+    ...laporan({ dropped, droppedFiles: payload.droppedFiles }),
+  };
 }
 
 /**
@@ -611,6 +651,7 @@ export async function sendOrUpdatePostViaWebhook(options: {
     components: built.components,
     flags: options.flags ? built.flags | options.flags : built.flags,
     files: built.files,
+    allowedMentions: built.allowedMentions,
     username: options.identity.username.slice(0, 80),
     ...(options.identity.avatarURL ? { avatarURL: options.identity.avatarURL } : {}),
   };

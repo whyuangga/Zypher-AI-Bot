@@ -7167,6 +7167,105 @@ await testAsync('aksi: thread lengkap & kirim webhook divalidasi', async () => {
   assert.equal(thread!.slowmodeSeconds, 5);
 });
 
+await testAsync('pesan: allowed_mentions & thread_name bertahan & bawaan aman', async () => {
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  // Bawaan: TANPA ping apa pun. Arah aman ini disengaja — pesan yang tidak
+  // sengaja berisi @everyone tidak bisa ditarik kembali.
+  const polos = await repo.createCustomPost(GUILD, {
+    name: 'Tanpa ping',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Halo' }],
+  });
+  assert.deepEqual(polos.allowedMentions.parse, [], 'bawaan tanpa ping');
+  assert.equal(polos.threadName, null, 'bawaan tanpa thread');
+
+  // Izin ping & nama thread bertahan setelah dibaca ulang dari database.
+  const denganPing = await repo.createCustomPost(GUILD, {
+    name: 'Ping role',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Pengumuman' }],
+    allowedMentions: { parse: ['roles', 'users', 'tidak-dikenal' as never] },
+    threadName: '  Diskusi pengumuman  ',
+  });
+  const dibaca = await repo.getCustomPost(GUILD, denganPing.id);
+  assert.deepEqual(dibaca?.allowedMentions.parse, ['roles', 'users'], 'jenis tak dikenal dibuang');
+  assert.equal(dibaca?.threadName, 'Diskusi pengumuman', 'nama thread dirapikan');
+
+  // Memperbarui TANPA menyebut izin ping = izin lama dipertahankan, bukan
+  // direset jadi "tanpa ping" (itu akan mematikan ping yang sudah disusun).
+  const tanpaUbah = await repo.updateCustomPost(GUILD, denganPing.id, { name: 'Nama baru' });
+  assert.deepEqual(tanpaUbah?.allowedMentions.parse, ['roles', 'users'], 'izin lama bertahan');
+  assert.equal(tanpaUbah?.threadName, 'Diskusi pengumuman', 'thread lama bertahan');
+
+  // Menyebut daftar kosong = sengaja mematikan ping.
+  const dimatikan = await repo.updateCustomPost(GUILD, denganPing.id, { allowedMentions: { parse: [] } });
+  assert.deepEqual(dimatikan?.allowedMentions.parse, [], 'daftar kosong mematikan ping');
+
+  /*
+   * Kolom rusak (mis. disunting manual di database) dibaca sebagai "tanpa
+   * ping" — bukan "semua boleh". Salah baca ke arah aman hanya membuat ping
+   * tidak terjadi.
+   */
+  const { run } = await import('../src/db/index.js');
+  await run('UPDATE custom_posts SET mentions = ? WHERE guild_id = ? AND id = ?', [
+    '{bukan json',
+    GUILD,
+    denganPing.id,
+  ]);
+  const rusak = await repo.getCustomPost(GUILD, denganPing.id);
+  assert.deepEqual(rusak?.allowedMentions.parse, [], 'kolom rusak = tanpa ping');
+
+  /* --- Payload: allowed_mentions & thread_name sampai ke penyusun --- */
+  const { buildPostPayload } = await import('../src/features/custom-post.js');
+  const deps = {
+    ContainerBuilder: (await import('discord.js')).ContainerBuilder,
+    TextDisplayBuilder: (await import('discord.js')).TextDisplayBuilder,
+    SeparatorBuilder: (await import('discord.js')).SeparatorBuilder,
+    MediaGalleryBuilder: (await import('discord.js')).MediaGalleryBuilder,
+    MediaGalleryItemBuilder: (await import('discord.js')).MediaGalleryItemBuilder,
+    ActionRowBuilder: (await import('discord.js')).ActionRowBuilder,
+    ButtonBuilder: (await import('discord.js')).ButtonBuilder,
+    ButtonStyle: (await import('discord.js')).ButtonStyle,
+    accent: 0x6d8cff,
+    accentToNumber: () => 0x6d8cff,
+    roleButtons: [],
+    roleButtonId: (id: number) => `post-role:${id}`,
+  };
+  const blok = [{ kind: 'container' }, { kind: 'text', value: 'Hai' }];
+  const bawaan = buildPostPayload(blok as never, deps as never);
+  assert.deepEqual(bawaan!.allowedMentions.parse, [], 'penyusun payload bawaan tanpa ping');
+  assert.equal(bawaan!.threadName, undefined, 'tanpa thread');
+
+  const dipasang = buildPostPayload(blok as never, {
+    ...deps,
+    allowedMentions: { parse: ['users'] },
+    threadName: 'Ruang diskusi',
+  } as never);
+  assert.deepEqual(dipasang!.allowedMentions.parse, ['users'], 'izin ping diteruskan');
+  assert.equal(dipasang!.threadName, 'Ruang diskusi', 'nama thread diteruskan');
+
+  /* --- default_values pada select --- */
+  const { sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const select = sanitizeBlocks([
+    { kind: 'select', selectKind: 'role', defaultValues: ['900000000000000001', 'bukan-id'] },
+    { kind: 'select', selectKind: 'string', options: [{ label: 'A' }], defaultValues: ['1'] },
+    { kind: 'select', selectKind: 'user', defaultValues: ['111111111111111111', '222222222222222222'] },
+  ]);
+  const pertama = select.blocks[0] as { defaultValues?: string[] };
+  assert.deepEqual(pertama.defaultValues, ['900000000000000001'], 'ID tidak sah dibuang');
+  assert.ok(
+    select.dropped.some((alasan) => alasan.includes('select string')),
+    'default_values pada select string dilaporkan',
+  );
+  const kedua = select.blocks[2] as { defaultValues?: string[] };
+  assert.equal(kedua.defaultValues?.length, 1, 'single-select hanya menyimpan satu default');
+
+  await repo.deleteCustomPost(GUILD, polos.id);
+  await repo.deleteCustomPost(GUILD, denganPing.id);
+});
+
 await testAsync('multi-pesan: rujukan, urutan kirim, & dokumen tersimpan', async () => {
   const series = await import('../src/features/post-series.js');
 

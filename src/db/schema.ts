@@ -215,6 +215,11 @@ CREATE TABLE IF NOT EXISTS custom_posts (
   -- postingan: pesan pertama biasa, sisanya BALASAN ke pesan sebelumnya.
   -- Padanan multi-pesan Discohook: rujukan balasan per pesan.
   series     INTEGER,
+  -- Izin ping (allowed_mentions) sebagai JSON: {"parse":["users","roles"]}.
+  -- NULL/'' = tanpa ping apa pun, yang memang bawaan yang benar.
+  mentions   TEXT,
+  -- Nama thread yang dibuka pesan ini (thread_name). NULL = tanpa thread.
+  thread_name TEXT,
   updated_at INTEGER NOT NULL
 );
 
@@ -554,6 +559,8 @@ CREATE TABLE IF NOT EXISTS custom_posts (
   flags      INTEGER,
   -- true = pesan-pesan dokumen ini dikirim berurutan sebagai balasan.
   series     INTEGER,
+  mentions    TEXT,
+  thread_name TEXT,
   updated_at BIGINT NOT NULL
 );
 

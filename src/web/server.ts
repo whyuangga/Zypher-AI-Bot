@@ -355,6 +355,32 @@ function hasSession(request: IncomingMessage): boolean {
  * `GUILD_ID` dari `.env`. Kalau kosong, bot memang tidak pernah sampai ke sini
  * karena config menolak start.
  */
+/**
+ * Rapikan izin ping dari dashboard.
+ *
+ * Hanya tiga jenis yang dikenal Discord. Yang tidak dikenal DIBUANG, dan
+ * daftar kosong berarti "tanpa ping" — arah yang aman: salah baca ke arah ini
+ * hanya membuat ping tidak terjadi, sedangkan arah sebaliknya bisa memicu ping
+ * massal yang tidak bisa ditarik kembali.
+ */
+function sanitizeAllowedMentions(value: unknown): { parse: Array<'users' | 'roles' | 'everyone'> } {
+  const isi = value && typeof value === 'object' ? (value as { parse?: unknown }) : {};
+  const daftar = Array.isArray(isi.parse) ? isi.parse : [];
+  const sah: Array<'users' | 'roles' | 'everyone'> = [];
+  for (const satu of daftar) {
+    if (satu === 'users' || satu === 'roles' || satu === 'everyone') {
+      if (!sah.includes(satu)) sah.push(satu);
+    }
+  }
+  return { parse: sah };
+}
+
+/** Nama thread dari dashboard: dipotong ke batas Discord, kosong = null. */
+function sanitizeThreadName(value: unknown): string | null {
+  const teks = typeof value === 'string' ? value.trim().slice(0, 100) : '';
+  return teks ? teks : null;
+}
+
 function resolveGuild(): string {
   return config.discord.homeGuildId;
 }
@@ -2010,6 +2036,8 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       accent,
       sender,
       flags,
+      allowedMentions: sanitizeAllowedMentions(payload.allowedMentions),
+      threadName: sanitizeThreadName(payload.threadName),
     });
     const { blocks: blokSah, dropped } = sanitizeBlocks(payload.blocks);
     // `usage` = hitungan versi SERVER. Dashboard boleh menghitung sendiri
@@ -2118,6 +2146,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
                 identity: await webhookIdentityFor(botClient, guildId),
                 postId: id,
                 flags: post.flags,
+                template: null,
               })
             : await sendOrUpdatePost({
                 client: botClient,
@@ -2127,6 +2156,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
                 accent: post.accent ?? undefined,
                 postId: id,
                 flags: post.flags,
+                /* Izin ping & thread: bagian dari isi pesan, bukan komponen. */
+                allowedMentions: post.allowedMentions,
+                ...(post.threadName ? { threadName: post.threadName } : {}),
                 roleButtons: roleButtons.map((b) => ({
                   id: b.id,
                   label: b.label,
@@ -2225,6 +2257,10 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         name: payload.name === undefined ? undefined : String(payload.name).trim(),
         // Tidak dikirim = flag lama dipertahankan, sama seperti field lain.
         flags: payload.flags === undefined ? undefined : sanitizeMessageFlags(payload.flags),
+        // Sama: tidak dikirim = izin ping & nama thread lama dipertahankan.
+        allowedMentions:
+          payload.allowedMentions === undefined ? undefined : sanitizeAllowedMentions(payload.allowedMentions),
+        threadName: payload.threadName === undefined ? undefined : sanitizeThreadName(payload.threadName),
         channelId:
           payload.channelId === undefined
             ? undefined

@@ -618,15 +618,39 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Poll | ❌ di Discohook pun masih dinonaktifkan |
 | Tombol link & tombol interaktif ber-flow | ✅ |
 | Select menu: string (flow per opsi), user/role/mentionable/channel | ✅ |
-| `default_values` pada select user/role/channel | ❌ |
-| `allowed_mentions` (ping role/user tertentu) | ❌ (balasan selalu tanpa ping; itu keputusan keamanan) |
-| `thread_name` (pesan menjadi awal thread) | ❌ |
+| `default_values` pada select user/role/channel | ✅ (isian ID di kartu blok Select; select string ditolak Discord & dilaporkan) |
+| `allowed_mentions` (ping role/user tertentu) | ✅ tiga centang di kartu "Tampilan & pengirim"; bawaannya **tanpa ping** |
+| `thread_name` (pesan menjadi awal thread) | ✅ isian "Nama thread" di kartu pengaturan |
 | Message flags: suppress embeds, suppress notifications | ✅ |
 | Message flags: voice message, `IS_COMPONENTS_V2` manual | ❌ (v2 diurus pengirim) |
 | Multi-pesan dalam satu backup (beberapa pesan, `reference`, `thread_id`) | ✅ tab **Multi-pesan** (`?tab=grup`): sampai 20 pesan per dokumen, `reference` antar pesan, nama thread per pesan, disimpan di `post_documents` |
 | Riwayat/undo revisi, impor backup, share link | ⚠️ impor JSON/URL ada; riwayat & share belum |
 | Jadwal kirim (sekali / berulang, cron) | ⚠️ sekali / tiap N jam (min. 2 jam); jadwal cron per hari/bulan belum |
 | Trigger event (member masuk/keluar) | ❌ (bot punya sambutan sendiri, bukan flow) |
+
+### Batch 4: allowed_mentions, thread_name, default_values
+
+**Izin ping (`allowed_mentions`).** Tiga centang: pengguna, role, `@everyone`/
+`@here`. Bawaannya **tanpa ping apa pun** (`parse: []`), dan itu keputusan yang
+disengaja: pesan buatan admin paling sering berisi `@everyone` yang tidak
+dimaksud, dan ping massal tidak bisa ditarik kembali. Kolom database yang
+rusak/kosong juga dibaca sebagai "tanpa ping", bukan "semua boleh" — arah salah
+yang dipilih sengaja: salah baca ke arah aman hanya membuat ping tidak terjadi.
+
+Memperbarui pesan TANPA mengirim `allowedMentions` mempertahankan izin lama
+(bukan meresetnya), dan mengirim `{parse: []}` mematikannya secara sengaja.
+
+**`thread_name`.** Pesan bisa langsung membuka thread. Discord membuat thread
+SESUDAH pesan terkirim, jadi nilainya dipakai lapisan pengirim, bukan payload
+komponen. Kalau thread gagal dibuat, pesannya TETAP terkirim dan kegagalannya
+dilaporkan — membuang pesan hanya karena thread gagal akan menghilangkan isi
+yang sudah disusun admin.
+
+**`default_values`.** Daftar ID pilihan bawaan untuk select user/role/
+mentionable/channel. Discord menolak `default_values` pada select string, jadi
+di sana isiannya tidak ditampilkan (bukan ditampilkan lalu diabaikan). Menu
+single-select hanya menyimpan satu nilai bawaan — Discord menolak lebih dari
+satu, dan yang dipakai yang pertama dengan alasan yang dilaporkan.
 
 ### Batch 3: multi-pesan (padanan `messages[]`)
 
