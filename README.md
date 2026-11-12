@@ -360,7 +360,11 @@ PDF/zip dari URL atau unggahan, dengan spoiler), **pemisah tanpa garis**,
 **tombol nonaktif**, **naik/turun/salin/hapus** tiap blok, **impor langsung dari
 Discohook** (tempel tautan `?share=` atau JSON-nya — komponen V2 diterjemahkan
 otomatis), **import/ekspor JSON** (pindah susunan pesan antar server), dan
-**penghitung batas komponen** yang menunjukkan sisa kuota sebelum Discord menolak. Ada **pratinjau hidup**, **warna aksen** bebas,
+**penghitung batas komponen** yang menunjukkan sisa kuota sebelum Discord menolak.
+Editornya **bertumpuk ala Discohook** (komponen tampil di dalam kotak container-nya,
+lengkap dengan ⧉ duplikat & × hapus), dan halaman dipecah **empat tab**
+(Susun / Pratinjau / Ambil role / Impor) dengan tombol Simpan di bilah bawah yang
+selalu terlihat — tidak perlu menggulir jauh. Ada **pratinjau hidup**, **warna aksen** bebas,
 **unggah gambar**, dan pilihan pengirim: lewat bot, atau **atas nama server**
 (webhook — tokennya dienkripsi, butuh izin *Manage Webhooks*). Tombol **ambil
 role** memberi role hanya dengan klik, lengkap dengan **emoji** dan **warna**

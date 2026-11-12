@@ -935,6 +935,151 @@ await check('pesan: ekspor dan impor JSON mempertahankan semua field', async () 
   assert.equal(hasil.namaPesanan, 'Rules', 'nama pesan pulih');
 });
 
+await check('pesan: tidak ada id ganda antar tab (penyebab isian mati)', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+
+  /*
+   * Bug nyata: kartu pengaturan (warna aksen & pengirim) pernah dirender di
+   * dua tab. Dua elemen ber-id sama membuat getElementById selalu mengambil
+   * yang PERTAMA — yang ada di tab tersembunyi — sehingga mengubah warna dari
+   * tab lain tidak berpengaruh, tanpa error apa pun.
+   *
+   * Karena itu: setiap id yang dibaca JavaScript halaman ini harus muncul
+   * tepat satu kali di HTML.
+   */
+  const dihitung = new Map<string, number>();
+  for (const match of html.matchAll(/\sid="([^"]+)"/g)) {
+    const id = match[1]!;
+    dihitung.set(id, (dihitung.get(id) ?? 0) + 1);
+  }
+  const ganda = [...dihitung.entries()].filter(([, jumlah]) => jumlah > 1).map(([id]) => id);
+  assert.deepEqual(ganda, [], `id muncul lebih dari sekali: ${ganda.join(', ')}`);
+
+  // Elemen yang dipakai bersama tetap harus ada, tepat satu.
+  for (const id of ['previewHost', 'previewHostBesar', 'postName', 'postAccent', 'postSender', 'blockList']) {
+    assert.equal(dihitung.get(id), 1, `#${id} ada tepat satu kali`);
+  }
+});
+
+await check('pesan: tab halaman menyembunyikan panel, bukan menghapusnya', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  // Empat tab: Susun, Pratinjau, Ambil role, Impor.
+  for (const key of ['susun', 'pratinjau', 'role', 'impor']) {
+    assert.ok(html.includes(`id="tab-${key}"`), `tab ${key} ada`);
+    assert.ok(html.includes(`id="pane-${key}"`), `panel ${key} ada`);
+  }
+  assert.ok(html.includes('showPesanTab'), 'fungsi pindah tab ada di halaman');
+
+  const page = mountPage(html, 'uji-tab');
+  // Pindah ke tab Pratinjau: panel lain disembunyikan, tab aktif ditandai.
+  await page.evaluate("showPesanTab('pratinjau')");
+  assert.equal(page.elements.get('pane-pratinjau')!.hidden, false, 'panel pratinjau terbuka');
+  assert.equal(page.elements.get('pane-susun')!.hidden, true, 'panel susun disembunyikan');
+  assert.equal(
+    page.elements.get('pane-role')!.hidden,
+    true,
+    'panel role ikut tersembunyi (satu tab sekaligus)',
+  );
+  assert.equal(page.errors.length, 0, `tidak ada error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: editor menggambar komponen bertumpuk di dalam kartu', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-tumpuk');
+
+  /*
+   * Yang diperiksa BUKAN tampilan DOM (DOM tiruan tidak menyimpan anak
+   * elemen), melainkan hasil pengelompokan yang dipakai untuk menggambar:
+   * komponen sesudah `container` harus masuk ke kartu itu, dan `close`
+   * mengeluarkan komponen berikutnya. Ini aturan yang sama dengan penyusun
+   * payload — kalau berbeda, editor dan pesan sungguhan akan melenceng.
+   */
+  const hasil = (await page.evaluate(`
+    (function () {
+      blocks = [
+        { kind: 'text', value: 'Pembuka' },
+        { kind: 'container', value: '', accent: '#58b9ff' },
+        { kind: 'text', value: 'Di dalam kartu' },
+        { kind: 'button', value: 'Situs', url: 'https://a.test' },
+        { kind: 'close', value: '' },
+        { kind: 'text', value: 'Penutup' }
+      ];
+      renderBlocks();
+      return {
+        // Panel pratinjau ada dua: kecil di tab Susun & besar di tab Pratinjau.
+        duaPratinjau: Boolean(
+          document.getElementById('previewHost') && document.getElementById('previewHostBesar'),
+        ),
+        fungsiTumpuk: typeof buatKartuEditor === 'function' && typeof buatItemEditor === 'function',
+        error: null,
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.fungsiTumpuk, true, 'penggambar kartu & komponen tersedia');
+  assert.equal(hasil.duaPratinjau, true, 'dua host pratinjau tersedia');
+  assert.equal(page.errors.length, 0, `editor tidak melempar error: ${page.errors.join('|')}`);
+
+  /*
+   * Pengelompokan kartu dipanggil dari fungsi NYATA (kelompokkanBlok), bukan
+   * dari salinan logikanya — supaya tes ini gagal kalau aturan editor berubah
+   * tanpa aturan penyusun payload ikut berubah.
+   */
+  const grup = (await page.evaluate(`
+    (function () {
+      function ringkas(daftar) {
+        return kelompokkanBlok(daftar).map(function (g) {
+          var jenis = g.kartu ? 'kartu' : (g.penutup ? 'tutup' : 'luar');
+          return jenis + ':' + g.isi.map(function (i) { return i.block.kind; }).join('+');
+        });
+      }
+      return {
+        // Pembuka di luar kartu, satu kartu berisi teks & tombol, penutup
+        // mengeluarkan blok sesudahnya.
+        lengkap: ringkas([
+          { kind: 'text' },
+          { kind: 'container' },
+          { kind: 'text' },
+          { kind: 'button' },
+          { kind: 'close' },
+          { kind: 'text' }
+        ]),
+        // Tanpa container: semuanya di luar kartu (payload akan membungkusnya
+        // sendiri jadi satu kartu bawaan).
+        tanpaContainer: ringkas([{ kind: 'text' }, { kind: 'divider' }, { kind: 'text' }]),
+        // Dua container berurutan: dua kartu, tanpa wadah luar kosong.
+        duaKartu: ringkas([
+          { kind: 'container' },
+          { kind: 'text' },
+          { kind: 'container' },
+          { kind: 'text' }
+        ])
+      };
+    })()
+  `)) as Record<string, string[]>;
+
+  /*
+   * Dibandingkan sebagai string, bukan deepEqual: array yang dibuat di dalam
+   * `node:vm` berasal dari realm lain, sehingga prototype-nya berbeda dan
+   * deepStrictEqual menolaknya walaupun isinya sama persis.
+   */
+  assert.equal(
+    grup.lengkap.join(' | '),
+    'luar:text | kartu:text+button | luar:text',
+    'komponen masuk ke kartunya, close mengeluarkan sisanya',
+  );
+  assert.equal(
+    grup.tanpaContainer.join(' | '),
+    'luar:text+divider+text',
+    'tanpa container tetap satu wadah',
+  );
+  assert.equal(
+    grup.duaKartu.join(' | '),
+    'kartu:text | kartu:text',
+    'dua kartu, tanpa wadah luar kosong',
+  );
+});
+
 await check('pesan: tombol impor Discohook memanggil endpoint yang benar', async () => {
   const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
   assert.ok(html.includes('importDiscohook'), 'tombol tarik Discohook ada di halaman');

@@ -11,13 +11,40 @@ sudah diatur bot. Di sini **kamu yang menentukan isinya**.
 ## 1. Cara pakai
 
 1. Buka **Pesan** di sidebar dashboard.
-2. Isi **Nama pesan** (mis. `Rules`). Nama ini hanya untuk dashboard — tidak ikut
-   terkirim ke Discord.
+2. Di tab **Susun**: isi **Nama pesan** (mis. `Rules`). Nama ini hanya untuk
+   dashboard — tidak ikut terkirim ke Discord.
 3. Pilih **Channel tujuan**.
-4. Tambahkan blok: **Teks**, **Gambar**, **Tombol**, **Pemisah**.
+4. Tambahkan komponen: **Teks**, **Gambar**, **Tombol**, **Pemisah**,
+   **Container**, **Section**, **File**.
 5. **Simpan** dulu. Setelah tersimpan, **Kirim ke Discord**.
 
-Urutan blok bisa diubah dengan panah ↑ ↓, dan setiap blok bisa dihapus dengan ×.
+Urutan komponen diubah dengan panah ↑ ↓; setiap komponen punya tombol **⧉**
+duplikat dan **×** hapus di kanan atas, sama seperti editor Discohook.
+
+### Tab: halaman tidak lagi memanjang ke bawah
+
+Halaman dibagi empat tab, jadi yang tampil hanya bagian yang sedang dikerjakan:
+
+| Tab | Isi |
+|---|---|
+| **Susun pesan** | editor komponen + pratinjau kecil yang **menempel** di kanan |
+| **Pratinjau** | pratinjau besar selebar halaman |
+| **Ambil role** | tombol & menu dropdown role |
+| **Impor** | tarik dari Discohook, ekspor/impor JSON |
+
+Tombol **Simpan** dan **Kirim ke Discord** ada di bilah bawah yang selalu
+terlihat, dari tab mana pun. Berpindah tab **tidak menghilangkan isian** yang
+belum disimpan: panel yang tidak aktif hanya disembunyikan, bukan dilepas.
+Tab terakhir yang dibuka diingat, dan setelah menyimpan halaman tidak dimuat
+ulang — jadi kamu tetap di tab yang sama.
+
+### Editor bertumpuk ala Discohook
+
+Komponen digambar **di dalam** kotak container-nya, bukan sebagai daftar datar.
+Kotak container memakai warna aksen yang dipilih, jadi pewarnaan terlihat
+sebelum pesan dikirim. Komponen yang berada di luar kartu diberi baris penanda
+**"di luar kartu"**, sehingga batas antara isi kartu dan teks polos selalu
+terlihat di editor.
 
 ### Mengirim ulang vs memperbarui
 

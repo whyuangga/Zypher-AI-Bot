@@ -1091,6 +1091,164 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   background: var(--line-strong);
   margin: 2px 0;
 }
+
+/*
+ * Editor bertumpuk ala Discohook.
+ *
+ * Discohook menggambar komponen sebagai kartu-kartu BERSARANG: container
+ * berisi komponennya, dan setiap komponen punya ikon jenis + tombol
+ * duplikat/hapus di kanan atas. Sebelumnya /pesan menampilkan daftar datar
+ * berisi kotak-kotak sejajar, sehingga mata admin tidak bisa melihat bagian
+ * mana yang berada DI DALAM kartu.
+ *
+ * .blok-stack = wadah komponen di dalam satu container; garis kiri tipisnya
+ * adalah kartu itu sendiri.
+ */
+.blok-stack {
+  display: grid;
+  gap: 8px;
+  padding-left: 10px;
+  border-left: 2px solid var(--line-strong);
+  border-radius: 2px;
+}
+.blok-stack.blok-stack-luar {
+  padding-left: 0;
+  border-left: 0;
+}
+.blok-stack-kosong {
+  font-size: 12px;
+  color: var(--text-3);
+  padding: 4px 0 2px;
+}
+
+/* Satu komponen di dalam kartu. */
+.blok-item {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+}
+.blok-item > .blok-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  background: rgba(255, 255, 255, 0.025);
+  border-bottom: 1px solid var(--line);
+}
+.blok-item > .blok-item-isi { display: grid; gap: 8px; padding: 10px; }
+.blok-item:not(:has(.blok-item-isi)) > .blok-item-head { border-bottom: 0; }
+
+/* Ikon jenis komponen — penanda cepat sebelum membaca isinya. */
+.blok-ikon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-2);
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+.blok-nama {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+/* Keterangan singkat di kanan label, mis. "spoiler" atau "di luar kartu". */
+.blok-tag {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+.blok-tag-warn { color: #ffcf8a; border-color: rgba(255, 182, 84, 0.35); }
+.blok-aksi { margin-left: auto; display: flex; gap: 2px; }
+
+/*
+ * Kartu container: warna aksennya ikut tampil di garis kiri, sama seperti
+ * pratinjau dan Discord. Jadi admin melihat pewarnaan sebelum mengirim.
+ */
+.blok-kartu {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.blok-kartu > .blok-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px 7px 10px;
+  background: rgba(255, 255, 255, 0.035);
+  border-bottom: 1px solid var(--line);
+}
+.blok-kartu > .blok-kartu-isi { display: grid; gap: 8px; padding: 10px 10px 12px; }
+
+/* Pemisah visual antar kartu di editor. */
+.blok-pemisah-struktur {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-3);
+  padding: 2px 0;
+}
+.blok-pemisah-struktur::before,
+.blok-pemisah-struktur::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--line);
+}
+
+/*
+ * Tab pratinjau yang menempel.
+ *
+ * Sebelumnya pratinjau adalah kartu selebar halaman di bawah editor, jadi
+ * halaman /pesan memanjang ke bawah dan admin harus menggulir jauh setiap
+ * kali mengetik. Sekarang pratinjau masuk ke daftar tab di kanan, dengan
+ * position: sticky supaya tetap terlihat selama menyunting blok panjang.
+ */
+.pesan-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+.pesan-sisi { display: grid; gap: 18px; }
+.pesan-sisi > .pane-sticky {
+  position: sticky;
+  top: 78px;
+}
+@media (max-width: 1080px) {
+  .pesan-layout { grid-template-columns: minmax(0, 1fr); }
+  .pesan-sisi > .pane-sticky { position: static; }
+}
+
+/* Bilah aksi (Simpan/Kirim) menempel di bawah supaya selalu terjangkau. */
+.pesan-aksi {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 12px 0 4px;
+  margin-top: 4px;
+  background: linear-gradient(to top, var(--bg) 70%, transparent);
+  z-index: 2;
+}
 .sep {
   border: 0;
   border-top: 1px solid var(--line);

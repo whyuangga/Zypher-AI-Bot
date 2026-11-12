@@ -144,6 +144,39 @@ export function pesanPage(options: PesanPageOptions): string {
         }),
   });
 
+  /**
+   * Isi tab Impor: dua panel yang dulu menumpuk di bawah editor blok.
+   *
+   * Dipisah ke sini (bukan ditulis ulang di dua tempat) supaya kotak tautan
+   * Discohook, tombol ekspor, dan kotak JSON tetap satu sumber.
+   */
+  const imporHtml = `
+    <details class="json-panel" open>
+      <summary>${icon('external', 15)} Impor dari Discohook</summary>
+      <div class="json-isi">
+        <p class="hint" style="margin:0">Tempel <b>tautan share Discohook</b> (mis. <code>https://discohook.app/?share=abcdefgh</code>) atau <b>ID</b>-nya saja, lalu klik Tarik. Server yang mengunduh, jadi tidak kena masalah CORS. Kalau discohook.app tidak bisa dihubungi, salin JSON-nya dari Discohook (<i>Share → Copy JSON</i>) dan tempel di kotak yang sama — keduanya diterima.</p>
+        <textarea id="discoText" rows="5" spellcheck="false" placeholder="https://discohook.app/?share=…  — atau tempel JSON Discohook di sini"></textarea>
+        <div class="json-aksi">
+          <button class="btn btn-ghost btn-sm" type="button" onclick="importDiscohook()">${icon('download', 15)} Tarik &amp; impor</button>
+          <span class="hint" id="discoStatus" style="margin:0"></span>
+        </div>
+      </div>
+    </details>
+
+    <details class="json-panel">
+      <summary>${icon('file', 15)} Import / ekspor JSON</summary>
+      <div class="json-isi">
+        <p class="hint" style="margin:0">Untuk memindahkan susunan pesan ke server lain, atau menyimpan cadangan sebelum mengubah banyak hal. Channel tujuan sengaja <b>tidak</b> ikut — ID channel berbeda di tiap server.</p>
+        <div class="json-aksi">
+          <button class="btn btn-ghost btn-sm" type="button" onclick="exportJson()">${icon('upload', 15)} Ekspor</button>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="importJson()">${icon('download', 15)} Impor</button>
+          <span class="hint" id="jsonStatus" style="margin:0"></span>
+        </div>
+        <textarea id="jsonText" rows="8" spellcheck="false" placeholder="Klik Ekspor untuk mengisi, atau tempel JSON di sini lalu klik Impor."></textarea>
+      </div>
+    </details>
+  `;
+
   const editorCard = card({
     title: 'Susun pesan',
     hint: 'teks, gambar, tombol link, dan pemisah',
@@ -193,67 +226,65 @@ export function pesanPage(options: PesanPageOptions): string {
     </div>
     <p class="hint" id="blockHint">Teks mendukung format Discord; baris diawali <code>-#</code> menjadi teks kecil. <b>Container</b> memulai kartu baru (blok sesudahnya masuk ke kartu itu), <b>Section</b> menaruh gambar kecil atau tombol di samping teks.</p>
 
-    <details class="json-panel">
-      <summary>${icon('external', 15)} Impor dari Discohook</summary>
-      <div class="json-isi">
-        <p class="hint" style="margin:0">Tempel <b>tautan share Discohook</b> (mis. <code>https://discohook.app/?share=abcdefgh</code>) atau <b>ID</b>-nya saja, lalu klik Tarik. Server yang mengunduh, jadi tidak kena masalah CORS. Kalau discohook.app tidak bisa dihubungi, salin JSON-nya dari Discohook (<i>Share → Copy JSON</i>) dan tempel di kotak yang sama — keduanya diterima.</p>
-        <textarea id="discoText" rows="5" spellcheck="false" placeholder="https://discohook.app/?share=…  — atau tempel JSON Discohook di sini"></textarea>
-        <div class="json-aksi">
-          <button class="btn btn-ghost btn-sm" type="button" onclick="importDiscohook()">${icon('download', 15)} Tarik &amp; impor</button>
-          <span class="hint" id="discoStatus" style="margin:0"></span>
-        </div>
-      </div>
-    </details>
-
-    <details class="json-panel">
-      <summary>${icon('file', 15)} Import / ekspor JSON</summary>
-      <div class="json-isi">
-        <p class="hint" style="margin:0">Untuk memindahkan susunan pesan ke server lain, atau menyimpan cadangan sebelum mengubah banyak hal. Channel tujuan sengaja <b>tidak</b> ikut — ID channel berbeda di tiap server.</p>
-        <div class="json-aksi">
-          <button class="btn btn-ghost btn-sm" type="button" onclick="exportJson()">${icon('upload', 15)} Ekspor</button>
-          <button class="btn btn-ghost btn-sm" type="button" onclick="importJson()">${icon('download', 15)} Impor</button>
-          <span class="hint" id="jsonStatus" style="margin:0"></span>
-        </div>
-        <textarea id="jsonText" rows="8" spellcheck="false" placeholder="Klik Ekspor untuk mengisi, atau tempel JSON di sini lalu klik Impor."></textarea>
-      </div>
-    </details>
   </div>
 
-  <div class="grid cols-2" style="gap:12px">
-    <div>
-      <label class="field" for="postAccent">Warna aksen</label>
-      <div style="display:flex;gap:8px;align-items:center">
-        <input type="color" id="postAccent" value="#6d8cff" style="width:48px;height:38px;padding:2px;border-radius:8px;border:1px solid var(--line);background:var(--panel)">
-        <span class="hint" id="accentText">#6d8cff</span>
-        <button class="btn btn-ghost btn-sm" type="button" onclick="resetAccent()">Bawaan</button>
-      </div>
+  <div class="notice">${icon('alert', 16)}<span>Blok <b>Tombol</b> di atas adalah tombol <b>link</b> (membuka URL). Untuk tombol yang memberi role, lihat tab <b>Ambil role</b>.</span></div>
+</div>`,
+  });
+
+  /**
+   * Kartu pratinjau.
+   *
+   * `hostId` wajib berbeda per pemakaian: halaman memakai pratinjau dua kali
+   * (menempel di tab Susun, dan besar di tab Pratinjau). Dua elemen ber-id
+   * sama membuat `getElementById` selalu mengambil yang pertama, sehingga
+   * salah satu pratinjau tidak pernah diperbarui.
+   */
+  const previewCard = (hostId: string): string =>
+    card({
+      title: 'Pratinjau',
+      hint: 'tampil seperti di Discord',
+      body: `<div id="${hostId}" class="preview-wrap"></div>`,
+    });
+
+  const settingCard = card({
+    title: 'Tampilan & pengirim',
+    hint: 'berlaku untuk seluruh pesan',
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+  <div>
+    <label class="field" for="postAccent">Warna aksen</label>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input type="color" id="postAccent" value="#6d8cff" style="width:48px;height:38px;padding:2px;border-radius:8px;border:1px solid var(--line);background:var(--panel)">
+      <span class="hint" id="accentText" style="margin:0">#6d8cff</span>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="resetAccent()">Bawaan</button>
     </div>
-    <div>
-      <label class="field" for="postSender">Pengirim</label>
-      <span class="select-shell full">
-        <select id="postSender">
-          <option value="bot">Bot (bisa tombol ambil role)</option>
-          <option value="webhook">Atas nama server (butuh Manage Webhooks)</option>
-        </select>
-        ${icon('chevron', 15)}
-      </span>
-      <p class="hint">Lewat webhook, pesan tampil dengan nama &amp; logo server — tapi tombol ambil role tidak bisa dipakai.</p>
-    </div>
+    <p class="hint">Garis warna di kiri kartu. Container boleh punya warna sendiri (tab Susun).</p>
   </div>
-
-  <div class="notice">${icon('alert', 16)}<span>Blok <b>Tombol</b> di atas adalah tombol <b>link</b> (membuka URL). Untuk tombol yang memberi role, pakai kartu <b>Tombol ambil role</b> di bawah.</span></div>
-
-  <div style="display:flex;gap:10px;flex-wrap:wrap">
-    <button class="btn-primary" type="button" id="postSave" onclick="savePost()">${icon('check', 16)} Simpan</button>
-    <button class="btn btn-ghost" type="button" id="postSend" onclick="sendPost()" ${options.botReady ? '' : 'disabled title="Bot offline"'}>${icon('external', 16)} Kirim ke Discord</button>
+  <div>
+    <label class="field" for="postSender">Pengirim</label>
+    <span class="select-shell full">
+      <select id="postSender">
+        <option value="bot">Bot (bisa tombol ambil role)</option>
+        <option value="webhook">Atas nama server (butuh Manage Webhooks)</option>
+      </select>
+      ${icon('chevron', 15)}
+    </span>
+    <p class="hint">Lewat webhook, pesan tampil dengan nama &amp; logo server — tapi tombol ambil role tidak bisa dipakai.</p>
   </div>
 </div>`,
   });
 
-  const previewCard = card({
-    title: 'Pratinjau',
-    hint: 'tampil seperti di Discord',
-    body: `<div id="previewHost" class="preview-wrap"></div>`,
+  /**
+   * Kartu impor ekspor — dipindah ke tab sendiri supaya tab Susun tidak
+   * memanjang oleh dua kotak teks besar yang jarang dipakai.
+   */
+  const importCard = card({
+    title: 'Impor',
+    hint: 'dari Discohook, atau cadangan JSON',
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+${imporHtml.trim()}
+  <p class="hint" style="margin:0">Format JSON milik halaman ini memakai penanda <code>zypher-post</code>; JSON Discohook (payload Components V2) juga diterima di kotak atas.</p>
+</div>`,
   });
 
   const roleCard = card({
@@ -299,15 +330,79 @@ export function pesanPage(options: PesanPageOptions): string {
 </div>`,
   });
 
+  /**
+   * Satu tombol tab. `hint` tampil kecil di bawah label pada layar lebar.
+   *
+   * Memakai pola yang sama dengan halaman Sambutan: panel nonaktif hanya
+   * diberi atribut `hidden`, jadi tidak ada isian yang hilang saat berpindah.
+   */
+  const tabPesan = (key: string, label: string, active: boolean, hint: string): string =>
+    `<button type="button" role="tab" class="tab${active ? ' is-active' : ''}"
+      id="tab-${key}" data-tab="${key}" aria-selected="${active ? 'true' : 'false'}"
+      aria-controls="pane-${key}" title="${esc(hint)}"
+      onclick="showPesanTab('${key}')">${esc(label)}</button>`;
+
   const body = `${pageHead({
     kicker: '09 — Pesan bertema',
     title: 'Pesan',
     subtitle: 'Susun pesan container sendiri: rules, ambil roles, pengumuman. Kirim sekali, lalu perbarui tanpa kirim ulang.',
     actions: badge(`${options.posts.length} pesan`, 'brand'),
   })}
-<div class="grid cols-2">${listCard}${editorCard}</div>
-${previewCard}
-${roleCard}
+${/*
+     * Tata letak: daftar pesan tersimpan di atas (satu baris penuh), lalu
+     * panel bertab di bawahnya — bukan lagi kartu-kartu yang ditumpuk ke
+     * bawah. Tab memakai `hidden`, bukan melepas elemen dari DOM: isian yang
+     * belum disimpan tidak hilang saat berpindah tab, dan semua
+     * getElementById tetap menemukan elemennya (pola yang sama dengan
+     * halaman Sambutan).
+     */''}
+${listCard}
+<div class="tabs" role="tablist" aria-label="Bagian halaman Pesan" style="margin-top:18px">
+  ${tabPesan('susun', 'Susun pesan', true, 'teks, gambar, tombol')}
+  ${tabPesan('pratinjau', 'Pratinjau', false, 'tampil seperti di Discord')}
+  ${tabPesan('role', 'Ambil role', false, 'tombol & menu')}
+  ${tabPesan('impor', 'Impor', false, 'Discohook & JSON')}
+  <span class="hint" style="margin:0 0 0 auto;align-self:center">Pindah tab tidak menghapus isian yang belum disimpan.</span>
+</div>
+
+<div class="tab-pane" id="pane-susun" role="tabpanel" aria-labelledby="tab-susun">
+  <div class="pesan-layout">
+    <div class="pesan-sisi">${editorCard}${settingCard}</div>
+    <div class="pesan-sisi">
+      <div class="pane-sticky">${previewCard('previewHost')}</div>
+    </div>
+  </div>
+</div>
+
+<div class="tab-pane" id="pane-pratinjau" role="tabpanel" aria-labelledby="tab-pratinjau" hidden>
+  ${/*
+       * Tab ini HANYA berisi pratinjau.
+       *
+       * Pengaturan warna & pengirim sengaja tidak diulang di sini: kartu yang
+       * sama dirender dua kali berarti dua elemen ber-id sama, dan
+       * getElementById akan selalu mengambil yang pertama — yang berada di tab
+       * tersembunyi. Akibatnya mengubah warna dari tab ini tidak berpengaruh
+       * apa pun. Satu elemen, satu tempat.
+       */''}
+  ${previewCard('previewHostBesar')}
+  <p class="hint">Pratinjau memakai data blok yang SAMA dengan yang dikirim ke Discord, jadi yang terlihat di sini bukan tebakan. Warna aksen & pengirim diatur di tab <b>Susun</b>.</p>
+</div>
+
+<div class="tab-pane" id="pane-role" role="tabpanel" aria-labelledby="tab-role" hidden>
+  ${roleCard}
+</div>
+
+<div class="tab-pane" id="pane-impor" role="tabpanel" aria-labelledby="tab-impor" hidden>
+  <div class="pesan-layout">
+    <div class="pesan-sisi">${importCard}</div>
+  </div>
+</div>
+
+<div class="pesan-aksi">
+  <button class="btn-primary" type="button" id="postSave" onclick="savePost()">${icon('check', 16)} Simpan</button>
+  <button class="btn btn-ghost" type="button" id="postSend" onclick="sendPost()" ${options.botReady ? '' : 'disabled title="Bot offline"'}>${icon('external', 16)} Kirim ke Discord</button>
+  <span class="hint" id="aksiStatus" style="margin:0"></span>
+</div>
 <script>
 const GUILD = ${jsonForScript(options.guildId)};
 /** Daftar role server + alasan tidak bisa dibagi (kalau ada). */
@@ -698,6 +793,7 @@ function importJson() {
   if (bersih.dropped.length) pesan += '. ' + bersih.dropped.length + ' blok dibuang: ' + bersih.dropped[0];
   if (status) status.textContent = pesan;
   toast(pesan);
+  showPesanTab('susun');
 }
 
 
@@ -824,285 +920,540 @@ async function importDiscohook() {
   if (peringatan.length) ringkas += '. ' + peringatan.length + ' catatan: ' + peringatan[0];
   if (status) status.textContent = ringkas;
   toast(ringkas);
+  // Hasil impor langsung ditampilkan di tab Susun — kalau tetap di tab Impor,
+  // admin tidak melihat apa pun berubah dan mengira impornya gagal.
+  showPesanTab('susun');
 }
 
+/**
+ * Kelompokkan blok menjadi "di luar kartu" dan "kartu".
+ *
+ * Ini aturan tampilan editor, dan sengaja fungsi murni supaya bisa diuji
+ * tanpa DOM: hasilnya
+ *
+ *   [{ kartu: null, isi: [...] },        // komponen di luar kartu
+ *    { kartu: <blok container>, isi: [...] }, // satu kartu beserta isinya
+ *    { kartu: null, penutup: true, ... }] // baris "tutup kartu"
+ *
+ * Aturannya SAMA dengan penyusun payload: 'container' membuka kartu,
+ * komponen sesudahnya masuk ke situ, 'close' mengeluarkan sisanya. Kalau
+ * keduanya berbeda, admin melihat satu susunan di editor dan susunan lain di
+ * Discord.
+ *
+ * Kalau pesan tidak punya container sama sekali, semua isi dikirim dalam satu
+ * kartu bawaan — editor menampilkannya sebagai wadah luar biasa (tanpa kotak
+ * kartu), karena admin tidak pernah menambahkan kartu itu.
+ */
+function kelompokkanBlok(daftar) {
+  var kelompok = [];
+  var adaContainer = daftar.some(function (b) { return b.kind === 'container'; });
+  var aktif = { kartu: null, indeks: -1, isi: [] };
+  // Wadah luar awal hanya perlu kalau ada container eksplisit (komponen
+  // sebelum container pertama tampil polos) atau pesan tanpa container.
+  kelompok.push(aktif);
+
+  daftar.forEach(function (block, index) {
+    if (block.kind === 'container') {
+      aktif = { kartu: block, indeks: index, isi: [] };
+      kelompok.push(aktif);
+      return;
+    }
+    if (block.kind === 'close') {
+      // Penutup tidak punya isi sendiri; ia hanya memindahkan penulisan ke
+      // luar kartu. Ditampilkan sebagai baris penanda supaya admin melihat
+      // batasnya, bukan menghilang tanpa jejak.
+      /*
+       * Penutup SELALU ditampilkan, termasuk pada pesan tanpa container
+       * (mis. hasil impor Discohook, yang memakai 'close' di awal supaya
+       * isinya tidak dibungkus kartu). Kalau barisnya disembunyikan, blok itu
+       * tidak bisa dipilih untuk dihapus — admin melihat "di luar kartu" tanpa
+       * tahu penyebabnya.
+       */
+      aktif = { kartu: null, indeks: index, penutup: true, isi: [] };
+      kelompok.push(aktif);
+      return;
+    }
+    if (aktif.penutup) {
+      // Blok sesudah 'close' menempati wadah luar yang sama.
+      if (aktif.isi.length > 0) {
+        aktif = { kartu: null, indeks: -1, isi: [] };
+        kelompok.push(aktif);
+      }
+      aktif.penutup = false;
+      aktif.indeks = -1;
+    }
+    aktif.isi.push({ block: block, index: index });
+  });
+
+  // Wadah luar yang tidak berisi apa pun dibuang — kecuali baris penutup,
+  // yang tetap ditampilkan supaya batas kartunya terlihat.
+  return kelompok.filter(function (grup) {
+    return grup.kartu || grup.penutup || grup.isi.length > 0;
+  });
+}
+
+/**
+ * Editor blok — digambar sebagai kartu BERTUMPUK, seperti Discohook.
+ *
+ * Alasannya bukan sekadar cantik: daftar datar menyembunyikan hal yang paling
+ * penting saat menyusun pesan container, yaitu **bagian mana yang berada di
+ * dalam kartu**. Di sini container menjadi kotak berwarna yang MENGANDUNG
+ * komponen sesudahnya, dan setiap komponen punya ikon jenis + tombol
+ * duplikat/hapus di kanan atas — tata letak yang sama dengan editor Discohook.
+ *
+ * Aturan yang dipakai untuk menyalin struktur Discohook ke struktur blok
+ * /pesan (sama persis dengan yang dilakukan penyusun payload):
+ *   - 'container' membuka kartu baru; komponen sesudahnya masuk ke kartu itu,
+ *   - 'close' menutup kartu; komponen sesudahnya tampil di luar kartu,
+ *   - tanpa 'close', kartu terakhir dianggap memuat semua sisa komponen.
+ */
 function renderBlocks() {
   var host = document.getElementById('blockList');
   host.innerHTML = '';
   if (blocks.length === 0) {
     var kosong = document.createElement('p');
     kosong.className = 'hint';
-    kosong.textContent = 'Belum ada isi. Tambahkan blok di bawah.';
+    kosong.textContent = 'Belum ada isi. Tambahkan komponen di bawah — atau tarik dari Discohook di tab Impor.';
     host.appendChild(kosong);
     return;
   }
 
-  blocks.forEach(function (block, index) {
-    var row = document.createElement('div');
-    row.className = 'block-row';
+  var kelompok = kelompokkanBlok(blocks);
 
-    var head = document.createElement('div');
-    head.className = 'block-head';
-    var label = document.createElement('span');
-    label.className = 'block-kind';
-    label.textContent = LABEL[block.kind] || block.kind;
-    head.appendChild(label);
+  kelompok.forEach(function (grup) {
+    /*
+     * Kartu kosong tetap ditampilkan: admin baru saja menambahkannya dan butuh
+     * tempat untuk mengatur warna/spoilernya. Wadah luar yang kosong tidak
+     * pernah sampai ke sini karena kelompokkanBlok sudah membuangnya.
+     */
+    if (grup.kartu) {
+      host.appendChild(buatKartuEditor(grup));
+      return;
+    }
 
-    var tools = document.createElement('div');
-    tools.className = 'block-tools';
+    var wadah = document.createElement('div');
+    wadah.className = 'blok-stack blok-stack-luar';
+    if (grup.penutup) {
+      var penanda = document.createElement('div');
+      penanda.className = 'blok-pemisah-struktur';
+      penanda.textContent = 'di luar kartu — semua komponen di bawah tampil polos';
+      wadah.appendChild(penanda);
+      // Baris kendali untuk blok 'close' itu sendiri (naik/turun/hapus).
+      wadah.insertBefore(buatBarisStruktur(blocks[grup.indeks], grup.indeks), wadah.firstChild);
+    }
+    grup.isi.forEach(function (item) {
+      wadah.appendChild(buatItemEditor(item.block, item.index));
+    });
+    host.appendChild(wadah);
+  });
+
+  renderPreview();
+  renderUsage();
+}
+
+/** Baris kecil untuk blok struktural ('close') yang tidak punya isi sendiri. */
+function buatBarisStruktur(block, index) {
+  var baris = document.createElement('div');
+  baris.className = 'blok-item';
+  var head = document.createElement('div');
+  head.className = 'blok-item-head';
+  head.appendChild(ikonJenis('⤴'));
+  var nama = document.createElement('span');
+  nama.className = 'blok-nama';
+  nama.textContent = 'Tutup kartu';
+  head.appendChild(nama);
+  var tag = document.createElement('span');
+  tag.className = 'blok-tag';
+  tag.textContent = 'struktur';
+  head.appendChild(tag);
+  head.appendChild(alatBlok(index));
+  baris.appendChild(head);
+  return baris;
+}
+
+/** Kartu container: kotak berwarna yang MENGANDUNG komponen sesudahnya. */
+function buatKartuEditor(grup) {
+  var block = grup.kartu;
+  var index = grup.indeks;
+  var kartu = document.createElement('div');
+  kartu.className = 'blok-kartu';
+  kartu.style.borderLeftColor = block.accent || accentNow();
+
+  var head = document.createElement('div');
+  head.className = 'blok-item-head';
+  head.appendChild(ikonJenis('▭'));
+  var nama = document.createElement('span');
+  nama.className = 'blok-nama';
+  nama.textContent = 'Container';
+  head.appendChild(nama);
+
+  // Warna aksen tampil langsung sebagai kotak kecil — sama seperti Discohook.
+  var warna = document.createElement('input');
+  warna.type = 'color';
+  warna.value = block.accent || accentNow();
+  warna.title = 'Warna aksen container ini';
+  warna.style.cssText = 'width:26px;height:20px;padding:0;border:1px solid var(--line);border-radius:4px;background:var(--panel);flex:0 0 auto';
+  warna.oninput = function () {
+    blocks[index].accent = warna.value;
+    kartu.style.borderLeftColor = warna.value;
+    renderPreview();
+  };
+  head.appendChild(warna);
+
+  var ikut = document.createElement('button');
+  ikut.className = 'btn btn-ghost btn-sm';
+  ikut.type = 'button';
+  ikut.textContent = 'Ikut warna pesan';
+  ikut.title = 'Container memakai warna aksen pesan';
+  ikut.onclick = function () {
+    blocks[index].accent = '';
+    renderBlocks();
+    renderPreview();
+  };
+  head.appendChild(ikut);
+
+  if (blocks[index].spoiler) {
+    var tagSpoiler = document.createElement('span');
+    tagSpoiler.className = 'blok-tag blok-tag-warn';
+    tagSpoiler.textContent = 'spoiler';
+    head.appendChild(tagSpoiler);
+  }
+  head.appendChild(alatBlok(index));
+  kartu.appendChild(head);
+
+  /*
+   * Pengaturan container: spoiler. Ditaruh di baris head, bukan kotak besar,
+   * supaya kartu tetap ringkas dan isinya yang jadi fokus.
+   */
+  var pengaturan = document.createElement('div');
+  pengaturan.className = 'blok-item-isi';
+  pengaturan.style.paddingTop = '8px';
+  pengaturan.style.paddingBottom = '0';
+  pengaturan.appendChild(buatSakelar(index, 'spoiler', 'Spoiler — isi kartu tertutup sampai diklik'));
+  kartu.appendChild(pengaturan);
+
+  var isi = document.createElement('div');
+  isi.className = 'blok-kartu-isi';
+  if (grup.isi.length === 0) {
+    var kosong = document.createElement('div');
+    kosong.className = 'blok-stack-kosong';
+    kosong.textContent = 'Kartu kosong — tambahkan komponen, atau tekan × untuk membuangnya.';
+    isi.appendChild(kosong);
+  }
+  grup.isi.forEach(function (item) {
+    isi.appendChild(buatItemEditor(item.block, item.index));
+  });
+  kartu.appendChild(isi);
+  return kartu;
+}
+
+/** Ikon kecil penanda jenis komponen. */
+function ikonJenis(teks) {
+  var el = document.createElement('span');
+  el.className = 'blok-ikon';
+  el.textContent = teks;
+  el.setAttribute('aria-hidden', 'true');
+  return el;
+}
+
+/** Tombol ⧉ duplikat & × hapus di kanan atas komponen (pola Discohook). */
+function alatBlok(index) {
+  var alat = document.createElement('div');
+  alat.className = 'blok-aksi';
+
+  {
     if (index > 0) {
       var up = document.createElement('button');
       up.className = 'btn-ghost btn-sm btn-icon';
       up.type = 'button';
       up.title = 'Naikkan';
+      up.setAttribute('aria-label', 'Naikkan komponen');
       up.textContent = '↑';
       up.onclick = function () { moveBlock(index, -1); };
-      tools.appendChild(up);
+      alat.appendChild(up);
     }
     if (index < blocks.length - 1) {
       var down = document.createElement('button');
       down.className = 'btn-ghost btn-sm btn-icon';
       down.type = 'button';
       down.title = 'Turunkan';
+      down.setAttribute('aria-label', 'Turunkan komponen');
       down.textContent = '↓';
       down.onclick = function () { moveBlock(index, 1); };
-      tools.appendChild(down);
+      alat.appendChild(down);
     }
-    var dup = document.createElement('button');
-    dup.className = 'btn-ghost btn-sm btn-icon';
-    dup.type = 'button';
-    dup.title = 'Duplikat blok';
-    dup.textContent = '⧉';
-    dup.onclick = function () { duplicateBlock(index); };
-    tools.appendChild(dup);
-    var del = document.createElement('button');
-    del.className = 'btn-danger btn-sm btn-icon';
-    del.type = 'button';
-    del.title = 'Hapus blok';
-    del.textContent = '×';
-    del.onclick = function () { removeBlock(index); };
-    tools.appendChild(del);
-    head.appendChild(tools);
-    row.appendChild(head);
+  }
 
-    if (block.kind === 'divider') {
-      var garis = document.createElement('div');
-      garis.className = 'block-divider';
-      row.appendChild(garis);
-      var jarak = document.createElement('label');
-      jarak.className = 'menu-flags';
-      jarak.style.marginTop = '6px';
-      var cekJarak = document.createElement('input');
-      cekJarak.type = 'checkbox';
-      cekJarak.checked = block.spacing === 'large';
-      cekJarak.onchange = function () {
-        blocks[index].spacing = cekJarak.checked ? 'large' : '';
-        renderPreview();
-      };
-      jarak.appendChild(cekJarak);
-      jarak.appendChild(document.createTextNode(' jarak besar'));
+  var dup = document.createElement('button');
+  dup.className = 'btn-ghost btn-sm btn-icon';
+  dup.type = 'button';
+  dup.title = 'Duplikat komponen';
+  dup.setAttribute('aria-label', 'Duplikat komponen');
+  dup.textContent = '⧉';
+  dup.onclick = function () { duplicateBlock(index); };
+  alat.appendChild(dup);
 
-      /*
-       * Garis pemisah bisa dimatikan (Discord: 'divider: false') — hasilnya
-       * hanya jarak kosong. Discohook menampilkannya sebagai centang
-       * "Show Divider"; di sini dibalik supaya lebih jelas maksudnya.
-       */
-      var cekGaris = document.createElement('input');
-      cekGaris.type = 'checkbox';
-      cekGaris.checked = block.divider !== false;
-      cekGaris.onchange = function () {
-        blocks[index].divider = cekGaris.checked;
-        renderPreview();
-      };
-      jarak.appendChild(cekGaris);
-      jarak.appendChild(document.createTextNode(' tampilkan garis'));
-      row.appendChild(jarak);
-    } else if (block.kind === 'container') {
-      // Container = kartu baru. Warnanya opsional: kosong berarti ikut warna
-      // pesan, jadi admin yang tidak peduli warna tidak perlu mengisinya.
-      var barisWarna = document.createElement('div');
-      barisWarna.className = 'role-style-row';
-
-      var warna = document.createElement('input');
-      warna.type = 'color';
-      warna.value = block.accent || document.getElementById('postAccent').value || '#6d8cff';
-      warna.title = 'Warna aksen container ini';
-      warna.oninput = function () {
-        blocks[index].accent = warna.value;
-        teksWarna.textContent = warna.value;
-        renderPreview();
-      };
-      barisWarna.appendChild(warna);
-
-      var teksWarna = document.createElement('span');
-      teksWarna.className = 'hint';
-      teksWarna.style.margin = '0';
-      teksWarna.textContent = block.accent || 'ikut warna pesan';
-      barisWarna.appendChild(teksWarna);
-
-      var ikut = document.createElement('button');
-      ikut.className = 'btn btn-ghost btn-sm';
-      ikut.type = 'button';
-      ikut.textContent = 'Ikut warna pesan';
-      ikut.onclick = function () {
-        blocks[index].accent = '';
-        renderBlocks();
-        renderPreview();
-      };
-      barisWarna.appendChild(ikut);
-      row.appendChild(barisWarna);
-
-      // Spoiler kartu: seluruh isi container tertutup sampai diklik member.
-      row.appendChild(buatSakelar(index, 'spoiler', 'Spoiler — isi kartu tertutup sampai diklik'));
-
-      var ket = document.createElement('p');
-      ket.className = 'hint';
-      ket.style.margin = '4px 0 0';
-      ket.textContent = 'Blok sesudah ini masuk ke dalam container sampai ada container berikutnya.';
-      row.appendChild(ket);
-    } else if (block.kind === 'section') {
-      var taSection = document.createElement('textarea');
-      taSection.rows = Math.min(8, Math.max(2, lineCount(block.value)));
-      taSection.value = block.value || '';
-      taSection.placeholder = 'Teks section…';
-      taSection.oninput = function () { blocks[index].value = taSection.value; renderPreview(); };
-      row.appendChild(taSection);
-
-      var barisAks = document.createElement('div');
-      barisAks.className = 'role-style-row';
-
-      // Aksesori: satu saja. Discord menolak section dengan dua aksesori,
-      // jadi admin memilih salah satu — bukan mengisi keduanya lalu bingung.
-      var thumb = document.createElement('input');
-      thumb.type = 'text';
-      thumb.value = block.thumbnail || '';
-      thumb.placeholder = 'URL gambar kecil (kanan)';
-      thumb.oninput = function () {
-        blocks[index].thumbnail = thumb.value;
-        renderPreview();
-      };
-      barisAks.appendChild(thumb);
-      row.appendChild(barisAks);
-
-      var barisTombol = document.createElement('div');
-      barisTombol.className = 'role-style-row';
-      var labelAks = document.createElement('input');
-      labelAks.type = 'text';
-      labelAks.value = block.accessoryLabel || '';
-      labelAks.placeholder = 'Label tombol (kanan)';
-      labelAks.oninput = function () { blocks[index].accessoryLabel = labelAks.value; renderPreview(); };
-      barisTombol.appendChild(labelAks);
-
-      var urlAks = document.createElement('input');
-      urlAks.type = 'text';
-      urlAks.value = block.url || '';
-      urlAks.placeholder = 'https://…';
-      urlAks.oninput = function () { blocks[index].url = urlAks.value; renderPreview(); };
-      barisTombol.appendChild(urlAks);
-      row.appendChild(barisTombol);
-
-      var ketAks = document.createElement('p');
-      ketAks.className = 'hint';
-      ketAks.style.margin = '4px 0 0';
-      ketAks.textContent = block.accessoryLabel && block.url
-        ? 'Tombol di kanan dipakai; gambar kecil diabaikan saat tombol terisi.'
-        : 'Isi salah satu: gambar kecil ATAU tombol. Discord hanya mengizinkan satu aksesori per section.';
-      row.appendChild(ketAks);
-    } else if (block.kind === 'close') {
-      var ketTutup = document.createElement('p');
-      ketTutup.className = 'hint';
-      ketTutup.style.margin = '0';
-      ketTutup.textContent = 'Blok sesudah ini tampil DI LUAR kartu — polos di pesan, seperti teks pembuka dan baris tombol di Discohook. Tambahkan Container untuk masuk ke kartu lagi.';
-      row.appendChild(ketTutup);
-    } else if (block.kind === 'text') {
-      var ta = document.createElement('textarea');
-      ta.rows = Math.min(10, Math.max(2, lineCount(block.value)));
-      ta.value = block.value;
-      ta.placeholder = 'Tulis isi pesan…';
-      ta.oninput = function () { blocks[index].value = ta.value; renderPreview(); };
-      row.appendChild(ta);
-      // Aksesori teks — sama seperti "Add Accessory" di Discohook.
-      row.appendChild(buatAksesori(index));
-    } else if (block.kind === 'file') {
-      row.appendChild(buatEditorFile(index));
-    } else {
-      var input = document.createElement('input');
-      input.type = 'text';
-      input.value = block.value;
-      input.placeholder = block.kind === 'image' ? 'https://…/gambar.png' : 'Label tombol';
-      input.oninput = function () { blocks[index].value = input.value; renderPreview(); };
-      row.appendChild(input);
-      if (block.kind === 'image') {
-        // Alt text: deskripsi gambar untuk pembaca layar dan saat gagal muat.
-        var alt = document.createElement('input');
-        alt.type = 'text';
-        alt.value = block.alt || '';
-        alt.placeholder = 'Deskripsi gambar (alt text, opsional)';
-        alt.oninput = function () { blocks[index].alt = alt.value.slice(0, 1024); renderPreview(); };
-        row.appendChild(alt);
-        row.appendChild(buatAksesori(index));
-        row.appendChild(buatSakelar(index, 'spoiler', 'Sembunyikan sebagai spoiler'));
-      }
-      if (block.kind === 'button') {
-        var url = document.createElement('input');
-        url.type = 'text';
-        url.value = block.url || '';
-        url.placeholder = 'https://discord.gg/…';
-        url.oninput = function () { blocks[index].url = url.value; };
-        row.appendChild(url);
-
-        // Emoji tombol: diketik langsung, mis. 🎮 atau <:nama:123456789>.
-        var emojiTombol = document.createElement('input');
-        emojiTombol.type = 'text';
-        emojiTombol.className = 'role-emoji';
-        emojiTombol.value = block.emoji || '';
-        emojiTombol.placeholder = '🎮';
-        emojiTombol.title = 'Emoji di depan label — boleh emoji biasa atau <:nama:id>';
-        emojiTombol.oninput = function () {
-          blocks[index].emoji = emojiTombol.value.slice(0, 80);
-          renderPreview();
-        };
-        row.appendChild(emojiTombol);
-
-        row.appendChild(buatSakelar(index, 'disabled', 'Nonaktif (tidak bisa diklik)'));
-      }
-      if (block.kind === 'image') {
-        // Unggah dari komputer: hasilnya data URI yang disimpan di blok.
-        // Discord menolak data URI mentah, jadi pengirim mengubahnya jadi
-        // lampiran — di dashboard cukup ditampilkan sebagai gambar biasa.
-        var baris = document.createElement('div');
-        baris.style.display = 'flex';
-        baris.style.gap = '8px';
-        baris.style.alignItems = 'center';
-
-        var file = document.createElement('input');
-        file.type = 'file';
-        file.accept = 'image/png,image/jpeg,image/webp';
-        file.onchange = function () { unggahGambar(index, file); };
-        baris.appendChild(file);
-
-        if (block.data) {
-          var kecil = document.createElement('img');
-          kecil.src = block.data;
-          kecil.alt = 'pratinjau unggahan';
-          kecil.style.cssText = 'height:40px;border-radius:6px';
-          baris.appendChild(kecil);
-
-          var hapus = document.createElement('button');
-          hapus.className = 'btn-ghost btn-sm';
-          hapus.type = 'button';
-          hapus.textContent = 'Pakai URL';
-          hapus.onclick = function () { blocks[index].data = ''; renderBlocks(); };
-          baris.appendChild(hapus);
-        }
-        row.appendChild(baris);
-      }
-    }
-    host.appendChild(row);
-  });
-  renderPreview();
-  renderUsage();
+  var del = document.createElement('button');
+  del.className = 'btn-danger btn-sm btn-icon';
+  del.type = 'button';
+  del.title = 'Hapus komponen';
+  del.setAttribute('aria-label', 'Hapus komponen');
+  del.textContent = '×';
+  del.onclick = function () { removeBlock(index); };
+  alat.appendChild(del);
+  return alat;
 }
+
+var IKON = {
+  text: 'T',
+  image: '▣',
+  button: '🔗',
+  divider: '―',
+  container: '▭',
+  section: '▤',
+  close: '⤴',
+  file: '📄'
+};
+
+/**
+ * Satu komponen di dalam kartu: judul kecil + isian.
+ *
+ * Semua isian dibuat dengan createElement/textContent, tidak lewat innerHTML:
+ * isi blok berasal dari admin (dan dari impor Discohook), jadi tidak boleh ada
+ * jalan masuk HTML ke halaman dashboard.
+ */
+function buatItemEditor(block, index) {
+  var baris = document.createElement('div');
+  baris.className = 'blok-item';
+
+  var head = document.createElement('div');
+  head.className = 'blok-item-head';
+  head.appendChild(ikonJenis(IKON[block.kind] || '•'));
+
+  var label = document.createElement('span');
+  label.className = 'blok-nama';
+  label.textContent = LABEL[block.kind] || block.kind;
+  head.appendChild(label);
+
+  // Penanda kecil yang menjelaskan keadaan komponen tanpa membuka isiannya.
+  if (block.kind === 'image' && block.spoiler) head.appendChild(tagKecil('spoiler'));
+  if (block.kind === 'button' && block.disabled) head.appendChild(tagKecil('nonaktif'));
+  if (block.kind === 'divider' && block.divider === false) head.appendChild(tagKecil('tanpa garis'));
+  if (block.kind === 'section' && block.accessoryLabel) head.appendChild(tagKecil('tombol'));
+  if (block.kind === 'section' && !block.accessoryLabel && block.thumbnail) head.appendChild(tagKecil('thumbnail'));
+  if (block.kind === 'file' && block.spoiler) head.appendChild(tagKecil('spoiler'));
+
+  head.appendChild(alatBlok(index));
+  baris.appendChild(head);
+
+  var isi = document.createElement('div');
+  isi.className = 'blok-item-isi';
+
+  if (block.kind === 'divider') {
+    var garis = document.createElement('div');
+    garis.className = 'block-divider';
+    if (block.divider === false) garis.style.background = 'transparent';
+    isi.appendChild(garis);
+
+    var jarak = document.createElement('div');
+    jarak.className = 'menu-flags';
+
+    var cekJarak = document.createElement('input');
+    cekJarak.type = 'checkbox';
+    cekJarak.checked = block.spacing === 'large';
+    cekJarak.onchange = function () {
+      blocks[index].spacing = cekJarak.checked ? 'large' : '';
+      renderPreview();
+    };
+    jarak.appendChild(cekJarak);
+    jarak.appendChild(document.createTextNode(' jarak besar'));
+
+    /*
+     * Garis pemisah bisa dimatikan (Discord: divider: false) — hasilnya
+     * hanya jarak kosong. Discohook menampilkannya sebagai centang
+     * "Show Divider"; di sini dibalik supaya lebih jelas maksudnya.
+     */
+    var cekGaris = document.createElement('input');
+    cekGaris.type = 'checkbox';
+    cekGaris.checked = block.divider !== false;
+    cekGaris.onchange = function () {
+      blocks[index].divider = cekGaris.checked;
+      renderBlocks();
+      renderPreview();
+    };
+    jarak.appendChild(cekGaris);
+    jarak.appendChild(document.createTextNode(' tampilkan garis'));
+    isi.appendChild(jarak);
+  } else if (block.kind === 'section') {
+    var taSection = document.createElement('textarea');
+    taSection.rows = Math.min(8, Math.max(2, lineCount(block.value)));
+    taSection.value = block.value || '';
+    taSection.placeholder = 'Teks section…';
+    taSection.oninput = function () { blocks[index].value = taSection.value; renderPreview(); };
+    isi.appendChild(taSection);
+
+    var barisAks = document.createElement('div');
+    barisAks.className = 'role-style-row';
+
+    // Aksesori: satu saja. Discord menolak section dengan dua aksesori.
+    var thumb = document.createElement('input');
+    thumb.type = 'text';
+    thumb.value = block.thumbnail || '';
+    thumb.placeholder = 'URL gambar kecil (kanan)';
+    thumb.disabled = Boolean(block.accessoryLabel);
+    thumb.oninput = function () {
+      blocks[index].thumbnail = thumb.value;
+      renderPreview();
+    };
+    barisAks.appendChild(thumb);
+    isi.appendChild(barisAks);
+
+    var barisTombol = document.createElement('div');
+    barisTombol.className = 'role-style-row';
+    var labelAks = document.createElement('input');
+    labelAks.type = 'text';
+    labelAks.value = block.accessoryLabel || '';
+    labelAks.placeholder = 'Label tombol (kanan)';
+    labelAks.oninput = function () {
+      blocks[index].accessoryLabel = labelAks.value;
+      thumb.disabled = Boolean(labelAks.value);
+      renderPreview();
+    };
+    barisTombol.appendChild(labelAks);
+
+    var urlAks = document.createElement('input');
+    urlAks.type = 'text';
+    urlAks.value = block.url || '';
+    urlAks.placeholder = 'https://…';
+    urlAks.oninput = function () { blocks[index].url = urlAks.value; renderPreview(); };
+    barisTombol.appendChild(urlAks);
+
+    var emojiAks = document.createElement('input');
+    emojiAks.type = 'text';
+    emojiAks.className = 'role-emoji';
+    emojiAks.value = block.emoji || '';
+    emojiAks.placeholder = '🎮';
+    emojiAks.title = 'Emoji tombol aksesori (opsional)';
+    emojiAks.oninput = function () { blocks[index].emoji = emojiAks.value.slice(0, 80); renderPreview(); };
+    barisTombol.appendChild(emojiAks);
+    isi.appendChild(barisTombol);
+
+    isi.appendChild(buatSakelar(index, 'disabled', 'Tombol nonaktif'));
+  } else if (block.kind === 'close') {
+    var ketTutup = document.createElement('p');
+    ketTutup.className = 'hint';
+    ketTutup.style.margin = '0';
+    ketTutup.textContent = 'Komponen sesudah ini tampil DI LUAR kartu — polos di pesan, seperti teks pembuka dan baris tombol di Discohook. Tambahkan Container untuk masuk ke kartu lagi.';
+    isi.appendChild(ketTutup);
+  } else if (block.kind === 'text') {
+    var ta = document.createElement('textarea');
+    ta.rows = Math.min(10, Math.max(2, lineCount(block.value)));
+    ta.value = block.value;
+    ta.placeholder = 'Tulis isi pesan… (mendukung **tebal**, ### judul, -# teks kecil)';
+    ta.oninput = function () { blocks[index].value = ta.value; renderPreview(); };
+    isi.appendChild(ta);
+    // Aksesori teks — sama seperti "Add Accessory" di Discohook.
+    isi.appendChild(buatAksesori(index));
+  } else if (block.kind === 'file') {
+    isi.appendChild(buatEditorFile(index));
+  } else {
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.value = block.value;
+    input.placeholder = block.kind === 'image' ? 'https://…/gambar.png' : 'Label tombol';
+    input.oninput = function () { blocks[index].value = input.value; renderPreview(); };
+    isi.appendChild(input);
+
+    if (block.kind === 'image') {
+      // Alt text: deskripsi gambar untuk pembaca layar dan saat gagal muat.
+      var alt = document.createElement('input');
+      alt.type = 'text';
+      alt.value = block.alt || '';
+      alt.placeholder = 'Deskripsi gambar (alt text, opsional)';
+      alt.oninput = function () { blocks[index].alt = alt.value.slice(0, 1024); renderPreview(); };
+      isi.appendChild(alt);
+      isi.appendChild(buatAksesori(index));
+
+      var opsiGambar = document.createElement('div');
+      opsiGambar.className = 'menu-flags';
+      opsiGambar.appendChild(buatSakelar(index, 'spoiler', 'Sembunyikan sebagai spoiler'));
+      isi.appendChild(opsiGambar);
+
+      // Unggah dari komputer: hasilnya data URI yang disimpan di blok.
+      var baris = document.createElement('div');
+      baris.style.display = 'flex';
+      baris.style.gap = '8px';
+      baris.style.alignItems = 'center';
+      baris.style.flexWrap = 'wrap';
+
+      var file = document.createElement('input');
+      file.type = 'file';
+      file.accept = 'image/png,image/jpeg,image/webp';
+      file.onchange = function () { unggahGambar(index, file); };
+      baris.appendChild(file);
+
+      if (block.data) {
+        var kecil = document.createElement('img');
+        kecil.src = block.data;
+        kecil.alt = 'pratinjau unggahan';
+        kecil.style.cssText = 'height:40px;border-radius:6px';
+        baris.appendChild(kecil);
+
+        var hapus = document.createElement('button');
+        hapus.className = 'btn-ghost btn-sm';
+        hapus.type = 'button';
+        hapus.textContent = 'Pakai URL';
+        hapus.onclick = function () { blocks[index].data = ''; renderBlocks(); };
+        baris.appendChild(hapus);
+      }
+      isi.appendChild(baris);
+    }
+
+    if (block.kind === 'button') {
+      var url = document.createElement('input');
+      url.type = 'text';
+      url.value = block.url || '';
+      url.placeholder = 'https://discord.gg/… (wajib)';
+      url.oninput = function () { blocks[index].url = url.value; renderPreview(); };
+      isi.appendChild(url);
+
+      var barisTombolLink = document.createElement('div');
+      barisTombolLink.className = 'role-style-row';
+
+      // Emoji tombol: diketik langsung, mis. 🎮 atau <:nama:123456789>.
+      var emojiTombol = document.createElement('input');
+      emojiTombol.type = 'text';
+      emojiTombol.className = 'role-emoji';
+      emojiTombol.value = block.emoji || '';
+      emojiTombol.placeholder = '🎮';
+      emojiTombol.title = 'Emoji di depan label — boleh emoji biasa atau <:nama:id>';
+      emojiTombol.oninput = function () {
+        blocks[index].emoji = emojiTombol.value.slice(0, 80);
+        renderPreview();
+      };
+      barisTombolLink.appendChild(emojiTombol);
+      barisTombolLink.appendChild(buatSakelar(index, 'disabled', 'Nonaktif (tidak bisa diklik)'));
+      isi.appendChild(barisTombolLink);
+    }
+  }
+
+  /*
+   * Komponen tanpa isian (mis. hasil impor yang belum lengkap) tidak perlu
+   * kotak isi kosong. Properti children dipakai, bukan childNodes: yang
+   * dihitung hanya elemen, dan DOM tiruan pengaman UI menyediakan children.
+   */
+  if (isi.children.length > 0) baris.appendChild(isi);
+  return baris;
+}
+
+/** Label kecil di kanan nama komponen. */
+function tagKecil(teks) {
+  var tag = document.createElement('span');
+  tag.className = 'blok-tag';
+  tag.textContent = teks;
+  return tag;
+}
+
 
 /** Batas unggahan gambar (sama dengan banner). */
 var MAKS_GAMBAR = 4 * 1024 * 1024;
@@ -1219,11 +1570,52 @@ async function savePost(andSend) {
       await api('/api/posts/' + result.post.id + '/send', { method: 'POST' });
       toast('✅ Terkirim ke Discord');
     }
-    setTimeout(function () { location.href = '/pesan'; }, 500);
+
+    /*
+     * Selesai menyimpan, halaman TIDAK dimuat ulang.
+     *
+     * Dulu location.href = '/pesan' dipakai supaya daftar di atas ikut
+     * segar, tetapi itu membuang tab yang sedang dibuka dan isian yang belum
+     * tersimpan di tab lain. Sekarang: pesan yang baru disimpan menjadi
+     * "pesan yang sedang diubah" (editingId), dan tautannya diperbarui tanpa
+     * memuat ulang halaman — Simpan berikutnya memperbarui pesan yang sama,
+     * bukan membuat duplikat.
+     */
+    editingId = result.post.id;
+    try {
+      var url = new URL(location.href);
+      url.searchParams.set('id', String(result.post.id));
+      history.replaceState(null, '', url.toString());
+    } catch (e) {}
+    var judulKirim = document.getElementById('postSend');
+    if (judulKirim) judulKirim.textContent = 'Simpan & kirim ulang';
+    setAksiStatus(
+      andSend
+        ? '✅ Tersimpan & terkirim ' + jamSekarang()
+        : '✅ Tersimpan ' + jamSekarang() + ' — pesan berikutnya memperbarui pesan ini',
+    );
   } catch (error) {
     toast('Gagal: ' + error.message, true);
+    setAksiStatus('❌ Gagal: ' + error.message);
     button.disabled = false;
   }
+}
+
+/**
+ * Tulis status kecil di bilah aksi (sebelah tombol Simpan).
+ *
+ * Dipakai supaya admin tahu hasil terakhir tanpa bergantung pada toast yang
+ * hilang setelah beberapa detik — terutama setelah tab berpindah.
+ */
+function setAksiStatus(teks) {
+  var el = document.getElementById('aksiStatus');
+  if (el) el.textContent = teks || '';
+}
+
+function jamSekarang() {
+  var d = new Date();
+  var dua = function (n) { return (n < 10 ? '0' : '') + n; };
+  return dua(d.getHours()) + ':' + dua(d.getMinutes());
 }
 
 async function sendPost() {
@@ -1345,8 +1737,21 @@ function buatSectionPratinjau(teks, kecil, blok) {
   return sec;
 }
 
+/**
+ * Gambar ulang SEMUA pratinjau di halaman.
+ *
+ * Ada dua tempat pratinjau: panel kecil yang menempel di tab Susun, dan panel
+ * besar di tab Pratinjau. Keduanya harus berisi gambar yang sama — kalau
+ * hanya satu yang diperbarui, admin melihat isi berbeda di dua tab.
+ */
 function renderPreview() {
-  var host = document.getElementById('previewHost');
+  ['previewHost', 'previewHostBesar'].forEach(function (id) {
+    renderPreviewKe(id);
+  });
+}
+
+function renderPreviewKe(hostId) {
+  var host = document.getElementById(hostId);
   if (!host) return;
   host.innerHTML = '';
 
@@ -2086,6 +2491,47 @@ function loadRoleButtonsFor(postId) {
     if (teks) teks.textContent = el.value;
     renderPreview();
   });
+})();
+
+/* ---------------- Tab halaman ---------------- */
+
+/**
+ * Pindah tab halaman Pesan.
+ *
+ * Panel nonaktif hanya diberi hidden (bukan dilepas dari DOM), sama seperti
+ * tab Sambutan: isian yang belum disimpan tetap ada, dan semua elemen yang
+ * dibaca fungsi lain masih ditemukan.
+ *
+ * Satu hal yang WAJIB: pratinjau digambar ulang saat tab Pratinjau dibuka.
+ * Alasannya bukan kemalasan — renderPreview menulis ke dua host, tetapi
+ * elemen di tab tersembunyi tidak punya ukuran di browser. Menggambar ulang
+ * saat tab terlihat memastikan gambarnya pas, bukan sisa dari keadaan lama.
+ */
+function showPesanTab(key) {
+  var kunci = ['susun', 'pratinjau', 'role', 'impor'];
+  for (var i = 0; i < kunci.length; i++) {
+    var nama = kunci[i];
+    var aktif = nama === key;
+    var pane = document.getElementById('pane-' + nama);
+    var tab = document.getElementById('tab-' + nama);
+    if (pane) pane.hidden = !aktif;
+    if (tab) {
+      tab.classList.toggle('is-active', aktif);
+      tab.setAttribute('aria-selected', aktif ? 'true' : 'false');
+    }
+  }
+  if (key === 'pratinjau') renderPreview();
+  // Tab terakhir disimpan supaya tidak balik ke Susun setelah menyimpan.
+  try { localStorage.setItem('zypher.tab.pesan', key); } catch (e) {}
+}
+
+/** Buka tab dari ?tab=… (mis. setelah menyimpan) atau dari localStorage. */
+(function bukaTabAwal() {
+  var dariUrl = new URLSearchParams(location.search).get('tab');
+  var tersimpan = null;
+  try { tersimpan = localStorage.getItem('zypher.tab.pesan'); } catch (e) {}
+  var kunci = dariUrl || tersimpan;
+  if (kunci && ['susun', 'pratinjau', 'role', 'impor'].indexOf(kunci) !== -1) showPesanTab(kunci);
 })();
 
 loadExisting();
