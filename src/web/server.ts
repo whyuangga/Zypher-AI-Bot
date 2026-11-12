@@ -64,6 +64,11 @@ import {
   getPostDocument,
   savePostDocument,
   deletePostDocument,
+  listPostRevisions,
+  restorePostRevision,
+  createPostShare,
+  deletePostShare,
+  getSharedPost,
 } from '../db/repo.js';
 import { invalidateModerationCache } from '../features/moderation.js';
 import { listPanelChannels, PanelError, publishPanel, removePanel } from '../features/panel.js';
@@ -80,6 +85,7 @@ import {
   normalizeAccent,
   sanitizeBlocks,
   sanitizeMessageFlags,
+  type PostBlock,
 } from '../features/custom-post.js';
 import {
   discohookShareApiUrl,
@@ -88,6 +94,7 @@ import {
   parseDiscohookShareId,
 } from '../features/discohook-import.js';
 import { listGuildRoles } from '../features/role-buttons.js';
+import { sharePage } from './ui/share.js';
 import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
 import {
   previewAgentReply,
@@ -192,6 +199,29 @@ function readRawBody(request: IncomingMessage, limit: number): Promise<Buffer> {
 
 function readBody(request: IncomingMessage, limit: number): Promise<string> {
   return readRawBody(request, limit).then((buffer) => buffer.toString('utf8'));
+}
+
+/**
+ * Ringkasan satu baris isi blok — dipakai daftar riwayat versi.
+ *
+ * Hanya jenis blok yang dihitung, bukan isinya: yang dicari admin di daftar
+ * versi adalah "yang mana tadi yang ada tombolnya", bukan teks lengkapnya.
+ */
+function summarize(blocks: PostBlock[]): string {
+  const hasil: string[] = [];
+  let teks = 0;
+  let tombol = 0;
+  let gambar = 0;
+  for (const blok of blocks) {
+    if (blok.kind === 'text' || blok.kind === 'section') teks += 1;
+    else if (blok.kind === 'button') tombol += 1;
+    else if (blok.kind === 'image' || blok.kind === 'file') gambar += 1;
+  }
+  if (teks) hasil.push(`${teks} teks`);
+  if (tombol) hasil.push(`${tombol} tombol`);
+  if (gambar) hasil.push(`${gambar} media`);
+  if (blocks.some((blok) => blok.kind === 'select')) hasil.push('menu pilihan');
+  return hasil.join(' · ') || '(kosong)';
 }
 
 function sendJson(response: ServerResponse, status: number, payload: unknown): void {
@@ -483,6 +513,29 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
 
+  /*
+   * Tautan berbagi: halaman PUBLIK, tanpa login.
+   *
+   * Diletakkan SEBELUM pemeriksaan sesi — itu intinya. Isinya sengaja hanya
+   * blok pesan (tanpa ID channel/pesan, tanpa daftar role, tanpa kaitan ke
+   * server mana pun), karena tautan ini bisa dibuka siapa saja yang punya
+   * alamatnya. Token acak dan bisa dicabut admin kapan saja.
+   */
+  const shareMatch = /^\/bagi\/([A-Za-z0-9_-]{8,64})$/.exec(path);
+  if (shareMatch && method === 'GET') {
+    const dibagikan = await getSharedPost(shareMatch[1]!).catch((): null => null);
+    if (!dibagikan) {
+      sendHtml(
+        response,
+        404,
+        sharePage({ name: '', blocks: [], notFound: true }),
+      );
+      return;
+    }
+    sendHtml(response, 200, sharePage({ name: dibagikan.name, blocks: dibagikan.blocks, notFound: false }));
+    return;
+  }
+
   if (!hasSession(request)) {
     if (path.startsWith('/api/')) {
       sendJson(response, 401, { error: 'Belum login. Buka /login dulu.' });
@@ -767,6 +820,28 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       }
     }
 
+    /*
+     * Riwayat versi per pesan, dengan ringkasan bloknya.
+     *
+     * Ringkasan dihitung di server karena bentuk blok bisa berbeda-beda
+     * (container, gambar, tombol) dan klien tidak perlu tahu semua bentuk itu
+     * hanya untuk menampilkan satu baris "3 blok: teks, tombol".
+     */
+    const riwayat: Record<number, Array<{ id: number; name: string; createdAt: number; ringkas: string }>> = {};
+    if (guildId) {
+      for (const post of posts) {
+        const daftar = await listPostRevisions(guildId, post.id).catch(() => []);
+        if (daftar.length > 0) {
+          riwayat[post.id] = daftar.map((satu) => ({
+            id: satu.id,
+            name: satu.name,
+            createdAt: satu.createdAt,
+            ringkas: summarize(satu.snapshot.blocks),
+          }));
+        }
+      }
+    }
+
     // Daftar role hanya tersedia saat bot online.
     const roleInfo =
       guildId && botClient?.isReady()
@@ -800,6 +875,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         roleMenus,
         postActions: aksiKomponen,
         schedules: jadwal,
+        revisions: riwayat,
         // Dokumen multi-pesan: dikirim sekalian supaya tab "Multi-pesan"
         // bisa dibuka tanpa permintaan tambahan (sama seperti daftar pesan).
         documents: guildId ? await listPostDocuments(guildId) : [],
@@ -1936,6 +2012,67 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       ...(hasil.dropped.length ? { dropped: hasil.dropped } : {}),
       ...(hasil.warnings.length ? { warnings: hasil.warnings } : {}),
     });
+    return;
+  }
+
+  /*
+   * ---------- riwayat revisi & tautan berbagi ----------
+   *
+   *   GET  /api/posts/:id/revisions       daftar versi
+   *   POST /api/posts/:id/revisions       { revisionId } = kembalikan versi itu
+   *   POST /api/posts/:id/share           buat tautan berbagi
+   *   DELETE /api/posts/:id/share         cabut tautannya
+   *
+   * Riwayat dibuat otomatis setiap kali pesan diperbarui (lihat
+   * updateCustomPost), bukan lewat tombol "simpan versi": admin tidak akan
+   * ingat menekannya, dan riwayat yang bolong lebih buruk daripada tidak ada.
+   */
+  const revMatch = /^\/api\/posts\/(\d+)(\/revisions|\/share)$/.exec(path);
+  if (revMatch) {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const postId = Number(revMatch[1]);
+    const jenis = revMatch[2];
+    const post = await getCustomPost(guildId, postId);
+    if (!post) {
+      sendJson(response, 404, { error: 'Pesan tidak ditemukan.' });
+      return;
+    }
+
+    if (jenis === '/revisions' && method === 'GET') {
+      sendJson(response, 200, { revisions: await listPostRevisions(guildId, postId) });
+      return;
+    }
+
+    if (jenis === '/revisions' && method === 'POST') {
+      const payload = await readJsonBody(request, response, 64 * 1024);
+      const revisionId = Number(payload?.revisionId);
+      if (!Number.isSafeInteger(revisionId) || revisionId <= 0) {
+        sendJson(response, 400, { error: 'Versi yang mau dikembalikan tidak disebut.' });
+        return;
+      }
+      const hasil = await restorePostRevision(guildId, postId, revisionId);
+      if (!hasil.post) {
+        sendJson(response, 400, { error: hasil.error ?? 'Versi itu tidak bisa dikembalikan.' });
+        return;
+      }
+      sendJson(response, 200, { ok: true, post: hasil.post });
+      return;
+    }
+
+    if (jenis === '/share' && (method === 'POST' || method === 'DELETE')) {
+      if (method === 'DELETE') {
+        await deletePostShare(guildId, postId);
+        sendJson(response, 200, { ok: true });
+        return;
+      }
+      const token = await createPostShare(guildId, postId);
+      sendJson(response, 200, { ok: true, token });
+      return;
+    }
+    sendJson(response, 405, { error: 'Metode tidak didukung.' });
     return;
   }
 

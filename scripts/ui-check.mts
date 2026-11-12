@@ -546,6 +546,16 @@ const pages: Array<{ name: string; render: () => string }> = [
         botReady: true,
         roles: [{ id: '9001', name: 'Gamer', color: '#6d8cff', position: 3, blockedBy: null }],
         hasManageRoles: true,
+        /*
+         * Riwayat versi ikut dikirim bersama halaman: tab Riwayat harus bisa
+         * langsung menampilkan daftar tanpa permintaan tambahan.
+         */
+        revisions: {
+          1: [
+            { id: 77, name: 'Rules lama', createdAt: Date.now() - 3_600_000, ringkas: '2 teks · 1 tombol' },
+            { id: 76, name: 'Rules sebelum disunting', createdAt: Date.now() - 7_200_000, ringkas: '1 teks' },
+          ],
+        },
         roleButtons: {
           1: [{ id: 5, roleId: '9001', label: 'Ambil role Gamer', mode: 'toggle', emoji: '🎮', style: 'success' }],
         },
@@ -1640,6 +1650,74 @@ await check('pesan: izin ping & nama thread ikut dikirim, bawaan tanpa ping', as
   assert.equal((muatan.allowedMentions?.parse ?? []).join(','), 'roles', 'izin ping ikut dikirim');
   assert.equal(muatan.threadName, 'Diskusi umum', 'nama thread ikut dikirim');
   assert.equal(page.errors.length, 0, `editor ping/thread error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: tab riwayat memuat versi & tautan berbagi bisa dibuat', async () => {
+  // Halaman berisi: riwayat versi hanya ada kalau pesannya sudah tersimpan.
+  const html = mounted.find((page) => page.name === '/pesan?isi')?.html ?? '';
+  const page = mountPage(html, 'uji-riwayat');
+
+  /*
+   * Riwayat yang tertanam di halaman dipakai lebih dulu: membuka tab tidak
+   * boleh memicu permintaan baru, karena daftarnya sudah dikirim server.
+   */
+  const awal = (await page.evaluate(`
+    (function () {
+      editingId = 1;
+      document.getElementById('postName').value = 'Rules';
+      showPesanTab('riwayat');
+      return {
+        tabTampil: !document.getElementById('pane-riwayat').hidden,
+        html: riwayatHtml(),
+        jumlahDariServer: (RIWAYAT[editingId] || []).length,
+      };
+    })()
+  `)) as { tabTampil: boolean; html: string; jumlahDariServer: number };
+
+  assert.equal(awal.tabTampil, true, 'tab riwayat bisa dibuka');
+  assert.equal(awal.jumlahDariServer, 2, 'riwayat dari server dipakai tanpa permintaan tambahan');
+  assert.ok(awal.html.includes('sebelum disunting'), 'versi lama tampil apa adanya');
+  assert.ok(awal.html.includes('kembalikanVersi(77)'), 'tiap versi punya tombol kembalikan');
+
+  // Tombol "Muat ulang" memakai endpoint revisi dengan metode GET.
+  await page.evaluate(`
+    (async function () { await muatRiwayat(); })()
+  `);
+  const muat = page.fetches.find((call) => /^\/api\/posts\/\d+\/revisions$/.test(call.path));
+  assert.ok(muat, 'riwayat dimuat dari /api/posts/:id/revisions');
+
+  // Mengembalikan versi = POST ke endpoint yang sama, membawa id versinya.
+  await page.evaluate(`
+    (async function () {
+      // Dialog konfirmasi sungguhan menunggu klik; di uji ini dijawab "ya".
+      askConfirm = async function () { return true; };
+      await kembalikanVersi(77);
+    })()
+  `);
+  const kembali = page.fetches.find(
+    (call) => /^\/api\/posts\/\d+\/revisions$/.test(call.path) && call.method === 'POST',
+  );
+  assert.ok(kembali, 'kembalikan versi memakai POST');
+  assert.equal((kembali!.body as { revisionId: number }).revisionId, 77, 'id versi ikut dikirim');
+
+  // Tautan berbagi: dibuat lewat POST, alamatnya memakai origin halaman.
+  await page.evaluate(`
+    (async function () { await buatShare(); })()
+  `);
+  const share = page.fetches.find((call) => /^\/api\/posts\/\d+\/share$/.test(call.path));
+  assert.ok(share, 'tautan berbagi dibuat lewat /api/posts/:id/share');
+  assert.equal(share!.method, 'POST');
+  const alamat = (await page.evaluate(`document.getElementById('shareUrl').value`)) as string;
+  assert.ok(alamat.includes('/bagi/'), 'alamat yang ditampilkan memakai /bagi/');
+
+  await page.evaluate(`
+    (async function () { await cabutShare(); })()
+  `);
+  const cabut = page.fetches.find(
+    (call) => /^\/api\/posts\/\d+\/share$/.test(call.path) && call.method === 'DELETE',
+  );
+  assert.ok(cabut, 'pencabutan tautan memakai DELETE');
+  assert.equal(page.errors.length, 0, `editor riwayat error: ${page.errors.join('|')}`);
 });
 
 await check('pesan: dokumen multi-pesan bisa disusun & dikirim', async () => {

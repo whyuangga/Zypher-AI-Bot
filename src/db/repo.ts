@@ -1,4 +1,6 @@
+import { randomBytes } from 'node:crypto';
 import { all, get, insert, run } from './index.js';
+import { errorMessage, logger } from '../lib/logger.js';
 import { config } from '../config.js';
 import { normalizeTimeZone } from '../lib/timezone.js';
 import { parseBlocks, sanitizeBlocks, type PostBlock } from '../features/custom-post.js';
@@ -1597,6 +1599,15 @@ export async function updateCustomPost(
   const current = await getCustomPost(guildId, id);
   if (!current) return null;
 
+  /*
+   * Versi SEBELUM diubah disimpan lebih dulu. Kalau `simpanRevisi` melempar,
+   * perubahan tetap dilanjutkan: riwayat yang gagal dicatat tidak boleh
+   * menghalangi admin menyimpan pekerjaannya.
+   */
+  await simpanRevisi(guildId, current).catch((error: unknown) =>
+    logger.warn(`Gagal menyimpan revisi pesan ${id}`, errorMessage(error)),
+  );
+
   const blocks = input.blocks === undefined ? current.blocks : sanitizeBlocks(input.blocks).blocks;
   await run(
     'UPDATE custom_posts SET name = ?, channel_id = ?, blocks = ?, accent = ?, sender = ?, flags = ?, series = ?, mentions = ?, thread_name = ?, updated_at = ? WHERE guild_id = ? AND id = ?',
@@ -1653,6 +1664,10 @@ export async function deleteCustomPost(guildId: string, id: number): Promise<voi
   await run('DELETE FROM post_actions WHERE guild_id = ? AND post_id = ?', [guildId, id]);
   await run('DELETE FROM post_schedules WHERE guild_id = ? AND post_id = ?', [guildId, id]);
   await run('DELETE FROM post_flow_sessions WHERE guild_id = ? AND post_id = ?', [guildId, id]);
+  // Riwayat & tautan berbagi ikut dibersihkan: keduanya menunjuk pesan yang
+  // sudah tidak ada, dan tautan yang tertinggal akan membuka halaman kosong.
+  await run('DELETE FROM post_revisions WHERE guild_id = ? AND post_id = ?', [guildId, id]);
+  await run('DELETE FROM post_shares WHERE guild_id = ? AND post_id = ?', [guildId, id]);
   await run('DELETE FROM custom_posts WHERE guild_id = ? AND id = ?', [guildId, id]);
 }
 
@@ -1771,6 +1786,217 @@ export async function savePostDocument(
 
 export async function deletePostDocument(guildId: string, id: number): Promise<void> {
   await run('DELETE FROM post_documents WHERE guild_id = ? AND id = ?', [guildId, id]);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Riwayat revisi pesan                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Batas riwayat.
+ *
+ * Disimpan per pesan: 20 versi cukup untuk "kembalikan seperti tadi", dan
+ * mencegah satu pesan yang sering disunting menelan ruang database. Versi
+ * terlama dibuang saat batas terlampaui — bukan menolak simpanan baru, karena
+ * menyimpan perubahan terbaru selalu lebih penting daripada menyimpan yang
+ * lama.
+ */
+export const HISTORY_LIMITS = {
+  perPost: 20,
+} as const;
+
+export interface PostRevision {
+  id: number;
+  postId: number;
+  name: string;
+  /** Isi pesan saat versi ini dibuat (blok + pengaturan tampilan). */
+  snapshot: {
+    blocks: PostBlock[];
+    accent: string | null;
+    sender: 'bot' | 'webhook';
+    flags: number;
+    series: boolean;
+    allowedMentions: { parse: string[] };
+    threadName: string | null;
+  };
+  createdAt: number;
+}
+
+interface PostRevisionRow {
+  id: number | string;
+  post_id: number | string;
+  name: string;
+  payload: string;
+  created_at: number | string;
+}
+
+function toRevision(row: PostRevisionRow): PostRevision {
+  let snapshot: PostRevision['snapshot'];
+  try {
+    snapshot = JSON.parse(row.payload) as PostRevision['snapshot'];
+  } catch {
+    /*
+     * Payload rusak (sunting manual di database) tetap ditampilkan sebagai
+     * versi kosong. Melempar di sini akan membuat SELURUH daftar riwayat
+     * gagal dibuka hanya karena satu baris lama rusak.
+     */
+    snapshot = {
+      blocks: [],
+      accent: null,
+      sender: 'bot',
+      flags: 0,
+      series: false,
+      allowedMentions: { parse: [] },
+      threadName: null,
+    };
+  }
+  return {
+    id: Number(row.id),
+    postId: Number(row.post_id),
+    name: row.name,
+    snapshot,
+    createdAt: Number(row.created_at),
+  };
+}
+
+/**
+ * Simpan versi SEBELUM pesan diubah.
+ *
+ * Dipanggil dari `updateCustomPost` dan dari jalur "kirim ulang", bukan dari
+ * API: kalau pemanggil harus ingat menyimpannya sendiri, cepat atau lambat ada
+ * jalur yang lupa dan riwayatnya bolong tanpa tanda.
+ */
+async function simpanRevisi(guildId: string, current: CustomPost): Promise<void> {
+  await run(
+    'INSERT INTO post_revisions (guild_id, post_id, name, payload, created_at) VALUES (?, ?, ?, ?, ?)',
+    [
+      guildId,
+      current.id,
+      current.name,
+      JSON.stringify({
+        blocks: current.blocks,
+        accent: current.accent,
+        sender: current.sender,
+        flags: current.flags,
+        series: current.series,
+        allowedMentions: current.allowedMentions,
+        threadName: current.threadName,
+      }),
+      Date.now(),
+    ],
+  );
+  /*
+   * Buang versi terlama di luar batas. Dua langkah (id yang disisakan, lalu
+   * hapus sisanya) dipakai karena SQLite dan Postgres sama-sama tidak
+   * mendukung DELETE ... LIMIT secara portabel.
+   */
+  const baris = await all<{ id: number | string }>(
+    'SELECT id FROM post_revisions WHERE guild_id = ? AND post_id = ? ORDER BY created_at DESC, id DESC',
+    [guildId, current.id],
+  );
+  if (baris.length <= HISTORY_LIMITS.perPost) return;
+  const buang = baris.slice(HISTORY_LIMITS.perPost).map((satu) => Number(satu.id));
+  for (const id of buang) {
+    await run('DELETE FROM post_revisions WHERE id = ?', [id]);
+  }
+}
+
+/** Riwayat revisi satu pesan, terbaru lebih dulu. */
+export async function listPostRevisions(
+  guildId: string,
+  postId: number,
+  limit = HISTORY_LIMITS.perPost,
+): Promise<PostRevision[]> {
+  const rows = await all<PostRevisionRow>(
+    'SELECT id, post_id, name, payload, created_at FROM post_revisions WHERE guild_id = ? AND post_id = ? ORDER BY created_at DESC, id DESC LIMIT ?',
+    [guildId, postId, Math.min(Math.max(1, limit), 100)],
+  );
+  return rows.map(toRevision);
+}
+
+/**
+ * Kembalikan pesan ke satu versi.
+ *
+ * Versi yang dikembalikan TIDAK dihapus: admin mungkin ingin kembali lagi ke
+ * versi sesudahnya. Yang terjadi hanyalah isi pesan diganti, dan versi
+ * "sekarang" otomatis tersimpan sebagai revisi baru oleh `updateCustomPost`.
+ */
+export async function restorePostRevision(
+  guildId: string,
+  postId: number,
+  revisionId: number,
+): Promise<{ post: CustomPost | null; error?: string }> {
+  const baris = await get<PostRevisionRow>(
+    'SELECT id, post_id, name, payload, created_at FROM post_revisions WHERE guild_id = ? AND post_id = ? AND id = ?',
+    [guildId, postId, revisionId],
+  );
+  if (!baris) return { post: null, error: 'Versi itu tidak ada (mungkin sudah terhapus karena batas riwayat).' };
+  const revisi = toRevision(baris);
+  const post = await updateCustomPost(guildId, postId, {
+    name: revisi.name,
+    blocks: revisi.snapshot.blocks,
+    accent: revisi.snapshot.accent,
+    sender: revisi.snapshot.sender,
+    flags: revisi.snapshot.flags,
+    series: revisi.snapshot.series,
+    allowedMentions: revisi.snapshot.allowedMentions as { parse: Array<'users' | 'roles' | 'everyone'> },
+    threadName: revisi.snapshot.threadName,
+  });
+  return post ? { post } : { post: null, error: 'Pesan sudah tidak ada.' };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Tautan berbagi                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Buat tautan berbagi untuk satu pesan.
+ *
+ * Token dibuat ACak dan disimpan, bukan menyandikan isi pesan di URL: isi
+ * pesan container bisa jauh melewati batas panjang URL, dan tautan yang sudah
+ * dibagikan harus bisa DICABUT. Token yang sama dipakai ulang kalau sudah ada,
+ * supaya admin tidak menumpuk tautan untuk pesan yang sama.
+ */
+export async function createPostShare(guildId: string, postId: number): Promise<string> {
+  const ada = await get<{ token: string }>(
+    'SELECT token FROM post_shares WHERE guild_id = ? AND post_id = ? ORDER BY created_at ASC LIMIT 1',
+    [guildId, postId],
+  );
+  if (ada) return ada.token;
+  const token = randomBytes(16).toString('base64url');
+  await run('INSERT INTO post_shares (token, guild_id, post_id, created_at) VALUES (?, ?, ?, ?)', [
+    token,
+    guildId,
+    postId,
+    Date.now(),
+  ]);
+  return token;
+}
+
+/** Hapus tautan berbagi milik satu pesan (semua tokennya). */
+export async function deletePostShare(guildId: string, postId: number): Promise<void> {
+  await run('DELETE FROM post_shares WHERE guild_id = ? AND post_id = ?', [guildId, postId]);
+}
+
+/**
+ * Baca pesan dari token berbagi.
+ *
+ * Sengaja TIDAK memeriksa guild pemanggil: tautan ini memang untuk dibagikan,
+ * termasuk ke orang yang tidak punya akses dashboard. Yang dikembalikan hanya
+ * isi pesan (blok + nama), bukan ID channel atau ID pesan Discord — tautan
+ * berbagi tidak boleh membocorkan struktur server.
+ */
+export async function getSharedPost(token: string): Promise<{ name: string; blocks: PostBlock[] } | null> {
+  const bersih = token.trim();
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(bersih)) return null;
+  const baris = await get<{ post_id: number | string; guild_id: string }>(
+    'SELECT post_id, guild_id FROM post_shares WHERE token = ?',
+    [bersih],
+  );
+  if (!baris) return null;
+  const post = await getCustomPost(baris.guild_id, Number(baris.post_id));
+  if (!post) return null;
+  return { name: post.name, blocks: post.blocks };
 }
 
 /* ------------------------------------------------------------------ */

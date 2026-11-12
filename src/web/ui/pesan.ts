@@ -100,6 +100,15 @@ export interface PesanPageOptions extends PageContext {
    * otomatis tiap …" tanpa permintaan tambahan per pesan.
    */
   schedules?: Record<number, Array<{ dueAt: number; repeatMinutes: number; lastSentAt: number | null }>>;
+  /**
+   * Riwayat versi per pesan (yang terbaru lebih dulu).
+   *
+   * Dikirim sekalian dengan daftar pesan: riwayat dibuka dari tombol di daftar
+   * pesan yang belum tentu pesan itu sedang dibuka di editor, dan memuatnya
+   * lewat permintaan terpisah berarti daftar pesan tampil dulu tanpa riwayat.
+   * Isinya ringkas (tanpa blok penuh) supaya halaman tidak membengkak.
+   */
+  revisions?: Record<number, Array<{ id: number; name: string; createdAt: number; ringkas: string }>>;
 }
 
 /**
@@ -159,6 +168,7 @@ export function pesanPage(options: PesanPageOptions): string {
   </div>
   <div class="list-actions">
     <a class="btn btn-ghost btn-sm" href="/pesan?id=${post.id}">${icon('sliders', 15)} Ubah</a>
+    <a class="btn btn-ghost btn-sm" href="/pesan?id=${post.id}#riwayat">${icon('history', 15)} Riwayat</a>
     <button class="btn-danger btn-sm btn-icon" type="button" title="Hapus pesan"
       aria-label="Hapus pesan" onclick="removePost(${post.id}, ${esc(JSON.stringify(post.name))})">${icon('trash', 15)}</button>
   </div>
@@ -340,6 +350,39 @@ export function pesanPage(options: PesanPageOptions): string {
   });
 
   /**
+   * Kartu riwayat versi & tautan berbagi.
+   *
+   * Riwayat dibuat OTOMATIS setiap pesan disimpan (bukan tombol "simpan
+   * versi"): admin tidak akan ingat menekannya, dan riwayat yang bolong lebih
+   * berbahaya daripada tidak ada riwayat sama sekali. Karena itu kartu ini
+   * tidak punya tombol simpan — hanya daftar versi dan tombol kembalikan.
+   *
+   * Tautan berbagi ada di kartu yang sama karena keduanya sama-sama soal
+   * "membawa isi pesan ke luar editor": satu ke versi lama, satu ke orang lain.
+   */
+  const riwayatCard = card({
+    title: 'Riwayat & bagikan',
+    hint: '20 versi terakhir',
+    body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <button class="btn btn-ghost btn-sm" type="button" onclick="muatRiwayat()">${icon('download', 15)} Muat ulang riwayat</button>
+    <span class="hint" id="riwayatStatus" style="margin:0"></span>
+  </div>
+  <div id="riwayatList" class="block-list"></div>
+  <p class="hint" style="margin:0">Versi lama muncul di sini setiap kali pesan disimpan atau dikirim ulang. Mengembalikan versi lama <b>tidak</b> menghapus versi terbaru — versi sekarang ikut tersimpan, jadi bisa dibalik lagi.</p>
+  <hr class="sep" />
+  <div class="subhead">${icon('external', 15)} Tautan berbagi</div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <input type="text" id="shareUrl" readonly placeholder="Belum dibuat" style="flex:1;min-width:220px" />
+    <button class="btn btn-ghost btn-sm" type="button" onclick="buatShare()">${icon('copy', 15)} Buat tautan</button>
+    <button class="btn btn-ghost btn-sm" type="button" onclick="salinShare()">${icon('copy', 15)} Salin</button>
+    <button class="btn-danger btn-sm" type="button" onclick="cabutShare()">${icon('trash', 15)} Cabut</button>
+  </div>
+  <p class="hint" style="margin:0">Tautan <code>/bagi/…</code> bisa dibuka <b>tanpa login</b> dan hanya menampilkan blok pesannya — tanpa daftar role, channel, atau server. Cocok untuk minta pendapat orang lain sebelum pesan dikirim. Cabut tautannya kalau sudah tidak dipakai.</p>
+</div>`,
+  });
+
+  /**
    * Kartu impor ekspor — dipindah ke tab sendiri supaya tab Susun tidak
    * memanjang oleh dua kotak teks besar yang jarang dipakai.
    */
@@ -428,6 +471,7 @@ ${listCard}
   ${tabPesan('role', 'Ambil role', false, 'tombol & menu')}
   ${tabPesan('impor', 'Impor', false, 'Discohook & JSON')}
   ${tabPesan('grup', 'Multi-pesan', false, 'beberapa pesan, berbalas')}
+  ${tabPesan('riwayat', 'Riwayat', false, 'versi lama & tautan berbagi')}
   <span class="hint" style="margin:0 0 0 auto;align-self:center">Pindah tab tidak menghapus isian yang belum disimpan.</span>
 </div>
 
@@ -452,6 +496,10 @@ ${listCard}
        */''}
   ${previewCard('previewHostBesar')}
   <p class="hint">Pratinjau memakai data blok yang SAMA dengan yang dikirim ke Discord, jadi yang terlihat di sini bukan tebakan. Warna aksen & pengirim diatur di tab <b>Susun</b>.</p>
+</div>
+
+<div class="tab-pane" id="pane-riwayat" role="tabpanel" aria-labelledby="tab-riwayat" hidden>
+  ${riwayatCard}
 </div>
 
 <div class="tab-pane" id="pane-role" role="tabpanel" aria-labelledby="tab-role" hidden>
@@ -2171,6 +2219,13 @@ async function savePost(andSend) {
     } catch (e) {}
     var judulKirim = document.getElementById('postSend');
     if (judulKirim) judulKirim.textContent = 'Simpan & kirim ulang';
+    /*
+     * Riwayat yang tertanam di halaman sudah basi setelah menyimpan (versi
+     * sebelum perubahan ini baru saja dibuat di server). Dibuang dari cache
+     * lokal supaya tab Riwayat memuatnya lagi saat dibuka, bukan menampilkan
+     * daftar lama tanpa versi terbaru.
+     */
+    delete RIWAYAT[result.post.id];
     setAksiStatus(
       andSend
         ? '✅ Tersimpan & terkirim ' + jamSekarang()
@@ -2260,11 +2315,179 @@ function loadExisting() {
   if (send) send.textContent = 'Simpan & kirim ulang';
   loadRoleButtonsFor(found.id);
   loadActionsFor(found.id);
+  /*
+   * Riwayat: pakai data yang sudah tertanam di halaman (tidak ada permintaan
+   * tambahan saat membuka pesan), lalu tetap bisa dimuat ulang dari tab.
+   */
+  if (RIWAYAT_AWAL[found.id]) RIWAYAT[found.id] = RIWAYAT_AWAL[found.id];
+  renderRiwayat();
   muatJadwal();
   renderRoleButtons();
   renderBlocks();
 }
 
+
+/* ---------------- Riwayat versi & tautan berbagi ---------------- */
+
+/**
+ * Ambil riwayat versi dari server, lalu gambar daftarnya.
+ *
+ * Riwayat juga sudah dikirim saat halaman dimuat (RIWAYAT_AWAL), tetapi tombol
+ * "Muat ulang" tetap ada: setelah beberapa kali menyimpan, daftar yang
+ * tertanam di halaman sudah basi dan admin perlu melihat versi barunya tanpa
+ * memuat ulang seluruh halaman.
+ */
+/**
+ * Riwayat yang sudah dimuat bersama halaman: { pesanId: [...] }.
+ *
+ * Langsung dipakai supaya tab Riwayat tidak berkedip kosong saat dibuka.
+ */
+var RIWAYAT_AWAL = ${jsonForScript(options.revisions ?? {})};
+var RIWAYAT = {};
+/**
+ * Escape teks untuk disisipkan ke HTML.
+ *
+ * Fungsi escape dari base.ts hanya dipakai saat server menyusun halaman; kode
+ * di dalam script browser tidak melihat fungsi itu. Nama dan waktu versi berasal dari
+ * database (nama pesan pernah disunting admin), jadi tetap harus di-escape.
+ */
+function escAman(teks) {
+  return String(teks == null ? '' : teks)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+/** Ikon jam untuk baris riwayat — disisipkan server, bukan digambar di sini. */
+var IKON_JAM = ${jsonForScript(icon('clock', 15))};
+
+async function muatRiwayat() {
+  if (!editingId) {
+    setRiwayatStatus('Simpan pesan ini dulu — riwayat dibuat otomatis sejak penyimpanan pertama.');
+    return;
+  }
+  setRiwayatStatus('Memuat…');
+  try {
+    var hasil = await api('/api/posts/' + editingId + '/revisions');
+    RIWAYAT[editingId] = (hasil.revisions || []).map(function (satu) {
+      return { id: satu.id, name: satu.name, createdAt: satu.createdAt };
+    });
+    renderRiwayat();
+    setRiwayatStatus(RIWAYAT[editingId].length ? '' : 'Belum ada versi lama — versi disimpan setiap kali pesan diubah.');
+  } catch (error) {
+    setRiwayatStatus('Gagal memuat riwayat: ' + error.message);
+  }
+}
+
+function setRiwayatStatus(teks) {
+  var el = document.getElementById('riwayatStatus');
+  if (el) el.textContent = teks || '';
+}
+
+/**
+ * Gambar satu baris per versi.
+ *
+ * Waktu memakai format lokal (bukan "3 jam lalu"): yang dicari admin biasanya
+ * versi sebelum perubahan terakhir, dan jam persis lebih mudah dicocokkan
+ * dengan ingatannya daripada selisih waktu yang terus berubah.
+ */
+function renderRiwayat() {
+  var host = document.getElementById('riwayatList');
+  if (!host) return;
+  host.innerHTML = riwayatHtml();
+}
+
+/**
+ * HTML daftar versi — dipisah dari penggambarnya supaya isinya bisa diperiksa
+ * tanpa DOM sungguhan (uji UI memakai elemen tiruan yang tidak menyimpan HTML).
+ */
+function riwayatHtml() {
+  if (!editingId) {
+    return '<p class="hint" style="margin:0">Riwayat muncul untuk pesan yang sudah tersimpan.</p>';
+  }
+  var daftar = RIWAYAT[editingId] || [];
+  if (!daftar.length) {
+    return '<p class="hint" style="margin:0">Belum ada versi lama.</p>';
+  }
+  return daftar.map(function (versi) {
+    return '<div class="list-row">' +
+      '<span class="avatar-sm">' + IKON_JAM + '</span>' +
+      '<div class="list-body">' +
+        '<div class="list-title">' + escAman(versi.name || '(tanpa nama)') + '</div>' +
+        '<div class="list-meta">disimpan ' + escAman(waktuLokal(versi.createdAt)) + '</div>' +
+      '</div>' +
+      '<div class="list-actions">' +
+        '<button class="btn btn-ghost btn-sm" type="button" onclick="kembalikanVersi(' + versi.id + ')">Kembalikan</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+async function kembalikanVersi(revisionId) {
+  var ok = await askConfirm(
+    'Kembalikan versi ini?',
+    'Isi pesan diganti dengan versi itu. Blok yang sekarang otomatis tersimpan sebagai versi baru, jadi masih bisa dibalik.',
+  );
+  if (!ok) return;
+  try {
+    var hasil = await apiMetode('/api/posts/' + editingId + '/revisions', { revisionId: revisionId }, 'POST');
+    var pesan = hasil.post;
+    if (pesan) {
+      document.getElementById('postName').value = pesan.name || '';
+      document.getElementById('postChannel').value = pesan.channelId || '';
+      blocks = (pesan.blocks || []).map(normalBlock);
+      renderBlocks();
+    }
+    await muatRiwayat();
+    toast('✅ Versi dikembalikan — klik Simpan untuk mengirim perubahannya');
+  } catch (error) {
+    toast('Gagal: ' + error.message, true);
+  }
+}
+
+/** Buat tautan berbagi untuk pesan yang sedang dibuka. */
+async function buatShare() {
+  if (!editingId) return toast('Simpan pesan ini dulu', true);
+  try {
+    var hasil = await apiMetode('/api/posts/' + editingId + '/share', {}, 'POST');
+    // origin kosong hanya terjadi di lingkungan uji; di browser selalu ada.
+    var alamat = String(location.origin || '') + '/bagi/' + hasil.token;
+    var isian = document.getElementById('shareUrl');
+    if (isian) isian.value = alamat;
+    toast('✅ Tautan berbagi dibuat');
+  } catch (error) {
+    toast('Gagal: ' + error.message, true);
+  }
+}
+
+async function salinShare() {
+  var isian = document.getElementById('shareUrl');
+  if (!isian || !isian.value) return toast('Buat tautannya dulu', true);
+  try {
+    await navigator.clipboard.writeText(isian.value);
+    toast('✅ Tautan disalin');
+  } catch (error) {
+    // Clipboard bisa diblokir browser (bukan https / izin ditolak). Isian
+    // dibuat bisa dipilih supaya admin tetap bisa menyalin manual.
+    isian.select();
+    toast('Salin manual: tekan Ctrl+C', true);
+  }
+}
+
+async function cabutShare() {
+  if (!editingId) return;
+  var ok = await askConfirm('Cabut tautan berbagi?', 'Siapa pun yang memegang tautannya tidak bisa membukanya lagi.');
+  if (!ok) return;
+  try {
+    await apiMetode('/api/posts/' + editingId + '/share', undefined, 'DELETE');
+    var isian = document.getElementById('shareUrl');
+    if (isian) isian.value = '';
+    toast('✅ Tautan dicabut');
+  } catch (error) {
+    toast('Gagal: ' + error.message, true);
+  }
+}
 
 /* ---------------- Pratinjau ---------------- */
 
@@ -4815,6 +5038,12 @@ function showPesanTab(key) {
     }
   }
   if (key === 'pratinjau') renderPreview();
+  // Tab riwayat memakai data yang sudah dimuat bersama halaman; permintaan
+  // baru baru dilakukan lewat tombol "Muat ulang riwayat".
+  if (key === 'riwayat') {
+    if (editingId && !RIWAYAT[editingId] && RIWAYAT_AWAL[editingId]) RIWAYAT[editingId] = RIWAYAT_AWAL[editingId];
+    renderRiwayat();
+  }
   // Tab terakhir disimpan supaya tidak balik ke Susun setelah menyimpan.
   try { localStorage.setItem('zypher.tab.pesan', key); } catch (e) {}
 }
@@ -4825,7 +5054,7 @@ function showPesanTab(key) {
   var tersimpan = null;
   try { tersimpan = localStorage.getItem('zypher.tab.pesan'); } catch (e) {}
   var kunci = dariUrl || tersimpan;
-  if (kunci && ['susun', 'pratinjau', 'role', 'impor', 'grup'].indexOf(kunci) !== -1) showPesanTab(kunci);
+  if (kunci && ['susun', 'pratinjau', 'role', 'impor', 'grup', 'riwayat'].indexOf(kunci) !== -1) showPesanTab(kunci);
 })();
 
 loadExisting();

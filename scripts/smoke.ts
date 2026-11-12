@@ -7266,6 +7266,136 @@ await testAsync('pesan: allowed_mentions & thread_name bertahan & bawaan aman', 
   await repo.deleteCustomPost(GUILD, denganPing.id);
 });
 
+await testAsync('pesan: riwayat versi & tautan berbagi', async () => {
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Versi awal',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Isi pertama' }],
+    accent: '#5865f2',
+  });
+
+  // Penyimpanan PERTAMA tidak membuat revisi: tidak ada "sebelum" yang perlu
+  // disimpan, dan revisi kosong hanya mengaburkan daftar.
+  assert.equal((await repo.listPostRevisions(GUILD, post.id)).length, 0, 'belum ada versi lama');
+
+  await repo.updateCustomPost(GUILD, post.id, { name: 'Versi kedua', blocks: [{ kind: 'text', value: 'Isi kedua' }] });
+  const setelahDua = await repo.listPostRevisions(GUILD, post.id);
+  assert.equal(setelahDua.length, 1, 'satu versi tersimpan');
+  assert.equal(setelahDua[0]!.name, 'Versi awal', 'yang disimpan adalah isi SEBELUM diubah');
+  assert.equal(
+    (setelahDua[0]!.snapshot.blocks[0] as { value: string }).value,
+    'Isi pertama',
+    'isi lama ikut tersimpan',
+  );
+
+  await repo.updateCustomPost(GUILD, post.id, { name: 'Versi ketiga' });
+  const setelahTiga = await repo.listPostRevisions(GUILD, post.id);
+  assert.equal(setelahTiga.length, 2, 'dua versi');
+  assert.equal(setelahTiga[0]!.name, 'Versi kedua', 'terbaru lebih dulu');
+
+  // Kembalikan ke versi pertama. Versi "sekarang" harus ikut tersimpan,
+  // sehingga mengembalikan versi lama bisa dibatalkan lagi.
+  const kembali = await repo.restorePostRevision(GUILD, post.id, setelahTiga[1]!.id);
+  assert.equal(kembali.post?.name, 'Versi awal', 'nama dikembalikan');
+  assert.equal(
+    (kembali.post?.blocks[0] as { value: string })?.value,
+    'Isi pertama',
+    'blok dikembalikan',
+  );
+  const setelahKembali = await repo.listPostRevisions(GUILD, post.id);
+  assert.equal(setelahKembali.length, 3, 'versi sekarang tersimpan sebagai revisi baru');
+  assert.ok(
+    setelahKembali.some((satu) => satu.name === 'Versi ketiga'),
+    'versi terbaru tidak hilang — bisa dibalik lagi',
+  );
+
+  // Versi yang tidak ada / milik pesan lain harus gagal, bukan mengembalikan
+  // pesan kosong.
+  const lain = await repo.createCustomPost(GUILD, {
+    name: 'Pesan lain',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'x' }],
+  });
+  await repo.updateCustomPost(GUILD, lain.id, { name: 'Pesan lain v2' });
+  const revisiLain = await repo.listPostRevisions(GUILD, lain.id);
+  const salah = await repo.restorePostRevision(GUILD, post.id, revisiLain[0]!.id);
+  assert.equal(salah.post, null, 'versi milik pesan lain ditolak');
+  assert.ok(salah.error, 'alasan penolakan dijelaskan');
+
+  const hantu = await repo.restorePostRevision(GUILD, post.id, 999999);
+  assert.equal(hantu.post, null, 'versi yang tidak ada ditolak');
+
+  /* --- tautan berbagi --- */
+  const token = await repo.createPostShare(GUILD, post.id);
+  assert.ok(/^[A-Za-z0-9_-]{8,64}$/.test(token), 'token aman dipakai di URL');
+  assert.equal(await repo.createPostShare(GUILD, post.id), token, 'token yang sama dipakai ulang');
+
+  const dibagikan = await repo.getSharedPost(token);
+  assert.equal(dibagikan?.name, 'Versi awal', 'nama ikut dibagikan');
+  assert.equal(
+    (dibagikan?.blocks[0] as { value: string })?.value,
+    'Isi pertama',
+    'blok terbaru yang dibagikan',
+  );
+
+  /*
+   * Yang dibagikan hanya blok & nama. Channel, messageId, dan daftar role
+   * TIDAK boleh ikut — tautan ini bisa dibuka siapa saja yang memegangnya.
+   */
+  assert.equal('channelId' in (dibagikan as unknown as Record<string, unknown>), false, 'channel tidak ikut');
+  assert.equal('messageId' in (dibagikan as unknown as Record<string, unknown>), false, 'id pesan tidak ikut');
+
+  await repo.updateCustomPost(GUILD, post.id, { blocks: [{ kind: 'text', value: 'Isi terbaru' }] });
+  assert.equal(
+    ((await repo.getSharedPost(token))?.blocks[0] as { value: string })?.value,
+    'Isi terbaru',
+    'tautan selalu menampilkan isi terkini, bukan salinan beku',
+  );
+
+  // Token ngawur tidak membocorkan apa pun.
+  assert.equal(await repo.getSharedPost('token-palsu-123'), null, 'token tidak dikenal = null');
+  assert.equal(await repo.getSharedPost(''), null, 'token kosong = null');
+
+  await repo.deletePostShare(GUILD, post.id);
+  assert.equal(await repo.getSharedPost(token), null, 'tautan yang dicabut tidak bisa dibuka');
+
+  /*
+   * Halaman publik menyusun HTML dari isi pesan admin. Isi itu harus
+   * di-escape, dan tombol hanya boleh jadi tautan kalau URL-nya http(s) —
+   * URL javascript: akan membuat tautan berbahaya di halaman tanpa login.
+   */
+  const { sharePage } = await import('../src/web/ui/share.js');
+  const halaman = sharePage({
+    name: '<script>alert(1)</script>',
+    blocks: [
+      { kind: 'text', value: 'Halo **dunia** & <b>x</b>' },
+      { kind: 'button', value: 'Klik', url: 'javascript:alert(1)' },
+      { kind: 'button', value: 'Aman', url: 'https://example.com' },
+    ] as never,
+    notFound: false,
+  });
+  assert.equal(halaman.includes('<script>'), false, 'isi pesan tidak bisa menyelipkan script');
+  assert.ok(halaman.includes('&lt;script&gt;'), 'tag ditampilkan sebagai teks');
+  assert.ok(halaman.includes('<strong>dunia</strong>'), 'markdown tebal tetap dirender');
+  assert.equal(halaman.includes('href="javascript:'), false, 'URL javascript: tidak jadi tautan');
+  assert.ok(halaman.includes('href="https://example.com"'), 'URL http(s) tetap jadi tautan');
+  assert.ok(
+    halaman.includes('rel="noopener noreferrer nofollow"'),
+    'tautan luar tidak membawa referrer & tidak diikuti mesin pencari',
+  );
+  const halaman404 = sharePage({ name: '', blocks: [], notFound: true });
+  assert.ok(halaman404.includes('tidak berlaku lagi'), 'token mati dijelaskan, bukan halaman kosong');
+
+  // Menghapus pesan ikut menghapus riwayat & tautannya (tidak ada baris yatim).
+  await repo.deleteCustomPost(GUILD, post.id);
+  assert.equal((await repo.listPostRevisions(GUILD, post.id)).length, 0, 'riwayat ikut terhapus');
+
+  await repo.deleteCustomPost(GUILD, lain.id);
+});
+
 await testAsync('multi-pesan: rujukan, urutan kirim, & dokumen tersimpan', async () => {
   const series = await import('../src/features/post-series.js');
 

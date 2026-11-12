@@ -624,11 +624,52 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Message flags: suppress embeds, suppress notifications | ✅ |
 | Message flags: voice message, `IS_COMPONENTS_V2` manual | ❌ (v2 diurus pengirim) |
 | Multi-pesan dalam satu backup (beberapa pesan, `reference`, `thread_id`) | ✅ tab **Multi-pesan** (`?tab=grup`): sampai 20 pesan per dokumen, `reference` antar pesan, nama thread per pesan, disimpan di `post_documents` |
-| Riwayat/undo revisi, impor backup, share link | ⚠️ impor JSON/URL ada; riwayat & share belum |
+| Riwayat/undo revisi (padanan backup) | ✅ 20 versi terakhir per pesan, dibuat otomatis setiap pesan diubah; kartu "Riwayat & bagikan" (tab **Riwayat**) |
+| Share link (tautan berbagi) | ✅ tautan `/bagi/<token>` bisa dibuka tanpa login, hanya berisi blok pesan, bisa dicabut |
+| Impor backup | ✅ JSON/URL Discohook di tab **Impor**; ekspor JSON juga ada |
 | Jadwal kirim (sekali / berulang, cron) | ⚠️ sekali / tiap N jam (min. 2 jam); jadwal cron per hari/bulan belum |
 | Trigger event (member masuk/keluar) | ❌ (bot punya sambutan sendiri, bukan flow) |
 
-### Batch 4: allowed_mentions, thread_name, default_values
+### Batch 4b: riwayat versi & tautan berbagi
+
+Discohook punya tombol undo di editor dan tautan share untuk membuka backup di
+browser lain. Keduanya sudah ada di sini, dengan dua perbedaan yang disengaja.
+
+**Riwayat versi — dibuat otomatis, bukan tombol.** Setiap kali pesan disimpan
+atau dikirim ulang, isi SEBELUM perubahan dicatat lebih dulu (tabel
+`post_revisions`) — sampai 20 versi per pesan, versi terlama dibuang. Tombol
+"simpan versi" tidak ada karena admin tidak akan ingat menekannya, dan riwayat
+yang bolong lebih berbahaya daripada tidak punya riwayat: saat sadar salah ubah,
+versi yang dibutuhkan justru tidak ada.
+
+Mengembalikan versi lama **tidak menghapus versi terbaru** — isi sekarang ikut
+tercatat sebagai versi baru, sehingga "kembalikan" bisa dibalik lagi. Yang
+dikembalikan: blok, warna aksen, pengirim, flag, pengaturan multi-pesan, izin
+ping, dan nama thread. Yang TIDAK dikembalikan: channel tujuan dan tombol/menu
+role (keduanya tabel sendiri dengan alasan yang berbeda — lihat catatan di
+bawah).
+
+Kalau pencatatan versi gagal (mis. database penuh), penyimpanan pesannya tetap
+jalan dan kegagalannya masuk log sebagai peringatan. Membatalkan penyimpanan
+hanya karena riwayat gagal akan membuat admin kehilangan perubahannya.
+
+**Tautan berbagi.** Tombol "Buat tautan" menghasilkan alamat
+`/bagi/<token>` yang bisa dibuka **tanpa login**. Isinya sengaja dibatasi:
+hanya nama dan blok pesan. Channel, ID pesan, daftar role, dan nama server
+tidak ikut — tautan ini bisa diteruskan ke siapa saja. Token acak 22 karakter,
+disimpan di tabel `post_shares`, dan bisa dicabut kapan saja (halaman langsung
+404). Membuka tautan dua kali menghasilkan token yang sama, supaya admin tidak
+menumpuk tautan untuk pesan yang sama.
+
+Halaman `/bagi/…` juga menyusun HTML-nya sendiri, bukan memakai shell dashboard:
+isi pesan di-escape, dan hanya URL `http(s)` yang dijadikan tautan — URL
+`javascript:` tampil sebagai teks. Tanpa dua hal itu, tautan berbagi menjadi
+jalan masuk script ke halaman tanpa login.
+
+Yang belum: membandingkan dua versi berdampingan (diff), dan riwayat untuk
+dokumen multi-pesan (baru untuk pesan tunggal).
+
+### Batch 4a: allowed_mentions, thread_name, default_values
 
 **Izin ping (`allowed_mentions`).** Tiga centang: pengguna, role, `@everyone`/
 `@here`. Bawaannya **tanpa ping apa pun** (`parse: []`), dan itu keputusan yang
@@ -818,6 +859,11 @@ tidak bisa dibuka lagi — bot akan membuat webhook baru otomatis.
 | `DELETE` | `/api/posts/:id?withMessage=1` | hapus dari dashboard **dan** dari Discord |
 | `PUT` | `/api/posts/:id/roles` | ganti seluruh tombol, menu ambil role, **dan** aksi komponen pesan (`{ buttons, menus, actions }`) |
 | `PUT` | `/api/posts/:id/schedules` | ganti seluruh jadwal kirim pesan (`{ schedules: [{ dueAt, repeatMinutes }] }`) |
+| `GET` | `/api/posts/:id/revisions` | daftar versi lama (`{ revisions: [{ id, name, snapshot, createdAt }] }`) |
+| `POST` | `/api/posts/:id/revisions` | kembalikan satu versi (`{ revisionId }`) |
+| `POST` | `/api/posts/:id/share` | buat (atau pakai ulang) tautan berbagi (`{ token }`) |
+| `DELETE` | `/api/posts/:id/share` | cabut semua tautan berbagi pesan itu |
+| `GET` | `/bagi/:token` | **halaman publik** pratinjau pesan yang dibagikan (tanpa login) |
 | `GET` | `/api/roles` | daftar role server + alasan tidak bisa dibagi |
 | `POST` | `/api/posts/import/discohook` | terjemahkan tautan/JSON Discohook jadi blok (`{ url }` atau `{ json }`) |
 
@@ -878,6 +924,17 @@ Target yang dikenali:
 Aksi yang tidak sah dibuang dan alasannya muncul di `dropped`.
 
 ### Tabel database
+
+Tabel riwayat & tautan berbagi:
+
+| Tabel | Isi |
+|---|---|
+| `post_revisions` | satu baris = satu versi isi pesan SEBELUM diubah (`payload` JSON: blok, aksen, pengirim, flag, series, izin ping, nama thread). Dibatasi 20 baris per pesan (`HISTORY_LIMITS.perPost`), dibuang saat menulis |
+| `post_shares` | satu baris = satu tautan berbagi (`token` acak sebagai kunci utama) |
+
+Keduanya ikut terhapus saat pesannya dihapus, dan keduanya memakai kolom
+`guild_id` + `post_id` (bukan foreign key) supaya tetap berperilaku sama di
+SQLite maupun Postgres.
 
 | Tabel | Isi |
 |---|---|

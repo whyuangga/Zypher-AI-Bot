@@ -243,6 +243,43 @@ CREATE TABLE IF NOT EXISTS post_documents (
 
 CREATE INDEX IF NOT EXISTS idx_post_documents_guild ON post_documents (guild_id);
 
+-- ---------- riwayat revisi pesan ----------
+-- Satu baris = SATU versi isi pesan sebelum diubah.
+--
+-- Kenapa menyimpan isi penuh, bukan diff: pesan container adalah dokumen
+-- panjang yang disunting utuh oleh admin. Diff akan butuh algoritma khusus
+-- dan tetap tidak bisa menjawab pertanyaan yang sebenarnya ditanyakan admin:
+-- "kembalikan seperti jam 10 tadi".
+--
+-- Kenapa dibatasi: tanpa batas, setiap tekan Simpan menambah satu salinan
+-- dokumen panjang. Batasnya dijaga saat menulis, lihat HISTORY_LIMITS.
+CREATE TABLE IF NOT EXISTS post_revisions (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id   TEXT NOT NULL,
+  post_id    INTEGER NOT NULL,
+  name       TEXT NOT NULL,
+  payload    TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_revisions_post ON post_revisions (post_id, created_at DESC);
+
+-- ---------- tautan berbagi pesan ----------
+-- Satu baris = satu tautan yang bisa dibuka orang lain TANPA login.
+--
+-- Kenapa di database, bukan sekadar menyandikan isi di URL: URL dengan isi
+-- pesan panjang akan melewati batas panjang URL, dan tautan yang sudah
+-- dibagikan harus bisa DICABUT. Token di sini acak dan bisa dihapus kapan
+-- saja oleh admin.
+CREATE TABLE IF NOT EXISTS post_shares (
+  token      TEXT PRIMARY KEY,
+  guild_id   TEXT NOT NULL,
+  post_id    INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_shares_post ON post_shares (post_id);
+
 -- ---------- tombol ambil role (tahap 3) ----------
 -- Satu baris = satu tombol. Role disimpan di sini, BUKAN di dalam customId:
 -- customId hanya membawa ID baris, jadi role bisa diganti tanpa mengirim ulang
@@ -574,6 +611,36 @@ CREATE TABLE IF NOT EXISTS post_documents (
 );
 
 CREATE INDEX IF NOT EXISTS idx_post_documents_guild ON post_documents (guild_id);
+
+-- ---------- riwayat revisi pesan ----------
+-- Satu baris = SATU versi isi pesan sebelum diubah.
+--
+-- Kenapa menyimpan isi penuh, bukan diff: pesan container adalah dokumen
+-- panjang yang disunting utuh oleh admin. Diff akan butuh algoritma khusus
+-- dan tetap tidak bisa menjawab pertanyaan yang sebenarnya ditanyakan admin:
+-- "kembalikan seperti jam 10 tadi".
+--
+-- Kenapa dibatasi: tanpa batas, setiap tekan Simpan menambah satu salinan
+-- dokumen panjang. Batasnya dijaga saat menulis, lihat HISTORY_LIMITS.
+CREATE TABLE IF NOT EXISTS post_revisions (
+  id         SERIAL PRIMARY KEY,
+  guild_id   TEXT NOT NULL,
+  post_id    INTEGER NOT NULL,
+  name       TEXT NOT NULL,
+  payload    TEXT NOT NULL,
+  created_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_revisions_post ON post_revisions (post_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS post_shares (
+  token      TEXT PRIMARY KEY,
+  guild_id   TEXT NOT NULL,
+  post_id    INTEGER NOT NULL,
+  created_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_shares_post ON post_shares (post_id);
 
 CREATE TABLE IF NOT EXISTS post_role_buttons (
   id       SERIAL PRIMARY KEY,
