@@ -4387,8 +4387,15 @@ function kotakCabang(daftar, nomor, kunci, judul, kedalaman) {
       return toast('Maksimal ' + BATAS_AKSI.perKomponen + ' aksi per cabang', true);
     }
     var jenis = tambah.value;
-    if (jenis === 'condition' && kedalaman + 1 > KEDALAMAN_CABANG) {
-      return toast('Cabang maksimal ' + KEDALAMAN_CABANG + ' tingkat', true);
+    /*
+     * Menambah syarat ke cabang berarti membuat cabang satu tingkat lebih
+     * dalam. Tingkat 0 = daftar tombol, jadi batasnya kedalaman + 1.
+     */
+    if (jenis === 'condition' && kedalaman + 1 >= KEDALAMAN_CABANG) {
+      return toast(
+        'Cabang maksimal ' + KEDALAMAN_CABANG + ' tingkat. Syarat lebih dalam bisa ditulis sebagai beberapa aksi syarat berurutan.',
+        true,
+      );
     }
     var baru = aksiContoh(jenis);
     if (!baru) return;
@@ -4482,10 +4489,15 @@ function simpulBaru(tipe) {
 /**
  * Kotak editor satu simpul syarat, bersarang untuk and/or/not.
  *
- * Kedalaman dibatasi 3 tingkat di UI (server mengizinkan 4) — bukan karena
- * teknis, tetapi karena kotak yang lebih dalam dari itu tidak terbaca di
- * layar ponsel, dan syarat 4 tingkat hampir selalu bisa ditulis lebih jelas
- * sebagai beberapa aksi syarat berurutan.
+ * Kedalaman pohon syarat dibatasi 3 tingkat di UI (server mengizinkan 4) —
+ * bukan karena teknis, tetapi karena kotak yang lebih dalam dari itu tidak
+ * terbaca di layar ponsel, dan syarat 4 tingkat hampir selalu bisa ditulis
+ * lebih jelas sebagai beberapa aksi syarat berurutan.
+ *
+ * Ini BUKAN batas yang sama dengan kedalaman CABANG aksi (5 tingkat,
+ * KEDALAMAN_CABANG): pohon syarat ada di dalam satu aksi, sedangkan cabang
+ * adalah aksi di dalam aksi. Keduanya dihitung terpisah supaya angka yang
+ * dilihat admin tidak tertukar.
  */
 function kotakSyarat(node, induk, kunci, kedalaman) {
   var kotak = document.createElement('div');
@@ -4632,7 +4644,8 @@ function kotakSyarat(node, induk, kunci, kedalaman) {
     var batas = document.createElement('p');
     batas.className = 'hint';
     batas.style.margin = '0';
-    batas.textContent = 'Batas 3 tingkat sarang di editor. Syarat lebih dalam bisa ditulis sebagai beberapa aksi syarat berurutan.';
+    batas.textContent =
+      'Batas 3 tingkat gabungan syarat (dan / atau / bukan) di editor. Syarat lebih dalam bisa ditulis sebagai beberapa aksi syarat berurutan.';
     kotak.appendChild(batas);
   }
 

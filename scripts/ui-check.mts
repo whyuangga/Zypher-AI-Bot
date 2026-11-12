@@ -1452,6 +1452,74 @@ await check('pesan: cabang bersyarat memakai editor aksi penuh & bisa bersarang'
   assert.equal(page.errors.length, 0, `editor cabang error: ${page.errors.join('|')}`);
 });
 
+await check('pesan: menambah syarat di cabang berhenti di 5 tingkat & memberi alasan', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-cabang-dalam');
+
+  /*
+   * Batas kedalaman harus DITEGAKKAN di tombol tambah, bukan hanya di
+   * sanitizer: tanpa ini admin menyusun lima tingkat, menekan Simpan, dan
+   * baru tahu sebagian cabangnya dibuang server.
+   *
+   * Kotak cabang dipanggil langsung dengan kedalaman tertentu supaya test ini
+   * tidak bergantung pada cara pohon bertingkat digambar.
+   */
+  const hasil = (await page.evaluate(`
+    (function () {
+      var pesan = [];
+      toast = function (teks) { pesan.push(String(teks)); };
+
+      var daftar = [{ kind: 'condition', value: 'a', comparator: 'notEmpty', then: [{ kind: 'dud' }] }];
+
+      function tombolKotak(kotak) {
+        var head = kotak.children[0];
+        var pilih = null;
+        var tombol = null;
+        (head.children || []).forEach(function (c) {
+          if (c.tagName === 'SELECT') pilih = c;
+          if (c.title === 'Tambah aksi ke cabang ini') tombol = c;
+        });
+        return { pilih: pilih, tombol: tombol };
+      }
+
+      // Kedalaman 3 (masih boleh): cabangnya ada di tingkat keempat.
+      var kotakDangkal = tombolKotak(kotakCabang(daftar, 0, 'then', 'cocok', 3));
+      var sebelum = (daftar[0].then || []).length;
+      kotakDangkal.pilih.value = 'condition';
+      kotakDangkal.tombol.onclick();
+      var sesudah = (daftar[0].then || []).length;
+
+      // Kedalaman 4 (cabangnya akan jadi tingkat kelima): syarat DITOLAK.
+      daftar[0].then = [{ kind: 'dud' }];
+      var kotakDalam = tombolKotak(kotakCabang(daftar, 0, 'then', 'cocok', 4));
+      kotakDalam.pilih.value = 'condition';
+      kotakDalam.tombol.onclick();
+      var tetap = (daftar[0].then || []).length;
+
+      // Di kedalaman yang sama, aksi BIASA (bukan syarat) tetap boleh.
+      kotakDalam.pilih.value = 'dud';
+      kotakDalam.tombol.onclick();
+      var sesudahDud = (daftar[0].then || []).length;
+
+      return {
+        sebelum: sebelum,
+        sesudah: sesudah,
+        tetap: tetap,
+        sesudahDud: sesudahDud,
+        pesan: pesan.join(' | '),
+        batas: KEDALAMAN_CABANG
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(page.errors.length, 0, `cabang dalam tidak melempar error: ${page.errors.join('|')}`);
+  assert.equal(hasil.batas, 5, 'batas di layar 5 tingkat');
+  assert.equal(hasil.sesudah, Number(hasil.sebelum) + 1, 'syarat di tingkat keempat masih diterima');
+  assert.equal(hasil.tetap, 1, 'syarat di tingkat kelima DITOLAK');
+  assert.equal(hasil.sesudahDud, 2, 'aksi biasa di kedalaman itu tetap boleh (bukan dinding mati)');
+  assert.match(String(hasil.pesan), /maksimal 5 tingkat/, 'alasan menyebut angkanya');
+});
+
 await check('pesan: kartu aksi blok Select bisa dibuka & digambar ulang', async () => {
   const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
   const page = mountPage(html, 'uji-aksi-select');
