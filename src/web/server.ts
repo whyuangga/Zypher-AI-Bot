@@ -105,6 +105,7 @@ import { listGuildRoles } from '../features/role-buttons.js';
 import { sharePage } from './ui/share.js';
 import { payloadUntukPesan } from '../features/custom-post-send.js';
 import { CODEGEN_LIBRARIES, generateCodegen } from '../features/post-codegen.js';
+import { ACTION_LIMITS } from '../features/post-actions.js';
 import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
 import {
   previewAgentReply,
@@ -929,6 +930,12 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         roleButtons,
         roleMenus,
         postActions: aksiKomponen,
+        aksiLimits: {
+          perKomponen: ACTION_LIMITS.perComponent,
+          countedPerFlow: ACTION_LIMITS.countedPerFlow,
+          messagePerFlow: ACTION_LIMITS.messagePerFlow,
+          branchDepth: ACTION_LIMITS.branchDepth,
+        },
         schedules: jadwal,
         revisions: riwayat,
         // Dokumen multi-pesan: dikirim sekalian supaya tab "Multi-pesan"

@@ -1,5 +1,5 @@
 /**
- * Aksi komponen `/pesan` — versi ringkas "flow" Discohook.
+ * Aksi komponen `/pesan` — flow bergaya Discohook Actions.
  *
  * Kenapa modul terpisah dan MURNI (tanpa discord.js, tanpa database):
  *
@@ -10,25 +10,25 @@
  *   - Aksi adalah teks bebas yang ditulis admin (balasan, template). Semuanya
  *     harus divalidasi di sini supaya tidak ada jalan masuk ke data rusak.
  *
- * Bedanya dengan Discohook, dan alasannya:
+ * Padanan dengan Discohook (`FlowActionType`):
  *
- *   - Discohook punya 11 aksi (Check, Stop, Wait, Set variable, Create thread,
- *     Send webhook message, Delete message, dst). Yang diambil di sini hanya
- *     yang benar-benar berguna untuk bot satu-server: role, balasan, dan
- *     mengirim pesan lain yang sudah tersimpan.
- *   - `Wait` dan `Set variable` sengaja belum ada. `Wait` butuh antrean
- *     tahan-restart (bot yang restart di tengah flow akan kehilangan sisa
- *     aksinya), sedangkan `Set variable` baru berguna kalau sudah ada cabang
- *     bersyarat. Menambahkannya setengah matang lebih membingungkan daripada
- *     tidak ada.
- *   - Balasan pada aksi role TIDAK memakai kalimat tetap seperti dulu. Admin
- *     menentukan sendiri teksnya (opsional) — itu yang paling sering diminta
- *     saat memakai Discohook.
+ *   - `AddRole`/`RemoveRole`/`ToggleRole` → `role` dengan `op` give/remove/toggle;
+ *   - `SendMessage`/`SendWebhookMessage` → `message` dan `webhook`;
+ *   - `SendRawMessage` → `raw`;
+ *   - `Wait` → `wait` (batas di sini 7 hari, Discohook 60 detik);
+ *   - `Check` → `condition` dengan cabang `then`/`else` bertingkat;
+ *   - `SetVariable` → `variable` (static/adaptive/get);
+ *   - `CreateThread` → `thread`; `DeleteMessage` → `delete`;
+ *   - `Stop` → `stop`; `Dud` → `dud`.
  *
- * Sejak penantian tahan-restart tersedia (lihat post-flow.ts), `wait`, `condition`,
- * dan `variable` ikut didukung. Ketiganya tetap TIDAK boleh bergantung pada
- * antrean yang rumit: flow yang menunggu disimpan sebagai sesi, lalu dilanjutkan
- * timer — bukan ditahan di memori.
+ * Yang TIDAK diambil: `SendModal` (di Discohook sendiri sudah dikomentari) dan
+ * `Backup`. Batasnya pun mengikuti Discohook: kedalaman cabang 5 tingkat, 40
+ * aksi berhitung per flow (`condition`/`stop` tidak dihitung), dan 15 aksi
+ * pengirim pesan per flow.
+ *
+ * `wait` tetap tidak menahan apa pun di memori: flow yang menunggu disimpan
+ * sebagai sesi lalu dilanjutkan timer, termasuk sisa aksi yang berada DI DALAM
+ * cabang (lihat `jalankanLangkah` di post-action-runner.ts).
  */
 import {
   CONDITION_LIMITS,
@@ -250,14 +250,38 @@ export const ACTION_LIMITS = {
   /**
    * Kedalaman cabang bersyarat.
    *
-   * Discohook membatasi 40 aksi berhitung (10 untuk pengguna gratis) dan
-   * menyusun cabang sebagai pohon. Di sini batasnya lebih sederhana: 3 tingkat
-   * sarang. Alasannya bukan teknis semata — dashboard harus bisa menampilkan
-   * pohonnya, dan cabang 4 tingkat di layar ponsel sudah tidak terbaca.
+   * Discohook menyusun cabang sebagai pohon tanpa batas tingkat yang tegas
+   * (yang dijaga di sana jumlah aksinya). Di sini 5 tingkat: cukup untuk
+   * "kalau A, kalau B, kalau C" yang wajar ditulis manusia, dan masih bisa
+   * digambar dashboard tanpa kotak yang tak terbaca di layar ponsel. Lebih
+   * dari itu DILAPORKAN, bukan dipotong diam-diam.
    */
-  branchDepth: 3,
-  /** Jumlah aksi dihitung per flow, termasuk yang di dalam cabang. */
-  countedPerComponent: 40,
+  branchDepth: 5,
+  /**
+   * Jumlah aksi yang DIHITUNG per flow, termasuk yang di dalam cabang.
+   *
+   * Sama seperti `refineZodDraftFlowMax` di Discohook: `condition` dan `stop`
+   * tidak dihitung (keduanya hanya mengatur alur, bukan melakukan sesuatu).
+   * Discohook memakai 40 (10 untuk pengguna gratis); di sini semua server
+   * dianggap penuh, jadi 40.
+   */
+  countedPerFlow: 40,
+  /**
+   * Jumlah aksi yang MENGIRIM pesan per flow (kirim pesan + webhook).
+   *
+   * Discohook membatasi 15 (`Cannot have more than 15 message actions`).
+   * Batasnya bukan teknis: flow yang mengirim puluhan pesan dalam satu klik
+   * hampir selalu salah susun, dan rate limit channel akan menghukumnya.
+   */
+  messagePerFlow: 15,
+  /**
+   * Jaring pengaman jumlah aksi TOTAL per flow, termasuk yang tidak dihitung.
+   *
+   * `condition` dan `stop` tidak dihitung terhadap kuota, jadi tanpa batas ini
+   * satu cabang bisa berisi ratusan aksi "hentikan" — masing-masing sah, tetapi
+   * tidak ada gunanya dan membuat sesi penantian menyimpan payload besar.
+   */
+  maxTotal: 120,
 } as const;
 
 /** Batas variabel per flow saat dijalankan. */
@@ -391,7 +415,142 @@ export function ringkasSyarat(node: ConditionNode | null | undefined): string {
  * yang hilang diam-diam.
  */
 export function sanitizeActions(input: unknown): { actions: PostAction[]; dropped: string[] } {
-  return sanitizeActionsDalam(input, 0);
+  const { actions, dropped } = sanitizeActionsDalam(input, 0);
+  /*
+   * Batas flow diterapkan SESUDAH pohonnya utuh, bukan di tengah penyusunan:
+   * jumlah aksi hanya berarti kalau cabang di dalamnya sudah ikut dihitung.
+   * Kalau dihitung sambil berjalan, cabang yang dibuang belakangan membuat
+   * angkanya berbeda dari yang dilihat admin di dasbor.
+   */
+  const dibatasi = batasiAksiFlow(actions, dropped);
+  return { actions: dibatasi, dropped };
+}
+
+/** Cacahan aksi satu flow (satu komponen). */
+export interface HitungFlow {
+  /** Semua aksi, termasuk `condition` dan `stop`. */
+  total: number;
+  /** Aksi berhitung — `condition`/`stop` tidak dihitung, sama seperti Discohook. */
+  berhitung: number;
+  /** Aksi yang mengirim pesan (`message` + `webhook`). */
+  pesan: number;
+}
+
+/** Aksi ini dihitung terhadap kuota flow? (padanan `refineZodDraftFlowMax`) */
+function dihitungFlow(kind: string): boolean {
+  return kind !== 'condition' && kind !== 'stop';
+}
+
+/** Apakah aksi ini mengirim pesan (kuota 15 ala Discohook)? */
+function kirimPesanAksi(kind: string): boolean {
+  return kind === 'message' || kind === 'webhook';
+}
+
+/**
+ * Hitung aksi satu flow, termasuk yang berada di dalam cabang.
+ *
+ * Dipakai sanitizer DAN dasbor, supaya angka "12/40" di layar admin adalah
+ * angka yang sama dengan yang ditegakkan saat menyimpan.
+ */
+export function hitungAksiFlow(actions: PostAction[]): HitungFlow {
+  let total = 0;
+  let berhitung = 0;
+  let pesan = 0;
+  const jalan = (daftar: PostAction[]): void => {
+    for (const aksi of daftar) {
+      total += 1;
+      if (dihitungFlow(aksi.kind)) berhitung += 1;
+      if (kirimPesanAksi(aksi.kind)) pesan += 1;
+      if (aksi.kind === 'condition') {
+        jalan(aksi.then ?? []);
+        jalan(aksi.else ?? []);
+      }
+    }
+  };
+  jalan(actions);
+  return { total, berhitung, pesan };
+}
+
+/**
+ * Buang aksi yang melewati kuota flow Discohook.
+ *
+ * Dua kuota: 40 aksi berhitung dan 15 aksi pengirim pesan. `condition` tidak
+ * pernah dibuang karena ia hanya mengatur alur — membuangnya akan membuang
+ * cabang beserta aksinya, dan alasan "syarat dihapus" tidak menjelaskan apa
+ * pun ke admin.
+ *
+ * Alasan dilaporkan SEKALI per kuota: daftar 60 alasan "melebihi batas" tidak
+ * lebih membantu daripada satu kalimat.
+ */
+export function batasiAksiFlow(actions: PostAction[], dropped: string[] = []): PostAction[] {
+  const hitung: HitungFlow = { total: 0, berhitung: 0, pesan: 0 };
+  let laporHitung = false;
+  let laporPesan = false;
+  let laporTotal = false;
+  const jalan = (daftar: PostAction[]): PostAction[] => {
+    const hasil: PostAction[] = [];
+    for (const aksi of daftar) {
+      if (aksi.kind === 'condition') {
+        if (hitung.total >= ACTION_LIMITS.maxTotal) {
+          if (!laporTotal) {
+            dropped.push(`aksi melebihi batas ${ACTION_LIMITS.maxTotal} total per flow`);
+            laporTotal = true;
+          }
+          continue;
+        }
+        hitung.total += 1;
+        const thenBaru = aksi.then ? jalan(aksi.then) : undefined;
+        const elseBaru = aksi.else ? jalan(aksi.else) : undefined;
+        /*
+         * Cabang yang HABIS karena kuota membuang aksi syaratnya sekalian.
+         * Kalau tidak, syarat itu tersimpan tanpa cabang — dan syarat tanpa
+         * cabang berarti "tidak cocok = hentikan flow", padahal admin menulis
+         * cabang. Perubahan arti diam-diam seperti itu justru yang dihindari
+         * di seluruh modul ini, jadi lebih baik dilaporkan.
+         */
+        const habis =
+          (aksi.then?.length && !thenBaru?.length ? 'cocok' : '') ||
+          (aksi.else?.length && !elseBaru?.length ? 'tidak cocok' : '');
+        if (habis) {
+          dropped.push(`syarat dibuang: seluruh isi cabang "${habis}" melewati kuota flow`);
+          continue;
+        }
+        hasil.push({
+          ...aksi,
+          ...(thenBaru?.length ? { then: thenBaru } : {}),
+          ...(elseBaru?.length ? { else: elseBaru } : {}),
+        });
+        continue;
+      }
+      if (hitung.total >= ACTION_LIMITS.maxTotal) {
+        if (!laporTotal) {
+          dropped.push(`aksi melebihi batas ${ACTION_LIMITS.maxTotal} total per flow`);
+          laporTotal = true;
+        }
+        continue;
+      }
+      if (dihitungFlow(aksi.kind) && hitung.berhitung >= ACTION_LIMITS.countedPerFlow) {
+        if (!laporHitung) {
+          dropped.push(`aksi melebihi batas ${ACTION_LIMITS.countedPerFlow} aksi dihitung per flow`);
+          laporHitung = true;
+        }
+        continue;
+      }
+      if (kirimPesanAksi(aksi.kind) && hitung.pesan >= ACTION_LIMITS.messagePerFlow) {
+        if (!laporPesan) {
+          dropped.push(`aksi kirim pesan melebihi batas ${ACTION_LIMITS.messagePerFlow} per flow`);
+          laporPesan = true;
+        }
+        continue;
+      }
+      hitung.total += 1;
+      if (dihitungFlow(aksi.kind)) hitung.berhitung += 1;
+      if (kirimPesanAksi(aksi.kind)) hitung.pesan += 1;
+      hasil.push(aksi);
+    }
+    return hasil;
+  };
+  return jalan(actions);
 }
 
 /**
@@ -661,6 +820,17 @@ function sanitizeActionsDalam(
     }
   }
 
+  /*
+   * Batas per komponen HANYA di tingkat atas.
+   *
+   * Tingkat atas = satu tombol/opsi/menu, jadi batasnya 6 — angka yang dipakai
+   * dashboard sejak awal. Isi cabang TIDAK dibatasi 6: cabang bukan komponen,
+   * dan Discohook pun tidak membatasi panjang cabang selain lewat kuota flow.
+   * Kalau isi cabang dipotong 6 di sini, kuota flow (40 aksi berhitung) tidak
+   * pernah tercapai dan admin melihat alasan "maksimal 6" yang membingungkan.
+   * Batas menyeluruhnya ada di `batasiAksiFlow` (`maxTotal`).
+   */
+  if (kedalaman > 0) return { actions, dropped };
   const dibatasi = actions.slice(0, ACTION_LIMITS.perComponent);
   if (actions.length > dibatasi.length) {
     dropped.push(`aksi melebihi batas ${ACTION_LIMITS.perComponent} per komponen`);

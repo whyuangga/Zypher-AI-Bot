@@ -300,13 +300,31 @@ type HasilFlow = 'selesai' | 'menunggu' | 'berhenti';
  *
  * `steps` adalah SISA langkah. Saat menemui `wait`, sisa langkah dikembalikan
  * lewat `pending` supaya pemanggil bisa menyimpannya — bukan ditahan di memori.
+ *
+ * Cabang bersyarat TIDAK dijalankan dengan panggilan rekursif yang menyembunyikan
+ * sisa langkahnya. Cabang yang dipilih DISISIPKAN ke daftar kerja yang sedang
+ * berjalan (lihat `jalankanLangkah` pada `condition`), sehingga:
+ *
+ *   1. `wait` di dalam cabang ikut tersimpan sebagai sesi — dulu cabang
+ *      dijalankan lewat rekursi, dan `pending`-nya hanya berisi sisa langkah
+ *      cabang; aksi SESUDAH syarat hilang begitu bot restart.
+ *   2. Cabang bertingkat (5 tingkat) tidak menumpuk tumpukan panggilan.
+ *   3. `stop` di dalam cabang menghentikan SELURUH flow, bukan hanya cabangnya
+ *      (perilaku lama: cabang yang berhenti membuat sisa langkah luar hilang
+ *      tanpa penjelasan).
  */
 async function jalankanLangkah(
   runtime: FlowRuntime,
   steps: ActionStep[],
 ): Promise<{ hasil: HasilFlow; pending?: ActionStep[]; alasan?: string }> {
-  for (let i = 0; i < steps.length; i += 1) {
-    const step = steps[i]!;
+  /*
+   * Daftar kerja: satu-satunya sumber urutan. Cabang yang dipilih disisipkan
+   * di posisi sesudah aksi syarat, jadi "lanjut ke aksi berikutnya" bekerja
+   * sama di tingkat atas maupun di dalam cabang.
+   */
+  const kerja: ActionStep[] = [...steps];
+  for (let i = 0; i < kerja.length; i += 1) {
+    const step = kerja[i]!;
 
     if (step.kind === 'role') {
       const hasil = await jalankanRole({
@@ -413,8 +431,15 @@ async function jalankanLangkah(
         // terjadi di jalur itu. Tidak ada pesan apa pun — jangan mengganggu.
         continue;
       }
-      const dalam = await jalankanLangkah(runtime, cabang);
-      if (dalam.hasil !== 'selesai') return dalam;
+      /*
+       * Sisipkan cabang TEPAT sesudah aksi syarat ini. Dengan begitu sisa
+       * langkah sesudah cabang tetap berada di daftar kerja yang sama, ikut
+       * tersimpan saat ada `wait`, dan `stop` di dalam cabang menghentikan
+       * seluruh flow (bukan hanya cabangnya). Hal yang sama berlaku untuk
+       * cabang yang bersarang: penyisipan berulang membuat urutannya persis
+       * urutan yang dibaca admin di dasbor.
+       */
+      kerja.splice(i + 1, 0, ...cabang);
       continue;
     }
 
@@ -431,7 +456,13 @@ async function jalankanLangkah(
        * beberapa menit terasa seperti rusak.
        */
       await runtime.jawab(`⏳ Diterima. Aksi berikutnya dijalankan dalam ${describeWait(step.seconds)}.`, true);
-      return { hasil: 'menunggu', pending: steps.slice(i) };
+      /*
+       * Yang disimpan adalah SISA DAFTAR KERJA, bukan sisa `steps` asli:
+       * kalau penantian berada di dalam cabang, sisa itu sudah memuat cabang
+       * yang belum dijalankan DAN langkah sesudah syaratnya. Versi lama
+       * menyimpan `steps.slice(i)` sehingga aksi sesudah syarat hilang.
+       */
+      return { hasil: 'menunggu', pending: kerja.slice(i) };
     }
 
     if (step.kind === 'thread') {

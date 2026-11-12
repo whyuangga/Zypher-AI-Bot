@@ -1806,10 +1806,20 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   letter-spacing: 0.03em;
 }
 
-.aksi-cabang-baris {
-  display: flex;
-  align-items: center;
+/*
+ * Baris aksi di dalam cabang memakai editor aksi penuh (bukan satu baris teks
+ * ringkas), karena isinya boleh aksi apa pun. Karena itu barisnya TIDAK
+ * dipaksa flex seperti dulu: isian teks, dropdown, dan kotak cabang anak
+ * harus bisa turun ke baris berikutnya di layar sempit.
+ */
+.aksi-baris.aksi-cabang-baris {
+  display: grid;
   gap: 6px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent, var(--line));
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--bg-2);
 }
 
 .aksi-cabang-teks {

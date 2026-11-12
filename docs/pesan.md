@@ -478,7 +478,7 @@ yang dilakukan editor). Aksi komponen menempel pada ID itu, jadi menyimpan ulang
 tombol tidak membuang aksinya. Tombol yang benar-benar dihapus tetap berhenti
 berlaku — customId lamanya tidak ditemukan di database.
 
-### Aksi komponen: versi ringkas "flow" Discohook
+### Aksi komponen: flow bergaya Discohook Actions
 
 Setiap tombol role, setiap **pilihan** dropdown role, dan setiap blok **Select
 menu** punya kartu **Aksi**. Isinya deretan tindakan yang dijalankan bot saat
@@ -508,7 +508,14 @@ Yang perlu diketahui:
 - **Satu balasan per interaksi.** Discord hanya menerima satu jawaban, jadi
   balasan pertama yang dipakai; balasan kedua dilewati dan dicatat di log.
   Karena itu aksi **kirim pesan** mengirim ke channel, bukan sebagai balasan.
-- **Maksimal 6 aksi per komponen** dan 40 aksi per pesan.
+- **Kuota flow mengikuti Discohook** (`refineZodDraftFlowMax`): **40 aksi dihitung**
+  per flow — `periksa syarat` dan `hentikan flow` tidak ikut dihitung, karena keduanya
+  hanya mengatur alur — dan **15 aksi kirim pesan** per flow (kirim pesan + webhook).
+  Isi cabang ikut dihitung. Di atas itu ada **jaring pengaman 120 aksi total** supaya
+  satu cabang tidak bisa berisi ratusan aksi yang semuanya tak terhitung.
+  Tingkat teratas (satu tombol/opsi/menu) tetap dibatasi **6 aksi**, dan satu pesan
+  tetap dibatasi **40 aksi**. Semua kelebihan dilaporkan dengan alasannya, bukan
+  dipotong diam-diam, dan kartu aksi menampilkan `12/40 dihitung` sambil menyusun.
 - **Aksi "Tunggu" tahan restart.** Sisa aksinya disimpan ke tabel `post_flow_sessions` dan
   dilanjutkan timer 15 detik. Artinya: waktunya bisa mundur beberapa detik, dan kalau bot
   sedang mati saat waktunya tiba, aksinya berjalan begitu bot hidup lagi (bukan hilang).
@@ -516,7 +523,9 @@ Yang perlu diketahui:
   seperti `Check` di Discohook: cabang "cocok" ATAU "tidak cocok" dijalankan, lalu flow
   **lanjut** ke aksi sesudahnya. Kalau kedua cabang kosong, perilakunya seperti versi lama —
   syarat yang tidak cocok menghentikan flow. Bentuk lama dipertahankan supaya aksi yang sudah
-  tersimpan tidak berubah artinya diam-diam. Kedalaman cabang dibatasi **3 tingkat**.
+  tersimpan tidak berubah artinya diam-diam. Kedalaman cabang **5 tingkat**
+  (`ACTION_LIMITS.branchDepth`), dan cabang boleh berisi aksi apa pun — termasuk `tunggu`,
+  `thread`, `webhook`, atau `periksa syarat` lagi (lihat **Batch 12**).
 - **Tanpa aksi, perilaku lama tetap jalan.** Tombol role yang belum diberi aksi
   masih memberi/melepas role dengan balasan baku, jadi pesan yang sudah
   terkirim tidak mendadak mati.
@@ -575,12 +584,14 @@ Contoh balasan paling sering dipakai:
   aplikasi pemilik komponen, dan pemilik pesan webhook adalah webhook itu
   sendiri. Bot menolaknya lebih awal dengan penjelasan.
 - Yang **belum** ada dan alasannya:
-  - **Percabangan dua jalur** (Discohook: `Check` dengan jalur "kalau cocok / kalau tidak").
-    Saat ini syarat yang tidak cocok menghentikan flow. Percabangan butuh langkah
-    bertingkat + batas kedalaman yang bisa dijelaskan.
-  - **`Wait` sub-detik** dan penjadwalan presisi: timer berjalan tiap 15 detik.
-  - **Kirim pesan webhook dari flow** dan **backup/shortlink** (fitur Deluxe Discohook).
-  - **Thread forum** (hanya thread biasa yang didukung).
+  - **`Wait` sub-detik** dan penjadwalan presisi: timer berjalan tiap 15 detik
+    (Discohook sendiri membatasi `Wait` di 60 detik; di sini sampai 7 hari).
+  - **Backup/shortlink Deluxe Discohook** — itu layanan berbayar milik mereka, bukan
+    bentuk payload; padanannya di sini riwayat versi 20 terakhir + tautan `/bagi/<token>`.
+  - **`SendModal`** — di kode sumber Discohook sendiri aksi ini dikomentari (tidak aktif).
+  - **Thread forum** dalam arti "memilih forum dari daftar": tag forum sudah didukung
+    dan channel forum dibuatkan postingan baru, tetapi pemilihan channel forum tujuan
+    belum ada (thread selalu dibuat di channel pesan pemicu).
 
 ### Kenapa tombol role di baris paling bawah
 
@@ -599,7 +610,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 |---|---|---|
 | Do nothing | ✅ Tanpa aksi | |
 | Wait | ✅ Tunggu | Discohook maks 60 detik; di sini sampai 7 hari karena penantian disimpan di database |
-| Check (pohon `then`/`else`, `and`/`or`/`not`/`in`/`equals`) | ✅ | cabang `then`/`else`, pohon `and`/`or`/`not`/`in` bertingkat (maks 4 tingkat, 40 simpul), plus pembanding datar lama (`contains`, `empty`, …). `not` = NOR, sama dengan Discohook. Bentuk datar tetap didukung supaya aksi lama tidak berubah arti |
+| Check (pohon `then`/`else`, `and`/`or`/`not`/`in`/`equals`) | ✅ | cabang `then`/`else` **bertingkat sampai 5 tingkat**, isi cabang boleh aksi apa pun (termasuk `wait` yang tetap dilanjutkan timer sesudah bot restart), pohon `and`/`or`/`not`/`in` (maks 4 tingkat, 40 simpul), plus pembanding datar lama (`contains`, `empty`, …). `not` = NOR, sama dengan Discohook. Bentuk datar tetap didukung supaya aksi lama tidak berubah arti |
 | Set variable (static / adaptive / get) | ✅ | ketiga jenisnya ada; nilai `adaptive` terbatas pada `messageId`, `channelId`, `threadId` |
 | Stop (+ pesan) | ✅ Hentikan flow | |
 | Add / Remove / Toggle role | ✅ | |
@@ -635,6 +646,49 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Melihat payload JSON mentah | ✅ panel yang sama menampilkan `components` persis seperti yang diterima Discord, siap ditempel ke REST API |
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, satu gambar besar, tombol/menu tetap di luar embed |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 12: flow bertingkat penuh (padanan Discohook Actions)
+
+Batch ini menutup tiga selisih yang paling terasa saat memindahkan flow Discohook
+ke sini, semuanya diukur dari kode sumber mereka (`packages/site/app/types/flows.ts`).
+
+| Aspek | Discohook | Sebelum batch ini | Sekarang |
+|---|---|---|---|
+| Kedalaman cabang `Check` | pohon, tanpa batas tingkat tegas | 3 tingkat | **5 tingkat** (`ACTION_LIMITS.branchDepth`) |
+| Isi cabang | aksi apa pun, termasuk `Wait` & `Check` lagi | hanya 6 jenis ringkas, tanpa syarat | **editor aksi penuh**, semua 12 jenis, `periksa syarat` boleh bersarang |
+| `Wait` di dalam cabang | ditangani runner mereka | sisa cabang disimpan, **sisa aksi sesudah syarat hilang** | sesi menyimpan **sisa cabang + sisa flow** |
+| Kuota aksi berhitung | 40 (10 non-premium), `Check`/`Stop` tidak dihitung | hanya 6/komponen + 40/pesan, cabang tidak dihitung | **40 dihitung per flow**, cabang ikut dihitung |
+| Kuota aksi kirim pesan | 15 per flow | tidak ada | **15 per flow** |
+| Angka batas di layar | dihitung dari skema | ditulis ulang di JavaScript | dikirim server (`aksiLimits`), satu sumber |
+
+**Kenapa `wait` di dalam cabang dulu kehilangan aksi.** Cabang dijalankan lewat
+panggilan rekursif, dan saat `wait` ditemui, yang dikembalikan hanya
+`steps.slice(i)` — sisa **cabang**. Aksi sesudah aksi syarat berada di daftar
+pemanggil, jadi tidak ikut tersimpan; begitu bot restart, sapaan "sesudah syarat"
+hilang tanpa jejak.
+
+Sekarang cabang yang dipilih **disisipkan ke satu daftar kerja**
+(`kerja.splice(i + 1, 0, ...cabang)`), sehingga:
+
+- `wait` di cabang mana pun menyimpan sisa cabang **dan** sisa flow di luar cabang;
+- `stop` di dalam cabang menghentikan **seluruh** flow, bukan hanya cabangnya;
+- cabang bertingkat lima tingkat tidak menumpuk tumpukan panggilan rekursif;
+- urutan yang dijalankan persis urutan yang dibaca admin di dasbor.
+
+**Kenapa batas 6 tidak berlaku di dalam cabang.** Enam adalah batas untuk **satu
+komponen** (satu tombol/opsi/menu) — jumlah aksi yang bisa dijelaskan ke pengklik
+dalam satu klik. Cabang bukan komponen: isinya hanya berjalan pada satu jalur, dan
+Discohook pun tidak membatasi panjang cabang selain lewat kuota flow. Jadi isi cabang
+dibatasi kuota flow (40 dihitung, 120 total), bukan 6.
+
+**Cabang yang habis karena kuota.** Kalau seluruh isi cabang terbuang oleh kuota,
+aksi syaratnya **ikut dibuang** dengan alasan yang bisa dibaca admin. Syarat tanpa
+cabang berarti "tidak cocok = hentikan flow" — menyimpannya dalam keadaan seperti itu
+akan mengubah arti flow diam-diam, dan itu justru yang dihindari di seluruh halaman ini.
+
+Di editor, tiap baris di dalam cabang memakai **editor aksi yang sama** dengan tingkat
+atas (`barisAksiDalam`), jadi aksi di cabang bisa diatur selengkap aksi di luar: pilih
+role, teks balasan, channel tujuan, arsip thread, jenis variabel — semuanya ada.
 
 ### Batch 11: `targets[]` — satu pesan, beberapa channel
 

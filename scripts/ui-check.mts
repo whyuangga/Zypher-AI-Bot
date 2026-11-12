@@ -1360,6 +1360,98 @@ await check('pesan: editor aksi tampil di komponen & tersimpan bersama tombol', 
   assert.equal(page.errors.length, 0, `editor aksi tidak melempar error: ${page.errors.join('|')}`);
 });
 
+await check('pesan: cabang bersyarat memakai editor aksi penuh & bisa bersarang', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-cabang');
+
+  /*
+   * Dua hal yang dijaga:
+   *   1. isi cabang memakai editor aksi yang SAMA dengan tingkat atas, jadi
+   *      aksi di dalam cabang tidak lagi terbatas pada enam jenis ringkas;
+   *   2. cabang bisa bersarang, dan batas kedalamannya berasal dari server
+   *      (BATAS_AKSI.branchDepth), bukan angka yang ditulis ulang di browser.
+   */
+  const hasil = (await page.evaluate(`
+    (function () {
+      function cariKelas(node, kelas, hasil) {
+        if (!node) return hasil;
+        if (node.className === kelas) hasil.push(node);
+        (node.children || []).forEach(function (c) { cariKelas(c, kelas, hasil); });
+        return hasil;
+      }
+
+      editingId = 1;
+      roleButtons = [{ id: 7, roleId: '900', label: 'Cek', mode: 'toggle', emoji: '', style: 'primary' }];
+      POST_ACTIONS = { 1: { 'button:7': [
+        {
+          kind: 'condition',
+          value: 'member.name',
+          comparator: 'notEmpty',
+          then: [
+            {
+              kind: 'condition',
+              value: 'member.id',
+              comparator: 'notEmpty',
+              then: [{ kind: 'reply', text: 'dalam' }]
+            }
+          ],
+          else: [{ kind: 'thread', threadName: 'Bantuan' }]
+        }
+      ] } };
+      loadActionsFor(1);
+      aksiTerbuka = 'button:7';
+      renderRoleButtons();
+
+      var host = document.getElementById('roleList');
+      var kotak = cariKelas(host, 'aksi-cabang', []);
+      // Kotak cabang bersarang: cabang di dalam cabang.
+      var bersarang = 0;
+      kotak.forEach(function (k) { bersarang += cariKelas(k, 'aksi-cabang', []).length; });
+
+      // Tiap baris di dalam cabang harus memakai editor penuh (aksi-baris).
+      var barisDalam = 0;
+      kotak.forEach(function (k) { barisDalam += cariKelas(k, 'aksi-baris', []).length; });
+
+      // Jenis aksi yang bisa ditambahkan: daftar bersama, bukan daftar ringkas.
+      var jenis = DAFTAR_JENIS_AKSI.map(function (j) { return j[0]; });
+
+      return {
+        batas: BATAS_AKSI.branchDepth,
+        kedalaman: KEDALAMAN_CABANG,
+        jumlahKotak: kotak.length,
+        bersarang: bersarang,
+        judulKotak: kotak.map(function (k) { var h = cariKelas(k, 'aksi-cabang-judul', []); return h.length ? h[0].textContent : '?'; }).join(' | '),
+        barisDalam: barisDalam,
+        jenis: jenis.join(','),
+        hitung: hitungAksi(aksiUntuk('button:7')).berhitung,
+        labelKartu: cariKelas(host, 'aksi-judul', []).map(function (n) { return n.textContent; }).join(' | ')
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.batas, 5, 'kedalaman cabang dari server (5 tingkat)');
+  assert.equal(hasil.kedalaman, 5, 'batas di layar sama dengan batas server');
+  /*
+   * Pohon yang diharapkan:
+   *   Kalau cocok (1)        <- cabang luar, berisi satu syarat bersarang
+   *     Kalau cocok (1)      <- cabang dari syarat di dalamnya
+   *     Kalau tidak cocok (0)
+   *   Kalau tidak cocok (1)  <- cabang luar, berisi thread
+   */
+  assert.equal(
+    hasil.judulKotak,
+    'Kalau cocok (1) | Kalau cocok (1) | Kalau tidak cocok (0) | Kalau tidak cocok (1)',
+    'cabang bersarang tergambar di pohon halaman',
+  );
+  assert.equal(hasil.jumlahKotak, 4, 'dua cabang luar + dua cabang bersarang');
+  assert.ok(Number(hasil.barisDalam) >= 3, 'isi cabang memakai editor aksi penuh');
+  assert.match(String(hasil.jenis), /thread/, 'jenis aksi di cabang memakai daftar lengkap');
+  assert.match(String(hasil.jenis), /webhook/, 'aksi webhook bisa dipakai di cabang');
+  assert.equal(hasil.hitung, 2, 'aksi di dalam cabang ikut dihitung terhadap kuota flow');
+  assert.match(String(hasil.labelKartu), /2\/40 dihitung/, 'kartu aksi menampilkan kuota flow');
+  assert.equal(page.errors.length, 0, `editor cabang error: ${page.errors.join('|')}`);
+});
+
 await check('pesan: kartu aksi blok Select bisa dibuka & digambar ulang', async () => {
   const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
   const page = mountPage(html, 'uji-aksi-select');
@@ -1551,12 +1643,26 @@ await check('pesan: cabang syarat bisa diisi & tampil bersarang', async () => {
       var kotak = kotakCabang(daftar, 0, 'then', 'cocok');
       var kotakLain = kotakCabang(daftar, 0, 'else', 'tidak cocok');
 
+      /*
+       * Isi cabang sekarang memakai editor aksi penuh, jadi isinya ada di
+       * value isian (textarea/input), bukan di textContent. Test membaca
+       * keduanya: judul & jumlah dari textContent, isi aksi dari value.
+       */
+      function kumpulValue(node, hasil) {
+        if (!node) return hasil;
+        if (typeof node.value === 'string' && node.value) hasil.push(node.value);
+        (node.children || []).forEach(function (c) { kumpulValue(c, hasil); });
+        return hasil;
+      }
+
       return {
         jumlahCabang: kotak.children ? kotak.children.length : 0,
         teksCocok: kotak.textContent,
         teksLain: kotakLain.textContent,
+        nilaiCocok: kumpulValue(kotak, []).join(' | '),
+        nilaiLain: kumpulValue(kotakLain, []).join(' | '),
+        jenisStop: jenisAksiLabel('stop'),
         ringkas: ringkasAksi(daftar[0]),
-        label: jenisAksiLabel('stop'),
         // Cabang ikut terkirim ke server; tanpa ini percabangan hilang diam-diam.
         muatan: (susunAksi()['button:9'] || [])[0],
       };
@@ -1564,9 +1670,10 @@ await check('pesan: cabang syarat bisa diisi & tampil bersarang', async () => {
   `)) as Record<string, unknown>;
 
   assert.match(String(hasil.teksCocok), /Kalau cocok \(1\)/, 'cabang cocok menampilkan jumlah');
-  assert.match(String(hasil.teksCocok), /kamu gamer/, 'isi cabang terbaca');
-  assert.match(String(hasil.teksLain), /Hentikan/, 'cabang tidak cocok berisi aksi stop');
-  assert.equal(hasil.label, 'Hentikan');
+  assert.match(String(hasil.nilaiCocok), /kamu gamer/, 'isi cabang terbaca dari editornya');
+  assert.match(String(hasil.teksLain), /Kalau tidak cocok \(1\)/, 'cabang tidak cocok menampilkan jumlah');
+  assert.match(String(hasil.teksLain), /Hentikan/, 'baris aksi stop tergambar di cabang');
+  assert.equal(hasil.jenisStop, 'Hentikan');
   const muatan = hasil.muatan as { then?: unknown[]; else?: unknown[] };
   assert.equal(muatan.then!.length, 1, 'cabang "cocok" ikut dikirim');
   assert.equal(muatan.else!.length, 1, 'cabang "tidak cocok" ikut dikirim');

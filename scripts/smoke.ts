@@ -7060,7 +7060,12 @@ await testAsync('aksi: cabang bersyarat, dud, stop, & variabel adaptif', async (
   assert.equal(dropped.length, 1);
   assert.match(dropped[0]!, /hasil aksi sebelumnya/);
 
-  // Cabang bersarang: kedalaman 3 diterima, lebih dalam dilaporkan.
+  /*
+   * Cabang bersarang: batasnya 5 tingkat (ACTION_LIMITS.branchDepth), jadi
+   * contoh di bawah ini 6 tingkat dan harus dilaporkan. Angka 6 dipakai
+   * dengan sengaja: contoh 4 tingkat dulu "terlalu dalam" saat batasnya 3,
+   * dan sekarang justru sah.
+   */
   const dalam = {
     kind: 'condition',
     value: 'a',
@@ -7075,7 +7080,21 @@ await testAsync('aksi: cabang bersyarat, dud, stop, & variabel adaptif', async (
             kind: 'condition',
             value: 'c',
             comparator: 'notEmpty',
-            then: [{ kind: 'condition', value: 'd', comparator: 'notEmpty', then: [{ kind: 'dud' }] }],
+            then: [
+              {
+                kind: 'condition',
+                value: 'd',
+                comparator: 'notEmpty',
+                then: [
+                  {
+                    kind: 'condition',
+                    value: 'f',
+                    comparator: 'notEmpty',
+                    then: [{ kind: 'condition', value: 'g', comparator: 'notEmpty', then: [{ kind: 'dud' }] }],
+                  },
+                ],
+              },
+            ],
           },
         ],
       },
@@ -7105,6 +7124,162 @@ await testAsync('aksi: cabang bersyarat, dud, stop, & variabel adaptif', async (
   assert.equal(syarat.then!.length, 1, 'cabang "cocok" jadi langkah');
   assert.equal(syarat.otherwise!.length, 1, 'cabang "tidak cocok" jadi langkah');
   assert.equal(plan.steps[1]!.kind, 'dud', 'dud tetap jadi langkah (urutan terjaga)');
+});
+
+await testAsync('aksi: cabang bersarang 5 tingkat & kuota flow ala Discohook', async () => {
+  const { sanitizeActions, planActions, hitungAksiFlow, ACTION_LIMITS } = await import(
+    '../src/features/post-actions.js'
+  );
+
+  /* --- kedalaman: 5 tingkat diterima, tingkat keenam dilaporkan --- */
+  const bersarang = (tingkat: number): Record<string, unknown> => {
+    let dalam: Record<string, unknown> = { kind: 'dud' };
+    for (let i = tingkat; i >= 1; i -= 1) {
+      dalam = { kind: 'condition', value: 'member.name', comparator: 'notEmpty', then: [dalam] };
+    }
+    return dalam;
+  };
+
+  assert.equal(ACTION_LIMITS.branchDepth, 5, 'kedalaman cabang sama dengan yang dipakai UI');
+  const lima = sanitizeActions([bersarang(5)]);
+  assert.equal(lima.actions.length, 1, 'lima tingkat masih diterima');
+  assert.equal(lima.dropped.length, 0, 'lima tingkat tidak dilaporkan sebagai terlalu dalam');
+
+  const enam = sanitizeActions([bersarang(6)]);
+  assert.ok(
+    enam.dropped.some((alasan) => alasan.includes('tingkat')),
+    'cabang keenam dilaporkan, bukan dipotong diam-diam',
+  );
+
+  /* --- hitungan: syarat & hentikan tidak dihitung, cabang ikut dihitung --- */
+  const hitung = hitungAksiFlow([
+    { kind: 'condition', value: 'a', comparator: 'notEmpty', then: [{ kind: 'reply', text: 'x' }] },
+    { kind: 'stop' },
+    { kind: 'wait', seconds: 5 },
+    { kind: 'condition', value: 'b', comparator: 'notEmpty', else: [{ kind: 'dud' }] },
+  ]);
+  assert.deepEqual(hitung, { total: 6, berhitung: 3, pesan: 0 }, 'syarat/hentikan tidak dihitung, isi cabang dihitung');
+
+  /* --- kuota 15 aksi kirim pesan per flow, termasuk yang di dalam cabang --- */
+  /*
+   * Tujuh belas aksi kirim pesan: lima di tingkat atas dan dua belas di dalam
+   * cabang. Daftar tingkat atas sengaja 6 aksi (lima pesan + satu syarat),
+   * tepat di batas per komponen — jadi yang menahan di sini benar-benar kuota
+   * 15 aksi kirim pesan per flow, bukan batas 6 itu. Isi cabang tidak dibatasi
+   * 6: cabang bukan komponen.
+   */
+  const banyakPesan = sanitizeActions([
+    ...Array.from({ length: 5 }, () => ({ kind: 'message', postId: 1 })),
+    {
+      kind: 'condition',
+      value: 'member.name',
+      comparator: 'notEmpty',
+      then: Array.from({ length: 12 }, () => ({ kind: 'message', postId: 2 })),
+    },
+  ]);
+  const pesanSaja = hitungAksiFlow(banyakPesan.actions).pesan;
+  assert.equal(pesanSaja, ACTION_LIMITS.messagePerFlow, 'kirim pesan dibatasi 15 per flow');
+  assert.ok(
+    banyakPesan.dropped.some((alasan) => alasan.includes('kirim pesan')),
+    'kelebihan kirim pesan dilaporkan sekali',
+  );
+  assert.equal(
+    banyakPesan.dropped.filter((alasan) => alasan.includes('kirim pesan')).length,
+    1,
+    'alasan kuota pesan tidak diulang 3 kali',
+  );
+
+  /* --- kuota 40 aksi berhitung, dihitung lintas cabang --- */
+  const dibatasi = sanitizeActions([
+    {
+      kind: 'condition',
+      value: 'member.name',
+      comparator: 'notEmpty',
+      then: Array.from({ length: ACTION_LIMITS.countedPerFlow + 5 }, () => ({ kind: 'dud' })),
+    },
+  ]);
+  assert.equal(hitungAksiFlow(dibatasi.actions).berhitung, ACTION_LIMITS.countedPerFlow, 'kuota 40 ditegakkan');
+  assert.ok(
+    dibatasi.dropped.some((alasan) => alasan.includes('dihitung')),
+    'kelebihan aksi berhitung dilaporkan',
+  );
+
+  /*
+   * Syarat SESUDAH kuota habis: aksinya tetap ada (membuangnya akan membuang
+   * cabangnya juga), tetapi isi cabangnya yang melewati kuota ikut hilang.
+   * Cabang yang habis seluruhnya membuat syaratnya dibuang dengan alasan —
+   * syarat tanpa cabang berarti "tidak cocok = hentikan flow", dan perubahan
+   * arti diam-diam seperti itu tidak boleh terjadi.
+   */
+  const syaratDiUjung = sanitizeActions([
+    {
+      kind: 'condition',
+      value: 'member.name',
+      comparator: 'notEmpty',
+      then: Array.from({ length: ACTION_LIMITS.countedPerFlow }, () => ({ kind: 'dud' })),
+    },
+    {
+      kind: 'condition',
+      value: 'member.id',
+      comparator: 'notEmpty',
+      then: [{ kind: 'dud' }, { kind: 'dud' }],
+    },
+  ]);
+  assert.equal(syaratDiUjung.actions.length, 1, 'syarat yang cabangnya habis dibuang');
+  assert.ok(
+    syaratDiUjung.dropped.some((alasan) => alasan.includes('seluruh isi cabang')),
+    'alasan syarat-dibuang dijelaskan',
+  );
+
+  // Syarat dengan cabang yang SEBAGIAN masih muat tetap dipertahankan.
+  const sebagian = sanitizeActions([
+    {
+      kind: 'condition',
+      value: 'member.name',
+      comparator: 'notEmpty',
+      then: Array.from({ length: ACTION_LIMITS.countedPerFlow - 1 }, () => ({ kind: 'dud' })),
+    },
+    { kind: 'condition', value: 'member.id', comparator: 'notEmpty', then: [{ kind: 'dud' }] },
+  ]);
+  assert.equal(sebagian.actions.length, 2, 'syarat kedua tetap ada');
+  assert.equal(sebagian.actions[1]!.then!.length, 1, 'isi cabang yang masih muat dipertahankan');
+
+  /* --- jaring pengaman: total aksi (termasuk yang tak dihitung) dibatasi --- */
+  const totalBanyak = sanitizeActions([
+    {
+      kind: 'condition',
+      value: 'member.name',
+      comparator: 'notEmpty',
+      then: Array.from({ length: ACTION_LIMITS.maxTotal + 20 }, () => ({ kind: 'stop' })),
+    },
+  ]);
+  assert.equal(hitungAksiFlow(totalBanyak.actions).total, ACTION_LIMITS.maxTotal, 'batas total ditegakkan');
+  assert.ok(
+    totalBanyak.dropped.some((alasan) => alasan.includes('total')),
+    'kelebihan total dilaporkan dengan alasannya sendiri',
+  );
+
+  /* --- rencana: cabang bertingkat jadi langkah bersarang, urutan tetap --- */
+  const plan = planActions([
+    {
+      kind: 'condition',
+      value: 'member.name',
+      comparator: 'notEmpty',
+      then: [
+        {
+          kind: 'condition',
+          value: 'member.id',
+          comparator: 'notEmpty',
+          then: [{ kind: 'reply', text: 'dalam sekali' }],
+        },
+      ],
+    },
+    { kind: 'dud' },
+  ]);
+  const luar = plan.steps[0] as { then?: Array<{ kind: string; then?: unknown[] }> };
+  assert.equal(luar.then![0]!.kind, 'condition', 'syarat di dalam cabang tetap syarat');
+  assert.equal(luar.then![0]!.then!.length, 1, 'cabang tingkat ketiga ikut');
+  assert.equal(plan.steps[1]!.kind, 'dud', 'aksi sesudah syarat tidak hilang');
 });
 
 await testAsync('syarat: and / or / not / in bertingkat', async () => {
@@ -8301,6 +8476,221 @@ await testAsync('flow: cabang dijalankan, lalu flow lanjut — bukan berhenti', 
   });
   await jalankan();
   assert.deepEqual(balasan, ['Berhenti di sini, Wahyu.'], 'stop memakai pesan sendiri & menghentikan sisa');
+});
+
+await testAsync('flow: tunggu di dalam cabang menyimpan sisa cabang DAN sisa flow', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runComponentActions, resumeFlowSession } = await import('../src/features/post-action-runner.js');
+  const GUILD = '123456789012345678';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Tunggu di cabang',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Klik' }],
+  });
+  const tombol = await repo.replaceRoleButtons(GUILD, post.id, [
+    { label: 'Mulai', roleId: '900000000000000001', mode: 'toggle' },
+  ]);
+  const buttonId = tombol.buttons[0]!.id;
+
+  const balasan: string[] = [];
+  const interaction = {
+    customId: `post-role:${buttonId}`,
+    guildId: GUILD,
+    channelId: '999',
+    message: { id: '555' },
+    deferred: false,
+    replied: false,
+    user: { id: '2', username: 'wahyu', globalName: 'Wahyu', tag: 'uji#0001' },
+    member: {
+      displayName: 'Wahyu',
+      roles: { cache: { has: () => false }, highest: { position: 20 } },
+      permissions: { has: () => true },
+    },
+    guild: {
+      id: GUILD,
+      name: 'Server Uji',
+      roles: { cache: new Map(), fetch: async () => null },
+      members: { me: { roles: { highest: { position: 10 } }, permissions: { has: () => true } }, fetchMe: async () => null },
+    },
+    reply: async (payload: { content: string }) => void balasan.push(payload.content),
+    followUp: async (payload: { content: string }) => void balasan.push(payload.content),
+  };
+
+  /*
+   * Penantian berada DI DALAM cabang. Yang harus tersimpan bukan hanya sisa
+   * cabang, melainkan juga aksi SESUDAH syarat — dulu cabang dijalankan lewat
+   * rekursi, `pending` hanya berisi sisa cabang, dan sapaan sesudah syarat
+   * hilang selamanya begitu bot restart.
+   */
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      {
+        kind: 'condition',
+        value: 'member.name',
+        comparator: 'equals',
+        expected: 'Wahyu',
+        then: [
+          { kind: 'variable', name: 'jalur', value: 'cocok' },
+          { kind: 'wait', seconds: 600 },
+          { kind: 'reply', text: 'di dalam cabang' },
+        ],
+      },
+      { kind: 'reply', text: 'sesudah syarat ({var.jalur})' },
+    ],
+  });
+
+  await runComponentActions({
+    client: {} as never,
+    interaction: interaction as never,
+    target: `button:${buttonId}`,
+    postId: post.id,
+  });
+  assert.equal(balasan.length, 1, 'hanya pemberitahuan penantian yang dikirim sekarang');
+  assert.match(balasan[0]!, /10 menit/, 'durasi penantian dijelaskan');
+
+  const sesi = (await repo.listDueFlowSessions(Date.now() + 60 * 60 * 1000)).filter((s) => s.postId === post.id);
+  assert.equal(sesi.length, 1, 'sesi tersimpan');
+  const sisa = sesi[0]!.steps as Array<{ kind: string; text?: string }>;
+  assert.deepEqual(
+    sisa.map((s) => s.kind),
+    ['reply', 'reply'],
+    'sisa cabang DAN sisa flow sesudah syarat ikut tersimpan',
+  );
+  assert.equal(sisa[0]!.text, 'di dalam cabang', 'urutan: cabang dulu');
+  assert.equal(sisa[1]!.text, 'sesudah syarat ({var.jalur})', 'baru kemudian aksi sesudah syarat');
+  assert.equal(sesi[0]!.variables.jalur, 'cocok', 'variabel dari dalam cabang tersimpan');
+
+  /* --- lanjutan: timer mengirim dua sapaan itu, berurutan --- */
+  const balasanTimer: string[] = [];
+  const client = {
+    guilds: { fetch: async () => ({ id: GUILD, members: { fetch: async () => ({ user: { tag: 'uji#0001' }, roles: { cache: { has: () => false }, highest: { position: 20 } }, permissions: { has: () => true } }) } }) },
+    channels: { fetch: async () => ({ isTextBased: () => true, send: async (p: { content: string }) => void balasanTimer.push(p.content) }) },
+  };
+  await resumeFlowSession(client as never, sesi[0]!);
+  assert.deepEqual(
+    balasanTimer,
+    ['di dalam cabang', 'sesudah syarat (cocok)'],
+    'sesudah penantian, cabang dan sisa flow sama-sama dijalankan',
+  );
+});
+
+await testAsync('flow: cabang bertingkat tiga & stop di dalam cabang menghentikan seluruh flow', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runComponentActions } = await import('../src/features/post-action-runner.js');
+  const GUILD = '123456789012345678';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Cabang bertingkat',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Klik' }],
+  });
+  const tombol = await repo.replaceRoleButtons(GUILD, post.id, [
+    { label: 'Pilih jalur', roleId: '900000000000000001', mode: 'toggle' },
+  ]);
+  const buttonId = tombol.buttons[0]!.id;
+
+  const balasan: string[] = [];
+  const jalankan = async (values?: string[]) => {
+    const interaction = {
+      customId: `post-role:${buttonId}`,
+      guildId: GUILD,
+      channelId: '999',
+      deferred: false,
+      replied: false,
+      user: { id: '2', username: 'wahyu', globalName: 'Wahyu', tag: 'uji#0001' },
+      ...(values ? { values } : {}),
+      member: {
+        displayName: 'Wahyu',
+        roles: { cache: { has: () => false }, highest: { position: 20 } },
+        permissions: { has: () => true },
+      },
+      guild: {
+        id: GUILD,
+        name: 'Server Uji',
+        roles: { cache: new Map(), fetch: async () => null },
+        members: { me: { roles: { highest: { position: 10 } }, permissions: { has: () => true } }, fetchMe: async () => null },
+      },
+      reply: async (payload: { content: string }) => void balasan.push(payload.content),
+      followUp: async (payload: { content: string }) => void balasan.push(payload.content),
+    };
+    return runComponentActions({
+      client: {} as never,
+      interaction: interaction as never,
+      target: `button:${buttonId}`,
+      postId: post.id,
+    });
+  };
+
+  /*
+   * Tiga tingkat sarang, masing-masing memilih cabang yang berbeda. Yang
+   * dibuktikan: cabang tingkat paling dalam benar-benar dijalankan, dan aksi
+   * sesudah syarat TERLUAR tetap jalan sesudah semua cabang selesai (bukti
+   * bahwa cabang disisipkan ke satu daftar kerja, bukan dijalankan terpisah).
+   */
+  const bertingkat = (pilihan: string) => [
+    {
+      kind: 'condition',
+      value: 'selected',
+      comparator: 'equals',
+      expected: 'gamer',
+      then: [
+        {
+          kind: 'condition',
+          value: 'member.name',
+          comparator: 'equals',
+          expected: 'Wahyu',
+          then: [
+            {
+              kind: 'condition',
+              value: 'selected',
+              comparator: 'equals',
+              expected: pilihan,
+              then: [{ kind: 'reply', text: 'paling dalam: ' + pilihan }],
+              else: [{ kind: 'reply', text: 'bukan ' + pilihan }],
+            },
+          ],
+        },
+      ],
+      else: [{ kind: 'reply', text: 'bukan gamer' }],
+    },
+    { kind: 'reply', text: 'sesudah semua cabang' },
+  ];
+
+  await repo.replacePostActions(GUILD, post.id, { [`button:${buttonId}`]: bertingkat('gamer') });
+  await jalankan(['gamer']);
+  /*
+   * Hanya SATU balasan per interaksi (aturan Discord), jadi balasan kedua
+   * dilaporkan sebagai follow-up: di sini keduanya tercatat, yang penting
+   * urutannya benar.
+   */
+  assert.deepEqual(
+    balasan,
+    ['paling dalam: gamer', 'sesudah semua cabang'],
+    'tiga tingkat cabang jalan, lalu lanjut ke aksi sesudah syarat terluar',
+  );
+
+  balasan.length = 0;
+  await repo.replacePostActions(GUILD, post.id, { [`button:${buttonId}`]: bertingkat('anime') });
+  await jalankan(['gamer']);
+  assert.deepEqual(balasan, ['bukan anime', 'sesudah semua cabang'], 'cabang tingkat tiga memilih jalur "tidak cocok"');
+
+  // Berhenti di cabang DALAM: sisa flow di luar cabang juga tidak dijalankan.
+  balasan.length = 0;
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      {
+        kind: 'condition',
+        value: 'member.name',
+        comparator: 'equals',
+        expected: 'Wahyu',
+        then: [{ kind: 'stop', stopMessage: 'berhenti di dalam' }],
+      },
+      { kind: 'reply', text: 'TIDAK BOLEH' },
+    ],
+  });
+  await jalankan();
+  assert.deepEqual(balasan, ['berhenti di dalam'], 'stop di cabang menghentikan seluruh flow');
 });
 
 await testAsync('pesan: flag pesan disaring & digabung dengan flag Components V2', async () => {

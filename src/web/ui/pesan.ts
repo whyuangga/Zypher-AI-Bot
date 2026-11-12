@@ -98,6 +98,19 @@ export interface PesanPageOptions extends PageContext {
    */
   postActions?: Record<number, Record<string, unknown[]>>;
   /**
+   * Batas flow dari `ACTION_LIMITS` di server.
+   *
+   * Dikirim ke browser supaya pesan "maksimal 6 aksi per komponen" / "15 aksi
+   * kirim pesan" di layar admin berasal dari angka yang sama dengan yang
+   * ditegakkan sanitizer — bukan angka yang ditulis ulang di JavaScript.
+   */
+  aksiLimits?: {
+    perKomponen: number;
+    countedPerFlow: number;
+    messagePerFlow: number;
+    branchDepth: number;
+  };
+  /**
    * Jadwal kirim per pesan (`dueAt` = waktu kirim berikutnya, epoch ms).
    *
    * Dikirim bersama daftar pesan supaya editor bisa menampilkan "dikirim
@@ -758,6 +771,101 @@ var editingId = null;
  * adalah batas pesan lama — memakainya akan menolak pesan yang sebenarnya sah.
  */
 var BATAS = { total: 40, top: 10, teks: 4000, teksAman: 3500, tombolPerBaris: 5 };
+
+/**
+ * Batas flow, dikirim server (ACTION_LIMITS) supaya angka di layar admin sama
+ * dengan yang ditegakkan saat menyimpan.
+ *
+ * Ditulis sebagai objek dengan nilai cadangan: halaman ini harus tetap bisa
+ * dibuka walau HTML lama (tanpa blok ini) masih tersimpan di cache browser.
+ */
+var BATAS_AKSI = ${jsonForScript(options.aksiLimits ?? { perKomponen: 6, countedPerFlow: 40, messagePerFlow: 15, branchDepth: 5 })};
+/** Kedalaman cabang bersyarat yang boleh disusun di layar. */
+var KEDALAMAN_CABANG = Number(BATAS_AKSI.branchDepth) || 5;
+
+/**
+ * Jenis aksi yang bisa ditambahkan, dengan labelnya.
+ *
+ * Satu daftar dipakai editor tingkat atas DAN editor di dalam cabang. Dulu
+ * cabang punya daftar sendiri yang lebih pendek, sehingga aksi seperti thread
+ * atau webhook tidak bisa dipakai di dalam cabang walau server menerimanya.
+ */
+var DAFTAR_JENIS_AKSI = [
+  ['role', 'Role - beri / lepas'],
+  ['reply', 'Balas pengklik'],
+  ['message', 'Kirim pesan tersimpan'],
+  ['webhook', 'Kirim pesan lewat webhook'],
+  ['raw', 'Kirim teks biasa (tanpa komponen)'],
+  ['wait', 'Tunggu'],
+  ['condition', 'Periksa syarat (dengan cabang)'],
+  ['variable', 'Simpan variabel'],
+  ['thread', 'Buat thread'],
+  ['delete', 'Hapus pesan (ini / hasil aksi sebelumnya)'],
+  ['dud', 'Tidak melakukan apa pun'],
+  ['stop', 'Hentikan flow']
+];
+
+/**
+ * Aksi contoh untuk satu jenis.
+ *
+ * Dikembalikan null kalau jenisnya butuh data yang belum ada (mis. pesan lain
+ * untuk dikirim). Pemanggil menampilkan alasannya lewat toast, bukan menambah
+ * aksi setengah jadi yang akan ditolak server.
+ */
+function aksiContoh(jenis) {
+  if (jenis === 'role') {
+    var role = ROLES.filter(function (r) { return !r.blockedBy; })[0];
+    if (!role) {
+      toast('Belum ada role yang bisa dipakai - jalankan bot dulu', true);
+      return null;
+    }
+    return { kind: 'role', roleId: role.id, op: 'toggle' };
+  }
+  if (jenis === 'reply') return { kind: 'reply', text: 'Halo {member.name}, selesai!', hidden: true };
+  if (jenis === 'wait') return { kind: 'wait', seconds: 300 };
+  if (jenis === 'condition') return { kind: 'condition', value: 'member.name', comparator: 'notEmpty' };
+  if (jenis === 'variable') return { kind: 'variable', name: 'pilihan', value: '{member.name}' };
+  if (jenis === 'thread') return { kind: 'thread', threadName: 'Diskusi {member.name}', private: false };
+  if (jenis === 'raw') return { kind: 'raw', rawText: 'Halo {member.mention}!' };
+  if (jenis === 'delete') return { kind: 'delete', what: 'pesan' };
+  if (jenis === 'dud') return { kind: 'dud' };
+  if (jenis === 'stop') return { kind: 'stop' };
+  var lain = POST_LIST.filter(function (p) { return !editingId || p.id !== editingId; });
+  if (jenis === 'message' || jenis === 'webhook') {
+    if (lain.length === 0) {
+      toast('Belum ada pesan lain yang bisa dikirim', true);
+      return null;
+    }
+    return { kind: jenis, postId: lain[0].id, toChannel: true };
+  }
+  return null;
+}
+
+/**
+ * Hitung aksi satu flow (satu komponen), termasuk yang ada di dalam cabang.
+ *
+ * Aturannya SAMA dengan hitungAksiFlow di post-actions.ts: syarat dan
+ * hentikan tidak dihitung, aksi kirim pesan dihitung terpisah. Dua salinan
+ * memang tidak ideal, tetapi halaman ini hanya menerima HTML+JS jadi: yang
+ * penting keduanya memakai batas yang dikirim server, bukan angka yang
+ * ditulis ulang di browser.
+ */
+function hitungAksi(daftar) {
+  var hasil = { total: 0, berhitung: 0, pesan: 0 };
+  var jalan = function (sisa) {
+    (sisa || []).forEach(function (aksi) {
+      hasil.total += 1;
+      if (aksi.kind !== 'condition' && aksi.kind !== 'stop') hasil.berhitung += 1;
+      if (aksi.kind === 'message' || aksi.kind === 'webhook') hasil.pesan += 1;
+      if (aksi.kind === 'condition') {
+        jalan(aksi.then);
+        jalan(aksi.else);
+      }
+    });
+  };
+  jalan(daftar);
+  return hasil;
+}
 
 /**
  * Hitung pemakaian komponen di browser, meniru penyusun payload di server.
@@ -3714,25 +3822,48 @@ async function saveRoleButtons(postId) {
 function susunAksi() {
   var hasil = {};
   Object.keys(postActions).forEach(function (target) {
-    var daftar = (postActions[target] || []).filter(function (aksi) {
-      if (aksi.kind === 'role') return Boolean(aksi.roleId);
-      if (aksi.kind === 'reply') return Boolean(String(aksi.text || '').trim());
-      if (aksi.kind === 'wait') return Number(aksi.seconds) >= 1;
-      if (aksi.kind === 'condition') {
-        return Boolean(aksi.check) || Boolean(String(aksi.value || '').trim());
-      }
-      if (aksi.kind === 'variable') return /^[a-zA-Z][a-zA-Z0-9_]{0,31}$/.test(String(aksi.name || ''));
-      if (aksi.kind === 'thread') return Boolean(String(aksi.threadName || '').trim());
-      if (aksi.kind === 'delete') return true;
-      if (aksi.kind === 'dud') return true;
-      if (aksi.kind === 'stop') return true;
-      // Teks mentah tanpa isi tidak dikirim: pesan kosong ditolak Discord.
-      if (aksi.kind === 'raw') return Boolean(String(aksi.rawText || '').trim());
-      return Boolean(Number(aksi.postId));
-    });
-    if (daftar.length > 0) hasil[target] = daftar;
+    var sah = (postActions[target] || []).filter(aksiSah).map(rapikanAksi);
+    if (sah.length > 0) hasil[target] = sah;
   });
   return hasil;
+}
+
+/**
+ * Rapikan satu aksi SESUDAH disaring, termasuk cabangnya.
+ *
+ * Yang dikerjakan: membuang cabang kosong. Cabang kosong mengubah arti syarat
+ * (syarat tanpa cabang menghentikan flow, syarat dengan cabang tidak), jadi
+ * bentuk setengah jadi tidak boleh ikut terkirim. Kuota flow TIDAK ditegakkan
+ * di sini: server melaporkan aksinya dengan alasan yang bisa dibaca admin,
+ * dan memotong diam-diam di browser justru menyembunyikan masalah itu.
+ */
+function rapikanAksi(aksi) {
+  if (aksi.kind !== 'condition') return aksi;
+  var salinan = {};
+  Object.keys(aksi).forEach(function (kunci) { salinan[kunci] = aksi[kunci]; });
+  var then = (aksi.then || []).filter(aksiSah).map(rapikanAksi);
+  var otherwise = (aksi.else || []).filter(aksiSah).map(rapikanAksi);
+  if (then.length) salinan.then = then;
+  else delete salinan.then;
+  if (otherwise.length) salinan.else = otherwise;
+  else delete salinan.else;
+  return salinan;
+}
+
+/** Apakah aksi ini cukup lengkap untuk dikirim? (dipakai juga di dalam cabang) */
+function aksiSah(aksi) {
+  if (!aksi || typeof aksi !== 'object') return false;
+  if (aksi.kind === 'role') return Boolean(aksi.roleId);
+  if (aksi.kind === 'reply') return Boolean(String(aksi.text || '').trim());
+  if (aksi.kind === 'wait') return Number(aksi.seconds) >= 1;
+  if (aksi.kind === 'condition') return Boolean(aksi.check) || Boolean(String(aksi.value || '').trim());
+  if (aksi.kind === 'variable') return /^[a-zA-Z][a-zA-Z0-9_]{0,31}$/.test(String(aksi.name || ''));
+  if (aksi.kind === 'thread') return Boolean(String(aksi.threadName || '').trim());
+  if (aksi.kind === 'delete') return true;
+  if (aksi.kind === 'dud') return true;
+  if (aksi.kind === 'stop') return true;
+  if (aksi.kind === 'raw') return Boolean(String(aksi.rawText || '').trim());
+  return Boolean(Number(aksi.postId));
 }
 
 /* ---------------- Menu dropdown role ---------------- */
@@ -4106,7 +4237,13 @@ function kartuAksi(target, judul) {
   var nama = document.createElement('span');
   nama.className = 'aksi-judul';
   var jumlah = target ? aksiUntuk(target).length : 0;
-  nama.textContent = 'Aksi: ' + judul + (jumlah ? ' · ' + jumlah : '');
+  /*
+   * Angka yang ditampilkan adalah kuota flow (aksi berhitung), bukan jumlah
+   * baris tingkat atas: cabang ikut dihitung server, dan admin perlu melihat
+   * sisa kuotanya sebelum menekan Simpan — bukan sesudah sebagian aksi dibuang.
+   */
+  var hitung = target ? hitungAksi(aksiUntuk(target)) : { total: 0, berhitung: 0, pesan: 0 };
+  nama.textContent = 'Aksi: ' + judul + (jumlah ? ' · ' + hitung.berhitung + '/' + BATAS_AKSI.countedPerFlow + ' dihitung' : '');
   head.appendChild(nama);
 
   var buka = document.createElement('button');
@@ -4152,20 +4289,7 @@ function kartuAksi(target, judul) {
   var pilih = document.createElement('select');
   pilih.className = 'role-mode';
   pilih.id = 'aksiJenis-' + target.replace(/[^a-z0-9]/gi, '-');
-  [
-    ['role', 'Role — beri / lepas'],
-    ['reply', 'Balas pengklik'],
-    ['message', 'Kirim pesan tersimpan'],
-    ['wait', 'Tunggu'],
-    ['condition', 'Periksa syarat (berhenti bila tidak cocok)'],
-    ['variable', 'Simpan variabel'],
-    ['thread', 'Buat thread'],
-    ['delete', 'Hapus pesan (ini / hasil aksi sebelumnya)'],
-    ['dud', 'Tidak melakukan apa pun'],
-    ['stop', 'Hentikan flow'],
-    ['webhook', 'Kirim pesan lewat webhook'],
-    ['raw', 'Kirim teks biasa (tanpa komponen)']
-  ].forEach(function (opt) {
+  DAFTAR_JENIS_AKSI.forEach(function (opt) {
     var o = document.createElement('option');
     o.value = opt[0];
     o.textContent = opt[1];
@@ -4178,39 +4302,24 @@ function kartuAksi(target, judul) {
   tombolTambah.type = 'button';
   tombolTambah.textContent = '+ Tambah aksi';
   tombolTambah.onclick = function () {
-    if (aksiUntuk(target).length >= 6) return toast('Maksimal 6 aksi per komponen', true);
-    var jenis = pilih.value;
-    if (jenis === 'role') {
-      var role = ROLES.filter(function (r) { return !r.blockedBy; })[0];
-      if (!role) return toast('Belum ada role yang bisa dipakai — jalankan bot dulu', true);
-      aksiUntuk(target).push({ kind: 'role', roleId: role.id, op: 'toggle' });
-    } else if (jenis === 'reply') {
-      aksiUntuk(target).push({ kind: 'reply', text: 'Halo {member.name}, selesai!', hidden: true });
-    } else if (jenis === 'wait') {
-      aksiUntuk(target).push({ kind: 'wait', seconds: 300 });
-    } else if (jenis === 'condition') {
-      aksiUntuk(target).push({ kind: 'condition', value: 'member.name', comparator: 'notEmpty' });
-    } else if (jenis === 'variable') {
-      aksiUntuk(target).push({ kind: 'variable', name: 'pilihan', value: '{member.name}' });
-    } else if (jenis === 'thread') {
-      aksiUntuk(target).push({ kind: 'thread', threadName: 'Diskusi {member.name}', private: false });
-    } else if (jenis === 'raw') {
-      aksiUntuk(target).push({ kind: 'raw', rawText: 'Halo {member.mention}!' });
-    } else if (jenis === 'delete') {
-      aksiUntuk(target).push({ kind: 'delete', what: 'pesan' });
-    } else if (jenis === 'dud') {
-      aksiUntuk(target).push({ kind: 'dud' });
-    } else if (jenis === 'stop') {
-      aksiUntuk(target).push({ kind: 'stop' });
-    } else if (jenis === 'webhook') {
-      var lewatWebhook = POST_LIST.filter(function (p) { return editingId && p.id !== editingId; });
-      if (lewatWebhook.length === 0) return toast('Belum ada pesan lain yang bisa dikirim', true);
-      aksiUntuk(target).push({ kind: 'webhook', postId: lewatWebhook[0].id, toChannel: true });
-    } else {
-      var lain = POST_LIST.filter(function (p) { return editingId && p.id !== editingId; });
-      if (lain.length === 0) return toast('Belum ada pesan lain yang bisa dikirim', true);
-      aksiUntuk(target).push({ kind: 'message', postId: lain[0].id, toChannel: true });
+    if (aksiUntuk(target).length >= BATAS_AKSI.perKomponen) {
+      return toast('Maksimal ' + BATAS_AKSI.perKomponen + ' aksi per komponen', true);
     }
+    /*
+     * Kuota flow diperiksa SEBELUM aksi ditambahkan, supaya admin tahu
+     * sekarang — bukan setelah menyimpan dan melihat sebagian aksinya hilang
+     * dari laporan server.
+     */
+    var hitung = hitungAksi(aksiUntuk(target));
+    if (hitung.berhitung >= BATAS_AKSI.countedPerFlow) {
+      return toast('Batas ' + BATAS_AKSI.countedPerFlow + ' aksi dihitung per flow sudah tercapai', true);
+    }
+    var baru = aksiContoh(pilih.value);
+    if (!baru) return;
+    if ((baru.kind === 'message' || baru.kind === 'webhook') && hitung.pesan >= BATAS_AKSI.messagePerFlow) {
+      return toast('Batas ' + BATAS_AKSI.messagePerFlow + ' aksi kirim pesan per flow sudah tercapai', true);
+    }
+    aksiUntuk(target).push(baru);
     segarkanAksi();
   };
   tambah.appendChild(tombolTambah);
@@ -4221,21 +4330,32 @@ function kartuAksi(target, judul) {
   bantuan.style.margin = '0';
   bantuan.textContent =
     'Aksi dijalankan berurutan. Bisa memakai {member.name}, {member.mention}, {member.id}, {server.name}, {role}, {effect}, {selected}, dan {var.nama}. ' +
-    'Aksi role yang gagal dan syarat yang tidak cocok MENGENTIKAN sisa aksi. ' +
-    'Aksi "Tunggu" menyimpan sisa aksi ke database, jadi penantian tetap berjalan walau bot restart.';
+    'Aksi role yang gagal MENGENTIKAN sisa aksi; syarat TANPA cabang juga menghentikan flow bila tidak cocok. ' +
+    'Syarat DENGAN cabang menjalankan cabangnya lalu lanjut ke aksi berikutnya, dan cabangnya boleh bersarang sampai ' +
+    KEDALAMAN_CABANG + ' tingkat. ' +
+    'Kuota flow: ' + BATAS_AKSI.countedPerFlow + ' aksi dihitung (syarat & hentikan tidak dihitung) dan ' +
+    BATAS_AKSI.messagePerFlow + ' aksi kirim pesan. ' +
+    'Aksi "Tunggu" menyimpan sisa aksi ke database — termasuk sisa aksi di dalam cabang — jadi penantian tetap berjalan walau bot restart.';
   bungkus.appendChild(bantuan);
 
   return bungkus;
 }
 
 /**
- * Kotak satu cabang bersyarat (cocok / tidak cocok).
+ * Satu cabang bersyarat (cocok / tidak cocok), bisa berisi aksi apa pun.
  *
- * Ditulis sebagai kotak bersarang, bukan daftar datar: cabang adalah bagian
- * dari aksi syarat, dan menampilkannya berderet akan membuat urutan flow
- * terbaca salah (aksi cabang seolah dijalankan selalu).
+ * Kotak bersarang, bukan daftar datar: cabang adalah bagian dari aksi syarat,
+ * dan menampilkannya berderet membuat urutan flow terbaca salah (aksi cabang
+ * seolah dijalankan selalu).
+ *
+ * Isi cabang memakai editor aksi yang SAMA dengan tingkat atas
+ * (barisAksiDalam), jadi aksi di dalam cabang bisa diatur selengkap aksi di
+ * luar — termasuk menambah syarat lagi di dalamnya. Kedalaman dijaga di
+ * KEDALAMAN_CABANG (sama dengan ACTION_LIMITS.branchDepth di server).
  */
-function kotakCabang(daftar, nomor, kunci, judul) {
+function kotakCabang(daftar, nomor, kunci, judul, kedalaman) {
+  kedalaman = Number(kedalaman) || 0;
+  var isi = daftar[nomor][kunci] || [];
   var kotak = document.createElement('div');
   kotak.className = 'aksi-cabang';
 
@@ -4243,21 +4363,13 @@ function kotakCabang(daftar, nomor, kunci, judul) {
   head.className = 'aksi-cabang-head';
   var nama = document.createElement('span');
   nama.className = 'aksi-cabang-judul';
-  var isi = daftar[nomor][kunci] || [];
   nama.textContent = 'Kalau ' + judul + ' (' + isi.length + ')';
   head.appendChild(nama);
 
   var tambah = document.createElement('select');
   tambah.className = 'role-mode';
   tambah.id = 'aksiCabang-' + kunci + '-' + nomor;
-  [
-    ['reply', 'Balas pengklik'],
-    ['role', 'Role'],
-    ['message', 'Kirim pesan'],
-    ['wait', 'Tunggu'],
-    ['variable', 'Simpan variabel'],
-    ['stop', 'Hentikan flow']
-  ].forEach(function (opt) {
+  DAFTAR_JENIS_AKSI.forEach(function (opt) {
     var o = document.createElement('option');
     o.value = opt[0];
     o.textContent = opt[1];
@@ -4271,26 +4383,17 @@ function kotakCabang(daftar, nomor, kunci, judul) {
   tombol.textContent = '+';
   tombol.title = 'Tambah aksi ke cabang ini';
   tombol.onclick = function () {
-    daftar[nomor][kunci] = daftar[nomor][kunci] || [];
-    if (daftar[nomor][kunci].length >= 6) return toast('Maksimal 6 aksi per cabang', true);
-    var jenis = tambah.value;
-    if (jenis === 'role') {
-      var role = ROLES.filter(function (r) { return !r.blockedBy; })[0];
-      if (!role) return toast('Belum ada role yang bisa dipakai', true);
-      daftar[nomor][kunci].push({ kind: 'role', roleId: role.id, op: 'toggle' });
-    } else if (jenis === 'reply') {
-      daftar[nomor][kunci].push({ kind: 'reply', text: 'Halo {member.name}!', hidden: true });
-    } else if (jenis === 'message') {
-      var lain = POST_LIST.filter(function (p) { return editingId && p.id !== editingId; });
-      if (lain.length === 0) return toast('Belum ada pesan lain yang bisa dikirim', true);
-      daftar[nomor][kunci].push({ kind: 'message', postId: lain[0].id, toChannel: true });
-    } else if (jenis === 'wait') {
-      daftar[nomor][kunci].push({ kind: 'wait', seconds: 60 });
-    } else if (jenis === 'variable') {
-      daftar[nomor][kunci].push({ kind: 'variable', name: 'nilai', value: '{member.name}' });
-    } else {
-      daftar[nomor][kunci].push({ kind: 'stop' });
+    if (isi.length >= BATAS_AKSI.perKomponen) {
+      return toast('Maksimal ' + BATAS_AKSI.perKomponen + ' aksi per cabang', true);
     }
+    var jenis = tambah.value;
+    if (jenis === 'condition' && kedalaman + 1 > KEDALAMAN_CABANG) {
+      return toast('Cabang maksimal ' + KEDALAMAN_CABANG + ' tingkat', true);
+    }
+    var baru = aksiContoh(jenis);
+    if (!baru) return;
+    isi.push(baru);
+    if (!daftar[nomor][kunci]) daftar[nomor][kunci] = isi;
     segarkanAksi();
   };
   head.appendChild(tombol);
@@ -4305,25 +4408,15 @@ function kotakCabang(daftar, nomor, kunci, judul) {
     return kotak;
   }
 
+  /*
+   * Isi cabang digambar lewat editor aksi yang SAMA dengan tingkat atas, lalu
+   * kotak cabang anaknya ditempelkan ke baris itu sendiri. Menempelkannya ke
+   * baris (bukan ke kotak induk) membuat cabang bertingkat terbaca sebagai
+   * bagian dari aksi syaratnya, bukan sebagai daftar sejajar.
+   */
   isi.forEach(function (anak, urutan) {
-    var baris = document.createElement('div');
-    baris.className = 'aksi-cabang-baris';
-
-    var teks = document.createElement('span');
-    teks.className = 'aksi-cabang-teks';
-    teks.textContent = (urutan + 1) + '. ' + jenisAksiLabel(anak.kind) + ' — ' + ringkasAksi(anak);
-    baris.appendChild(teks);
-
-    var hapus = document.createElement('button');
-    hapus.className = 'btn-danger btn-sm btn-icon';
-    hapus.type = 'button';
-    hapus.title = 'Hapus aksi dari cabang';
-    hapus.textContent = '×';
-    hapus.onclick = function () {
-      isi.splice(urutan, 1);
-      segarkanAksi();
-    };
-    baris.appendChild(hapus);
+    var baris = barisAksiDalam(isi, urutan, anak, segarkanAksi, kedalaman);
+    baris.classList.add('aksi-cabang-baris');
     kotak.appendChild(baris);
   });
 
@@ -4639,7 +4732,21 @@ function waktuDariInput(nilai) {
 
 /** Satu baris aksi: semua isian yang dibutuhkan jenisnya. */
 function buatBarisAksi(target, nomor, aksi) {
-  var daftar = aksiUntuk(target);
+  return barisAksiDalam(aksiUntuk(target), nomor, aksi, segarkanAksi, 0);
+}
+
+/**
+ * Satu baris editor aksi untuk DAFTAR mana pun.
+ *
+ * Dipakai daftar tingkat atas (tombol/menu) DAN daftar di dalam cabang
+ * bersyarat. Dulu fungsi ini hanya mengenal daftar milik satu target, jadi
+ * cabang terpaksa memakai editor ringkas sendiri — akibatnya aksi di dalam
+ * cabang tidak bisa diatur sama lengkapnya dengan aksi di luar (padahal
+ * server menegakkan aturan yang sama untuk keduanya). Tinggal satu editor
+ * berarti tidak ada dua perilaku yang bisa menyimpang.
+ */
+function barisAksiDalam(daftar, nomor, aksi, segarkan, kedalaman) {
+  kedalaman = Number(kedalaman) || 0;
   var baris = document.createElement('div');
   baris.className = 'aksi-baris';
 
@@ -4663,7 +4770,7 @@ function buatBarisAksi(target, nomor, aksi) {
       var tmp = daftar[nomor - 1];
       daftar[nomor - 1] = daftar[nomor];
       daftar[nomor] = tmp;
-      segarkanAksi();
+      segarkan();
     };
     alat.appendChild(naik);
   }
@@ -4675,7 +4782,7 @@ function buatBarisAksi(target, nomor, aksi) {
   hapus.textContent = '×';
   hapus.onclick = function () {
     daftar.splice(nomor, 1);
-    segarkanAksi();
+    segarkan();
   };
   alat.appendChild(hapus);
   head.appendChild(alat);
@@ -4801,7 +4908,7 @@ function buatBarisAksi(target, nomor, aksi) {
         daftar[nomor].value = 'member.name';
         daftar[nomor].comparator = 'notEmpty';
       }
-      segarkanAksi();
+      segarkan();
     };
     baris.appendChild(bentuk);
 
@@ -4833,7 +4940,7 @@ function buatBarisAksi(target, nomor, aksi) {
     });
     banding.onchange = function () {
       daftar[nomor].comparator = banding.value;
-      segarkanAksi();
+      segarkan();
     };
     baris.appendChild(banding);
 
@@ -4864,8 +4971,13 @@ function buatBarisAksi(target, nomor, aksi) {
       : 'Kedua cabang masih kosong, jadi syarat yang tidak cocok akan MENGENTIKAN sisa flow. Isi salah satu cabang untuk membuat percabangan.';
     baris.appendChild(catatanSyarat);
 
-    baris.appendChild(kotakCabang(daftar, nomor, 'then', 'cocok'));
-    baris.appendChild(kotakCabang(daftar, nomor, 'else', 'tidak cocok'));
+    /*
+     * Cabang digambar DI SINI, bukan oleh pemanggil: satu tempat berarti
+     * cabang tingkat atas dan cabang di dalam cabang memakai aturan yang sama,
+     * dan tidak ada kotak yang tergambar dua kali.
+     */
+    baris.appendChild(kotakCabang(daftar, nomor, 'then', 'cocok', kedalaman + 1));
+    baris.appendChild(kotakCabang(daftar, nomor, 'else', 'tidak cocok', kedalaman + 1));
     return baris;
   }
 
@@ -4925,7 +5037,7 @@ function buatBarisAksi(target, nomor, aksi) {
     sumber.onchange = function () {
       daftar[nomor].source = sumber.value;
       daftar[nomor].value = sumber.value === 'adaptive' ? 'messageId' : sumber.value === 'get' ? 'var.nama' : '';
-      segarkanAksi();
+      segarkan();
     };
     baris.appendChild(sumber);
 
@@ -4979,7 +5091,7 @@ function buatBarisAksi(target, nomor, aksi) {
     cekPrivat.checked = aksi.private === true;
     cekPrivat.onchange = function () {
       daftar[nomor].private = cekPrivat.checked;
-      segarkanAksi();
+      segarkan();
     };
     privatLabel.appendChild(cekPrivat);
     privatLabel.appendChild(document.createTextNode(' thread privat (hanya yang diundang)'));
