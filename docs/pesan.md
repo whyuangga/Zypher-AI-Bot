@@ -494,6 +494,8 @@ komponen itu dipakai — padanan sederhana dari *flow* Discohook.
 | **Simpan variabel** | simpan teks (boleh template) ke variabel `{var.nama}` untuk aksi berikutnya |
 | **Buat thread** | buat thread publik atau privat dari pesan ini |
 | **Hapus pesan ini** | hapus pesan yang memuat komponen itu (butuh *Manage Messages*) |
+| **Tidak melakukan apa pun** | penanda "sengaja dikosongkan" saat menyusun flow bertahap |
+| **Hentikan flow** | berhenti sekarang, opsional dengan pesan sendiri |
 
 Yang perlu diketahui:
 
@@ -510,9 +512,11 @@ Yang perlu diketahui:
 - **Aksi "Tunggu" tahan restart.** Sisa aksinya disimpan ke tabel `post_flow_sessions` dan
   dilanjutkan timer 15 detik. Artinya: waktunya bisa mundur beberapa detik, dan kalau bot
   sedang mati saat waktunya tiba, aksinya berjalan begitu bot hidup lagi (bukan hilang).
-- **Aksi "Periksa syarat" hanya punya satu jalur.** Kalau syarat tidak cocok, flow berhenti
-  dengan penjelasan. Percabangan dua jalur ("kalau A lakukan X, kalau bukan lakukan Y")
-  belum ada — itu butuh langkah bertingkat, dan setengah jadi lebih membingungkan.
+- **Aksi "Periksa syarat" punya dua bentuk.** Kalau salah satu cabang diisi, flow bercabang
+  seperti `Check` di Discohook: cabang "cocok" ATAU "tidak cocok" dijalankan, lalu flow
+  **lanjut** ke aksi sesudahnya. Kalau kedua cabang kosong, perilakunya seperti versi lama —
+  syarat yang tidak cocok menghentikan flow. Bentuk lama dipertahankan supaya aksi yang sudah
+  tersimpan tidak berubah artinya diam-diam. Kedalaman cabang dibatasi **3 tingkat**.
 - **Tanpa aksi, perilaku lama tetap jalan.** Tombol role yang belum diberi aksi
   masih memberi/melepas role dengan balasan baku, jadi pesan yang sudah
   terkirim tidak mendadak mati.
@@ -531,6 +535,10 @@ Balasan dan kalimat susulan bisa memakai nilai dari saat tombol ditekan:
 | `{effect}` | `ditambahkan` atau `dilepas` |
 | `{selected}` | pilihan yang dipilih di menu (satu pilihan; kosong untuk tombol) |
 | `{var.nama}` | variabel yang disimpan aksi **Simpan variabel** |
+
+Variabel bisa diisi tiga cara, sama seperti Discohook: **teks/template**, **hasil aksi
+sebelumnya** (`messageId`, `channelId`, `threadId` — hanya nilai yang benar-benar ada), atau
+**salinan variabel lain** (`var.nama`).
 
 Nama-nama ini sengaja sama dengan Discohook. Token yang tidak dikenal dibiarkan apa adanya.
 
@@ -579,6 +587,55 @@ Contoh balasan paling sering dipakai:
 Tombol ini yang paling sering diklik member, jadi posisinya tetap dan mudah
 ditemukan walaupun admin mengubah isi teks di atasnya. Tombol link dari blok
 **Tombol** tetap di tempatnya sesuai urutan blok.
+
+### Kesetaraan dengan Discohook: apa yang sama, apa yang belum
+
+Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` dan
+`packages/site/app/types/QueryData-raw.ts`), bukan dari ingatan.
+
+**Aksi flow**
+
+| Discohook | Di sini | Catatan |
+|---|---|---|
+| Do nothing | ✅ Tanpa aksi | |
+| Wait | ✅ Tunggu | Discohook maks 60 detik; di sini sampai 7 hari karena penantian disimpan di database |
+| Check (pohon `then`/`else`, `and`/`or`/`not`/`in`/`equals`) | ⚠️ Sebagian | cabang `then`/`else` ada, tetapi pembandingnya datar: `equals`, `notEquals`, `contains`, `notContains`, `empty`, `notEmpty`. `and`/`or`/`not` bersarang belum ada |
+| Set variable (static / adaptive / get) | ✅ | ketiga jenisnya ada; nilai `adaptive` terbatas pada `messageId`, `channelId`, `threadId` |
+| Stop (+ pesan) | ✅ Hentikan flow | |
+| Add / Remove / Toggle role | ✅ | |
+| Send message (dari backup) | ✅ Kirim pesan tersimpan | |
+| Send webhook message | ❌ | butuh webhook per channel yang dikelola; belum disambungkan ke flow |
+| Send raw message | ❌ | hanya untuk alur impor, bukan penyusunan |
+| Create thread (publik/privat, auto-archive, slowmode, tag forum) | ⚠️ Sebagian | publik & privat ada; `autoArchiveDuration`, `rateLimitPerUser`, dan tag forum belum |
+| Delete message | ✅ Hapus pesan | hanya pesan pemicu; Discohook bisa menghapus pesan hasil aksi sebelumnya |
+
+**Pesan & komponen**
+
+| Discohook | Di sini |
+|---|---|
+| Container / Text Display / Section / Separator / Media Gallery / File / Action Row | ✅ |
+| Embed klasik (judul, penulis, footer, field, thumbnail, gambar) | ❌ (pesan memakai Components V2) |
+| Poll | ❌ di Discohook pun masih dinonaktifkan |
+| Tombol link & tombol interaktif ber-flow | ✅ |
+| Select menu: string (flow per opsi), user/role/mentionable/channel | ✅ |
+| `default_values` pada select user/role/channel | ❌ |
+| `allowed_mentions` (ping role/user tertentu) | ❌ (balasan selalu tanpa ping; itu keputusan keamanan) |
+| `thread_name` (pesan menjadi awal thread) | ❌ |
+| Message flags: suppress embeds, suppress notifications | ✅ |
+| Message flags: voice message, `IS_COMPONENTS_V2` manual | ❌ (v2 diurus pengirim) |
+| Multi-pesan dalam satu backup (beberapa pesan, `reference`, `thread_id`) | ❌ satu pesan per dokumen |
+| Riwayat/undo revisi, impor backup, share link | ⚠️ impor JSON/URL ada; riwayat & share belum |
+| Jadwal kirim (sekali / berulang, cron) | ⚠️ sekali / tiap N jam (min. 2 jam); jadwal cron per hari/bulan belum |
+| Trigger event (member masuk/keluar) | ❌ (bot punya sambutan sendiri, bukan flow) |
+
+Yang **sengaja berbeda** dan lebih ketat dari Discohook:
+
+- Aksi role diperiksa lebih dulu (`roleBlocker`) dan kegagalannya menghentikan flow —
+  Discohook menitipkan izin ke *responsible user*; di sini yang menentukan adalah izin bot
+  plus hierarki role, dan alasannya disebutkan ke member.
+- Setiap bagian yang dilewati (komponen, berkas, aksi tidak sah) dilaporkan, bukan hilang diam-diam.
+- Aksi pada pesan webhook ditolak di muka, karena Discord mengirim interaksi ke aplikasi
+  pemilik komponen — bukan ke bot kita.
 
 ### Jadwal kirim
 

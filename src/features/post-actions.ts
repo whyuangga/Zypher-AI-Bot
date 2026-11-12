@@ -50,6 +50,11 @@ export const ACTION_KINDS = [
   'variable',
   'thread',
   'delete',
+  /** Tidak melakukan apa pun. Discohook menyebutnya "Do nothing"; berguna
+   *  sebagai penanda "aksi ini sengaja dikosongkan" saat admin menyusun. */
+  'dud',
+  /** Hentikan flow, opsional dengan pesan. Padanan "Stop" di Discohook. */
+  'stop',
 ] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
@@ -72,6 +77,8 @@ export const ACTION_KIND_LABEL: Record<ActionKind, string> = {
   variable: 'Simpan variabel',
   thread: 'Buat thread',
   delete: 'Hapus pesan ini',
+  dud: 'Tidak melakukan apa pun',
+  stop: 'Hentikan flow',
 };
 
 /**
@@ -130,6 +137,28 @@ export interface PostAction {
   /* --- kind = 'delete' --- */
   /** Apa yang dihapus. `pesan` = pesan pemilik komponen (bawaan). */
   what?: 'pesan';
+  /* --- kind = 'stop' --- */
+  /** Pesan yang ditampilkan saat flow berhenti (opsional). */
+  stopMessage?: string;
+  /* --- kind = 'condition' (cabang) --- */
+  /**
+   * Aksi yang dijalankan bila syarat COCOK.
+   *
+   * Kalau `then` maupun `else` tidak diisi, perilakunya seperti sebelumnya:
+   * syarat yang tidak cocok menghentikan flow. Itu menjaga aksi yang sudah
+   * tersimpan tetap berjalan sama.
+   */
+  then?: PostAction[];
+  /** Aksi yang dijalankan bila syarat TIDAK cocok. */
+  else?: PostAction[];
+  /* --- kind = 'variable' --- */
+  /**
+   * Dari mana nilai variabel diambil:
+   *   - `static` (bawaan): teks yang ditulis admin, boleh berisi template;
+   *   - `adaptive`: hasil aksi sebelumnya (mis. ID channel pesan terkirim);
+   *   - `get`: salinan variabel lain yang sudah ada.
+   */
+  source?: 'static' | 'adaptive' | 'get';
 }
 
 /** Batas yang dijaga sanitizer dan dasbor. */
@@ -142,6 +171,22 @@ export const ACTION_LIMITS = {
   followUpLength: 300,
   /** Jumlah total aksi per pesan — jaring pengaman, bukan batas Discord. */
   perMessage: 40,
+  /**
+   * Kedalaman cabang bersyarat.
+   *
+   * Discohook membatasi 40 aksi berhitung (10 untuk pengguna gratis) dan
+   * menyusun cabang sebagai pohon. Di sini batasnya lebih sederhana: 3 tingkat
+   * sarang. Alasannya bukan teknis semata — dashboard harus bisa menampilkan
+   * pohonnya, dan cabang 4 tingkat di layar ponsel sudah tidak terbaca.
+   */
+  branchDepth: 3,
+  /** Jumlah aksi dihitung per flow, termasuk yang di dalam cabang. */
+  countedPerComponent: 40,
+} as const;
+
+/** Batas variabel per flow saat dijalankan. */
+export const VARIABLE_LIMITS = {
+  perFlow: 20,
 } as const;
 
 /* ------------------------------------------------------------------ */
@@ -169,6 +214,21 @@ function isRoleId(value: string): boolean {
  * yang hilang diam-diam.
  */
 export function sanitizeActions(input: unknown): { actions: PostAction[]; dropped: string[] } {
+  return sanitizeActionsDalam(input, 0);
+}
+
+/**
+ * Inti sanitizer, dengan tingkat kedalaman cabang.
+ *
+ * Dipisah supaya cabang bersyarat bisa memakai aturan yang PERSIS sama untuk
+ * aksi di dalamnya. Kalau cabang punya sanitizer sendiri, cepat atau lambat
+ * aturannya berbeda dan aksi di dalam cabang bisa lolos padahal aksi di
+ * tingkat atas ditolak.
+ */
+function sanitizeActionsDalam(
+  input: unknown,
+  kedalaman: number,
+): { actions: PostAction[]; dropped: string[] } {
   const dropped: string[] = [];
   const actions: PostAction[] = [];
   const source = Array.isArray(input) ? input : [];
@@ -222,7 +282,16 @@ export function sanitizeActions(input: unknown): { actions: PostAction[]; droppe
         continue;
       }
       const nilai = asString(item.value).slice(0, FLOW_LIMITS.variableValue);
-      actions.push({ kind: 'variable', name, value: nilai });
+      const source = ['static', 'adaptive', 'get'].includes(asString(item.source))
+        ? (asString(item.source) as 'static' | 'adaptive' | 'get')
+        : 'static';
+      // `adaptive` tanpa nilai tidak masuk akal: hasil aksi sebelumnya belum
+      // tentu ada, dan variabel kosong yang "berhasil" lebih menyesatkan.
+      if (source === 'adaptive' && !nilai) {
+        dropped.push('variabel "hasil aksi sebelumnya" harus menyebut nilai yang diambil');
+        continue;
+      }
+      actions.push({ kind: 'variable', name, value: nilai, source });
       continue;
     }
 
@@ -246,12 +315,46 @@ export function sanitizeActions(input: unknown): { actions: PostAction[]; droppe
           continue;
         }
       }
+      /*
+       * Cabang bersyarat: `then` dijalankan bila cocok, `else` bila tidak.
+       * Kalau keduanya kosong, perilakunya tetap seperti versi sebelumnya —
+       * syarat yang tidak cocok menghentikan flow — sehingga aksi yang sudah
+       * tersimpan tidak berubah arti.
+       */
+      let cabang: Pick<PostAction, 'then' | 'else'> = {};
+      if (kedalaman >= ACTION_LIMITS.branchDepth) {
+        if (Array.isArray(item.then) && item.then.length > 0) {
+          dropped.push(`cabang bersyarat lebih dari ${ACTION_LIMITS.branchDepth} tingkat tidak didukung`);
+        }
+      } else {
+        const dalamThen = sanitizeActionsDalam(item.then, kedalaman + 1);
+        const dalamElse = sanitizeActionsDalam(item.else, kedalaman + 1);
+        for (const alasan of dalamThen.dropped) dropped.push(`cabang "cocok": ${alasan}`);
+        for (const alasan of dalamElse.dropped) dropped.push(`cabang "tidak cocok": ${alasan}`);
+        cabang = {
+          ...(dalamThen.actions.length > 0 ? { then: dalamThen.actions } : {}),
+          ...(dalamElse.actions.length > 0 ? { else: dalamElse.actions } : {}),
+        };
+      }
+
       actions.push({
         kind: 'condition',
         value: nama,
         comparator,
         ...(expected ? { expected } : {}),
+        ...cabang,
       });
+      continue;
+    }
+
+    if (kind === 'dud') {
+      actions.push({ kind: 'dud' });
+      continue;
+    }
+
+    if (kind === 'stop') {
+      const stopMessage = asString(item.stopMessage).trim().slice(0, ACTION_LIMITS.textLength);
+      actions.push({ kind: 'stop', ...(stopMessage ? { stopMessage } : {}) });
       continue;
     }
 
@@ -308,8 +411,18 @@ export type ActionStep =
   | { kind: 'reply'; text: string; hidden: boolean }
   | { kind: 'message'; postId: number; toChannel: boolean; followUp?: string }
   | { kind: 'wait'; seconds: number }
-  | { kind: 'condition'; value: string; comparator: string; expected?: string }
-  | { kind: 'variable'; name: string; value: string }
+  | {
+      kind: 'condition';
+      value: string;
+      comparator: string;
+      expected?: string;
+      /** Cabang yang dijalankan bila cocok / tidak cocok (kosong = hentikan). */
+      then?: ActionStep[];
+      otherwise?: ActionStep[];
+    }
+  | { kind: 'dud' }
+  | { kind: 'stop'; message?: string }
+  | { kind: 'variable'; name: string; value: string; source: 'static' | 'adaptive' | 'get' }
   | { kind: 'thread'; threadName: string; private: boolean }
   | { kind: 'delete' };
 
@@ -373,17 +486,41 @@ export function planActions(actions: PostAction[], options: { selfPostId?: numbe
     }
 
     if (action.kind === 'condition') {
+      /*
+       * Cabang disusun REKURSIF lewat fungsi yang sama. Kalau penyusunan cabang
+       * punya jalurnya sendiri, aksi di dalam cabang akan kehilangan aturan
+       * (mis. "pesan sendiri tidak boleh dikirim") tanpa ada yang sadar.
+       */
+      const dalamThen = action.then && action.then.length > 0 ? planActions(action.then, options).steps : undefined;
+      const dalamElse = action.else && action.else.length > 0 ? planActions(action.else, options).steps : undefined;
       steps.push({
         kind: 'condition',
         value: action.value!,
         comparator: action.comparator ?? 'equals',
         ...(action.expected ? { expected: action.expected } : {}),
+        ...(dalamThen ? { then: dalamThen } : {}),
+        ...(dalamElse ? { otherwise: dalamElse } : {}),
       });
       continue;
     }
 
     if (action.kind === 'variable') {
-      steps.push({ kind: 'variable', name: action.name!, value: action.value ?? '' });
+      steps.push({
+        kind: 'variable',
+        name: action.name!,
+        value: action.value ?? '',
+        source: action.source ?? 'static',
+      });
+      continue;
+    }
+
+    if (action.kind === 'dud') {
+      steps.push({ kind: 'dud' });
+      continue;
+    }
+
+    if (action.kind === 'stop') {
+      steps.push({ kind: 'stop', ...(action.stopMessage ? { message: action.stopMessage } : {}) });
       continue;
     }
 
@@ -432,6 +569,15 @@ export interface TemplateContext {
   role?: string;
   /** `ditambahkan` / `dilepas` / `diperbarui` — hasil aksi role. */
   effect?: string;
+  /** Pilihan yang dipilih di menu (satu nilai; kosong untuk tombol). */
+  selected?: string;
+  /**
+   * Variabel flow, dengan awalan `var.` (mis. `{ 'var.kode': 'abc' }`).
+   *
+   * Dipisah dari field lain supaya nama variabel buatan admin tidak bisa
+   * menimpa token bawaan seperti `{member.name}`.
+   */
+  variables?: Record<string, string>;
 }
 
 /**
@@ -448,12 +594,25 @@ export function fillActionText(template: string, context: TemplateContext): stri
     ['{member.name}', context.member],
     ['{member.id}', context.memberId ?? ''],
     ['{server.name}', context.server],
+    ['{role.name}', context.role ?? ''],
     ['{role}', context.role ?? ''],
     ['{effect}', context.effect ?? ''],
+    ['{selected}', context.selected ?? ''],
   ];
   let result = template;
   for (const [token, value] of tokens) {
     result = result.split(token).join(value);
+  }
+
+  /*
+   * Variabel flow diganti BELAKANGAN dan satu per satu, bukan lewat daftar
+   * token tetap: namanya ditentukan admin, jadi hanya variabel yang benar-benar
+   * ada yang punya nilai. Variabel yang tidak ada dibiarkan apa adanya —
+   * supaya salah ketik terlihat, bukan menghilang menjadi teks kosong.
+   */
+  for (const [kunci, nilai] of Object.entries(context.variables ?? {})) {
+    if (!kunci.startsWith('var.')) continue;
+    result = result.split(`{${kunci}}`).join(nilai);
   }
   return result;
 }

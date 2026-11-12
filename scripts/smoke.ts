@@ -6890,6 +6890,231 @@ await testAsync('pesan: teks blok bisa memakai template, dan tanpa konteks tetap
   assert.match(teksTanpa, /\{member\.name\}/, 'tanpa konteks token dibiarkan');
 });
 
+await testAsync('aksi: cabang bersyarat, dud, stop, & variabel adaptif', async () => {
+  const { sanitizeActions, planActions } = await import('../src/features/post-actions.js');
+
+  const { actions, dropped } = sanitizeActions([
+    { kind: 'dud' },
+    { kind: 'stop', stopMessage: 'Selesai di sini.' },
+    {
+      kind: 'condition',
+      value: 'selected',
+      comparator: 'equals',
+      expected: 'gamer',
+      then: [{ kind: 'reply', text: 'kamu gamer' }],
+      else: [{ kind: 'reply', text: 'bukan gamer' }],
+    },
+    { kind: 'variable', name: 'pesan', value: 'messageId', source: 'adaptive' },
+    { kind: 'variable', name: 'salinan', value: 'var.kode', source: 'get' },
+    // adaptive tanpa nilai = menyesatkan, harus ditolak.
+    { kind: 'variable', name: 'kosong', source: 'adaptive' },
+  ]);
+
+  assert.deepEqual(
+    actions.map((a) => a.kind).join(','),
+    'dud,stop,condition,variable,variable',
+    'jenis baru lolos, variabel adaptive tanpa nilai ditolak',
+  );
+  assert.equal(actions[1]!.stopMessage, 'Selesai di sini.');
+  assert.equal(actions[2]!.then!.length, 1, 'cabang cocok tersimpan');
+  assert.equal(actions[2]!.else!.length, 1, 'cabang tidak cocok tersimpan');
+  assert.equal(dropped.length, 1);
+  assert.match(dropped[0]!, /hasil aksi sebelumnya/);
+
+  // Cabang bersarang: kedalaman 3 diterima, lebih dalam dilaporkan.
+  const dalam = {
+    kind: 'condition',
+    value: 'a',
+    comparator: 'notEmpty',
+    then: [
+      {
+        kind: 'condition',
+        value: 'b',
+        comparator: 'notEmpty',
+        then: [
+          {
+            kind: 'condition',
+            value: 'c',
+            comparator: 'notEmpty',
+            then: [{ kind: 'condition', value: 'd', comparator: 'notEmpty', then: [{ kind: 'dud' }] }],
+          },
+        ],
+      },
+    ],
+  };
+  const bersarang = sanitizeActions([dalam]);
+  assert.equal(bersarang.actions.length, 1);
+  assert.ok(
+    bersarang.dropped.some((alasan) => alasan.includes('tingkat')),
+    'cabang terlalu dalam dilaporkan, bukan dipotong diam-diam',
+  );
+
+  // Rencana: cabang diterjemahkan jadi langkah bersarang.
+  const plan = planActions([
+    {
+      kind: 'condition',
+      value: 'selected',
+      comparator: 'equals',
+      expected: 'gamer',
+      then: [{ kind: 'reply', text: 'gamer!' }],
+      else: [{ kind: 'stop', stopMessage: 'bukan gamer' }],
+    },
+    { kind: 'dud' },
+  ]);
+  const syarat = plan.steps[0] as { kind: string; then?: unknown[]; otherwise?: unknown[] };
+  assert.equal(syarat.kind, 'condition');
+  assert.equal(syarat.then!.length, 1, 'cabang "cocok" jadi langkah');
+  assert.equal(syarat.otherwise!.length, 1, 'cabang "tidak cocok" jadi langkah');
+  assert.equal(plan.steps[1]!.kind, 'dud', 'dud tetap jadi langkah (urutan terjaga)');
+});
+
+await testAsync('flow: cabang dijalankan, lalu flow lanjut — bukan berhenti', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runComponentActions } = await import('../src/features/post-action-runner.js');
+  const GUILD = '123456789012345678';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Cabang',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Klik' }],
+  });
+  const tombol = await repo.replaceRoleButtons(GUILD, post.id, [
+    { label: 'Cek', roleId: '900000000000000001', mode: 'toggle' },
+  ]);
+  const buttonId = tombol.buttons[0]!.id;
+
+  const balasan: string[] = [];
+  const jalankan = async () => {
+    const interaction = {
+      customId: `post-role:${buttonId}`,
+      guildId: GUILD,
+      channelId: '999',
+      deferred: false,
+      replied: false,
+      user: { id: '2', username: 'wahyu', globalName: 'Wahyu', tag: 'uji#0001' },
+      member: {
+        displayName: 'Wahyu',
+        roles: { cache: { has: () => false }, highest: { position: 20 } },
+        permissions: { has: () => true },
+      },
+      guild: {
+        id: GUILD,
+        name: 'Server Uji',
+        roles: { cache: new Map(), fetch: async () => null },
+        members: { me: { roles: { highest: { position: 10 } }, permissions: { has: () => true } }, fetchMe: async () => null },
+      },
+      reply: async (payload: { content: string }) => void balasan.push(payload.content),
+      followUp: async (payload: { content: string }) => void balasan.push(payload.content),
+    };
+    return runComponentActions({
+      client: {} as never,
+      interaction: interaction as never,
+      target: `button:${buttonId}`,
+      postId: post.id,
+    });
+  };
+
+  /*
+   * Cabang yang COCOK: aksi di dalam cabang jalan, lalu aksi SESUDAH syarat
+   * juga jalan. Dulu syarat yang cocok hanya "lolos", dan cabangnya tidak ada.
+   */
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      {
+        kind: 'condition',
+        value: 'member.name',
+        comparator: 'equals',
+        expected: 'Wahyu',
+        then: [{ kind: 'variable', name: 'jalur', value: 'cocok' }],
+        else: [{ kind: 'variable', name: 'jalur', value: 'lain' }],
+      },
+      { kind: 'reply', text: 'jalur={var.jalur}' },
+    ],
+  });
+  await jalankan();
+  assert.deepEqual(balasan, ['jalur=cocok'], 'cabang cocok dipakai, flow lanjut');
+
+  // Cabang yang TIDAK cocok: cabang lain dipakai, flow tetap lanjut.
+  balasan.length = 0;
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      {
+        kind: 'condition',
+        value: 'member.name',
+        comparator: 'equals',
+        expected: 'Orang Lain',
+        then: [{ kind: 'variable', name: 'jalur', value: 'cocok' }],
+        else: [{ kind: 'variable', name: 'jalur', value: 'lain' }],
+      },
+      { kind: 'reply', text: 'jalur={var.jalur}' },
+    ],
+  });
+  await jalankan();
+  assert.deepEqual(balasan, ['jalur=lain'], 'cabang "tidak cocok" dipakai');
+
+  // Cabang kosong: tidak berhenti, lanjut seperti biasa (Check tanpa isi).
+  balasan.length = 0;
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      { kind: 'condition', value: 'member.name', comparator: 'equals', expected: 'Wahyu', then: [{ kind: 'dud' }] },
+      { kind: 'reply', text: 'lanjut' },
+    ],
+  });
+  await jalankan();
+  assert.deepEqual(balasan, ['lanjut'], 'cabang berisi "tanpa aksi" tetap melanjutkan flow');
+
+  // Stop: berhenti dengan pesan sendiri, sisa aksi tidak jalan.
+  balasan.length = 0;
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      { kind: 'stop', stopMessage: 'Berhenti di sini, {member.name}.' },
+      { kind: 'reply', text: 'TIDAK BOLEH' },
+    ],
+  });
+  await jalankan();
+  assert.deepEqual(balasan, ['Berhenti di sini, Wahyu.'], 'stop memakai pesan sendiri & menghentikan sisa');
+});
+
+await testAsync('pesan: flag pesan disaring & digabung dengan flag Components V2', async () => {
+  const { sanitizeMessageFlags, describeMessageFlags, MESSAGE_FLAGS, buildPostPayload, sanitizeBlocks } =
+    await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SectionBuilder: d.SectionBuilder,
+    ThumbnailBuilder: d.ThumbnailBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    StringSelectMenuBuilder: d.StringSelectMenuBuilder,
+    StringSelectMenuOptionBuilder: d.StringSelectMenuOptionBuilder,
+    UserSelectMenuBuilder: d.UserSelectMenuBuilder,
+    RoleSelectMenuBuilder: d.RoleSelectMenuBuilder,
+    MentionableSelectMenuBuilder: d.MentionableSelectMenuBuilder,
+    ChannelSelectMenuBuilder: d.ChannelSelectMenuBuilder,
+  };
+
+  assert.equal(sanitizeMessageFlags(4 | 4096), 4 | 4096, 'dua flag sah dipertahankan');
+  assert.equal(sanitizeMessageFlags(4 | 1), 4, 'flag asing (1) dibuang');
+  assert.equal(sanitizeMessageFlags('bukan angka'), 0);
+  assert.equal(sanitizeMessageFlags(0), 0);
+  assert.deepEqual(describeMessageFlags(4 | 4096), ['tanpa kartu embed', 'tanpa notifikasi']);
+  assert.equal(MESSAGE_FLAGS.suppressEmbeds, 1 << 2);
+  assert.equal(MESSAGE_FLAGS.suppressNotifications, 1 << 12);
+
+  // Flag never removes the Components V2 bit (1<<15) that the payload needs.
+  const blok = sanitizeBlocks([{ kind: 'container' }, { kind: 'text', value: 'Hai' }]).blocks;
+  const built = buildPostPayload(blok, deps);
+  const flagsV2 = built!.flags;
+  assert.ok(flagsV2 & (1 << 15), 'payload memakai flag Components V2');
+  // Penggabungan terjadi di pengirim; di sini dipastikan bit-nya tidak bentrok.
+  assert.equal((flagsV2 | 4) & (1 << 15), 1 << 15, 'menggabung flag admin tidak menghapus flag v2');
+});
+
 await testAsync('pesan: klik tombol role benar-benar memberi & melepas role', async () => {
   // Memakai database smoke yang sudah terbuka (:memory:). JANGAN menutupnya:
   // driver itu dipakai test-test sesudah ini — percobaan pertama menutupnya

@@ -209,6 +209,8 @@ CREATE TABLE IF NOT EXISTS custom_posts (
   accent     TEXT,
   sender     TEXT,
   layout     TEXT,
+  -- Bitmask flag pesan Discord (suppress embeds/notifikasi/voice). NULL = 0.
+  flags      INTEGER,
   updated_at INTEGER NOT NULL
 );
 
@@ -524,6 +526,8 @@ CREATE TABLE IF NOT EXISTS custom_posts (
   accent     TEXT,
   sender     TEXT,
   layout     TEXT,
+  -- Bitmask flag pesan Discord. NULL = 0.
+  flags      INTEGER,
   updated_at BIGINT NOT NULL
 );
 

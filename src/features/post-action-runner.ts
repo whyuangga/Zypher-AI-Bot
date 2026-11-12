@@ -97,6 +97,29 @@ function highestPosition(member: GuildMember): number {
   return member.roles?.highest?.position ?? 0;
 }
 
+/**
+ * Selaraskan konteks template dengan variabel flow.
+ *
+ * Dipanggil sesudah variabel berubah, supaya `{var.nama}` dan `{role}` selalu
+ * mencerminkan keadaan TERKINI saat teks diganti. Dulu konteks hanya diisi
+ * sekali di awal, sehingga `{var.jalur}` yang disetel sebuah aksi tetap
+ * tercetak mentah di balasan berikutnya — bug yang lolos karena tidak ada tes
+ * yang memakai variabel di dua aksi berbeda.
+ */
+function sinkronKonteks(runtime: {
+  konteks: TemplateContext;
+  variables: FlowVariables;
+}): void {
+  const variabel: Record<string, string> = {};
+  for (const [kunci, nilai] of Object.entries(runtime.variables)) {
+    if (kunci.startsWith('var.')) variabel[kunci] = nilai;
+  }
+  runtime.konteks.variables = variabel;
+  runtime.konteks.selected = runtime.variables['selected'] ?? '';
+  runtime.konteks.role = runtime.variables['role.name'] ?? runtime.konteks.role;
+  runtime.konteks.effect = runtime.variables['effect'] ?? runtime.konteks.effect;
+}
+
 function teksBlocker(blocker: RoleBlocker): string {
   return `❌ ${BLOCKER_TEXT[blocker]}`;
 }
@@ -222,6 +245,20 @@ async function jalankanRole(options: {
  * dan dari sesi tersimpan (timer melanjutkan penantian). Itu sebabnya langkah
  * dijalankan oleh satu fungsi — dua salinan akan menyimpang cepat atau lambat.
  */
+/**
+ * Hasil aksi terakhir, untuk variabel `adaptive`.
+ *
+ * Discohook menyebutnya "adaptive variable": nilai diambil dari hasil aksi
+ * sebelumnya (mis. `channel_id` dari pesan yang baru dikirim). Di sini yang
+ * tersedia hanya nilai yang benar-benar kita punya — mengarang nilai lain
+ * hanya akan membuat flow tampak bisa sesuatu yang belum bisa.
+ */
+interface HasilAksi {
+  messageId?: string;
+  channelId?: string;
+  threadId?: string;
+}
+
 interface FlowRuntime {
   client: Client;
   guildId: string;
@@ -239,6 +276,8 @@ interface FlowRuntime {
   hapusPesan: () => Promise<void>;
   /** Untuk peringatan yang tidak boleh menghentikan flow. */
   peringatan: (teks: string) => Promise<void>;
+  /** Hasil aksi terakhir (diisi runner), dipakai variabel `adaptive`. */
+  hasil?: HasilAksi;
 }
 
 type HasilFlow = 'selesai' | 'menunggu' | 'berhenti';
@@ -273,40 +312,84 @@ async function jalankanLangkah(
         await runtime.jawab(hasil.text, true);
         return { hasil: 'berhenti', alasan: hasil.text };
       }
-      runtime.konteks.role = hasil.roleName ?? '';
-      runtime.konteks.effect = hasil.effect ?? 'diperbarui';
-      runtime.variables = nilaiFlow({
-        member: runtime.konteks.member,
-        mention: runtime.konteks.mention,
-        memberId: runtime.konteks.memberId,
-        server: runtime.konteks.server,
-        role: runtime.konteks.role,
-        effect: runtime.konteks.effect,
-        selected: runtime.variables['selected'] ?? '',
-        variables: runtime.variables,
-      });
+      runtime.variables = {
+        ...runtime.variables,
+        'role.name': hasil.roleName ?? '',
+        role: hasil.roleName ?? '',
+        effect: hasil.effect ?? 'diperbarui',
+      };
+      sinkronKonteks(runtime);
       continue;
     }
 
     if (step.kind === 'variable') {
-      runtime.variables[`var.${step.name}`] = fillActionText(step.value, runtime.konteks);
+      /*
+       * Tiga sumber nilai, sama seperti Discohook:
+       *   static   teks admin (boleh template);
+       *   adaptive nilai dari hasil aksi sebelumnya (messageId/channelId/threadId);
+       *   get      salinan variabel lain (nama lengkap, mis. `var.kode`).
+       */
+      let nilai = '';
+      if (step.source === 'adaptive') {
+        const kunci = step.value.trim() as keyof HasilAksi;
+        nilai = runtime.hasil?.[kunci] ?? '';
+        if (!nilai) {
+          await runtime.peringatan(
+            `⚠️ Variabel "${step.name}" tidak terisi: aksi sebelumnya tidak menghasilkan "${step.value}".`,
+          );
+        }
+      } else if (step.source === 'get') {
+        nilai = runtime.variables[step.value.trim()] ?? '';
+      } else {
+        nilai = fillActionText(step.value, runtime.konteks);
+      }
+      runtime.variables[`var.${step.name}`] = nilai;
+      sinkronKonteks(runtime);
       continue;
     }
 
+    if (step.kind === 'dud') {
+      // "Do nothing": sengaja tidak melakukan apa pun, tetapi tetap dihitung
+      // sebagai langkah supaya urutan yang disusun admin tidak bergeser.
+      continue;
+    }
+
+    if (step.kind === 'stop') {
+      const pesan = step.message ? fillActionText(step.message, runtime.konteks).trim() : '';
+      await runtime.jawab(pesan || '⏹️ Flow dihentikan.', true);
+      return { hasil: 'berhenti', alasan: pesan || 'aksi hentikan' };
+    }
+
     if (step.kind === 'condition') {
-      /*
-       * Percabangan di sini sederhana dan disengaja: kalau syarat TIDAK cocok,
-       * flow berhenti. Discohook bisa bercabang ke dua jalur berbeda; itu
-       * butuh antrean langkah bertingkat yang jauh lebih rumit, dan setengah
-       * jadi lebih membingungkan daripada berhenti dengan penjelasan.
-       */
       const nilai = runtime.variables[step.value] ?? '';
       const cocok = testCondition({ value: nilai, comparator: step.comparator as never, expected: step.expected });
-      if (!cocok) {
-        const alasan = `⏹️ Syarat "${step.value}" tidak terpenuhi, jadi aksi berikutnya tidak dijalankan.`;
-        await runtime.jawab(alasan, true);
-        return { hasil: 'berhenti', alasan };
+
+      /*
+       * Dua bentuk, keduanya sah:
+       *   - dengan cabang (`then`/`else`): jalankan cabangnya, lalu LANJUT ke
+       *     aksi sesudahnya — persis seperti `Check` di Discohook;
+       *   - tanpa cabang: perilaku lama, syarat tidak cocok menghentikan flow.
+       * Bentuk kedua dipertahankan supaya aksi yang sudah tersimpan sebelum
+       * cabang ada tidak berubah artinya diam-diam.
+       */
+      const punyaCabang = Boolean(step.then?.length || step.otherwise?.length);
+      if (!punyaCabang) {
+        if (!cocok) {
+          const alasan = `⏹️ Syarat "${step.value}" tidak terpenuhi, jadi aksi berikutnya tidak dijalankan.`;
+          await runtime.jawab(alasan, true);
+          return { hasil: 'berhenti', alasan };
+        }
+        continue;
       }
+
+      const cabang = cocok ? (step.then ?? []) : (step.otherwise ?? []);
+      if (cabang.length === 0) {
+        // Cabang kosong bukan kesalahan: admin memang tidak ingin apa pun
+        // terjadi di jalur itu. Tidak ada pesan apa pun — jangan mengganggu.
+        continue;
+      }
+      const dalam = await jalankanLangkah(runtime, cabang);
+      if (dalam.hasil !== 'selesai') return dalam;
       continue;
     }
 
@@ -357,7 +440,7 @@ async function jalankanLangkah(
        * batas komponen, berkas, dan pemetaan tombol/menu role otomatis
        * berlaku, jadi tidak ada perilaku kedua yang bisa menyimpang.
        */
-      await sendOrUpdatePost({
+      const terkirim = await sendOrUpdatePost({
         client: runtime.client,
         channelId: tujuan.channelId,
         // Nesting: balasan hanya bisa dipasang di channel yang sama.
@@ -376,6 +459,11 @@ async function jalankanLangkah(
          */
         template: runtime.variables,
       });
+      // Hasil dikirim untuk variabel `adaptive`.
+      runtime.hasil = {
+        messageId: terkirim.messageId,
+        channelId: tujuan.channelId ?? undefined,
+      };
     } catch (error) {
       logger.error(`Aksi kirim pesan ${step.postId} gagal`, errorMessage(error));
       await runtime.peringatan('❌ Pesan lanjutan gagal dikirim. Beri tahu admin.');
@@ -427,6 +515,7 @@ async function buatThread(runtime: FlowRuntime, nama: string, privat: boolean): 
       await runtime.jawab('❌ Channel ini tidak mendukung thread privat.', true);
       return false;
     }
+    runtime.hasil = { ...runtime.hasil, threadId: thread.id };
     await runtime.jawab(`🧵 Thread dibuat: <#${thread.id}>`, false);
     return true;
   } catch (error) {
@@ -511,7 +600,13 @@ export async function runComponentActions(options: {
     memberId: interaction.user.id,
     server: guild.name ?? 'server ini',
   };
+  /*
+   * `selected` ikut ke konteks, bukan hanya ke variabel: teks balasan admin
+   * paling sering ingin menyebut pilihan member (`{selected}`), dan tanpa ini
+   * token itu selalu kosong walaupun menunya jelas punya nilai.
+   */
   const dipilih = (interaction.values ?? []).join(', ');
+  konteks.selected = dipilih;
   const variables = nilaiFlow({ ...konteks, selected: dipilih });
 
   const runtime: FlowRuntime = {
@@ -628,6 +723,11 @@ export async function resumeFlowSession(client: Client, session: FlowSession): P
     server: session.serverName,
   };
   const variables = nilaiFlow({ ...konteks, variables: session.variables });
+  konteks.variables = Object.fromEntries(
+    Object.entries(variables)
+      .filter(([kunci]) => kunci.startsWith('var.'))
+      .map(([kunci, nilai]) => [kunci, nilai]),
+  );
 
   const runtime: FlowRuntime = {
     client,

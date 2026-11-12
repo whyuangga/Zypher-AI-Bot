@@ -1718,6 +1718,49 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   min-height: 46px;
   font-size: 12.5px;
 }
+
+/*
+ * Kotak cabang bersyarat.
+ *
+ * Garis kiri lebih tipis dari kartu aksi dan menjorok ke dalam: cabang adalah
+ * BAGIAN dari aksi syarat, bukan aksi sejajar. Tanpa perbedaan visual ini,
+ * admin sulit tahu aksi mana yang hanya berjalan di salah satu jalur.
+ */
+.aksi-cabang {
+  display: grid;
+  gap: 6px;
+  margin-left: 10px;
+  padding-left: 10px;
+  border-left: 1px dashed var(--line);
+}
+
+.aksi-cabang-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.aksi-cabang-judul {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-3, var(--text-2));
+  flex: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.aksi-cabang-baris {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.aksi-cabang-teks {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
 .role-mode {
   font-size: 12px;
   padding: 4px 8px;

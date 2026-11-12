@@ -1438,6 +1438,76 @@ await check('pesan: panel jadwal kirim menyusun & menyimpan jadwal', async () =>
   assert.equal(page.errors.length, 0, `panel jadwal error: ${page.errors.join('|')}`);
 });
 
+await check('pesan: cabang syarat bisa diisi & tampil bersarang', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-cabang');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      editingId = 1;
+      ROLES = [];
+      POST_LIST = [{ id: 2, name: 'Lain' }];
+      postActions = { 'button:9': [
+        { kind: 'condition', value: 'selected', comparator: 'equals', expected: 'gamer' }
+      ] };
+      aksiTerbuka = 'button:9';
+      renderRoleButtons();
+
+      // Tambah satu aksi ke cabang "cocok" lewat kotak cabang.
+      var daftar = aksiUntuk('button:9');
+      daftar[0].then = [{ kind: 'reply', text: 'kamu gamer', hidden: true }];
+      daftar[0].else = [{ kind: 'stop' }];
+      var kotak = kotakCabang(daftar, 0, 'then', 'cocok');
+      var kotakLain = kotakCabang(daftar, 0, 'else', 'tidak cocok');
+
+      return {
+        jumlahCabang: kotak.children ? kotak.children.length : 0,
+        teksCocok: kotak.textContent,
+        teksLain: kotakLain.textContent,
+        ringkas: ringkasAksi(daftar[0]),
+        label: jenisAksiLabel('stop'),
+        // Cabang ikut terkirim ke server; tanpa ini percabangan hilang diam-diam.
+        muatan: (susunAksi()['button:9'] || [])[0],
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.match(String(hasil.teksCocok), /Kalau cocok \(1\)/, 'cabang cocok menampilkan jumlah');
+  assert.match(String(hasil.teksCocok), /kamu gamer/, 'isi cabang terbaca');
+  assert.match(String(hasil.teksLain), /Hentikan/, 'cabang tidak cocok berisi aksi stop');
+  assert.equal(hasil.label, 'Hentikan');
+  const muatan = hasil.muatan as { then?: unknown[]; else?: unknown[] };
+  assert.equal(muatan.then!.length, 1, 'cabang "cocok" ikut dikirim');
+  assert.equal(muatan.else!.length, 1, 'cabang "tidak cocok" ikut dikirim');
+  assert.equal(page.errors.length, 0, `editor cabang error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: flag pesan dikirim sebagai bitmask yang benar', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-flag');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      var embeds = document.getElementById('postFlagEmbeds');
+      var notif = document.getElementById('postFlagNotif');
+      embeds.checked = true;
+      notif.checked = true;
+      var dua = flagPesan();
+      notif.checked = false;
+      var satu = flagPesan();
+      embeds.checked = false;
+      return { dua: dua, satu: satu, nol: flagPesan() };
+    })()
+  `)) as Record<string, number>;
+
+  // Angka ini harus sama dengan SUPPRESS_EMBEDS (4) dan
+  // SUPPRESS_NOTIFICATIONS (4096) di sisi server.
+  assert.equal(hasil.dua, 4 | 4096, 'dua flag digabung');
+  assert.equal(hasil.satu, 4, 'satu flag');
+  assert.equal(hasil.nol, 0, 'tanpa flag');
+  assert.equal(page.errors.length, 0, `flag pesan error: ${page.errors.join('|')}`);
+});
+
 await check('pesan: tombol impor Discohook memanggil endpoint yang benar', async () => {
   const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
   assert.ok(html.includes('importDiscohook'), 'tombol tarik Discohook ada di halaman');

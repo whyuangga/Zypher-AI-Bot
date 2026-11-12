@@ -249,6 +249,46 @@ export function normalizeSelectKind(value: unknown): SelectMenuKind {
   return SELECT_KINDS.includes(value as SelectMenuKind) ? (value as SelectMenuKind) : 'string';
 }
 
+/**
+ * Flag pesan yang boleh dipakai admin.
+ *
+ * Discohook menyebutnya "Message Flags": Suppress Embeds, Suppress
+ * Notifications, dan Voice Message. Nilainya bitmask Discord, dan hanya tiga
+ * ini yang masuk akal untuk pesan container:
+ *   - 4   = SUPPRESS_EMBEDS (tautan tidak dibuatkan kartu embed)
+ *   - 4096= SUPPRESS_NOTIFICATIONS (pesan tidak memicu notifikasi)
+ *   - 8192= IS_VOICE_MESSAGE (tidak dipakai: butuh lampiran audio khusus)
+ * Flag lain (IS_COMPONENTS_V2) diurus pengirim, bukan admin.
+ */
+export const MESSAGE_FLAGS = {
+  suppressEmbeds: 1 << 2,
+  suppressNotifications: 1 << 12,
+} as const;
+
+/**
+ * Rapikan bitmask flag dari input admin.
+ *
+ * Nilai asing DIBUANG, bukan diteruskan: flag Discord yang tidak dikenal bisa
+ * membuat pesan ditolak, dan admin tidak akan tahu kenapa.
+ */
+export function sanitizeMessageFlags(input: unknown): number {
+  const angka = Number(input);
+  if (!Number.isFinite(angka)) return 0;
+  let hasil = 0;
+  for (const nilai of Object.values(MESSAGE_FLAGS)) {
+    if ((angka & nilai) === nilai) hasil |= nilai;
+  }
+  return hasil;
+}
+
+/** Flag yang dipahami, untuk ditampilkan di dasbor. */
+export function describeMessageFlags(flags: number): string[] {
+  const bagian: string[] = [];
+  if (flags & MESSAGE_FLAGS.suppressEmbeds) bagian.push('tanpa kartu embed');
+  if (flags & MESSAGE_FLAGS.suppressNotifications) bagian.push('tanpa notifikasi');
+  return bagian;
+}
+
 export const BUTTON_STYLES = ['primary', 'secondary', 'success', 'danger'] as const;
 export type ButtonStyleName = (typeof BUTTON_STYLES)[number];
 

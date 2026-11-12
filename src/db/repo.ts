@@ -1435,6 +1435,11 @@ export interface CustomPost {
   accent: string | null;
   /** `webhook` = tampil atas nama server; selain itu lewat bot. */
   sender: 'bot' | 'webhook';
+  /**
+   * Flag pesan Discord (bitmask): 1<<2 suppress embed, 1<<12 suppress
+   * notifikasi. 0 = tidak ada flag.
+   */
+  flags: number;
   updatedAt: number;
 }
 
@@ -1447,6 +1452,7 @@ interface CustomPostRow {
   message_id: string | null;
   accent?: string | null;
   sender?: string | null;
+  flags?: number | string | null;
   updated_at: number | string;
 }
 
@@ -1459,6 +1465,7 @@ function toCustomPost(row: CustomPostRow): CustomPost {
     messageId: row.message_id,
     accent: row.accent ?? null,
     sender: row.sender === 'webhook' ? 'webhook' : 'bot',
+    flags: Number(row.flags ?? 0) || 0,
     updatedAt: Number(row.updated_at),
   };
 }
@@ -1497,12 +1504,13 @@ export async function createCustomPost(
     blocks: unknown;
     accent?: string | null;
     sender?: 'bot' | 'webhook';
+    flags?: number;
   },
 ): Promise<CustomPost> {
   const blocks = sanitizeBlocks(input.blocks).blocks;
   const id = await insert(
-    `INSERT INTO custom_posts (guild_id, name, channel_id, blocks, message_id, accent, sender, updated_at)
-     VALUES (?, ?, ?, ?, NULL, ?, ?, ?)`,
+    `INSERT INTO custom_posts (guild_id, name, channel_id, blocks, message_id, accent, sender, flags, updated_at)
+     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
     [
       guildId,
       input.name.slice(0, 120),
@@ -1510,6 +1518,7 @@ export async function createCustomPost(
       JSON.stringify(blocks),
       input.accent ?? null,
       input.sender ?? 'bot',
+      input.flags ?? 0,
       Date.now(),
     ],
   );
@@ -1526,6 +1535,7 @@ export async function updateCustomPost(
     blocks?: unknown;
     accent?: string | null;
     sender?: 'bot' | 'webhook';
+    flags?: number;
   },
 ): Promise<CustomPost | null> {
   const current = await getCustomPost(guildId, id);
@@ -1533,13 +1543,14 @@ export async function updateCustomPost(
 
   const blocks = input.blocks === undefined ? current.blocks : sanitizeBlocks(input.blocks).blocks;
   await run(
-    'UPDATE custom_posts SET name = ?, channel_id = ?, blocks = ?, accent = ?, sender = ?, updated_at = ? WHERE guild_id = ? AND id = ?',
+    'UPDATE custom_posts SET name = ?, channel_id = ?, blocks = ?, accent = ?, sender = ?, flags = ?, updated_at = ? WHERE guild_id = ? AND id = ?',
     [
       (input.name ?? current.name).slice(0, 120),
       input.channelId === undefined ? current.channelId : input.channelId,
       JSON.stringify(blocks),
       input.accent === undefined ? current.accent : input.accent,
       input.sender ?? current.sender,
+      input.flags === undefined ? current.flags : input.flags,
       Date.now(),
       guildId,
       id,

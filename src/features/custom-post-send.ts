@@ -229,6 +229,8 @@ export async function sendOrUpdatePost(options: {
   blocks: PostBlock[];
   /** ID pesan /pesan — dipakai untuk customId select menu. */
   postId?: number;
+  /** Flag pesan dari admin (suppress embeds/notifikasi). 0 = tanpa flag. */
+  flags?: number;
   /**
    * Kirim sebagai balasan pesan tertentu, bukan pesan channel baru.
    *
@@ -255,10 +257,17 @@ export async function sendOrUpdatePost(options: {
     options.postId ?? null,
     options.template ?? null,
   );
-  const payload = built;
-  if (!payload) {
+  if (!built) {
     throw new PostSendError('Pesan masih kosong — isi minimal satu teks atau gambar.');
   }
+  /*
+   * Flag admin DIGABUNG dengan flag Components V2 yang sudah dipasang penyusun
+   * payload. Tanpa penggabungan, memilih "tanpa kartu embed" akan menghapus
+   * flag v2 dan pesan ditolak Discord.
+   */
+  const payload = options.flags
+    ? { ...built, flags: built.flags | options.flags }
+    : built;
   // Saat memperbarui pesan, lampiran lama harus dibuang dulu: kalau tidak,
   // Discord menyimpan gambar lama DAN gambar baru, sehingga pesan terus
   // bertambah lampiran setiap kali admin menekan "Simpan & kirim ulang".
@@ -431,6 +440,8 @@ export async function sendOrUpdatePostViaWebhook(options: {
   identity: WebhookIdentity;
   /** ID pesan /pesan — dipakai untuk customId select menu. */
   postId?: number;
+  /** Flag pesan dari admin (suppress embeds/notifikasi). */
+  flags?: number;
 }): Promise<SendResult> {
   // Komponen interaktif dikirim oleh WEBHOOK, bukan oleh bot kita. Discord
   // hanya meneruskan klik ke aplikasi pemilik komponen — jadi tombol/menu di
@@ -471,7 +482,7 @@ export async function sendOrUpdatePostViaWebhook(options: {
    */
   const body = {
     components: built.components,
-    flags: built.flags,
+    flags: options.flags ? built.flags | options.flags : built.flags,
     files: built.files,
     username: options.identity.username.slice(0, 80),
     ...(options.identity.avatarURL ? { avatarURL: options.identity.avatarURL } : {}),

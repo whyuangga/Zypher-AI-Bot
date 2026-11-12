@@ -287,6 +287,16 @@ export function pesanPage(options: PesanPageOptions): string {
     </span>
     <p class="hint">Lewat webhook, pesan tampil dengan nama &amp; logo server — tapi tombol ambil role tidak bisa dipakai.</p>
   </div>
+  <div style="grid-column:1/-1">
+    <label class="field">Flag pesan</label>
+    <label class="menu-flags" style="margin-right:14px">
+      <input type="checkbox" id="postFlagEmbeds" /> tanpa kartu embed untuk tautan
+    </label>
+    <label class="menu-flags">
+      <input type="checkbox" id="postFlagNotif" /> tanpa notifikasi
+    </label>
+    <p class="hint">Sama seperti "Message Flags" di Discohook. Flag lain (Components V2) diurus bot dan tidak perlu diatur.</p>
+  </div>
 </div>`,
   });
 
@@ -1997,6 +2007,13 @@ async function savePost(andSend) {
         blocks: isi,
         accent: accentNow(),
         sender: (document.getElementById('postSender') || {}).value || 'bot',
+        /*
+         * Flag digabung dari dua centang. Angkanya HARUS sama dengan yang
+         * dipahami server (SUPPRESS_EMBEDS=4, SUPPRESS_NOTIFICATIONS=4096);
+         * angka yang salah dibuang diam-diam oleh sanitizer, jadi salah ketik
+         * di sini tidak akan terlihat sampai pesannya diperiksa di Discord.
+         */
+        flags: flagPesan(),
       }),
     });
     if (result.dropped && result.dropped.length) {
@@ -2115,6 +2132,14 @@ function loadExisting() {
     var pengirim = document.getElementById('postSender');
     if (pengirim) pengirim.value = found.sender;
   }
+  /*
+   * Flag pesan: dicentang dari bitmask yang tersimpan. Nilai lain diabaikan —
+   * hanya dua flag ini yang boleh diatur admin.
+   */
+  var flagEmbeds = document.getElementById('postFlagEmbeds');
+  var flagNotif = document.getElementById('postFlagNotif');
+  if (flagEmbeds) flagEmbeds.checked = Boolean((found.flags || 0) & 4);
+  if (flagNotif) flagNotif.checked = Boolean((found.flags || 0) & 4096);
   // normalBlock memuat SEMUA field yang dikenal, termasuk spoiler dan nama
   // berkas — dulu daftarnya ditulis ulang di sini dan dua field itu tertinggal.
   blocks = found.blocks.map(normalBlock);
@@ -2132,6 +2157,21 @@ function loadExisting() {
 
 /** Warna aksen aktif. */
 var ACCENT_DEFAULT = '#6d8cff';
+
+/**
+ * Bitmask flag pesan dari centang di tab Susun.
+ *
+ * Dihitung di satu tempat supaya penyimpanan dan pengiriman ulang tidak bisa
+ * memakai angka yang berbeda.
+ */
+function flagPesan() {
+  var embeds = document.getElementById('postFlagEmbeds');
+  var notif = document.getElementById('postFlagNotif');
+  var flags = 0;
+  if (embeds && embeds.checked) flags |= 4;
+  if (notif && notif.checked) flags |= 4096;
+  return flags;
+}
 
 function accentNow() {
   var el = document.getElementById('postAccent');
@@ -2776,6 +2816,8 @@ function susunAksi() {
       if (aksi.kind === 'variable') return /^[a-zA-Z][a-zA-Z0-9_]{0,31}$/.test(String(aksi.name || ''));
       if (aksi.kind === 'thread') return Boolean(String(aksi.threadName || '').trim());
       if (aksi.kind === 'delete') return true;
+      if (aksi.kind === 'dud') return true;
+      if (aksi.kind === 'stop') return true;
       return Boolean(Number(aksi.postId));
     });
     if (daftar.length > 0) hasil[target] = daftar;
@@ -3208,7 +3250,9 @@ function kartuAksi(target, judul) {
     ['condition', 'Periksa syarat (berhenti bila tidak cocok)'],
     ['variable', 'Simpan variabel'],
     ['thread', 'Buat thread'],
-    ['delete', 'Hapus pesan ini']
+    ['delete', 'Hapus pesan ini'],
+    ['dud', 'Tidak melakukan apa pun'],
+    ['stop', 'Hentikan flow']
   ].forEach(function (opt) {
     var o = document.createElement('option');
     o.value = opt[0];
@@ -3240,6 +3284,10 @@ function kartuAksi(target, judul) {
       aksiUntuk(target).push({ kind: 'thread', threadName: 'Diskusi {member.name}', private: false });
     } else if (jenis === 'delete') {
       aksiUntuk(target).push({ kind: 'delete', what: 'pesan' });
+    } else if (jenis === 'dud') {
+      aksiUntuk(target).push({ kind: 'dud' });
+    } else if (jenis === 'stop') {
+      aksiUntuk(target).push({ kind: 'stop' });
     } else {
       var lain = POST_LIST.filter(function (p) { return editingId && p.id !== editingId; });
       if (lain.length === 0) return toast('Belum ada pesan lain yang bisa dikirim', true);
@@ -3262,6 +3310,113 @@ function kartuAksi(target, judul) {
   return bungkus;
 }
 
+/**
+ * Kotak satu cabang bersyarat (cocok / tidak cocok).
+ *
+ * Ditulis sebagai kotak bersarang, bukan daftar datar: cabang adalah bagian
+ * dari aksi syarat, dan menampilkannya berderet akan membuat urutan flow
+ * terbaca salah (aksi cabang seolah dijalankan selalu).
+ */
+function kotakCabang(daftar, nomor, kunci, judul) {
+  var kotak = document.createElement('div');
+  kotak.className = 'aksi-cabang';
+
+  var head = document.createElement('div');
+  head.className = 'aksi-cabang-head';
+  var nama = document.createElement('span');
+  nama.className = 'aksi-cabang-judul';
+  var isi = daftar[nomor][kunci] || [];
+  nama.textContent = 'Kalau ' + judul + ' (' + isi.length + ')';
+  head.appendChild(nama);
+
+  var tambah = document.createElement('select');
+  tambah.className = 'role-mode';
+  tambah.id = 'aksiCabang-' + kunci + '-' + nomor;
+  [
+    ['reply', 'Balas pengklik'],
+    ['role', 'Role'],
+    ['message', 'Kirim pesan'],
+    ['wait', 'Tunggu'],
+    ['variable', 'Simpan variabel'],
+    ['stop', 'Hentikan flow']
+  ].forEach(function (opt) {
+    var o = document.createElement('option');
+    o.value = opt[0];
+    o.textContent = opt[1];
+    tambah.appendChild(o);
+  });
+  head.appendChild(tambah);
+
+  var tombol = document.createElement('button');
+  tombol.className = 'btn btn-ghost btn-sm';
+  tombol.type = 'button';
+  tombol.textContent = '+';
+  tombol.title = 'Tambah aksi ke cabang ini';
+  tombol.onclick = function () {
+    daftar[nomor][kunci] = daftar[nomor][kunci] || [];
+    if (daftar[nomor][kunci].length >= 6) return toast('Maksimal 6 aksi per cabang', true);
+    var jenis = tambah.value;
+    if (jenis === 'role') {
+      var role = ROLES.filter(function (r) { return !r.blockedBy; })[0];
+      if (!role) return toast('Belum ada role yang bisa dipakai', true);
+      daftar[nomor][kunci].push({ kind: 'role', roleId: role.id, op: 'toggle' });
+    } else if (jenis === 'reply') {
+      daftar[nomor][kunci].push({ kind: 'reply', text: 'Halo {member.name}!', hidden: true });
+    } else if (jenis === 'message') {
+      var lain = POST_LIST.filter(function (p) { return editingId && p.id !== editingId; });
+      if (lain.length === 0) return toast('Belum ada pesan lain yang bisa dikirim', true);
+      daftar[nomor][kunci].push({ kind: 'message', postId: lain[0].id, toChannel: true });
+    } else if (jenis === 'wait') {
+      daftar[nomor][kunci].push({ kind: 'wait', seconds: 60 });
+    } else if (jenis === 'variable') {
+      daftar[nomor][kunci].push({ kind: 'variable', name: 'nilai', value: '{member.name}' });
+    } else {
+      daftar[nomor][kunci].push({ kind: 'stop' });
+    }
+    segarkanAksi();
+  };
+  head.appendChild(tombol);
+  kotak.appendChild(head);
+
+  if (isi.length === 0) {
+    var kosong = document.createElement('p');
+    kosong.className = 'hint';
+    kosong.style.margin = '0';
+    kosong.textContent = 'Belum ada aksi di cabang ini.';
+    kotak.appendChild(kosong);
+    return kotak;
+  }
+
+  isi.forEach(function (anak, urutan) {
+    var baris = document.createElement('div');
+    baris.className = 'aksi-cabang-baris';
+
+    var teks = document.createElement('span');
+    teks.className = 'aksi-cabang-teks';
+    teks.textContent = (urutan + 1) + '. ' + jenisAksiLabel(anak.kind) + ' — ' + ringkasAksi(anak);
+    baris.appendChild(teks);
+
+    var hapus = document.createElement('button');
+    hapus.className = 'btn-danger btn-sm btn-icon';
+    hapus.type = 'button';
+    hapus.title = 'Hapus aksi dari cabang';
+    hapus.textContent = '×';
+    hapus.onclick = function () {
+      isi.splice(urutan, 1);
+      segarkanAksi();
+    };
+    baris.appendChild(hapus);
+    kotak.appendChild(baris);
+  });
+
+  var catatan = document.createElement('p');
+  catatan.className = 'hint';
+  catatan.style.margin = '0';
+  catatan.textContent = 'Aksi cabang dijalankan berurutan, lalu flow lanjut ke aksi sesudah syarat.';
+  kotak.appendChild(catatan);
+  return kotak;
+}
+
 /** Ringkasan satu aksi untuk daftar tertutup. */
 function ringkasAksi(aksi) {
   if (aksi.kind === 'wait') return 'tunggu ' + jamAksi(Number(aksi.seconds) || 0);
@@ -3276,6 +3431,8 @@ function ringkasAksi(aksi) {
   if (aksi.kind === 'variable') return 'simpan ' + aksi.name + ' = "' + String(aksi.value || '').slice(0, 24) + '"';
   if (aksi.kind === 'thread') return 'buat thread "' + String(aksi.threadName || '').slice(0, 30) + '"';
   if (aksi.kind === 'delete') return 'hapus pesan ini';
+  if (aksi.kind === 'dud') return 'tidak melakukan apa pun';
+  if (aksi.kind === 'stop') return 'hentikan flow' + (aksi.stopMessage ? ' ("' + String(aksi.stopMessage).slice(0, 30) + '")' : '');
   if (aksi.kind === 'role') {
     var role = roleById(aksi.roleId);
     var op = aksi.op === 'give' ? 'beri' : aksi.op === 'remove' ? 'lepas' : 'pasang/lepas';
@@ -3298,7 +3455,9 @@ function jenisAksiLabel(jenis) {
     condition: 'Syarat',
     variable: 'Variabel',
     thread: 'Thread',
-    delete: 'Hapus pesan'
+    delete: 'Hapus pesan',
+    dud: 'Tanpa aksi',
+    stop: 'Hentikan'
   }[jenis] || jenis;
 }
 
@@ -3517,12 +3676,49 @@ function buatBarisAksi(target, nomor, aksi) {
       baris.appendChild(harap);
     }
 
+    /*
+     * Dua jalur, seperti Check di Discohook: aksi yang dijalankan bila cocok
+     * dan bila tidak. Kalau keduanya kosong, perilakunya tetap seperti versi
+     * sebelumnya (tidak cocok = flow berhenti) supaya aksi yang sudah
+     * tersimpan tidak berubah arti.
+     */
+    var adaCabang = (aksi.then && aksi.then.length) || (aksi.else && aksi.else.length);
     var catatanSyarat = document.createElement('p');
     catatanSyarat.className = 'hint';
     catatanSyarat.style.margin = '0';
-    catatanSyarat.textContent =
-      'Kalau syarat TIDAK cocok, sisa aksi dihentikan dan pengklik diberi tahu. Percabangan dua jalur belum didukung.';
+    catatanSyarat.textContent = adaCabang
+      ? 'Syarat cocok: jalankan cabang "cocok". Tidak cocok: jalankan cabang "tidak cocok". Flow lanjut ke aksi berikutnya sesudah cabang selesai.'
+      : 'Kedua cabang masih kosong, jadi syarat yang tidak cocok akan MENGENTIKAN sisa flow. Isi salah satu cabang untuk membuat percabangan.';
     baris.appendChild(catatanSyarat);
+
+    baris.appendChild(kotakCabang(daftar, nomor, 'then', 'cocok'));
+    baris.appendChild(kotakCabang(daftar, nomor, 'else', 'tidak cocok'));
+    return baris;
+  }
+
+  if (aksi.kind === 'stop') {
+    var pesanStop = document.createElement('input');
+    pesanStop.type = 'text';
+    pesanStop.value = aksi.stopMessage || '';
+    pesanStop.placeholder = 'Pesan saat flow berhenti (opsional)';
+    pesanStop.oninput = function () { daftar[nomor].stopMessage = pesanStop.value.slice(0, 1800); };
+    baris.appendChild(pesanStop);
+
+    var catatanStop = document.createElement('p');
+    catatanStop.className = 'hint';
+    catatanStop.style.margin = '0';
+    catatanStop.textContent = 'Sisa aksi tidak dijalankan. Kosongkan pesannya kalau berhenti tanpa penjelasan.';
+    baris.appendChild(catatanStop);
+    return baris;
+  }
+
+  if (aksi.kind === 'dud') {
+    var catatanDud = document.createElement('p');
+    catatanDud.className = 'hint';
+    catatanDud.style.margin = '0';
+    catatanDud.textContent =
+      'Tidak melakukan apa pun. Berguna sebagai penanda "sengaja dikosongkan" saat menyusun flow bertahap.';
+    baris.appendChild(catatanDud);
     return baris;
   }
 
@@ -3534,12 +3730,58 @@ function buatBarisAksi(target, nomor, aksi) {
     namaVar.oninput = function () { daftar[nomor].name = namaVar.value.slice(0, 32); };
     baris.appendChild(namaVar);
 
-    var isiVar = document.createElement('input');
-    isiVar.type = 'text';
-    isiVar.value = aksi.value || '';
-    isiVar.placeholder = 'nilai, mis. {member.name} atau teks bebas';
-    isiVar.oninput = function () { daftar[nomor].value = isiVar.value.slice(0, 500); };
-    baris.appendChild(isiVar);
+    /*
+     * Sumber nilai. Discohook punya tiga jenis variabel; di sini yang
+     * "adaptive" hanya menawarkan nilai yang BENAR-BENAR kita punya setelah
+     * aksi sebelumnya (pesan/channel/thread). Menawarkan nilai lain hanya akan
+     * membuat flow tampak bisa sesuatu yang belum bisa.
+     */
+    var sumber = document.createElement('select');
+    sumber.className = 'role-mode';
+    [
+      ['static', 'Teks / template'],
+      ['adaptive', 'Hasil aksi sebelumnya'],
+      ['get', 'Salin variabel lain']
+    ].forEach(function (o) {
+      var opt = document.createElement('option');
+      opt.value = o[0];
+      opt.textContent = o[1];
+      if ((aksi.source || 'static') === o[0]) opt.selected = true;
+      sumber.appendChild(opt);
+    });
+    sumber.onchange = function () {
+      daftar[nomor].source = sumber.value;
+      daftar[nomor].value = sumber.value === 'adaptive' ? 'messageId' : sumber.value === 'get' ? 'var.nama' : '';
+      segarkanAksi();
+    };
+    baris.appendChild(sumber);
+
+    if ((aksi.source || 'static') === 'adaptive') {
+      var pilihHasil = document.createElement('select');
+      pilihHasil.className = 'role-mode';
+      [
+        ['messageId', 'ID pesan yang baru dikirim'],
+        ['channelId', 'ID channel pesan itu'],
+        ['threadId', 'ID thread yang baru dibuat']
+      ].forEach(function (o) {
+        var opt = document.createElement('option');
+        opt.value = o[0];
+        opt.textContent = o[1];
+        if (aksi.value === o[0]) opt.selected = true;
+        pilihHasil.appendChild(opt);
+      });
+      pilihHasil.onchange = function () { daftar[nomor].value = pilihHasil.value; };
+      baris.appendChild(pilihHasil);
+    } else {
+      var isiVar = document.createElement('input');
+      isiVar.type = 'text';
+      isiVar.value = aksi.value || '';
+      isiVar.placeholder = (aksi.source || 'static') === 'get'
+        ? 'nama variabel lain, mis. var.kode'
+        : 'nilai, mis. {member.name} atau teks bebas';
+      isiVar.oninput = function () { daftar[nomor].value = isiVar.value.slice(0, 500); };
+      baris.appendChild(isiVar);
+    }
 
     var catatanVar = document.createElement('p');
     catatanVar.className = 'hint';

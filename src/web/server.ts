@@ -70,7 +70,12 @@ import {
   sendOrUpdatePostViaWebhook,
   webhookIdentityFor,
 } from '../features/custom-post-send.js';
-import { measureBlocks, normalizeAccent, sanitizeBlocks } from '../features/custom-post.js';
+import {
+  measureBlocks,
+  normalizeAccent,
+  sanitizeBlocks,
+  sanitizeMessageFlags,
+} from '../features/custom-post.js';
 import {
   discohookShareApiUrl,
   looksLikeDiscohook,
@@ -1852,6 +1857,12 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     const channelId = typeof payload.channelId === 'string' && payload.channelId.trim() ? payload.channelId.trim() : null;
     const accent = payload.accent === undefined ? null : normalizeAccent(payload.accent);
     const sender = payload.sender === 'webhook' ? 'webhook' : 'bot';
+    /*
+     * Flag pesan: nilai asing dibuang sanitizer, bukan diteruskan. Flag yang
+     * tidak dikenal membuat Discord menolak pesan, dan admin tidak akan tahu
+     * penyebabnya.
+     */
+    const flags = payload.flags === undefined ? undefined : sanitizeMessageFlags(payload.flags);
 
     // Blok dirapikan di repo (sanitizeBlocks). Hasil buangannya dikembalikan
     // supaya admin tahu apa yang tidak jadi dikirim, bukan disembunyikan.
@@ -1861,6 +1872,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       blocks: payload.blocks,
       accent,
       sender,
+      flags,
     });
     const { blocks: blokSah, dropped } = sanitizeBlocks(payload.blocks);
     // `usage` = hitungan versi SERVER. Dashboard boleh menghitung sendiri
@@ -1968,6 +1980,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
                 accent: post.accent ?? undefined,
                 identity: await webhookIdentityFor(botClient, guildId),
                 postId: id,
+                flags: post.flags,
               })
             : await sendOrUpdatePost({
                 client: botClient,
@@ -1976,6 +1989,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
                 blocks: post.blocks,
                 accent: post.accent ?? undefined,
                 postId: id,
+                flags: post.flags,
                 roleButtons: roleButtons.map((b) => ({
                   id: b.id,
                   label: b.label,
@@ -2072,6 +2086,8 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         accent: payload.accent === undefined ? undefined : normalizeAccent(payload.accent),
         sender: payload.sender === undefined ? undefined : payload.sender === 'webhook' ? 'webhook' : 'bot',
         name: payload.name === undefined ? undefined : String(payload.name).trim(),
+        // Tidak dikirim = flag lama dipertahankan, sama seperti field lain.
+        flags: payload.flags === undefined ? undefined : sanitizeMessageFlags(payload.flags),
         channelId:
           payload.channelId === undefined
             ? undefined
