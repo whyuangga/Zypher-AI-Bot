@@ -882,10 +882,12 @@ await check('pesan: ekspor dan impor JSON mempertahankan semua field', async () 
     (function () {
       blocks = [
         { kind: 'text', value: 'Pembuka', accessoryLabel: 'Buka', url: 'https://a.test' },
-        { kind: 'container', value: '', accent: '#58b9ff' },
-        { kind: 'image', value: 'https://img.test/a.png', spoiler: true },
+        { kind: 'container', value: '', accent: '#58b9ff', spoiler: true },
+        { kind: 'image', value: 'https://img.test/a.png', spoiler: true, alt: 'contoh gambar' },
         { kind: 'close', value: '' },
-        { kind: 'file', value: 'https://a.test/p.pdf', name: 'panduan.pdf', spoiler: true }
+        { kind: 'file', value: 'https://a.test/p.pdf', name: 'panduan.pdf', spoiler: true },
+        { kind: 'divider', value: '', divider: false, spacing: 'large' },
+        { kind: 'button', value: 'Situs', url: 'https://a.test', emoji: '🎮', disabled: true }
       ];
       renderBlocks();
       document.getElementById('postName').value = 'Rules';
@@ -902,9 +904,14 @@ await check('pesan: ekspor dan impor JSON mempertahankan semua field', async () 
         format: JSON.parse(json).format,
         jenis: pulih.map(function (b) { return b.kind; }).join(','),
         aksesori: pulih[0].accessoryLabel + ' ' + pulih[0].url,
+        spoilerKartu: pulih[1].spoiler,
         spoilerGambar: pulih[2].spoiler,
+        altGambar: pulih[2].alt,
         namaBerkas: pulih[4].name,
         spoilerBerkas: pulih[4].spoiler,
+        tanpaGaris: pulih[5].divider,
+        emojiTombol: pulih[6].emoji,
+        tombolNonaktif: pulih[6].disabled,
         namaPesanan: document.getElementById('postName').value
       };
     })()
@@ -913,12 +920,52 @@ await check('pesan: ekspor dan impor JSON mempertahankan semua field', async () 
   assert.ok(Number(hasil.panjang) > 200, 'JSON terisi');
   assert.equal(hasil.versi, 1, 'versi format ikut');
   assert.equal(hasil.format, 'zypher-post', 'penanda format ikut');
-  assert.equal(hasil.jenis, 'text,container,image,close,file', 'semua jenis blok pulih');
+  assert.equal(hasil.jenis, 'text,container,image,close,file,divider,button', 'semua jenis blok pulih');
   assert.equal(hasil.aksesori, 'Buka https://a.test', 'aksesori teks pulih');
+  assert.equal(hasil.spoilerKartu, true, 'spoiler container pulih');
   assert.equal(hasil.spoilerGambar, true, 'spoiler gambar pulih');
+  assert.equal(hasil.altGambar, 'contoh gambar', 'alt text gambar pulih');
   assert.equal(hasil.namaBerkas, 'panduan.pdf', 'nama berkas pulih');
   assert.equal(hasil.spoilerBerkas, true, 'spoiler berkas pulih');
+  // Tiga field baru: tanpa normalBlock yang lengkap, ketiganya hilang diam-diam
+  // saat admin menyimpan ulang pesan hasil impor Discohook.
+  assert.equal(hasil.tanpaGaris, false, 'pemisah tanpa garis pulih');
+  assert.equal(hasil.emojiTombol, '🎮', 'emoji tombol pulih');
+  assert.equal(hasil.tombolNonaktif, true, 'tombol nonaktif pulih');
   assert.equal(hasil.namaPesanan, 'Rules', 'nama pesan pulih');
+});
+
+await check('pesan: tombol impor Discohook memanggil endpoint yang benar', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  assert.ok(html.includes('importDiscohook'), 'tombol tarik Discohook ada di halaman');
+  assert.ok(html.includes('discoText'), 'kotak tautan Discohook ada di halaman');
+
+  const page = mountPage(html, 'uji-discohook');
+
+  // Tempel tautan share, lalu tekan Tarik. Yang diperiksa: halaman mengirim
+  // tautannya ke server (bukan mengunduh sendiri — Discohook tidak mengirim
+  // header CORS, jadi fetch dari browser akan ditolak).
+  page.elements.get('discoText')!.value = 'https://discohook.app/?share=CpazsKTm';
+  await page.evaluate('importDiscohook()');
+
+  const panggilan = page.fetches.find((f) => f.path.includes('/api/posts/import/discohook'));
+  assert.ok(panggilan, `endpoint impor tidak dipanggil (fetches: ${page.fetches.map((f) => f.path).join(', ')})`);
+  assert.equal(panggilan!.method, 'POST', 'memakai POST');
+  assert.deepEqual(
+    panggilan!.body,
+    { url: 'https://discohook.app/?share=CpazsKTm' },
+    'tautan dikirim apa adanya ke server',
+  );
+
+  // JSON yang ditempel langsung juga harus diteruskan sebagai objek.
+  page.elements.get('discoText')!.value = JSON.stringify({ messages: [{ data: { content: 'Halo' } }] });
+  await page.evaluate('importDiscohook()');
+  const kedua = page.fetches.filter((f) => f.path.includes('/api/posts/import/discohook'));
+  assert.equal(kedua.length, 2, 'panggilan kedua terjadi');
+  assert.ok(
+    (kedua[1]!.body as { json?: unknown }).json,
+    'JSON mentah diteruskan sebagai "json", bukan "url"',
+  );
 });
 
 await check('pesan: impor JSON rusak tidak merusak editor', async () => {

@@ -6954,6 +6954,259 @@ await testAsync('pesan: batas berkas dan spoiler dihormati', async () => {
   assert.equal(ukur.files, 1);
 });
 
+/* ------------------------------------------------------------------ */
+/*  Impor Discohook                                                    */
+/* ------------------------------------------------------------------ */
+
+/** Contoh persis seperti respons https://discohook.app/api/v1/share/<id>. */
+const discoSample = {
+  data: {
+    version: 'd2',
+    messages: [
+      {
+        _id: 'iFJDZeVzD1',
+        data: {
+          flags: 32768,
+          components: [
+            { type: 10, content: 'Hey, welcome to <:discohook:736648398081622016> **Discohook**!' },
+            {
+              type: 17,
+              accent_color: 5814783,
+              spoiler: true,
+              components: [
+                { type: 10, content: '### What is this?' },
+                { type: 10, content: 'At its core, Discohook is a message designer.' },
+              ],
+            },
+            { type: 14, divider: false, spacing: 1 },
+            {
+              type: 17,
+              accent_color: 5814783,
+              components: [
+                { type: 10, content: '### Get started' },
+                {
+                  type: 9,
+                  components: [{ type: 10, content: 'Butuh bantuan?' }],
+                  accessory: {
+                    type: 2,
+                    style: 5,
+                    label: 'Support',
+                    url: 'https://discohook.app/discord',
+                    emoji: { name: '🎮' },
+                  },
+                },
+                {
+                  type: 12,
+                  items: [{ media: { url: 'https://a.test/a.png' }, description: 'contoh gambar' }],
+                },
+              ],
+            },
+            {
+              type: 1,
+              components: [
+                { type: 2, style: 5, label: 'Support Server', url: 'https://discohook.app/discord' },
+                { type: 2, style: 5, label: 'Invite Bot', url: 'https://discohook.app/bot', disabled: true },
+                { type: 2, style: 1, label: 'Role', custom_id: 'role-1' },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+    targets: [],
+  },
+  expires: '2026-11-19T03:59:26.448Z',
+};
+
+await testAsync('discohook: mengurai tautan share & hanya menerima host Discohook', async () => {
+  const { parseDiscohookShareId, discohookShareApiUrl } = await import('../src/features/discohook-import.js');
+
+  // Empat bentuk yang dipakai orang, semuanya harus menghasilkan ID yang sama.
+  for (const tautan of [
+    'https://discohook.app/?share=CpazsKTm',
+    'https://discohook.app/share/CpazsKTm',
+    'https://discohook.org/?share=CpazsKTm',
+    'CpazsKTm',
+  ]) {
+    assert.equal(parseDiscohookShareId(tautan), 'CpazsKTm', `ID terbaca dari ${tautan}`);
+  }
+
+  // Host lain ditolak: tanpa ini, endpoint impor bisa disuruh mengunduh
+  // alamat internal (SSRF) hanya dengan menempel tautan.
+  for (const tautan of [
+    'https://evil.test/?share=CpazsKTm',
+    'http://127.0.0.1:8080/?share=CpazsKTm',
+    'https://discohook.app.evil.test/?share=CpazsKTm',
+    'bukan tautan',
+    '',
+  ]) {
+    assert.equal(parseDiscohookShareId(tautan), null, `ditolak: ${tautan}`);
+  }
+
+  assert.equal(discohookShareApiUrl('CpazsKTm'), 'https://discohook.app/api/v1/share/CpazsKTm');
+});
+
+await testAsync('discohook: komponen v2 diterjemahkan jadi blok dengan kartu & batas yang benar', async () => {
+  const { parseDiscohookShare, looksLikeDiscohook } = await import('../src/features/discohook-import.js');
+  const { sanitizeBlocks, buildPostPayload } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+
+  assert.equal(looksLikeDiscohook(discoSample), true, 'respons API dikenali');
+  assert.equal(looksLikeDiscohook({ messages: [] }), true, 'QueryData mentah dikenali');
+  assert.equal(looksLikeDiscohook({ blocks: [] }), false, 'format /pesan sendiri bukan Discohook');
+
+  const hasil = parseDiscohookShare(discoSample);
+  assert.equal(hasil.messages.length, 1);
+  const blok = sanitizeBlocks(hasil.messages[0]!.blocks).blocks;
+
+  // Urutan struktur: pembuka polos → kartu spoiler → tutup → pemisah →
+  // kartu kedua → tutup → baris tombol.
+  assert.deepEqual(
+    blok.map((b) => b.kind),
+    ['text', 'container', 'text', 'text', 'close', 'divider', 'container', 'text', 'section', 'image', 'close', 'button', 'button'],
+    'susunan blok sesuai pesan Discohook',
+  );
+
+  // Properti yang dulu tidak ada di model blok.
+  assert.equal(blok[1]!.accent, '#58b9ff', 'warna container dari accent_color');
+  assert.equal(blok[1]!.spoiler, true, 'spoiler container ikut');
+  assert.equal(blok[5]!.divider, false, 'pemisah tanpa garis ikut');
+  assert.equal(blok[8]!.value, 'Butuh bantuan?', 'teks Section');
+  assert.equal(blok[8]!.accessoryLabel, 'Support', 'tombol aksesori Section');
+  assert.equal(blok[8]!.emoji, '🎮', 'emoji tombol aksesori ikut');
+  assert.equal(blok[9]!.alt, 'contoh gambar', 'alt text gambar ikut');
+  assert.equal(blok[12]!.disabled, true, 'tombol nonaktif ikut');
+
+  // Tombol interaktif tidak bisa dipindah — dilaporkan, bukan hilang diam-diam.
+  assert.ok(
+    hasil.messages[0]!.warnings.some((isi) => isi.includes('Role')),
+    'tombol customId dilaporkan ke admin',
+  );
+
+  // Dan hasilnya benar-benar bisa dikirim Discord: kartu spoiler, pemisah
+  // tanpa garis, tombol nonaktif semuanya tampil di payload.
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SectionBuilder: d.SectionBuilder,
+    ThumbnailBuilder: d.ThumbnailBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    FileBuilder: d.FileBuilder,
+    accent: 0x6d8cff,
+    accentToNumber: (hex: string) => Number.parseInt(hex.slice(1), 16),
+  };
+  type C = {
+    type: number;
+    spoiler?: boolean;
+    accent_color?: number;
+    divider?: boolean;
+    components?: Array<Record<string, any>>;
+  };
+  const built = buildPostPayload(blok, deps);
+  assert.ok(built, 'payload terbentuk');
+  const json = (built!.components as Array<{ toJSON: () => C }>).map((c) => c.toJSON());
+  assert.deepEqual(json.map((c) => c.type), [10, 17, 14, 17, 1], 'pembuka, dua kartu, pemisah, tombol');
+
+  const kartuSpoiler = json[1]!;
+  assert.equal(kartuSpoiler.spoiler, true, 'spoiler container sampai ke payload');
+  assert.equal(kartuSpoiler.accent_color, 5814783, 'warna container sampai ke payload');
+  assert.equal(json[2]!.divider, false, 'pemisah tanpa garis sampai ke payload');
+
+  // json[4] = ActionRow; komponennya adalah tombol-tombolnya.
+  const baris = json[4]!;
+  assert.equal(baris.components![1]!.disabled, true, 'tombol nonaktif sampai ke payload');
+});
+
+await testAsync('discohook: pesan tanpa container tetap di luar kartu, embed jadi kartu teks', async () => {
+  const { parseDiscohookShare } = await import('../src/features/discohook-import.js');
+  const { sanitizeBlocks } = await import('../src/features/custom-post.js');
+
+  const hasil = parseDiscohookShare({
+    version: 'd2',
+    messages: [
+      {
+        data: {
+          content: 'Halo dunia',
+          components: [{ type: 10, content: 'Tanpa container' }],
+        },
+      },
+      {
+        name: 'Embed lama',
+        data: {
+          embeds: [
+            {
+              title: 'Judul',
+              description: 'Isi embed',
+              color: 0x58b4ff,
+              fields: [{ name: 'Bidang', value: 'Nilai' }],
+              footer: { text: 'kaki' },
+              image: { url: 'https://a.test/x.png' },
+            },
+          ],
+        },
+      },
+    ],
+  });
+
+  assert.equal(hasil.messages.length, 2);
+
+  // Pesan tanpa container: satu `close` di awal menahan pembungkusan kartu,
+  // supaya tampilannya tetap seperti Discohook (polos di pesan).
+  const pertama = sanitizeBlocks(hasil.messages[0]!.blocks).blocks;
+  assert.equal(pertama[0]!.kind, 'close', 'penanda di luar kartu');
+  assert.deepEqual(pertama.map((b) => b.kind), ['close', 'text', 'text']);
+
+  // Embed: diterjemahkan menjadi kartu teks + gambar + footer kecil, dengan
+  // peringatan bahwa bentuknya berubah.
+  const kedua = sanitizeBlocks(hasil.messages[1]!.blocks).blocks;
+  assert.equal(kedua[0]!.kind, 'container', 'embed jadi kartu');
+  assert.equal(kedua[0]!.accent, '#58b4ff', 'warna embed dipakai');
+  assert.ok(kedua.some((b) => b.kind === 'image'), 'gambar embed ikut');
+  assert.ok(
+    kedua.some((b) => b.kind === 'text' && b.value.startsWith('-# ')),
+    'footer jadi teks kecil',
+  );
+  assert.ok(
+    hasil.messages[1]!.warnings.some((isi) => isi.includes('Embed')),
+    'perubahan bentuk embed dilaporkan',
+  );
+});
+
+await testAsync('discohook: data asing & lampiran attachment:// dilaporkan, bukan gagal senyap', async () => {
+  const { parseDiscohookShare } = await import('../src/features/discohook-import.js');
+
+  const asing = parseDiscohookShare({ hello: 'world' });
+  assert.equal(asing.messages.length, 0);
+  assert.ok(asing.warnings[0]!.includes('messages'), 'alasan jelas');
+
+  const lampiran = parseDiscohookShare({
+    messages: [
+      {
+        data: {
+          components: [
+            {
+              type: 12,
+              items: [{ media: { url: 'attachment://gambar.png' } }],
+            },
+            { type: 10, content: 'Teks asli' },
+          ],
+        },
+      },
+    ],
+  });
+  assert.ok(
+    lampiran.messages[0]!.warnings.some((isi) => isi.includes('attachment://')),
+    'lampiran Discohook dijelaskan, bukan dibuang tanpa kabar',
+  );
+  assert.equal(lampiran.messages[0]!.blocks.some((b) => b.kind === 'image'), false);
+  assert.equal(lampiran.messages[0]!.blocks.some((b) => b.kind === 'text'), true, 'sisa isi tetap diimpor');
+});
+
 await testAsync('pesan: penghitung batas komponen menghitung seperti Discord', async () => {
   const { measureBlocks, sanitizeBlocks, LIMITS } = await import('../src/features/custom-post.js');
   const ukur = (input: unknown) => measureBlocks(sanitizeBlocks(input).blocks);

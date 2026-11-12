@@ -67,6 +67,12 @@ import {
   webhookIdentityFor,
 } from '../features/custom-post-send.js';
 import { measureBlocks, normalizeAccent, sanitizeBlocks } from '../features/custom-post.js';
+import {
+  discohookShareApiUrl,
+  looksLikeDiscohook,
+  parseDiscohookShare,
+  parseDiscohookShareId,
+} from '../features/discohook-import.js';
 import { listGuildRoles } from '../features/role-buttons.js';
 import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
 import {
@@ -1695,6 +1701,99 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       logger.warn(`Gagal membaca daftar role — ${errorMessage(error)}`);
       sendJson(response, 200, { options: [], hasManageRoles: false, botHighestPosition: 0, offline: true });
     }
+    return;
+  }
+
+  /**
+   * Impor dari Discohook.
+   *
+   * Dua jalur, satu endpoint, karena keduanya menghasilkan bentuk yang sama
+   * (blok `/pesan` + daftar peringatan):
+   *
+   *   POST /api/posts/import/discohook  { url: "https://discohook.app/?share=xxxx" }
+   *   POST /api/posts/import/discohook  { json: { messages: [...] } }
+   *
+   * Kenapa pengunduhan dilakukan SERVER, bukan browser: Discohook tidak
+   * mengirim header CORS untuk `api/v1/share`, jadi `fetch` dari halaman
+   * dashboard akan ditolak. Server juga menjadi satu-satunya tempat yang bisa
+   * membatasi host tujuan (hanya discohook.app) — tanpa itu endpoint ini
+   * menjadi alat SSRF yang bisa disuruh membaca alamat internal.
+   */
+  if (path === '/api/posts/import/discohook' && method === 'POST') {
+    const payload = await readJsonBody(request, response, 1024 * 1024);
+    if (!payload) return;
+
+    let data: unknown = payload.json ?? null;
+    const sumber = payload.url ?? payload.share ?? '';
+
+    if (typeof sumber === 'string' && sumber.trim()) {
+      const shareId = parseDiscohookShareId(sumber);
+      if (!shareId) {
+        sendJson(response, 400, {
+          error:
+            'Tautan tidak dikenali. Tempel tautan share Discohook (https://discohook.app/?share=…) atau ID-nya saja.',
+        });
+        return;
+      }
+      const api = discohookShareApiUrl(shareId);
+      try {
+        const res = await fetch(api, {
+          headers: { accept: 'application/json', 'user-agent': 'ZypherBot/1.0 (+dashboard import)' },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (res.status === 404) {
+          sendJson(response, 400, {
+            error: 'Tautan Discohook itu tidak ditemukan — mungkin sudah kedaluwarsa (tautan share berlaku maksimal 4 minggu).',
+          });
+          return;
+        }
+        if (!res.ok) {
+          sendJson(response, 400, { error: `Discohook menjawab ${res.status}. Coba lagi sebentar.` });
+          return;
+        }
+        data = (await res.json()) as unknown;
+      } catch (error) {
+        logger.warn(`Gagal mengunduh share Discohook ${shareId} — ${errorMessage(error)}`);
+        sendJson(response, 400, {
+          error: 'Tidak bisa menghubungi discohook.app dari server ini. Tempel JSON-nya langsung (Ekspor dari Discohook).',
+        });
+        return;
+      }
+    }
+
+    if (data === null || data === undefined) {
+      sendJson(response, 400, { error: 'Kirim "url" tautan Discohook atau "json" isi ekspornya.' });
+      return;
+    }
+
+    const hasil = parseDiscohookShare(data);
+    if (hasil.messages.length === 0) {
+      sendJson(response, 400, {
+        error: hasil.warnings[0] ?? 'Tidak ada pesan yang bisa diimpor dari data itu.',
+        warnings: hasil.warnings,
+      });
+      return;
+    }
+
+    /*
+     * Setiap pesan dilewatkan sanitizer yang SAMA dengan penyimpanan biasa,
+     * jadi hasil impor tidak bisa menyelipkan blok yang tidak sah — sama
+     * seperti JSON yang ditempel manual di editor.
+     */
+    sendJson(response, 200, {
+      ok: true,
+      format: looksLikeDiscohook(data) ? 'discohook' : 'tidak-dikenal',
+      messages: hasil.messages.map((pesan) => {
+        const bersih = sanitizeBlocks(pesan.blocks);
+        return {
+          name: pesan.name,
+          blocks: bersih.blocks,
+          warnings: [...pesan.warnings, ...bersih.dropped.map((alasan) => `Blok dibuang: ${alasan}`)],
+          usage: measureBlocks(bersih.blocks),
+        };
+      }),
+      warnings: hasil.warnings,
+    });
     return;
   }
 

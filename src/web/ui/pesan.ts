@@ -194,6 +194,18 @@ export function pesanPage(options: PesanPageOptions): string {
     <p class="hint" id="blockHint">Teks mendukung format Discord; baris diawali <code>-#</code> menjadi teks kecil. <b>Container</b> memulai kartu baru (blok sesudahnya masuk ke kartu itu), <b>Section</b> menaruh gambar kecil atau tombol di samping teks.</p>
 
     <details class="json-panel">
+      <summary>${icon('external', 15)} Impor dari Discohook</summary>
+      <div class="json-isi">
+        <p class="hint" style="margin:0">Tempel <b>tautan share Discohook</b> (mis. <code>https://discohook.app/?share=abcdefgh</code>) atau <b>ID</b>-nya saja, lalu klik Tarik. Server yang mengunduh, jadi tidak kena masalah CORS. Kalau discohook.app tidak bisa dihubungi, salin JSON-nya dari Discohook (<i>Share → Copy JSON</i>) dan tempel di kotak yang sama — keduanya diterima.</p>
+        <textarea id="discoText" rows="5" spellcheck="false" placeholder="https://discohook.app/?share=…  — atau tempel JSON Discohook di sini"></textarea>
+        <div class="json-aksi">
+          <button class="btn btn-ghost btn-sm" type="button" onclick="importDiscohook()">${icon('download', 15)} Tarik &amp; impor</button>
+          <span class="hint" id="discoStatus" style="margin:0"></span>
+        </div>
+      </div>
+    </details>
+
+    <details class="json-panel">
       <summary>${icon('file', 15)} Import / ekspor JSON</summary>
       <div class="json-isi">
         <p class="hint" style="margin:0">Untuk memindahkan susunan pesan ke server lain, atau menyimpan cadangan sebelum mengubah banyak hal. Channel tujuan sengaja <b>tidak</b> ikut — ID channel berbeda di tiap server.</p>
@@ -714,7 +726,104 @@ function normalBlock(b) {
     name: b.name || '',
     spoiler: Boolean(b.spoiler),
     blockId: b.blockId || '',
+    // Emoji & gaya tombol. Tanpa dua baris ini, mengimpor pesan Discohook
+    // lalu menyimpannya akan membuang emoji tombol — bug yang sama seperti
+    // dulu pada warna container dan spoiler.
+    emoji: b.emoji || '',
+    style: b.style || '',
+    // Tombol nonaktif dan pemisah tanpa garis (fitur Discohook).
+    disabled: Boolean(b.disabled),
+    divider: b.divider === false ? false : true,
+    // Alt text gambar, dibaca pembaca layar.
+    alt: b.alt || '',
   };
+}
+
+/**
+ * Impor pesan Discohook.
+ *
+ * Yang dikirim ke server hanya **tautan** (atau JSON mentah kalau admin
+ * menempelnya). Penerjemahan komponen Discohook -> blok dilakukan di server
+ * (src/features/discohook-import.ts), dan alasannya bukan sekadar kerapian:
+ *
+ *   - Discohook tidak mengirim header CORS pada 'api/v1/share', jadi
+ *     'fetch' dari halaman dashboard akan ditolak browser.
+ *   - Hanya server yang boleh menentukan host mana yang diunduh. Kalau
+ *     browser yang mengunduh lalu mengirim hasilnya, endpoint impor menjadi
+ *     alat untuk membaca alamat internal (SSRF).
+ *
+ * Hasilnya SAMA dengan yang nanti dikirim ke Discord, karena server juga
+ * melewatkannya ke sanitizeBlocks sebelum dikembalikan.
+ */
+async function importDiscohook() {
+  var kotak = document.getElementById('discoText');
+  var status = document.getElementById('discoStatus');
+  var teks = kotak ? String(kotak.value || '').trim() : '';
+  if (!teks) return toast('Tempel tautan share Discohook dulu', true);
+
+  if (status) status.textContent = 'Menarik dari Discohook…';
+
+  // JSON ditempel langsung, atau tautan/ID share. Keduanya ke endpoint sama.
+  var body = { url: teks };
+  if (teks.charAt(0) === '{') {
+    try {
+      body = { json: JSON.parse(teks) };
+    } catch (error) {
+      if (status) status.textContent = '';
+      return toast('JSON tidak valid: ' + error.message, true);
+    }
+  }
+
+  var hasil;
+  try {
+    hasil = await api('/api/posts/import/discohook', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    if (status) status.textContent = '';
+    return toast('Gagal impor: ' + error.message, true);
+  }
+
+  var pesan = (hasil.messages || [])[0];
+  if (!pesan) {
+    if (status) status.textContent = '';
+    return toast('Tidak ada pesan yang bisa diimpor', true);
+  }
+
+  // Selalu jadi pesan BARU: menimpa pesan lama tanpa diminta bukan hal yang
+  // boleh dilakukan tombol "Tarik & impor".
+  blocks = (pesan.blocks || []).map(normalBlock);
+  editingId = null;
+  if (pesan.name) {
+    var nama = document.getElementById('postName');
+    if (nama && !nama.value) nama.value = String(pesan.name).slice(0, 120);
+  }
+
+  // Warna aksen pesan diambil dari kartu pertama yang punya warna sendiri,
+  // supaya pesan yang tidak memakai container tetap mirip aslinya.
+  var berwarna = blocks.filter(function (b) { return b.kind === 'container' && b.accent; })[0];
+  if (berwarna) {
+    var warna = document.getElementById('postAccent');
+    if (warna) warna.value = berwarna.accent;
+    var teksWarna = document.getElementById('accentText');
+    if (teksWarna) teksWarna.textContent = berwarna.accent;
+  }
+
+  renderBlocks();
+  renderPreview();
+
+  var peringatan = (pesan.warnings || []).concat(hasil.warnings || []);
+  var ringkas = '✅ ' + blocks.length + ' blok dimuat dari Discohook';
+  if (hasil.messages.length > 1) {
+    // Discohook menyimpan beberapa pesan sekaligus. Yang diimpor adalah pesan
+    // pertama; sisanya tidak dibuang diam-diam, tapi dilaporkan.
+    ringkas += ' — pesan pertama dari ' + hasil.messages.length + ' (impor satu per satu untuk sisanya)';
+  }
+  if (peringatan.length) ringkas += '. ' + peringatan.length + ' catatan: ' + peringatan[0];
+  if (status) status.textContent = ringkas;
+  toast(ringkas);
 }
 
 function renderBlocks() {
@@ -792,6 +901,21 @@ function renderBlocks() {
       };
       jarak.appendChild(cekJarak);
       jarak.appendChild(document.createTextNode(' jarak besar'));
+
+      /*
+       * Garis pemisah bisa dimatikan (Discord: 'divider: false') — hasilnya
+       * hanya jarak kosong. Discohook menampilkannya sebagai centang
+       * "Show Divider"; di sini dibalik supaya lebih jelas maksudnya.
+       */
+      var cekGaris = document.createElement('input');
+      cekGaris.type = 'checkbox';
+      cekGaris.checked = block.divider !== false;
+      cekGaris.onchange = function () {
+        blocks[index].divider = cekGaris.checked;
+        renderPreview();
+      };
+      jarak.appendChild(cekGaris);
+      jarak.appendChild(document.createTextNode(' tampilkan garis'));
       row.appendChild(jarak);
     } else if (block.kind === 'container') {
       // Container = kartu baru. Warnanya opsional: kosong berarti ikut warna
@@ -827,6 +951,9 @@ function renderBlocks() {
       };
       barisWarna.appendChild(ikut);
       row.appendChild(barisWarna);
+
+      // Spoiler kartu: seluruh isi container tertutup sampai diklik member.
+      row.appendChild(buatSakelar(index, 'spoiler', 'Spoiler — isi kartu tertutup sampai diklik'));
 
       var ket = document.createElement('p');
       ket.className = 'hint';
@@ -906,6 +1033,13 @@ function renderBlocks() {
       input.oninput = function () { blocks[index].value = input.value; renderPreview(); };
       row.appendChild(input);
       if (block.kind === 'image') {
+        // Alt text: deskripsi gambar untuk pembaca layar dan saat gagal muat.
+        var alt = document.createElement('input');
+        alt.type = 'text';
+        alt.value = block.alt || '';
+        alt.placeholder = 'Deskripsi gambar (alt text, opsional)';
+        alt.oninput = function () { blocks[index].alt = alt.value.slice(0, 1024); renderPreview(); };
+        row.appendChild(alt);
         row.appendChild(buatAksesori(index));
         row.appendChild(buatSakelar(index, 'spoiler', 'Sembunyikan sebagai spoiler'));
       }
@@ -916,6 +1050,21 @@ function renderBlocks() {
         url.placeholder = 'https://discord.gg/…';
         url.oninput = function () { blocks[index].url = url.value; };
         row.appendChild(url);
+
+        // Emoji tombol: diketik langsung, mis. 🎮 atau <:nama:123456789>.
+        var emojiTombol = document.createElement('input');
+        emojiTombol.type = 'text';
+        emojiTombol.className = 'role-emoji';
+        emojiTombol.value = block.emoji || '';
+        emojiTombol.placeholder = '🎮';
+        emojiTombol.title = 'Emoji di depan label — boleh emoji biasa atau <:nama:id>';
+        emojiTombol.oninput = function () {
+          blocks[index].emoji = emojiTombol.value.slice(0, 80);
+          renderPreview();
+        };
+        row.appendChild(emojiTombol);
+
+        row.appendChild(buatSakelar(index, 'disabled', 'Nonaktif (tidak bisa diklik)'));
       }
       if (block.kind === 'image') {
         // Unggah dari komputer: hasilnya data URI yang disimpan di blok.
@@ -1181,8 +1330,9 @@ function buatSectionPratinjau(teks, kecil, blok) {
   var url = blok.url || blok.accessoryUrl || '';
   if (label && /^https?:\\/\\//i.test(url)) {
     var btn = document.createElement('span');
-    btn.className = 'pc-button pc-button-link';
-    btn.textContent = label;
+    btn.className = 'pc-button pc-button-link' + (blok.disabled ? ' pc-disabled' : '');
+    // Emoji tombol aksesori ikut ditampilkan, sama seperti di Discord.
+    btn.textContent = teksTombol({ value: label, emoji: blok.emoji });
     kanan.appendChild(btn);
   } else if (blok.thumbnail) {
     var thumb = document.createElement('img');
@@ -1232,9 +1382,9 @@ function renderPreview() {
   // Kartu aktif tempat blok ditulis. Kartu kosong dibuang di akhir.
   var kartuList = [];
   var kartu;
-  function bukaKartu(warna) {
+  function bukaKartu(warna, spoiler) {
     kartu = document.createElement('div');
-    kartu.className = 'preview-container';
+    kartu.className = 'preview-container' + (spoiler ? ' pc-spoiler-kartu' : '');
     kartu.style.borderLeftColor = warna || accentNow();
     kartu._adaIsi = false;
     kartuList.push(kartu);
@@ -1289,7 +1439,7 @@ function renderPreview() {
       baris.className = 'pc-row';
       tertunda.slice(i, i + 5).forEach(function (t) {
         var b = document.createElement('span');
-        b.className = 'pc-button pc-button-link';
+        b.className = 'pc-button pc-button-link' + (t.disabled ? ' pc-disabled' : '');
         b.textContent = teksTombol(t);
         baris.appendChild(b);
       });
@@ -1302,7 +1452,7 @@ function renderPreview() {
   isi.forEach(function (blok) {
     if (blok.kind === 'container') {
       if (tertunda.length) flushTombol();
-      bukaKartu(blok.accent || null);
+      bukaKartu(blok.accent || null, blok.spoiler === true);
       luar = false;
       return;
     }
@@ -1367,7 +1517,9 @@ function renderPreview() {
 
     if (blok.kind === 'divider') {
       var sep = document.createElement('div');
-      sep.className = 'pc-sep' + (blok.spacing === 'large' ? ' pc-sep-large' : '');
+      sep.className = 'pc-sep' +
+        (blok.spacing === 'large' ? ' pc-sep-large' : '') +
+        (blok.divider === false ? ' pc-sep-none' : '');
       targetTulis().appendChild(sep);
       return;
     }

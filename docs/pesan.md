@@ -38,9 +38,9 @@ mengirim pesan baru dan menyimpan ID yang baru.
 | Blok | Isi | Catatan |
 |---|---|---|
 | **Teks** | teks biasa | mendukung format Discord (`**tebal**`, `_miring_`, `> kutipan`, `### judul`) |
-| **Gambar** | URL `http(s)://…` **atau unggah dari komputer** | PNG/JPG/WebP, maksimal 4 MB |
-| **Tombol** | label + URL tujuan + emoji | hanya **tombol link**; membuka tautan, tidak memberi role |
-| **Pemisah** | garis, jarak rapat atau renggang | pemisah antar bagian |
+| **Gambar** | URL `http(s)://…` **atau unggah dari komputer** | PNG/JPG/WebP, maksimal 4 MB. Ada isian **alt text** (deskripsi untuk pembaca layar) |
+| **Tombol** | label + URL tujuan + emoji | hanya **tombol link**; membuka tautan, tidak memberi role. Bisa ditandai **nonaktif** |
+| **Pemisah** | garis (bisa dimatikan) + jarak rapat/renggang | `tanpa garis` = hanya jarak kosong, seperti `divider: false` di Discohook |
 | **Container** | warna aksen sendiri | memulai **kartu baru**; blok sesudahnya masuk ke kartu itu |
 | **Section** | teks + gambar kecil **atau** tombol di kanan | Discord hanya mengizinkan satu aksesori |
 
@@ -74,6 +74,8 @@ Aturan yang dipegang:
   berubah pikiran tidak mendapat kartu kosong.
 - Container **tidak bisa bersarang** di dalam container lain (aturan Discord).
 - Maksimal **10** komponen teratas per pesan.
+- Container punya centang **spoiler**: seluruh isi kartu tertutup sampai member
+  mengkliknya (sama seperti Discohook).
 
 ### Tutup kartu: teks & tombol di luar container
 
@@ -143,6 +145,48 @@ Yang perlu diketahui:
 - **Spoiler** menyamarkan nama berkas dan gambarnya sampai diklik.
 - Kalau unduhan gagal (URL mati, berkas terlalu besar), pesan **tetap terkirim**
   tanpa berkas itu, dan dashboard memberi tahu berkas mana yang gagal.
+
+### Impor dari Discohook
+
+Panel **Impor dari Discohook** (dilipat, tepat di atas panel JSON) mengambil
+pesan yang sudah kamu susun di [Discohook](https://discohook.app) lalu
+menerjemahkannya menjadi blok `/pesan`.
+
+Dua cara, kotak yang sama:
+
+| Cara | Yang ditempel | Kapan dipakai |
+|---|---|---|
+| **Tautan share** | `https://discohook.app/?share=abcdefgh` atau ID-nya saja | Discohook bisa diakses dari server bot |
+| **JSON** | salin dari Discohook (tombol berbagi → *Copy JSON*) | Server bot tidak punya akses internet, atau tautan sudah kedaluwarsa |
+
+Yang perlu diketahui:
+
+| Hal | Perilaku |
+|---|---|
+| **Siapa yang mengunduh** | **server bot**, bukan browser — Discohook tidak mengirim header CORS, jadi `fetch` dari halaman akan ditolak browser |
+| **Host yang diterima** | hanya `discohook.app` / `discohook.org`. Host lain ditolak, supaya endpoint ini tidak bisa disuruh membaca alamat internal |
+| **Masa berlaku tautan** | maksimal 4 minggu (aturan Discohook). Kalau kedaluwarsa, tempel JSON-nya |
+| **Multi-pesan** | Discohook menyimpan beberapa pesan sekaligus; yang diimpor adalah **pesan pertama**, jumlah sisanya disebutkan |
+| **Hasil** | selalu **pesan baru** di editor, belum tersimpan — periksa dulu, lalu **Simpan** |
+| **Validasi** | hasil terjemahan dilewatkan `sanitizeBlocks` yang sama, jadi tidak bisa menyelipkan blok tidak sah |
+
+Komponen Discohook yang diterjemahkan:
+
+| Di Discohook | Jadi apa di `/pesan` |
+|---|---|
+| Text Display | blok **Teks** |
+| Container (`accent_color`, `spoiler`) | blok **Container** dengan warna **dan spoiler**-nya |
+| Separator (`divider`, `spacing`) | blok **Pemisah** — termasuk pemisah **tanpa garis** |
+| Section + aksesori tombol/thumbnail | blok **Section** (emoji & tombol nonaktif ikut) |
+| Media Gallery | blok **Gambar** (alt text & spoiler ikut) |
+| File (`attachment://`) | dilaporkan — lampiran Discohook tidak bisa dibawa lewat tautan |
+| Action Row + tombol **link** | blok **Tombol**, 5 per baris |
+| Tombol/menu **interaktif** (customId) | dilaporkan — pakai tombol/menu **ambil role** dari dashboard |
+| Embed | **kartu teks** (Components V2 tidak bisa membawa embed) + peringatan |
+
+Batas kartu ditangani otomatis: kalau di Discohook ada teks/tombol **di luar**
+container, blok `close` disisipkan di posisi yang tepat. Jadi susunan
+"pembuka polos → kartu → tombol penutup" tetap sama seperti aslinya.
 
 ### Import / ekspor JSON
 
@@ -391,6 +435,7 @@ tidak bisa dibuka lagi — bot akan membuat webhook baru otomatis.
 | `DELETE` | `/api/posts/:id?withMessage=1` | hapus dari dashboard **dan** dari Discord |
 | `PUT` | `/api/posts/:id/roles` | ganti seluruh tombol **dan** menu ambil role pesan (`{ buttons, menus }`) |
 | `GET` | `/api/roles` | daftar role server + alasan tidak bisa dibagi |
+| `POST` | `/api/posts/import/discohook` | terjemahkan tautan/JSON Discohook jadi blok (`{ url }` atau `{ json }`) |
 
 Kalau bot sedang offline, tombol kirim dinonaktifkan dan permintaan kirim
 dijawab `400` dengan pesan yang jelas — bukan `500`.

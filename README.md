@@ -351,14 +351,16 @@ Panduan lengkap: **[docs/sambutan-agent.md](docs/sambutan-agent.md)**.
 Butuh pesan sendiri (rules, pengumuman, info server, **ambil role**)? Pakai
 halaman [`/pesan`](docs/pesan.md) — susun blok teks/gambar/tombol, kirim sekali,
 lalu perbarui tanpa kirim ulang. Satu pesan bisa berisi **beberapa container**
-(masing-masing dengan warna aksen sendiri), **section** yang menaruh gambar kecil
-atau tombol di samping teks, **blok Tutup kartu** yang mengeluarkan teks & tombol
-dari container (pembuka polos di atas, baris tombol di bawah — seperti pesan
-Discohook), **aksesori di komponen mana pun** (tombol link atau thumbnail pada
-teks & gambar), **blok File** (lampiran PDF/zip dari URL atau unggahan, dengan
-spoiler), **naik/turun/salin/hapus** tiap blok, **import/ekspor JSON** (pindah susunan
-pesan antar server), dan **penghitung batas komponen** yang menunjukkan
-sisa kuota sebelum Discord menolak. Ada **pratinjau hidup**, **warna aksen** bebas,
+(masing-masing dengan warna aksen sendiri dan **spoiler kartu**), **section** yang
+menaruh gambar kecil atau tombol di samping teks, **blok Tutup kartu** yang
+mengeluarkan teks & tombol dari container (pembuka polos di atas, baris tombol di
+bawah — seperti pesan Discohook), **aksesori di komponen mana pun** (tombol link
+atau thumbnail pada teks & gambar, lengkap dengan emoji), **blok File** (lampiran
+PDF/zip dari URL atau unggahan, dengan spoiler), **pemisah tanpa garis**,
+**tombol nonaktif**, **naik/turun/salin/hapus** tiap blok, **impor langsung dari
+Discohook** (tempel tautan `?share=` atau JSON-nya — komponen V2 diterjemahkan
+otomatis), **import/ekspor JSON** (pindah susunan pesan antar server), dan
+**penghitung batas komponen** yang menunjukkan sisa kuota sebelum Discord menolak. Ada **pratinjau hidup**, **warna aksen** bebas,
 **unggah gambar**, dan pilihan pengirim: lewat bot, atau **atas nama server**
 (webhook — tokennya dienkripsi, butuh izin *Manage Webhooks*). Tombol **ambil
 role** memberi role hanya dengan klik, lengkap dengan **emoji** dan **warna**
@@ -487,7 +489,7 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke # 385 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
+npm run smoke # 389 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
 npm run smoke:pg       # 21 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # 15 pemeriksaan rantai fallback provider (server tiruan)
 npm run test:ui        # 75 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)

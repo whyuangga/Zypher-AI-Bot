@@ -106,6 +106,23 @@ export interface PostBlock {
   spacing?: 'small' | 'large';
 
   /**
+   * Tampilkan garis pemisah. `false` = hanya jarak kosong tanpa garis.
+   *
+   * Discord menyebutnya `divider`; Discohook menampilkannya sebagai centang
+   * "Show Divider" pada komponen Separator. Tanpa field ini, pemisah tanpa
+   * garis tidak bisa disusun padahal sah dikirim.
+   */
+  divider?: boolean;
+
+  /**
+   * Tombol tidak bisa diklik (`disabled`).
+   *
+   * Berguna untuk tombol penutup yang belum berlaku, mis. "Coming soon" —
+   * tombol tetap tampil, tetapi Discord menolak kliknya.
+   */
+  disabled?: boolean;
+
+  /**
    * Teks tombol aksesori untuk blok `section`.
    *
    * Kalau terisi, tombol link menempel di kanan teks section. Discord hanya
@@ -126,7 +143,9 @@ export interface PostBlock {
   /**
    * Tandai komponen sebagai spoiler (tersembunyi sampai diklik).
    *
-   * Berlaku untuk blok `image` (satu gambar) dan `file` (lampiran).
+   * Berlaku untuk blok `image` (satu gambar) dan `file` (lampiran), dan untuk
+   * blok `container` — Discohook punya centang "spoiler" pada container, yang
+   * membuat SELURUH kartu tertutup sampai member mengkliknya.
    */
   spoiler?: boolean;
 
@@ -135,6 +154,15 @@ export interface PostBlock {
    * Untuk unggahan, nama ini juga menentukan ekstensi lampiran.
    */
   name?: string;
+
+  /**
+   * Teks alternatif gambar (alt text) untuk blok `image`.
+   *
+   * Discord menampilkannya sebagai deskripsi saat gambar gagal dimuat dan
+   * membacakannya untuk pembaca layar. Discohook menyebutnya "description"
+   * pada item Media Gallery.
+   */
+  alt?: string;
 
   /**
    * Id blok — dipakai sebagai customId untuk select menu role.
@@ -307,6 +335,9 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
         value: '',
         // Kosong = ikut warna pesan, jadi tidak perlu disimpan sebagai nilai.
         ...(accentRaw && /^#?[0-9a-f]{6}$/i.test(accentRaw) ? { accent: normalizeAccent(accentRaw) } : {}),
+        // Spoiler container: seluruh kartu tertutup sampai diklik, sama
+        // seperti centang "spoiler" pada container di Discohook.
+        ...(item.spoiler === true ? { spoiler: true } : {}),
       });
       continue;
     }
@@ -334,11 +365,18 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
       // kalau admin mengisi keduanya, karena tombol lebih terlihat.
       const url = typeof item.url === 'string' ? item.url.trim() : '';
       const pakaiTombol = Boolean(label) && isHttpUrl(url);
+      // Emoji & status nonaktif hanya berarti kalau aksesorinya tombol.
+      const emojiAksesori = pakaiTombol ? normalizeEmoji(item.emoji) : '';
       out.push({
         kind: 'section',
         value: isi,
         ...(pakaiTombol
-          ? { accessoryLabel: label, url }
+          ? {
+              accessoryLabel: label,
+              url,
+              ...(emojiAksesori ? { emoji: emojiAksesori } : {}),
+              ...(item.disabled === true ? { disabled: true } : {}),
+            }
           : isHttpUrl(thumbnailRaw)
             ? { thumbnail: thumbnailRaw }
             : {}),
@@ -356,6 +394,8 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
           // Block id hanya dipakai kalau bentuknya aman untuk customId.
           ...(/^[a-z0-9]{1,16}$/.test(blockId) ? { blockId } : {}),
           ...(item.spacing === 'large' ? { spacing: 'large' as const } : {}),
+          // `divider: false` = jarak kosong tanpa garis (Discord mendukungnya).
+          ...(item.divider === false ? { divider: false } : {}),
         });
       }
       continue;
@@ -400,6 +440,9 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
       // URI di komponen V2, jadi pengirim mengubahnya jadi lampiran lebih
       // dulu — di sini hanya bentuknya yang diperiksa.
       const data = typeof item.data === 'string' ? item.data.trim() : '';
+      // Alt text: dibaca pembaca layar dan tampil saat gambar gagal dimuat.
+      const altRaw = typeof item.alt === 'string' ? item.alt.trim().slice(0, 1024) : '';
+      const alt = altRaw ? { alt: altRaw } : {};
       if (data) {
         if (!/^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/i.test(data)) {
           dropped.push('gambar unggahan (format harus PNG, JPG, atau WebP)');
@@ -410,7 +453,14 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
           continue;
         }
         images += 1;
-        out.push({ kind: 'image', value: '', data, ...(item.spoiler === true ? { spoiler: true } : {}), ...aksesori() });
+        out.push({
+          kind: 'image',
+          value: '',
+          data,
+          ...alt,
+          ...(item.spoiler === true ? { spoiler: true } : {}),
+          ...aksesori(),
+        });
         continue;
       }
 
@@ -424,7 +474,13 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
         continue;
       }
       images += 1;
-      out.push({ kind: 'image', value: url, ...(item.spoiler === true ? { spoiler: true } : {}), ...aksesori() });
+      out.push({
+        kind: 'image',
+        value: url,
+        ...alt,
+        ...(item.spoiler === true ? { spoiler: true } : {}),
+        ...aksesori(),
+      });
       continue;
     }
 
@@ -484,14 +540,24 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
         url,
         ...(emoji ? { emoji } : {}),
         style: normalizeButtonStyle(item.style),
+        ...(item.disabled === true ? { disabled: true } : {}),
       });
       continue;
     }
 
     if (kind === 'close') {
-      // Penanda struktur murni: tidak menghasilkan komponen, dan dua penutup
-      // berurutan sama saja dengan satu.
-      if (out.length > 0 && out[out.length - 1]!.kind !== 'close') {
+      /*
+       * Penanda struktur murni: tidak menghasilkan komponen, dan dua penutup
+       * berurutan sama saja dengan satu.
+       *
+       * Penutup PERTAMA harus tetap dipertahankan walaupun belum ada blok
+       * sebelumnya. Artinya: "mulai menulis di luar kartu". Itu satu-satunya
+       * cara menyusun pesan yang SELURUH isinya di luar kartu — mis. teks
+       * polos + baris tombol seperti pesan Discohook tanpa container. Dulu
+       * syarat `out.length > 0` membuang penanda ini, sehingga pesan seperti
+       * itu tetap terbungkus satu kartu dan tampilannya berubah.
+       */
+      if (out.length === 0 || out[out.length - 1]!.kind !== 'close') {
         out.push({ kind: 'close', value: '' });
       }
       continue;
@@ -830,10 +896,13 @@ export function buildPostPayload(
   }
 
   const wadah: Wadah[] = [];
-  const buatWadah = (accent?: number): Wadah => {
+  const buatWadah = (accent?: number, spoiler?: boolean): Wadah => {
     const builder = new deps.ContainerBuilder();
     const warna = accent ?? accentDefault;
     if (warna !== undefined) builder.setAccentColor(warna);
+    // Spoiler container: seluruh kartu tertutup sampai member mengkliknya.
+    // `setSpoiler` ada di discord.js 14.19+; versi lawas cukup dilewati.
+    if (spoiler && typeof builder.setSpoiler === 'function') builder.setSpoiler(true);
     const baru: Wadah = { builder, anak: 0, adaIsi: false };
     wadah.push(baru);
     return baru;
@@ -914,7 +983,7 @@ export function buildPostPayload(
   /** Pindah ke container berikutnya; dipanggil saat blok `container` dibaca. */
   const bukaContainer = (block: PostBlock): void => {
     const accent = block.accent && deps.accentToNumber ? deps.accentToNumber(block.accent) : undefined;
-    aktif = buatWadah(accent);
+    aktif = buatWadah(accent, block.spoiler);
     // Wadah BARU harus didaftarkan — tanpa ini ia tidak pernah masuk daftar
     // urutan dan seluruh isinya hilang dari pesan.
     daftarkanWadah(aktif);
@@ -936,12 +1005,15 @@ export function buildPostPayload(
    */
   const tambahAksesori = (section: any, block: PostBlock): void => {
     if (block.accessoryLabel && block.accessoryUrl) {
-      section.setButtonAccessory(
-        new deps.ButtonBuilder()
-          .setStyle(deps.ButtonStyle.Link)
-          .setLabel(block.accessoryLabel)
-          .setURL(block.accessoryUrl),
-      );
+      const tombol = new deps.ButtonBuilder()
+        .setStyle(deps.ButtonStyle.Link)
+        .setLabel(block.accessoryLabel)
+        .setURL(block.accessoryUrl);
+      // Emoji tombol aksesori — Discohook mengizinkannya pada tombol Section.
+      const emoji = parseEmoji(block.emoji);
+      if (emoji) tombol.setEmoji(emoji);
+      if (block.disabled && typeof tombol.setDisabled === 'function') tombol.setDisabled(true);
+      section.setButtonAccessory(tombol);
     } else if (block.thumbnail && deps.ThumbnailBuilder) {
       const thumb = new deps.ThumbnailBuilder();
       thumb.setURL(block.thumbnail);
@@ -966,6 +1038,8 @@ export function buildPostPayload(
         // berlaku untuk tombol role.
         const emoji = parseEmoji(tombol.emoji);
         if (emoji) button.setEmoji(emoji);
+        // Tombol nonaktif tetap tampil, tetapi Discord menolak kliknya.
+        if (tombol.disabled && typeof button.setDisabled === 'function') button.setDisabled(true);
         row.addComponents(button);
       }
       if (luar) {
@@ -1000,7 +1074,10 @@ export function buildPostPayload(
     if (tombolTertunda.length > 0) flushButtons();
 
     if (block.kind === 'divider') {
-      const sep = new deps.SeparatorBuilder().setDivider(true);
+      // Discord menyebut dua hal terpisah pada Separator: `divider` (ada
+      // garisnya atau tidak) dan `spacing` (rapat/renggang). Discohook
+      // mengekspos keduanya, jadi keduanya diteruskan di sini.
+      const sep = new deps.SeparatorBuilder().setDivider(block.divider !== false);
       // Jarak: 1 = kecil (rapat), 2 = besar (renggang). Discord menamainya
       // `spacing`, bukan ukuran piksel.
       if (block.spacing === 'large' && typeof sep.setSpacing === 'function') sep.setSpacing(2);
@@ -1059,6 +1136,8 @@ export function buildPostPayload(
         url = `attachment://${name}`;
       }
       const item = new deps.MediaGalleryItemBuilder().setURL(url);
+      // Alt text: deskripsi gambar untuk pembaca layar (dan saat gagal muat).
+      if (block.alt && typeof item.setDescription === 'function') item.setDescription(block.alt);
       // Spoiler: gambar disamarkan sampai diklik. `setSpoiler` ada di
       // discord.js 14.19+; versi lawas dilewati tanpa menggagalkan pesan.
       if (block.spoiler && typeof item.setSpoiler === 'function') item.setSpoiler(true);

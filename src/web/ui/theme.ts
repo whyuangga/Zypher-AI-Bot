@@ -1322,6 +1322,40 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   filter: blur(6px);
 }
 
+/*
+ * Kartu spoiler: Discohook punya centang "spoiler" pada container, dan Discord
+ * menyamarkan SELURUH isi kartu sampai member mengkliknya. Pratinjau meniru
+ * itu — bukan hanya menampilkan kartu biasa, karena admin perlu melihat bahwa
+ * pesannya akan tertutup.
+ */
+.preview-container.pc-spoiler-kartu > * {
+  filter: blur(6px);
+  user-select: none;
+}
+.preview-container.pc-spoiler-kartu::after {
+  content: 'SPOILER';
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  color: #fff;
+  background: #1e1f22;
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+/* Pemisah tanpa garis: hanya jarak kosong, seperti 'divider: false'. */
+.preview-container .pc-sep.pc-sep-none {
+  background: transparent;
+}
+
+/* Tombol nonaktif: tetap terlihat, tetapi Discord menolak kliknya. */
+.preview-container .pc-button.pc-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .pc-section-text { flex: 1 1 auto; min-width: 0; }
 .pc-section-aksesori { flex: 0 0 auto; display: flex; align-items: center; }
 
@@ -1431,6 +1465,8 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   max-width: 520px;
   display: grid;
   gap: 8px;
+  /* Diperlukan label "SPOILER" pada kartu tersamar. */
+  position: relative;
 }
 .preview-container .pc-line {
   font-size: 14px;
