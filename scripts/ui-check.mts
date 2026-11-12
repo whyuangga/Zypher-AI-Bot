@@ -2209,6 +2209,72 @@ await check('pesan: flag pesan dikirim sebagai bitmask yang benar', async () => 
   assert.equal(page.errors.length, 0, `flag pesan error: ${page.errors.join('|')}`);
 });
 
+await check('pesan: bentuk embed menyimpan layout & pratinjaunya memakai aturan embed', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-embed');
+
+  /*
+   * Pembangun embed di klien harus menahan aturan yang sama dengan server:
+   * satu gambar besar, tombol di luar embed. Kalau pratinjau menampilkan dua
+   * gambar, admin melihat sesuatu yang tidak akan pernah muncul di Discord.
+   */
+  const hasil = (await page.evaluate(`
+    (function () {
+      document.getElementById('postName').value = 'Pengumuman';
+      document.getElementById('postAccent').value = '#5865f2';
+      document.getElementById('postLayout').value = 'embed';
+      blocks = [
+        { kind: 'text', value: 'Baris satu' },
+        { kind: 'divider' },
+        { kind: 'text', value: 'Baris dua' },
+        { kind: 'image', value: 'https://img.test/a.png' },
+        { kind: 'image', value: 'https://img.test/b.png' },
+        { kind: 'button', value: 'Buka', url: 'https://x.test' }
+      ];
+      var e = embedDariBlok();
+      return {
+        judul: e.embed.title,
+        warna: e.embed.color,
+        deskripsi: e.embed.description,
+        gambar: e.embed.image,
+        dilewati: e.dilewati.join('|')
+      };
+    })()
+  `)) as { judul: string; warna: number; deskripsi: string; gambar: string; dilewati: string };
+
+  assert.equal(hasil.judul, 'Pengumuman', 'judul embed dari nama pesan');
+  assert.equal(hasil.warna, 0x5865f2, 'warna embed dari aksen');
+  assert.ok(hasil.deskripsi.includes('Baris satu'), 'teks pertama masuk keterangan');
+  assert.ok(hasil.deskripsi.includes('Baris dua'), 'teks setelah pemisah ikut');
+  assert.equal(hasil.gambar, 'https://img.test/a.png', 'hanya satu gambar: yang pertama');
+  assert.ok(hasil.dilewati.includes('gambar kedua'), 'gambar kedua dilaporkan');
+  assert.ok(hasil.dilewati.includes('tombol'), 'tombol dijelaskan ada di luar embed');
+
+  /*
+   * Pratinjau embed: elemennya benar-benar DIGAMBAR lewat DOM tiruan, bukan
+   * hanya dihitung. Wadah pratinjau yang ada di halaman dipakai apa adanya.
+   */
+  const pratinjau = (await page.evaluate(`
+    (function () {
+      var kotak = document.getElementById('previewHost');
+      renderPreviewKe('previewHost');
+      return {
+        anak: kotak.children.length,
+        kelas: kotak.children.map(function (c) { return c.className; }).join('|'),
+        teks: kotak.textContent
+      };
+    })()
+  `)) as { anak: number; kelas: string; teks: string };
+
+  assert.ok(pratinjau.anak > 0, 'pratinjau menggambar elemen');
+  assert.ok(pratinjau.kelas.includes('preview-embed'), 'memakai gaya embed, bukan kartu container');
+  assert.ok(pratinjau.teks.includes('Pengumuman'), 'judul tampil di pratinjau');
+  assert.ok(pratinjau.teks.includes('Baris dua'), 'isi tampil di pratinjau');
+  assert.ok(pratinjau.teks.includes('Di luar embed'), 'komponen di luar embed disebut');
+  assert.ok(!pratinjau.kelas.includes('preview-container'), 'tidak menggambar kartu Components V2');
+  assert.equal(page.errors.length, 0, `embed error: ${page.errors.join('|')}`);
+});
+
 await check('pesan: pemicu event ikut tersimpan & tampil di daftar pesan', async () => {
   const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
   const page = mountPage(html, 'uji-pemicu');

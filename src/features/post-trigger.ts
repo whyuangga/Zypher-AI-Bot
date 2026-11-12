@@ -19,6 +19,7 @@ import type { Client } from 'discord.js';
 import { listPostsByTrigger, listRoleButtons, listRoleMenus, type PostTrigger } from '../db/repo.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import {
+  sendOrUpdateEmbedPost,
   sendOrUpdatePost,
   sendOrUpdatePostViaWebhook,
   webhookIdentityFor,
@@ -75,6 +76,38 @@ export async function runTriggers(options: {
           description: opsi.description ?? null,
         })),
       }));
+
+      /*
+       * Pesan bergaya embed: jalur sendiri, dan TIDAK memakai webhook.
+       * Embed klasik sudah tampil rapi di bawah nama bot; mengirimnya lewat
+       * webhook hanya menambah satu kegagalan (izin Manage Webhooks) tanpa
+       * menambah apa pun yang terlihat.
+       */
+      if (post.layout === 'embed') {
+        const hasilEmbed = await sendOrUpdateEmbedPost({
+          client,
+          channelId: post.channelId,
+          messageId: post.messageId,
+          blocks: post.blocks,
+          accent: post.accent,
+          title: post.name,
+          postId: post.id,
+          flags: post.flags,
+          allowedMentions: post.allowedMentions,
+          roleButtons: tombol.map((satu) => ({
+            id: satu.id,
+            label: satu.label,
+            emoji: satu.emoji ?? null,
+            style: satu.style ?? null,
+          })),
+          roleMenus,
+        });
+        if (hasilEmbed.messageId !== post.messageId) {
+          await setCustomPostMessage(guildId, post.id, hasilEmbed.messageId);
+        }
+        hasil.terkirim += 1;
+        continue;
+      }
 
       if (post.sender === 'webhook') {
         await sendOrUpdatePostViaWebhook({

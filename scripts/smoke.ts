@@ -7650,6 +7650,79 @@ await testAsync('pesan: generator kode & payload JSON dari penyusun yang sama', 
   await repo.deleteCustomPost(GUILD, kosong.id);
 });
 
+await testAsync('pesan: embed klasik dibangun dari blok & aturannya dijaga', async () => {
+  const { buildClassicEmbed, validateEmbed, warnaDari } = await import('../src/features/post-embed.js');
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  /* Warna: hanya #rrggbb yang diterima; nilai lain = tanpa warna embed. */
+  assert.equal(warnaDari('#5865f2'), 0x5865f2, 'hex enam digit dibaca');
+  assert.equal(warnaDari('5865f2'), 0x5865f2, 'tanpa pagar tetap dibaca');
+  assert.equal(warnaDari('#fff'), null, 'hex pendek ditolak, bukan ditebak');
+  assert.equal(warnaDari(null), null, 'kosong = tanpa warna');
+
+  const blok = [
+    { kind: 'container', accent: '#ffffff' },
+    { kind: 'text', value: 'Baris pertama' },
+    { kind: 'text', value: 'Baris kedua' },
+    { kind: 'divider' },
+    { kind: 'image', value: 'https://img.test/utama.png' },
+    { kind: 'image', value: 'https://img.test/kedua.png' },
+    { kind: 'button', value: 'Buka', url: 'https://x.test' },
+    { kind: 'file', value: 'https://x.test/a.pdf' },
+    { kind: 'close' },
+  ];
+  const hasil = buildClassicEmbed(blok, { accent: '#5865f2', title: 'Pengumuman' })!;
+  assert.ok(hasil, 'embed terbentuk');
+  assert.equal(hasil.embed.title, 'Pengumuman', 'judul dari nama pesan');
+  assert.equal(hasil.embed.color, 0x5865f2, 'warna dari aksen');
+  assert.ok(hasil.embed.description!.includes('Baris pertama'), 'teks masuk keterangan');
+  assert.ok(hasil.embed.description!.includes('Baris kedua'), 'semua teks ikut, bukan hanya yang pertama');
+  assert.equal(hasil.embed.image!.url, 'https://img.test/utama.png', 'gambar pertama dipakai');
+  /*
+   * Embed hanya punya satu gambar. Menimpa diam-diam akan menghilangkan pilihan
+   * admin, jadi gambar kedua dilaporkan sebagai bagian yang tidak muat.
+   */
+  assert.ok(
+    hasil.dropped.some((satu) => satu.includes('gambar kedua')),
+    'gambar kedua dilaporkan, bukan ditelan',
+  );
+  assert.ok(hasil.dropped.some((satu) => satu.includes('tombol')), 'tombol dijelaskan ada di luar embed');
+  assert.equal(validateEmbed(hasil.embed).length, 0, 'embed yang dibangun lolos validasi');
+
+  /* Tanpa isi = null, supaya pemanggil memberi tahu admin alih-alih mengirim kosong. */
+  assert.equal(buildClassicEmbed([{ kind: 'container' }, { kind: 'close' }]), null, 'kosong = null');
+  assert.equal(buildClassicEmbed([{ kind: 'text', value: '   ' }]), null, 'spasi saja = kosong');
+
+  /* Validasi menolak yang akan ditolak Discord, dengan alasan yang bisa dibaca. */
+  const kepanjangan = validateEmbed({ description: 'x'.repeat(5000) });
+  assert.ok(kepanjangan.some((satu) => satu.includes('4096')), 'batas isi embed disebut angkanya');
+  const tanpaIsi = validateEmbed({});
+  assert.ok(tanpaIsi.some((satu) => satu.includes('tidak punya isi')), 'embed kosong ditolak');
+
+  /*
+   * Layout disimpan per pesan & nilai asing jatuh ke container: pesan lama tidak
+   * boleh tiba-tiba berubah bentuk hanya karena kolomnya ada.
+   */
+  assert.equal(repo.parseLayout('embed'), 'embed', 'embed dikenali');
+  assert.equal(repo.parseLayout('container'), 'container', 'container dikenali');
+  assert.equal(repo.parseLayout(null), 'container', 'kosong = container (perilaku lama)');
+  assert.equal(repo.parseLayout('klasik'), 'container', 'nilai asing tidak diteruskan');
+
+  const pesan = await repo.createCustomPost(GUILD, {
+    name: 'Embed uji',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Halo' }],
+    layout: 'embed',
+  });
+  assert.equal(pesan.layout, 'embed', 'layout tersimpan saat dibuat');
+  const diubah = await repo.updateCustomPost(GUILD, pesan.id, { layout: 'container' });
+  assert.equal(diubah!.layout, 'container', 'layout bisa diubah');
+  const lain = await repo.updateCustomPost(GUILD, pesan.id, { name: 'Embed uji 2' });
+  assert.equal(lain!.layout, 'container', 'menyimpan field lain tidak mengubah layout');
+  await repo.deleteCustomPost(GUILD, pesan.id);
+});
+
 await testAsync('pesan: pemicu member masuk/keluar tersimpan & dijalankan hanya untuk pemicunya', async () => {
   const repo = await import('../src/db/repo.js');
   const { runTriggers } = await import('../src/features/post-trigger.js');

@@ -36,6 +36,7 @@ import {
 } from 'discord.js';
 import { accentToNumber, buildPostPayload, type BuiltPost, type PostBlock } from './custom-post.js';
 import type { SeriesMessage } from './post-series.js';
+import { buildClassicEmbed, validateEmbed } from './post-embed.js';
 import { roleButtonId, roleMenuId } from './role-buttons.js';
 import {
   deleteChannelWebhook,
@@ -442,6 +443,133 @@ export async function sendOrUpdatePost(options: {
     edited: false,
     ...laporan({ dropped, droppedFiles: payload.droppedFiles }),
   };
+}
+
+/**
+ * Kirim/perbarui pesan BERGAYA EMBED KLAISIK.
+ *
+ * Dipisah dari `sendOrUpdatePost` karena aturannya berlawanan: pesan
+ * Components V2 WAJIB tanpa `embeds`, dan pesan embed TIDAK boleh membawa
+ * flag V2. Mencampur keduanya di satu jalur membuat salah satu pesan ditolak
+ * Discord dengan galat yang tidak menyebut penyebabnya.
+ *
+ * Tombol & menu role tetap dikirim sebagai komponen di luar embed: keduanya
+ * bisa hidup berdampingan dengan embed di Discord, dan mematikannya berarti
+ * pesan pengumuman tidak bisa dipakai untuk membagikan role.
+ */
+export async function sendOrUpdateEmbedPost(options: {
+  client: Client;
+  channelId: string;
+  messageId: string | null;
+  blocks: PostBlock[];
+  accent?: string | null;
+  /** Judul embed — diambil dari nama pesan oleh pemanggil. */
+  title?: string | null;
+  roleButtons?: SendRoleButton[];
+  roleMenus?: SendRoleMenu[];
+  postId?: number;
+  /** Flag admin (suppress notifikasi). Flag V2 TIDAK ikut dipasang di sini. */
+  flags?: number;
+  allowedMentions?: BuiltPost['allowedMentions'];
+}): Promise<SendResult> {
+  const hasil = buildClassicEmbed(options.blocks, {
+    accent: options.accent ?? null,
+    title: options.title ?? null,
+  });
+  if (!hasil) {
+    throw new PostSendError('Embed masih kosong — isi minimal satu teks atau gambar.');
+  }
+  const masalah = validateEmbed(hasil.embed);
+  if (masalah.length) {
+    throw new PostSendError(`Embed tidak bisa dikirim: ${masalah[0]}`);
+  }
+
+  /*
+   * Komponen di luar embed: hanya tombol/menu. Penyusun payload biasa dipakai
+   * supaya customId dan gaya tombolnya persis sama dengan pesan container —
+   * dua cara menyusun tombol akan menghasilkan tombol yang berperilaku beda.
+   */
+  const komponen = await komponenInteraktif(options);
+  const payload = {
+    embeds: [hasil.embed],
+    ...(komponen.length ? { components: komponen } : {}),
+    ...(options.flags ? { flags: options.flags } : {}),
+    ...(options.allowedMentions ? { allowedMentions: { ...options.allowedMentions, repliedUser: false } } : {}),
+    // Embed tidak membawa lampiran; berkas pada blok `file` dilaporkan admin.
+    attachments: [] as [],
+  };
+
+  const channel = await resolveChannel(options.client, options.channelId);
+  const dropped = [...hasil.dropped];
+
+  if (options.messageId) {
+    const lama = await channel.messages.fetch(options.messageId).catch((): null => null);
+    if (lama) {
+      await lama.edit(payload);
+      return { messageId: lama.id, edited: true, dropped, droppedFiles: [] };
+    }
+    logger.info(`Pesan embed ${options.messageId} sudah tidak ada di channel — mengirim baru.`);
+  }
+
+  const sent: Message = await channel.send(payload);
+  return { messageId: sent.id, edited: false, dropped, droppedFiles: [] };
+}
+
+/** Tombol & menu role sebagai komponen di luar embed. */
+async function komponenInteraktif(options: {
+  roleButtons?: SendRoleButton[];
+  roleMenus?: SendRoleMenu[];
+  postId?: number;
+}): Promise<ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[]> {
+  const baris: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] = [];
+  const tombol = (options.roleButtons ?? []).slice(0, 25).map((satu) => {
+    const builder = new ButtonBuilder()
+      .setCustomId(roleButtonId(satu.id))
+      .setLabel(satu.label.slice(0, 80));
+    if (satu.emoji) {
+      try {
+        builder.setEmoji(satu.emoji);
+      } catch {
+        // Emoji tidak sah diabaikan: labelnya tetap tampil.
+      }
+    }
+    return builder.setStyle(gayaTombol(satu.style));
+  });
+  if (tombol.length) {
+    baris.push(new ActionRowBuilder<ButtonBuilder>().addComponents(...tombol) as ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>);
+  }
+
+  for (const menu of (options.roleMenus ?? []).slice(0, 4)) {
+    const pilihan = menu.options.slice(0, 25).map((opsi) =>
+      new StringSelectMenuOptionBuilder().setLabel(opsi.label.slice(0, 100)).setValue(opsi.roleId),
+    );
+    if (!pilihan.length) continue;
+    baris.push(
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(roleMenuId(menu.id))
+          .setPlaceholder(menu.placeholder.slice(0, 150))
+          .setMinValues(Math.max(1, menu.minValues))
+          .setMaxValues(Math.max(1, menu.maxValues))
+          .addOptions(...pilihan),
+      ),
+    );
+  }
+  return baris;
+}
+
+/** Nama gaya tombol → ButtonStyle. Nilai asing jadi Secondary, bukan gagal. */
+function gayaTombol(style: string | null | undefined): ButtonStyle {
+  switch (style) {
+    case 'primary':
+      return ButtonStyle.Primary;
+    case 'success':
+      return ButtonStyle.Success;
+    case 'danger':
+      return ButtonStyle.Danger;
+    default:
+      return ButtonStyle.Secondary;
+  }
 }
 
 /**

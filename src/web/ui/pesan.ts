@@ -39,6 +39,8 @@ export interface PostRowView {
   sender: 'bot' | 'webhook';
   /** Pemicu kirim otomatis (`member_add`/`member_remove`); null = manual. */
   trigger?: 'member_add' | 'member_remove' | null;
+  /** Bentuk pesan: container (Components V2) atau embed klasik. */
+  layout?: 'container' | 'embed';
 }
 
 /** Satu pesan di dalam dokumen multi-pesan (bentuk dari post-series.ts). */
@@ -337,6 +339,17 @@ export function pesanPage(options: PesanPageOptions): string {
     title: 'Tampilan & pengirim',
     hint: 'berlaku untuk seluruh pesan',
     body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+  <div style="grid-column:1/-1">
+    <label class="field" for="postLayout">Bentuk pesan</label>
+    <span class="select-shell full">
+      <select id="postLayout" onchange="renderPreview()">
+        <option value="container">Container (Components V2)</option>
+        <option value="embed">Embed klasik</option>
+      </select>
+      ${icon('chevron', 15)}
+    </span>
+    <p class="hint">Container: tampilan modern dengan kartu berwarna. Embed klasik: bentuk lama yang tetap rapi di notifikasi. Keduanya tidak bisa dicampur dalam satu pesan.</p>
+  </div>
   <div>
     <label class="field" for="postAccent">Warna aksen</label>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -2251,6 +2264,7 @@ async function savePost(andSend) {
         threadName: ((document.getElementById('postThreadName') || {}).value || '').trim().slice(0, 100),
         // '' = hanya manual; server membaca nilai asing sebagai null juga.
         trigger: (document.getElementById('postTrigger') || {}).value || null,
+        layout: (document.getElementById('postLayout') || {}).value || 'container',
       }),
     });
     if (result.dropped && result.dropped.length) {
@@ -2389,6 +2403,8 @@ function loadExisting() {
    * dibiarkan memilih opsi pertama secara diam-diam — admin harus tahu
    * pesannya tidak lagi punya pemicu.
    */
+  var bentuk = document.getElementById('postLayout');
+  if (bentuk) bentuk.value = found.layout === 'embed' ? 'embed' : 'container';
   var pemicu = document.getElementById('postTrigger');
   if (pemicu) pemicu.value = found.trigger === 'member_add' || found.trigger === 'member_remove' ? found.trigger : '';
   // normalBlock memuat SEMUA field yang dikenal, termasuk spoiler dan nama
@@ -2834,10 +2850,143 @@ function renderPreview() {
   });
 }
 
+/**
+ * Bangun embed dari blok — cerminan buildClassicEmbed di server.
+ *
+ * Aturannya harus sama, dan yang paling mudah salah adalah: embed hanya boleh
+ * SATU gambar besar, dan tombol/menu tidak masuk embed. Kalau pratinjau
+ * menampilkan dua gambar, admin akan bingung kenapa Discord hanya menampilkan
+ * satu.
+ */
+function embedDariBlok() {
+  var embed = { title: '', description: '', color: null, image: null, thumbnail: null };
+  var nama = (document.getElementById('postName') || {}).value || '';
+  embed.title = String(nama).trim().slice(0, 256);
+  var aksen = String(accentNow() || '').replace('#', '');
+  if (/^[0-9a-fA-F]{6}$/.test(aksen)) embed.color = parseInt(aksen, 16);
+
+  var baris = [];
+  var dilewati = [];
+  blocks.forEach(function (b) {
+    if (b.kind === 'text' || b.kind === 'section') {
+      if (String(b.value || '').trim()) baris.push(String(b.value));
+      if (b.kind === 'section' && String(b.thumbnail || '').trim() && !embed.thumbnail) {
+        embed.thumbnail = String(b.thumbnail);
+      }
+      return;
+    }
+    if (b.kind === 'divider') {
+      if (baris.length && baris[baris.length - 1] !== '') baris.push('');
+      return;
+    }
+    if (b.kind === 'image') {
+      var url = String(b.url || b.value || '').trim();
+      if (!url) return;
+      if (embed.image) {
+        dilewati.push('gambar kedua tidak muat di embed (maksimal satu)');
+        return;
+      }
+      embed.image = url;
+      return;
+    }
+    if (b.kind === 'file') {
+      dilewati.push('berkas jadi lampiran, bukan bagian embed');
+      return;
+    }
+    if (b.kind === 'button' || b.kind === 'select') {
+      dilewati.push('tombol/menu dikirim di luar embed (tetap bisa diklik)');
+    }
+  });
+
+  embed.description = baris.join(String.fromCharCode(10)).trim().slice(0, 4096);
+  return { embed: embed, dilewati: dilewati };
+}
+
+/** Pratinjau embed klasik — bentuknya mengikuti tampilan Discord. */
+function gambarPratinjauEmbed(host, hostId) {
+  var hasil = embedDariBlok();
+  var embed = hasil.embed;
+  if (!embed.title && !embed.description && !embed.image) {
+    var kosong = document.createElement('div');
+    kosong.className = 'preview-container';
+    kosong.style.borderLeftColor = accentNow();
+    var isiKosong = document.createElement('div');
+    isiKosong.className = 'preview-text';
+    isiKosong.textContent = 'Embed masih kosong — tambahkan teks atau gambar.';
+    kosong.appendChild(isiKosong);
+    host.appendChild(kosong);
+    return;
+  }
+
+  var kotak = document.createElement('div');
+  kotak.className = 'preview-embed';
+  kotak.style.borderLeftColor = embed.color === null ? accentNow() : '#' + aksenHex(embed.color);
+
+  if (embed.title) {
+    var judul = document.createElement('div');
+    judul.className = 'preview-embed-title';
+    judul.textContent = embed.title;
+    kotak.appendChild(judul);
+  }
+  if (embed.description) {
+    var isi = document.createElement('div');
+    isi.className = 'preview-embed-text';
+    isi.textContent = embed.description;
+    kotak.appendChild(isi);
+  }
+  if (embed.image) {
+    var gambar = document.createElement('div');
+    gambar.className = 'preview-embed-image';
+    // Alamat gambar dari admin: dipasang lewat style, bukan innerHTML.
+    gambar.style.backgroundImage = 'url("' + String(embed.image).replace(/"/g, '%22') + '")';
+    kotak.appendChild(gambar);
+  }
+  host.appendChild(kotak);
+
+  // Komponen di luar embed tetap ditampilkan: tombol role masih akan muncul.
+  var luar = [];
+  blocks.forEach(function (b) {
+    if (b.kind === 'button' && String(b.value || '').trim()) luar.push('Tombol: ' + b.value);
+    if (b.kind === 'select') luar.push('Menu pilihan');
+  });
+  if (luar.length) {
+    var catatan = document.createElement('div');
+    catatan.className = 'preview-outside';
+    catatan.textContent = 'Di luar embed: ' + luar.join(' · ');
+    host.appendChild(catatan);
+  }
+  if (hasil.dilewati.length && hostId === 'previewHostBesar') {
+    var peringatan = document.createElement('p');
+    peringatan.className = 'hint';
+    peringatan.style.margin = '8px 0 0';
+    peringatan.textContent = 'Catatan: ' + hasil.dilewati[0];
+    host.appendChild(peringatan);
+  }
+}
+
+/** Angka warna jadi rrggbb untuk CSS. */
+function aksenHex(angka) {
+  var teks = Number(angka || 0).toString(16);
+  while (teks.length < 6) teks = '0' + teks;
+  return teks.slice(-6);
+}
+
 function renderPreviewKe(hostId) {
   var host = document.getElementById(hostId);
   if (!host) return;
   host.innerHTML = '';
+
+  /*
+   * Bentuk embed: pratinjau memakai pembangun embed yang SAMA dengan server
+   * (embedDariBlok), jadi yang terlihat bukan tebakan. Kalau pratinjau
+   * menggambar sendiri, admin bisa melihat embed rapi padahal server menolak
+   * atau memotong isinya.
+   */
+  var bentuk = (document.getElementById('postLayout') || {}).value;
+  if (bentuk === 'embed') {
+    gambarPratinjauEmbed(host, hostId);
+    return;
+  }
 
   /*
    * Pratinjau memakai pemisahan wadah yang SAMA dengan penyusun payload:

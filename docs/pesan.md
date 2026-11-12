@@ -631,7 +631,43 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Trigger event (member masuk/keluar) | ✅ pilihan **Kirim otomatis saat**: `member_add` / `member_remove`; pesan yang sama diperbarui tiap kejadian, bukan dikirim ulang |
 | Generator kode (payload → kode bot) | ✅ tab **Impor** → panel "JSON payload & generator kode": keluaran `discord.js` v14 & `discord.py` v2, diterjemahkan dari payload yang benar-benar dikirim |
 | Melihat payload JSON mentah | ✅ panel yang sama menampilkan `components` persis seperti yang diterima Discord, siap ditempel ke REST API |
+| Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, satu gambar besar, tombol/menu tetap di luar embed |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 9: embed klasik (bentuk lama, di samping Components V2)
+
+Components V2 bukan satu-satunya bentuk yang dipakai server. Embed klasik masih
+lebih baik untuk pengumuman: ia tampil rapi di notifikasi HP, tidak butuh flag
+khusus, dan sudah dikenali semua bot lain. Discohook mendukung keduanya; di sini
+pun, lewat **Bentuk pesan** di kartu pengaturan.
+
+| Blok | Jadi apa di embed |
+|---|---|
+| teks & section | isi `description`, dipisah baris baru |
+| pemisah | satu baris kosong |
+| gambar (pertama) | `image` — gambar besar di bawah teks |
+| gambar kedua dan seterusnya | **tidak muat**; dilaporkan sebagai `dropped` |
+| section dengan thumbnail | `thumbnail` (gambar kecil di kanan atas) |
+| tombol & menu | komponen **di luar** embed — tetap bisa diklik |
+| berkas | lampiran, bukan bagian embed |
+| nama pesan | `title` |
+| warna aksen | garis warna di kiri embed |
+| container/tutup kartu | penanda struktur V2, diabaikan |
+
+Kenapa jalur kirimnya dipisah (`sendOrUpdateEmbedPost`, bukan cabang dari
+`sendOrUpdatePost`): **embed dan Components V2 saling menolak di Discord.**
+Pesan ber-flag `IsComponentsV2` tidak boleh punya `embeds`, dan pesan embed
+tidak boleh membawa flag itu. Satu jalur kode untuk keduanya membuat aturan ini
+mudah terlewat, dan galat yang muncul di Discord tidak menyebut penyebabnya.
+
+Bentuknya disimpan per pesan (`custom_posts.layout`), bukan per server: satu
+server sering punya pengumuman bergaya embed **dan** panel bergaya container.
+NULL dibaca sebagai `container`, jadi pesan lama tidak berubah tampilan setelah
+upgrade.
+
+Di dashboard, pratinjau embed memakai `embedDariBlok()` — cerminan
+`buildClassicEmbed()` di server — termasuk aturan "satu gambar" di atas. Peringatan
+tentang bagian yang tidak muat muncul di tab **Pratinjau**, bukan hanya di log.
 
 ### Batch 8: pemicu event member masuk/keluar
 

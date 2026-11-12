@@ -1472,7 +1472,24 @@ export interface CustomPost {
    * orang bergabung.
    */
   trigger: PostTrigger | null;
+  /**
+   * Bentuk pesan: `container` (Components V2, bawaan) atau `embed` (klasik).
+   *
+   * Disimpan per pesan, bukan per server: satu server sering punya pengumuman
+   * bergaya embed DAN panel bergaya container, dan memaksa satu bentuk untuk
+   * semuanya berarti admin harus memilih salah satu.
+   */
+  layout: PostLayout;
   updatedAt: number;
+}
+
+/** Bentuk tampilan pesan. */
+export const POST_LAYOUTS = ['container', 'embed'] as const;
+export type PostLayout = (typeof POST_LAYOUTS)[number];
+
+/** Nilai asing dibaca sebagai `container` — perilaku lama tidak berubah. */
+export function parseLayout(raw: string | null | undefined): PostLayout {
+  return raw === 'embed' ? 'embed' : 'container';
 }
 
 /** Nilai `trigger` yang dikenal. Selain ini dibaca sebagai `null`. */
@@ -1499,6 +1516,7 @@ interface CustomPostRow {
   mentions?: string | null;
   thread_name?: string | null;
   trigger?: string | null;
+  layout?: string | null;
   updated_at: number | string;
 }
 
@@ -1541,6 +1559,7 @@ function toCustomPost(row: CustomPostRow): CustomPost {
     allowedMentions: parseMentions(row.mentions),
     threadName: row.thread_name?.trim() ? row.thread_name.trim().slice(0, 100) : null,
     trigger: parseTrigger(row.trigger),
+    layout: parseLayout(row.layout),
     updatedAt: Number(row.updated_at),
   };
 }
@@ -1584,12 +1603,13 @@ export async function createCustomPost(
     allowedMentions?: { parse?: Array<'users' | 'roles' | 'everyone'> };
     threadName?: string | null;
     trigger?: PostTrigger | null;
+    layout?: PostLayout | null;
   },
 ): Promise<CustomPost> {
   const blocks = sanitizeBlocks(input.blocks).blocks;
   const id = await insert(
-    `INSERT INTO custom_posts (guild_id, name, channel_id, blocks, message_id, accent, sender, flags, series, mentions, thread_name, trigger, updated_at)
-     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO custom_posts (guild_id, name, channel_id, blocks, message_id, accent, sender, flags, series, mentions, thread_name, trigger, layout, updated_at)
+     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       guildId,
       input.name.slice(0, 120),
@@ -1602,6 +1622,7 @@ export async function createCustomPost(
       JSON.stringify(parseMentions(JSON.stringify({ parse: input.allowedMentions?.parse ?? [] }))),
       input.threadName?.trim() ? input.threadName.trim().slice(0, 100) : null,
       parseTrigger(input.trigger ?? null),
+      parseLayout(input.layout ?? null),
       Date.now(),
     ],
   );
@@ -1623,6 +1644,7 @@ export async function updateCustomPost(
     allowedMentions?: { parse?: Array<'users' | 'roles' | 'everyone'> };
     threadName?: string | null;
     trigger?: PostTrigger | null;
+    layout?: PostLayout | null;
   },
 ): Promise<CustomPost | null> {
   const current = await getCustomPost(guildId, id);
@@ -1639,7 +1661,7 @@ export async function updateCustomPost(
 
   const blocks = input.blocks === undefined ? current.blocks : sanitizeBlocks(input.blocks).blocks;
   await run(
-    'UPDATE custom_posts SET name = ?, channel_id = ?, blocks = ?, accent = ?, sender = ?, flags = ?, series = ?, mentions = ?, thread_name = ?, trigger = ?, updated_at = ? WHERE guild_id = ? AND id = ?',
+    'UPDATE custom_posts SET name = ?, channel_id = ?, blocks = ?, accent = ?, sender = ?, flags = ?, series = ?, mentions = ?, thread_name = ?, trigger = ?, layout = ?, updated_at = ? WHERE guild_id = ? AND id = ?',
     [
       (input.name ?? current.name).slice(0, 120),
       input.channelId === undefined ? current.channelId : input.channelId,
@@ -1661,6 +1683,7 @@ export async function updateCustomPost(
           ? input.threadName.trim().slice(0, 100)
           : null,
       input.trigger === undefined ? current.trigger : parseTrigger(input.trigger ?? null),
+      input.layout === undefined ? current.layout : parseLayout(input.layout ?? null),
       Date.now(),
       guildId,
       id,

@@ -671,6 +671,30 @@ details.user-group[open] > summary { background: rgba(226, 209, 204, .05); }
 .chev { margin-left: auto; color: var(--text-3); transition: transform .18s; }
 details[open] .chev { transform: rotate(180deg); }
 
+/* ---------------- pratinjau embed klasik ---------------- */
+/* Bentuknya mengikuti embed Discord: garis warna di kiri, isi menjorok. */
+.preview-embed {
+  background: rgba(226, 209, 204, .045);
+  border-left: 4px solid var(--brand);
+  border-radius: 4px 10px 10px 4px;
+  padding: 12px 14px;
+  display: grid; gap: 8px;
+  max-width: 520px;
+}
+.preview-embed-title { font-size: 14.5px; font-weight: 600; color: var(--text); }
+.preview-embed-text {
+  font-size: 13px; line-height: 1.55; color: var(--text-2);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.preview-embed-image {
+  height: 180px; border-radius: 8px; background-size: cover; background-position: center;
+  background-color: rgba(226, 209, 204, .08);
+}
+.preview-outside {
+  margin-top: 8px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-3);
+}
+
 /* ---------------- diff versi pesan ---------------- */
 /* Panel di bawah baris riwayat: ringkasan dulu, lalu rincian per blok. */
 .diff-panel {

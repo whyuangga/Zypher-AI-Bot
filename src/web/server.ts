@@ -49,6 +49,7 @@ import {
   listCustomPosts,
   getCustomPost,
   parseTrigger,
+  type PostLayout,
   type PostTrigger,
   createCustomPost,
   updateCustomPost,
@@ -79,6 +80,7 @@ import {
   PostSendError,
   sendPostSeries,
   sendOrUpdatePost,
+  sendOrUpdateEmbedPost,
   sendOrUpdatePostViaWebhook,
   webhookIdentityFor,
 } from '../features/custom-post-send.js';
@@ -415,6 +417,10 @@ function sanitizeAllowedMentions(value: unknown): { parse: Array<'users' | 'role
  * Nilai asing dibaca sebagai `null` (hanya manual), bukan diteruskan: pemicu
  * yang tidak dikenal akan membuat pesan diam selamanya tanpa pesan galat.
  */
+function sanitizeLayout(value: unknown): PostLayout | null {
+  return value === 'embed' ? 'embed' : value === 'container' ? 'container' : null;
+}
+
 function sanitizeTrigger(value: unknown): PostTrigger | null {
   return parseTrigger(typeof value === 'string' ? value : null);
 }
@@ -881,6 +887,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
           accent: post.accent,
           sender: post.sender,
           trigger: post.trigger,
+          layout: post.layout,
         })),
         channels,
         botReady: Boolean(botClient?.isReady()),
@@ -2256,6 +2263,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       allowedMentions: sanitizeAllowedMentions(payload.allowedMentions),
       threadName: sanitizeThreadName(payload.threadName),
       trigger: sanitizeTrigger(payload.trigger),
+      layout: sanitizeLayout(payload.layout),
     });
     const { blocks: blokSah, dropped } = sanitizeBlocks(payload.blocks);
     // `usage` = hitungan versi SERVER. Dashboard boleh menghitung sendiri
@@ -2341,6 +2349,42 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
          * Jadi tombol/aksinya akan diam. Lebih jujur menolak di sini, sama
          * seperti tombol & menu role.
          */
+        /*
+         * Pesan bergaya embed klasik: jalur kirim sendiri.
+         *
+         * Aturannya berlawanan dengan Components V2 (embed tidak boleh membawa
+         * flag V2, V2 tidak boleh membawa embeds), jadi keduanya tidak boleh
+         * lewat penyusun payload yang sama.
+         */
+        if (post.layout === 'embed') {
+          const hasilEmbed = await sendOrUpdateEmbedPost({
+            client: botClient,
+            channelId: post.channelId,
+            messageId: post.messageId,
+            blocks: post.blocks,
+            accent: post.accent,
+            title: post.name,
+            postId: id,
+            flags: post.flags,
+            allowedMentions: post.allowedMentions,
+            roleButtons: roleButtons.map((b) => ({
+              id: b.id,
+              label: b.label,
+              emoji: b.emoji ?? null,
+              style: b.style ?? null,
+            })),
+            roleMenus: menuPayload,
+          });
+          await setCustomPostMessage(guildId, id, hasilEmbed.messageId);
+          sendJson(response, 200, {
+            ok: true,
+            messageId: hasilEmbed.messageId,
+            edited: hasilEmbed.edited,
+            ...(hasilEmbed.dropped?.length ? { dropped: hasilEmbed.dropped } : {}),
+          });
+          return;
+        }
+
         if (post.sender === 'webhook') {
           const aksi = await listPostActions(guildId, id);
           if (Object.keys(aksi).length > 0) {
@@ -2492,6 +2536,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
           payload.allowedMentions === undefined ? undefined : sanitizeAllowedMentions(payload.allowedMentions),
         threadName: payload.threadName === undefined ? undefined : sanitizeThreadName(payload.threadName),
         trigger: payload.trigger === undefined ? undefined : sanitizeTrigger(payload.trigger),
+        layout: payload.layout === undefined ? undefined : sanitizeLayout(payload.layout),
         channelId:
           payload.channelId === undefined
             ? undefined
