@@ -6,6 +6,8 @@ import { normalizeTimeZone } from '../lib/timezone.js';
 import { parseBlocks, sanitizeBlocks, type PostBlock } from '../features/custom-post.js';
 import { decryptSecret, encryptSecret } from '../features/webhook-secret.js';
 import { sanitizeSeries, type SeriesMessage } from '../features/post-series.js';
+import { cronIntervalMinutes, nextCronTime, parseCron } from '../features/schedule-cron.js';
+import { TIME_ZONES } from '../lib/timezone.js';
 import {
   sanitizeRoleButtons,
   sanitizeRoleMenu,
@@ -2642,6 +2644,17 @@ export async function pruneFlowSessions(olderThan: number): Promise<number> {
 /* ------------------------------------------------------------------ */
 
 /** Batas jadwal, dipakai sanitizer dan dasbor. */
+/**
+ * Offset jam (dari UTC) untuk satu zona waktu server.
+ *
+ * Dipakai jadwal cron: "tiap Senin 09:00" harus berarti 09:00 WIB, bukan 09:00
+ * UTC. Zona Indonesia tidak memakai DST, jadi offsetnya tetap.
+ */
+export function zoneOffsetHours(timeZone: string | null | undefined): number {
+  const bersih = normalizeTimeZone(timeZone);
+  return TIME_ZONES.find((zona) => zona.id === bersih)?.offset ?? 7;
+}
+
 export const SCHEDULE_LIMITS = {
   /** Pengulangan paling rapat: 2 jam (mengikuti Discohook). */
   minRepeatMinutes: 120,
@@ -2655,6 +2668,10 @@ export interface PostSchedule {
   channelId: string;
   dueAt: number;
   repeatMinutes: number;
+  /** Ekspresi cron (lima ruas), atau null untuk pengulangan tiap N menit. */
+  cron: string | null;
+  /** Offset zona jadwal (jam dari UTC), dibaca dari zona waktu server saat disimpan. */
+  cronOffset: number;
   lastSentAt: number | null;
 }
 
@@ -2664,6 +2681,8 @@ interface ScheduleRow {
   channel_id: string;
   due_at: number | string;
   repeat_minutes: number | string;
+  cron: string | null;
+  cron_offset: number | string | null;
   last_sent_at: number | string | null;
 }
 
@@ -2674,6 +2693,10 @@ function bacaJadwal(row: ScheduleRow): PostSchedule {
     channelId: row.channel_id,
     dueAt: Number(row.due_at),
     repeatMinutes: Number(row.repeat_minutes),
+    cron: typeof row.cron === 'string' && row.cron.trim() ? row.cron.trim() : null,
+    cronOffset: Number.isFinite(Number(row.cron_offset)) && row.cron_offset !== null
+      ? Number(row.cron_offset)
+      : 7,
     lastSentAt: row.last_sent_at === null ? null : Number(row.last_sent_at),
   };
 }
@@ -2684,14 +2707,65 @@ function bacaJadwal(row: ScheduleRow): PostSchedule {
  * Tidak pernah melempar: jadwal yang tidak masuk akal DIBUANG dengan alasan,
  * sama seperti blok dan aksi. `null` = tolak.
  */
-export function sanitizeSchedule(input: unknown): { dueAt: number; repeatMinutes: number } | null {
+export function sanitizeSchedule(
+  input: unknown,
+  cronOffset = 7,
+): { dueAt: number; repeatMinutes: number; cron: string | null; cronOffset: number } | null {
   if (!input || typeof input !== 'object') return null;
   const item = input as Record<string, unknown>;
+
+  /*
+   * Dua bentuk jadwal, tidak pernah dua-duanya:
+   *   - cron      : pengulangan mengikuti kalender; `dueAt` DIHITUNG dari
+   *                 ekspresinya, bukan dipercaya dari klien (klien bisa
+   *                 mengirim waktu lampau atau tahun 2099);
+   *   - menit     : pengulangan tiap N menit seperti sebelumnya.
+   */
+  const cronTeks = typeof item.cron === 'string' ? item.cron.trim() : '';
+  if (cronTeks) {
+    let jadwalCron: ReturnType<typeof parseCron>;
+    try {
+      jadwalCron = parseCron(cronTeks);
+    } catch (error) {
+      droppedCron.push(errorMessage(error));
+      return null;
+    }
+    const berikut = nextCronTime(jadwalCron, Date.now(), cronOffset);
+    if (berikut === null) {
+      droppedCron.push(`cron "${cronTeks}" tidak akan pernah berbunyi (tanggal mustahil)`);
+      return null;
+    }
+    // Batas kerapatan sama dengan jadwal berulang: sekali per 2 jam.
+    const jarak = cronIntervalMinutes(jadwalCron, Date.now(), cronOffset);
+    if (jarak !== null && jarak < SCHEDULE_LIMITS.minRepeatMinutes) {
+      droppedCron.push(
+        `cron "${cronTeks}" terlalu rapat (tiap ${jarak} menit) — paling rapat sekali per ${SCHEDULE_LIMITS.minRepeatMinutes} menit`,
+      );
+      return null;
+    }
+    return { dueAt: berikut, repeatMinutes: 0, cron: jadwalCron.ekspresi, cronOffset };
+  }
+
   const dueAt = Number(item.dueAt);
   if (!Number.isFinite(dueAt) || dueAt <= Date.now() - 60_000) return null;
   const ulang = Math.trunc(Number(item.repeatMinutes) || 0);
   const repeatMinutes = ulang <= 0 ? 0 : Math.max(SCHEDULE_LIMITS.minRepeatMinutes, ulang);
-  return { dueAt, repeatMinutes };
+  return { dueAt, repeatMinutes, cron: null, cronOffset };
+}
+
+/**
+ * Alasan terakhir kenapa sebuah jadwal cron ditolak.
+ *
+ * `sanitizeSchedule` mengembalikan `null` (bukan melempar) supaya pemanggil
+ * lama tidak berubah, tetapi alasan seperti "menit 60 tidak ada" terlalu
+ * berguna untuk dibuang — tanpa itu admin hanya melihat "jadwal tanpa waktu
+ * yang sah" dan tidak tahu ruas mana yang salah.
+ */
+const droppedCron: string[] = [];
+
+/** Ambil (dan kosongkan) alasan penolakan cron terakhir. */
+export function ambilAlasanCron(): string[] {
+  return droppedCron.splice(0, droppedCron.length);
 }
 
 /** Semua jadwal satu pesan. */
@@ -2709,9 +2783,11 @@ export async function replaceSchedules(
   postId: number,
   channelId: string,
   input: unknown,
+  timeZone?: string | null,
 ): Promise<{ schedules: PostSchedule[]; dropped: string[] }> {
   const dropped: string[] = [];
   const daftar = Array.isArray(input) ? input : [];
+  const cronOffset = zoneOffsetHours(timeZone);
   await run('DELETE FROM post_schedules WHERE guild_id = ? AND post_id = ?', [guildId, postId]);
 
   let jumlah = 0;
@@ -2720,14 +2796,27 @@ export async function replaceSchedules(
       dropped.push(`jadwal melebihi batas ${SCHEDULE_LIMITS.perPost} per pesan`);
       break;
     }
-    const bersih = sanitizeSchedule(raw);
+    const bersih = sanitizeSchedule(raw, cronOffset);
+    const alasanCron = ambilAlasanCron();
     if (!bersih) {
-      dropped.push('jadwal tanpa waktu yang sah (harus di masa depan)');
+      dropped.push(
+        alasanCron[0] ??
+          'jadwal tanpa waktu yang sah (harus di masa depan, atau cron yang bisa berbunyi)',
+      );
       continue;
     }
     await insert(
-      'INSERT INTO post_schedules (guild_id, post_id, channel_id, due_at, repeat_minutes, last_sent_at, created_at) VALUES (?, ?, ?, ?, ?, NULL, ?)',
-      [guildId, postId, channelId, bersih.dueAt, bersih.repeatMinutes, Date.now()],
+      'INSERT INTO post_schedules (guild_id, post_id, channel_id, due_at, repeat_minutes, cron, cron_offset, last_sent_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)',
+      [
+        guildId,
+        postId,
+        channelId,
+        bersih.dueAt,
+        bersih.repeatMinutes,
+        bersih.cron,
+        bersih.cronOffset,
+        Date.now(),
+      ],
     );
     jumlah += 1;
   }
@@ -2752,6 +2841,28 @@ export async function listDueSchedules(now: number, limit = 10): Promise<PostSch
  * berhari-hari tidak mengirim puluhan pesan susulan sekaligus.
  */
 export async function markScheduleSent(schedule: PostSchedule, now = Date.now()): Promise<void> {
+  /*
+   * Jadwal cron TIDAK dihapus setelah dikirim: pengulangannya mengikuti
+   * kalender, dan waktu berikutnya dihitung dari ekspresinya. Kalau ekspresinya
+   * ternyata sudah tidak berbunyi lagi (mis. 29 Februari tahun lalu), barisnya
+   * dihapus supaya bot tidak memeriksanya selamanya.
+   */
+  if (schedule.cron) {
+    const berikut = nextCronTime(schedule.cron, now, schedule.cronOffset);
+    if (berikut === null) {
+      await run('DELETE FROM post_schedules WHERE id = ?', [schedule.id]);
+      logger.warn(
+        `Jadwal cron "${schedule.cron}" pesan ${schedule.postId} tidak akan berbunyi lagi — jadwalnya dihapus.`,
+      );
+      return;
+    }
+    await run('UPDATE post_schedules SET due_at = ?, last_sent_at = ? WHERE id = ?', [
+      berikut,
+      now,
+      schedule.id,
+    ]);
+    return;
+  }
   if (schedule.repeatMinutes <= 0) {
     await run('DELETE FROM post_schedules WHERE id = ?', [schedule.id]);
     return;

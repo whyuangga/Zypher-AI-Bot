@@ -6638,6 +6638,98 @@ await testAsync('jadwal: sanitizer, pengulangan minimal 2 jam, & geser setelah k
   assert.equal((await repo.listSchedules(GUILD, post.id)).length, 0);
 });
 
+await testAsync('jadwal: cron kalender per hari/senin/tanggal, batas rapat & zona waktu', async () => {
+  const cron = await import('../src/features/schedule-cron.js');
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  // 2026-11-12 10:30 WIB (UTC+7) = 03:30 UTC. Tanggal 12 Nov 2026 = Kamis.
+  const sekarang = Date.UTC(2026, 10, 12, 3, 30);
+  const wib = (ms: number): string => new Date(ms + 7 * 3_600_000).toISOString().slice(0, 16);
+
+  // Tiap hari 09:00: hari ini sudah lewat (10:30), jadi besok.
+  assert.equal(wib(cron.nextCronTime('0 9 * * *', sekarang, 7)!), '2026-11-13T09:00', 'tiap hari 09:00');
+
+  // Tiap Senin: 12 Nov 2026 Kamis -> Senin 16 Nov.
+  assert.equal(wib(cron.nextCronTime('0 0 * * 1', sekarang, 7)!), '2026-11-16T00:00', 'tiap Senin');
+
+  // Tiap tanggal 1 -> 1 Desember.
+  assert.equal(wib(cron.nextCronTime('0 8 1 * *', sekarang, 7)!), '2026-12-01T08:00', 'tiap tanggal 1');
+
+  // Zona ikut berpengaruh: "09:00" di WITA = 08:00 WIB.
+  const wita = cron.nextCronTime('0 9 * * *', sekarang, 8)!;
+  assert.equal(wib(wita), '2026-11-13T08:00', 'jam mengikuti offset zona server');
+
+  // Pola tidak sah ditolak dengan ALASAN, bukan diam.
+  const alasan: string[] = [];
+  for (const salah of ['60 9 * * *', '* * * *', 'x 9 * * *', '5-1 * * * *', '*/0 * * * *']) {
+    try {
+      cron.parseCron(salah);
+      alasan.push('LOLOS:' + salah);
+    } catch (error) {
+      alasan.push((error as Error).message);
+    }
+  }
+  assert.equal(alasan.filter((t) => t.startsWith('LOLOS')).length, 0, 'semua pola salah ditolak');
+  assert.ok(alasan.some((t) => t.includes('0-59')), 'batas menit dijelaskan');
+  assert.ok(alasan.some((t) => t.includes('5 ruas')), 'jumlah ruas dijelaskan');
+
+  // Tanggal mustahil (30 Februari) tidak pernah berbunyi — dilaporkan, bukan crash.
+  assert.equal(cron.nextCronTime('0 0 30 2 *', sekarang, 7), null, 'tanggal mustahil = tidak pernah');
+  assert.equal(cron.cronIntervalMinutes('0 9 * * *', sekarang, 7), 1440, 'jarak harian 1440 menit');
+  assert.equal(cron.cronIntervalMinutes('0 9 * * 1', sekarang, 7), 10080, 'jarak mingguan');
+
+  /* --- penyimpanan: dueAt dihitung server, bukan dari klien --- */
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Jadwal kalender',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Pengingat mingguan' }],
+  });
+
+  const disimpan = await repo.replaceSchedules(
+    GUILD,
+    post.id,
+    '999',
+    [
+      // dueAt sengaja ngawur: server harus menghitungnya dari cron.
+      { dueAt: 1, cron: '0 9 * * *' },
+      // Lebih rapat dari 2 jam -> ditolak dengan alasan.
+      { dueAt: 1, cron: '*/30 * * * *' },
+      // Pola rusak -> ditolak dengan alasan, bukan diam.
+      { dueAt: 1, cron: '99 9 * * *' },
+    ],
+    'Asia/Makassar',
+  );
+
+  assert.equal(disimpan.schedules.length, 1, 'hanya pola sah yang tersimpan');
+  const jadwal = disimpan.schedules[0]!;
+  assert.equal(jadwal.cron, '0 9 * * *', 'ekspresi disimpan');
+  assert.equal(jadwal.cronOffset, 8, 'offset zona server ikut disimpan');
+  assert.ok(jadwal.dueAt > Date.now(), 'dueAt dihitung dari ekspresi, bukan nilai klien');
+  assert.equal(jadwal.repeatMinutes, 0, 'cron tidak memakai pengulangan menit');
+  assert.equal(disimpan.dropped.length, 2, 'dua jadwal ditolak');
+  assert.ok(disimpan.dropped.some((t) => t.includes('terlalu rapat')), 'alasan rapat dijelaskan');
+  assert.ok(disimpan.dropped.some((t) => t.includes('0-59')), 'alasan pola rusak dijelaskan');
+
+  /* --- setelah dikirim: due bergeser ke pola berikutnya, baris TETAP ada --- */
+  const sebelum = jadwal.dueAt;
+  await repo.markScheduleSent(jadwal, sebelum);
+  const sesudahKirim = await repo.listSchedules(GUILD, post.id);
+  assert.equal(sesudahKirim.length, 1, 'jadwal kalender tidak dihapus setelah dikirim');
+  assert.equal(sesudahKirim[0]!.dueAt, sebelum + 24 * 3_600_000, 'bergeser tepat satu hari');
+  assert.equal(sesudahKirim[0]!.lastSentAt, sebelum, 'waktu kirim terakhir dicatat');
+
+  /*
+   * Jam dinding tetap: dikirim jam 09:00 WITA hari ini, jadwal berikutnya juga
+   * 09:00 WITA — bukan "24 jam dari sekarang" yang bisa melenceng kalau
+   * pengiriman molor beberapa menit.
+   */
+  const berikut = cron.nextCronTime('0 9 * * *', sesudahKirim[0]!.dueAt, 8)!;
+  assert.equal(wib(berikut), '2026-11-15T08:00', 'jadwal berikutnya tetap pukul 09:00 WITA (08:00 WIB)');
+
+  await repo.deleteCustomPost(GUILD, post.id);
+});
+
 await testAsync('flow: tunggu menyimpan sesi, syarat menghentikan, hapus menghapus pesan', async () => {
   const repo = await import('../src/db/repo.js');
   const { runComponentActions } = await import('../src/features/post-action-runner.js');

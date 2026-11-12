@@ -517,8 +517,31 @@ ${listCard}
         Pengulangan paling rapat <b>2 jam</b>. Bot memeriksa tiap 15 detik, jadi waktunya bisa mundur beberapa detik.
         Kalau bot mati saat waktunya tiba, pengiriman dilakukan begitu bot hidup lagi.
       </p>
+      <p class="hint" style="margin:0">
+        Mode <b>kalender</b> memakai zona waktu server (WIB/WITA/WIT), bukan jam komputermu — jadi "tiap Senin pukul 09:00" tetap 09:00 di server walau kamu membukanya dari zona lain. Formatnya lima ruas: <code>menit jam tanggal bulan hari</code>, mis. <code>0 9 * * 1</code>. Pola siap pakai ada di daftar; isian teks dipakai kalau polanya tidak ada di daftar.
+      </p>
       <div id="scheduleList" class="block-list"></div>
       <div class="block-add">
+        <span class="select-shell" style="max-width:220px">
+          <select id="scheduleMode" onchange="modeJadwal()">
+            <option value="sekali">Mode: waktu tertentu</option>
+            <option value="kalender">Mode: kalender (tiap hari/Senin/tanggal)</option>
+          </select>
+        </span>
+        <span class="select-shell" id="schedulePresetShell" hidden style="max-width:260px">
+          <select id="schedulePreset" onchange="presetJadwal()">
+            <option value="">Pilih pola…</option>
+            <option value="0 9 * * *">Tiap hari pukul 09:00</option>
+            <option value="0 20 * * *">Tiap hari pukul 20:00</option>
+            <option value="0 9 * * 1">Tiap Senin pukul 09:00</option>
+            <option value="0 9 * * 1-5">Tiap Senin–Jumat pukul 09:00</option>
+            <option value="0 8 1 * *">Tiap tanggal 1 pukul 08:00</option>
+            <option value="0 8 1,15 * *">Tiap tanggal 1 &amp; 15 pukul 08:00</option>
+            <option value="0 10 * * 0">Tiap Minggu pukul 10:00</option>
+            <option value="0 0 1 1 *">Tiap 1 Januari (tahun baru)</option>
+          </select>
+        </span>
+        <input type="text" id="scheduleCron" hidden placeholder="0 9 * * 1" spellcheck="false" style="max-width:200px" />
         <input type="datetime-local" id="scheduleDue" title="Waktu kirim" />
         <span class="select-shell" style="max-width:220px">
           <select id="scheduleRepeat">
@@ -5009,7 +5032,11 @@ function renderJadwal() {
     label.className = 'aksi-jenis';
     label.textContent =
       (nomor + 1) + '. ' + waktuLokal(jadwal.dueAt) +
-      (jadwal.repeatMinutes > 0 ? ' · ulang tiap ' + jamAksi(jadwal.repeatMinutes * 60) : ' · sekali') +
+      (jadwal.cron
+        ? ' · kalender: ' + jadwal.cron + ' (' + jadwalCronRingkas(jadwal.cron) + ')'
+        : jadwal.repeatMinutes > 0
+          ? ' · ulang tiap ' + jamAksi(jadwal.repeatMinutes * 60)
+          : ' · sekali') +
       (jadwal.lastSentAt ? ' · terakhir ' + waktuLokal(jadwal.lastSentAt) : '');
     head.appendChild(label);
 
@@ -5031,13 +5058,121 @@ function renderJadwal() {
 /** Tambah satu jadwal dari isian di bawah daftar. */
 function tambahJadwal() {
   if (!editingId) return toast('Simpan pesan dulu sebelum menjadwalkan', true);
+  if (jadwalPesan.length >= 10) return toast('Maksimal 10 jadwal per pesan', true);
+  var mode = (document.getElementById('scheduleMode') || {}).value || 'sekali';
+
+  if (mode === 'kalender') {
+    var ekspresi = String((document.getElementById('scheduleCron') || {}).value || '').trim();
+    if (!ekspresi) return toast('Isi pola kalendernya, mis. 0 9 * * 1', true);
+    /*
+     * Diperiksa di browser juga, bukan hanya di server: salah ketik ruas cron
+     * adalah hal yang paling sering terjadi, dan admin perlu tahu sebelum
+     * menekan Simpan — bukan sesudah jadwalnya tidak muncul.
+     */
+    if (!cronValid(ekspresi)) {
+      return toast('Pola cron tidak sah. Format: menit jam tanggal bulan hari (mis. 0 9 * * 1)', true);
+    }
+    // dueAt hanya penanda; server MENGHITUNG ulang waktu berikutnya dari
+    // ekspresinya, jadi angka ini tidak bisa dipakai untuk memaksa jadwal.
+    jadwalPesan.push({ dueAt: Date.now() + 60_000, repeatMinutes: 0, cron: ekspresi, lastSentAt: null });
+    renderJadwal();
+    return;
+  }
+
   var due = waktuDariInput(document.getElementById('scheduleDue').value);
   if (!due) return toast('Isi waktu kirimnya dulu', true);
   if (due <= Date.now()) return toast('Waktu kirim harus di masa depan', true);
-  if (jadwalPesan.length >= 10) return toast('Maksimal 10 jadwal per pesan', true);
   var ulang = Number(document.getElementById('scheduleRepeat').value) || 0;
   jadwalPesan.push({ dueAt: due, repeatMinutes: ulang, lastSentAt: null });
   renderJadwal();
+}
+
+/**
+ * Validasi cron di sisi browser.
+ *
+ * Sengaja RINGAN (lima ruas, angka 0-99 di ruas angka, nama hari/bulan
+ * dikenal) dan tidak menyalin seluruh parser server: yang penting di sini
+ * adalah menahan salah ketik bentuk, sedangkan keputusan akhir — termasuk
+ * "terlalu rapat" dan "tanggal mustahil" — tetap di server yang punya parser
+ * sungguhan. Menyalin parser penuh ke browser berarti dua sumber kebenaran.
+ */
+function cronValid(teks) {
+  var ruas = String(teks || '').trim().toLowerCase().split(/\\s+/);
+  if (ruas.length !== 5) return false;
+  var namaHari = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  var namaBulan = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+  var batas = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]];
+  for (var i = 0; i < 5; i++) {
+    var potong = ruas[i].split(',');
+    for (var j = 0; j < potong.length; j++) {
+      var bagian = potong[j];
+      if (!bagian) return false;
+      if (bagian === '*') continue;
+      var sisaLangkah = bagian.split('/');
+      if (sisaLangkah.length > 2) return false;
+      if (sisaLangkah.length === 2 && !/^\\d+$/.test(sisaLangkah[1])) return false;
+      var dasar = sisaLangkah[0];
+      if (dasar === '*') continue;
+      var rentang = dasar.split('-');
+      if (rentang.length > 2) return false;
+      for (var k = 0; k < rentang.length; k++) {
+        var nilai = rentang[k];
+        if (/^\\d+$/.test(nilai)) {
+          var angka = Number(nilai);
+          if (angka < batas[i][0] || angka > batas[i][1]) return false;
+        } else if (i === 3 && namaBulan.indexOf(nilai.slice(0, 3)) !== -1) {
+          continue;
+        } else if (i === 4 && namaHari.indexOf(nilai.slice(0, 3)) !== -1) {
+          continue;
+        } else {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+/** Ringkasan pola cron dalam bahasa manusia (versi ringan untuk daftar). */
+function jadwalCronRingkas(ekspresi) {
+  var ruas = String(ekspresi || '').trim().split(/\\s+/);
+  if (ruas.length !== 5) return ekspresi;
+  var jam = (ruas[1] || '').length === 1 ? '0' + ruas[1] : ruas[1];
+  var menit = (ruas[0] || '').length === 1 ? '0' + ruas[0] : ruas[0];
+  var pukul = /^\\d+$/.test(jam) && /^\\d+$/.test(menit) ? ' pukul ' + jam + ':' + menit : '';
+  if (ruas[2] === '*' && ruas[3] === '*' && ruas[4] === '*') return 'tiap hari' + pukul;
+  if (ruas[2] === '*' && ruas[3] === '*' && ruas[4] !== '*') return 'tiap ' + namaHariCron(ruas[4]) + pukul;
+  if (ruas[3] === '*' && ruas[4] === '*' && ruas[2] !== '*') return 'tiap tanggal ' + ruas[2] + pukul;
+  return 'pola kalender';
+}
+
+function namaHariCron(ruas) {
+  var nama = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+  if (/^\\d+$/.test(ruas)) return nama[Number(ruas) % 7];
+  var pendek = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  var posisi = pendek.indexOf(String(ruas).toLowerCase().slice(0, 3));
+  return posisi === -1 ? ruas : nama[posisi];
+}
+
+/** Tampilkan isian yang sesuai dengan mode jadwal. */
+function modeJadwal() {
+  var mode = (document.getElementById('scheduleMode') || {}).value || 'sekali';
+  var kalender = mode === 'kalender';
+  var due = document.getElementById('scheduleDue');
+  var ulang = document.getElementById('scheduleRepeat');
+  var cron = document.getElementById('scheduleCron');
+  var preset = document.getElementById('schedulePresetShell');
+  if (due) due.hidden = kalender;
+  if (ulang && ulang.parentNode) ulang.parentNode.hidden = kalender;
+  if (cron) cron.hidden = !kalender;
+  if (preset) preset.hidden = !kalender;
+}
+
+/** Isi isian cron dari pola siap pakai. */
+function presetJadwal() {
+  var nilai = (document.getElementById('schedulePreset') || {}).value || '';
+  var cron = document.getElementById('scheduleCron');
+  if (nilai && cron) cron.value = nilai;
 }
 
 /** Simpan daftar jadwal ke server. */

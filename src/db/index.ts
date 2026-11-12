@@ -106,6 +106,10 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
     'ALTER TABLE custom_posts ADD COLUMN thread_name TEXT',
     // Emoji & warna tombol role. NULL = tampilan lama (tanpa emoji, biru),
     // jadi tombol yang dibuat sebelum fitur ini tetap terlihat sama.
+    // Kolom cron jadwal kirim. NULL = jadwal lama (berulang tiap N menit)
+    // tetap berjalan apa adanya setelah upgrade.
+    'ALTER TABLE post_schedules ADD COLUMN cron TEXT',
+    'ALTER TABLE post_schedules ADD COLUMN cron_offset INTEGER',
     'ALTER TABLE post_role_buttons ADD COLUMN emoji TEXT',
     'ALTER TABLE post_role_buttons ADD COLUMN style TEXT',
   ];

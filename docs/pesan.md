@@ -627,8 +627,55 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Riwayat/undo revisi (padanan backup) | ✅ 20 versi terakhir per pesan, dibuat otomatis setiap pesan diubah; kartu "Riwayat & bagikan" (tab **Riwayat**) |
 | Share link (tautan berbagi) | ✅ tautan `/bagi/<token>` bisa dibuka tanpa login, hanya berisi blok pesan, bisa dicabut |
 | Impor backup | ✅ JSON/URL Discohook di tab **Impor**; ekspor JSON juga ada |
-| Jadwal kirim (sekali / berulang, cron) | ⚠️ sekali / tiap N jam (min. 2 jam); jadwal cron per hari/bulan belum |
+| Jadwal kirim (sekali / berulang / cron) | ✅ sekali, tiap N jam (min. 2 jam), dan **cron kalender** lima ruas (tiap hari, tiap Senin, tiap tanggal 1, …) memakai zona waktu server. Pola lebih rapat dari 2 jam ditolak dengan alasan |
 | Trigger event (member masuk/keluar) | ❌ (bot punya sambutan sendiri, bukan flow) |
+
+### Batch 4d: jadwal cron (per hari, per hari-pekan, per tanggal)
+
+Discohook menjadwalkan backup dengan ekspresi cron lewat `cron-parser`, dengan
+batas "paling rapat sekali per 2 jam". Yang ada di sini sama, dengan dua
+perbedaan yang disengaja:
+
+- **Parser ditulis sendiri** (`src/features/schedule-cron.ts`, ±250 baris) alih-alih
+  menambah dependensi. Yang dibutuhkan hanya "kapan waktu berikutnya", dan bot
+  ini hanya mengenal tiga zona Indonesia yang offsetnya tetap. Kesalahan pola
+  bisa dijelaskan dalam bahasa manusia — "ruas menit bernilai 60 — harus 0-59",
+  bukan sekadar "invalid cron".
+- **Zona waktu server, bukan zona akun.** Discohook menyimpan `timezone` per
+  backup karena penggunanya bisa di mana saja. Di sini jadwal selalu memakai
+  zona server (WIB/WITA/WIT), karena pesan yang dikirim ke channel server
+  dibaca orang-orang di server itu. Offsetnya **disimpan bersama jadwal**
+  (`cron_offset`), jadi mengubah zona server tidak diam-diam menggeser jadwal
+  yang sudah ada.
+
+Format: lima ruas `menit jam tanggal bulan hari`. Didukung: angka, daftar
+(`1,3,5`), rentang (`1-5`), langkah (`*/10`, `1-30/5`), `*`, serta singkatan
+`mon..sun` dan `jan..dec`. Tidak didukung (dan ditolak dengan alasan): detik,
+`?`, `L`, `W`, `#`.
+
+Aturan hari-vs-tanggal mengikuti cron klasik: kalau KEDUA ruas dibatasi, jadwal
+cocok bila salah satunya cocok; kalau salah satu `*`, yang dibatasi harus cocok.
+Tanpa aturan ini `0 9 * * 1` (tiap Senin) dan `0 9 1 * *` (tiap tanggal 1) tidak
+bisa dibedakan.
+
+Yang dilaporkan, bukan didiamkan:
+
+| Kejadian | Yang terjadi |
+|---|---|
+| Pola salah ketik (`60 9 * * *`) | ditolak, alasan ditampilkan di dashboard |
+| Lebih rapat dari 2 jam (`*/30 * * * *`) | ditolak, jarak sebenarnya disebut |
+| Tanggal mustahil (`0 0 30 2 *`) | ditolak — jadwal itu tidak akan pernah berbunyi |
+| Pola berhenti berbunyi setelah tersimpan (mis. 29 Feb) | baris jadwal dihapus + peringatan di log, bukan diperiksa selamanya |
+
+`dueAt` untuk jadwal cron **dihitung server** dari ekspresinya. Klien yang
+mengirim `dueAt` ngawur (tahun 2000, tahun 2099) tidak bisa memaksa jadwal —
+nilai itu diabaikan.
+
+Di dashboard: pemilih **Mode: kalender** di kartu jadwal, daftar pola siap pakai
+(tiap hari 09:00, tiap Senin, Senin–Jumat, tanggal 1, tanggal 1 & 15, Minggu,
+1 Januari), plus isian teks untuk pola lain. Pemeriksaan bentuk juga dilakukan di
+browser supaya salah ketik ketahuan sebelum Simpan; keputusan akhir tetap di
+server.
 
 ### Batch 4c: SendRawMessage & hapus pesan hasil aksi sebelumnya
 
@@ -958,6 +1005,10 @@ Target yang dikenali:
 Aksi yang tidak sah dibuang dan alasannya muncul di `dropped`.
 
 ### Tabel database
+
+Tabel jadwal menyimpan tiga kolom tambahan: `cron` (ekspresi lima ruas, NULL =
+jadwal lama tiap N menit), `cron_offset` (offset zona saat jadwal dibuat), dan
+`due_at` yang untuk jadwal cron selalu dihitung ulang dari ekspresinya.
 
 Tabel riwayat & tautan berbagi:
 

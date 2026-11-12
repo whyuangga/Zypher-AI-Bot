@@ -2380,7 +2380,19 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       }
       const payload = await readJson(request, response);
       if (!payload) return;
-      const hasil = await replaceSchedules(guildId, id, post.channelId, payload.schedules);
+      /*
+       * Zona waktu server ikut dikirim: jadwal cron berbunyi menurut jam
+       * dinding WIB/WITA/WIT, bukan UTC. Offsetnya disimpan bersama jadwal
+       * supaya arti "tiap Senin 09:00" tidak berubah kalau zona server diubah.
+       */
+      const zonaServer = (await getGuildSettings(guildId).catch((): null => null))?.timezone ?? null;
+      const hasil = await replaceSchedules(
+        guildId,
+        id,
+        post.channelId,
+        payload.schedules,
+        zonaServer,
+      );
       sendJson(response, 200, { ok: true, schedules: hasil.schedules, dropped: hasil.dropped });
       return;
     }

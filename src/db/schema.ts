@@ -355,6 +355,12 @@ CREATE TABLE IF NOT EXISTS post_schedules (
   channel_id     TEXT NOT NULL,
   due_at         BIGINT NOT NULL,
   repeat_minutes INTEGER NOT NULL DEFAULT 0,
+  -- Ekspresi cron lima ruas. NULL = jadwal berulang tiap N menit.
+  -- Diisi = pengulangan mengikuti kalender (tiap Senin, tiap tanggal 1, ...).
+  cron           TEXT,
+  -- Offset zona waktu jadwal (jam dari UTC), dihitung dari zona server.
+  -- Disimpan supaya "tiap Senin 09:00" tetap 09:00 WIB walau zona server diubah.
+  cron_offset    INTEGER,
   last_sent_at   BIGINT,
   created_at     BIGINT NOT NULL
 );
@@ -712,6 +718,8 @@ CREATE TABLE IF NOT EXISTS post_schedules (
   channel_id     TEXT NOT NULL,
   due_at         BIGINT NOT NULL,
   repeat_minutes INTEGER NOT NULL DEFAULT 0,
+  cron           TEXT,
+  cron_offset    INTEGER,
   last_sent_at   BIGINT,
   created_at     BIGINT NOT NULL
 );

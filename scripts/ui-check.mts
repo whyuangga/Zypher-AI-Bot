@@ -1720,6 +1720,74 @@ await check('pesan: tab riwayat memuat versi & tautan berbagi bisa dibuat', asyn
   assert.equal(page.errors.length, 0, `editor riwayat error: ${page.errors.join('|')}`);
 });
 
+await check('pesan: mode jadwal kalender menyusun cron & menolak pola salah', async () => {
+  const html = mounted.find((page) => page.name === '/pesan?isi')?.html ?? '';
+  const page = mountPage(html, 'uji-cron');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      editingId = 1;
+      muatJadwal();
+      modeJadwal();
+
+      // Mode kalender: isian waktu & pengulangan disembunyikan, isian cron tampil.
+      document.getElementById('scheduleMode').value = 'kalender';
+      modeJadwal();
+      var tampil = {
+        due: document.getElementById('scheduleDue').hidden,
+        cron: document.getElementById('scheduleCron').hidden,
+        preset: document.getElementById('schedulePresetShell').hidden
+      };
+
+      // Pola siap pakai mengisi isian teks.
+      document.getElementById('schedulePreset').value = '0 9 * * 1';
+      presetJadwal();
+      var terisi = document.getElementById('scheduleCron').value;
+
+      // Pola sah -> tersimpan dengan cron, pola salah -> tidak menambah apa pun.
+      jadwalPesan = [];
+      tambahJadwal();
+      var sesudahSah = jadwalPesan.length;
+      var cronTersimpan = jadwalPesan[0] ? jadwalPesan[0].cron : null;
+      document.getElementById('scheduleCron').value = '99 9 * * *';
+      tambahJadwal();
+      var sesudahSalah = jadwalPesan.length;
+
+      return {
+        tampil: tampil,
+        terisi: terisi,
+        sesudahSah: sesudahSah,
+        cronTersimpan: cronTersimpan,
+        sesudahSalah: sesudahSalah,
+        validHarian: cronValid('0 9 * * *'),
+        validMingguan: cronValid('0 9 * * 1-5'),
+        validNama: cronValid('0 9 * * mon'),
+        validRusak: cronValid('0 9 * *'),
+        ringkas: jadwalCronRingkas('0 9 * * 1'),
+        ringkasHarian: jadwalCronRingkas('0 8 * * *'),
+        ringkasTanggal: jadwalCronRingkas('30 8 1 * *')
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  const tampil = hasil.tampil as { due: boolean; cron: boolean; preset: boolean };
+  assert.equal(tampil.due, true, 'isian waktu disembunyikan di mode kalender');
+  assert.equal(tampil.cron, false, 'isian cron tampil');
+  assert.equal(tampil.preset, false, 'daftar pola tampil');
+  assert.equal(hasil.terisi, '0 9 * * 1', 'pola siap pakai mengisi isian');
+  assert.equal(hasil.sesudahSah, 1, 'pola sah menambah satu jadwal');
+  assert.equal(hasil.cronTersimpan, '0 9 * * 1', 'ekspresi ikut disimpan');
+  assert.equal(hasil.sesudahSalah, 1, 'pola salah TIDAK menambah jadwal');
+  assert.equal(hasil.validHarian, true);
+  assert.equal(hasil.validMingguan, true, 'rentang hari diterima');
+  assert.equal(hasil.validNama, true, 'nama hari diterima');
+  assert.equal(hasil.validRusak, false, 'ruas kurang ditolak');
+  assert.equal(hasil.ringkas, 'tiap Senin pukul 09:00');
+  assert.equal(hasil.ringkasHarian, 'tiap hari pukul 08:00');
+  assert.equal(hasil.ringkasTanggal, 'tiap tanggal 1 pukul 08:30');
+  assert.equal(page.errors.length, 0, `editor jadwal cron error: ${page.errors.join('|')}`);
+});
+
 await check('pesan: aksi teks mentah & hapus pesan bertarget tersusun', async () => {
   const html = mounted.find((page) => page.name === '/pesan?isi')?.html ?? '';
   const page = mountPage(html, 'uji-aksi-baru');
