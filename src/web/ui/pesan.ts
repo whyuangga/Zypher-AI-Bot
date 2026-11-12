@@ -217,6 +217,8 @@ export function pesanPage(options: PesanPageOptions): string {
       <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('container')">${icon('sliders', 15)} Container</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('section')">${icon('users', 15)} Section</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('file')">${icon('download', 15)} File</button>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('select')">${icon('menu', 15)} Select menu</button>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('row')">${icon('sliders', 15)} Baris baru</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="addBlock('close')">${icon('logout', 15)} Tutup kartu</button>
     </div>
     <div id="usageBar" class="usage-bar" hidden>
@@ -224,7 +226,7 @@ export function pesanPage(options: PesanPageOptions): string {
       <span class="usage-track"><span id="usageFill" class="usage-fill"></span></span>
       <span id="usageWarn" class="usage-warn"></span>
     </div>
-    <p class="hint" id="blockHint">Teks mendukung format Discord; baris diawali <code>-#</code> menjadi teks kecil. <b>Container</b> memulai kartu baru (blok sesudahnya masuk ke kartu itu), <b>Section</b> menaruh gambar kecil atau tombol di samping teks.</p>
+    <p class="hint" id="blockHint">Teks mendukung format Discord; baris diawali <code>-#</code> menjadi teks kecil. <b>Container</b> memulai kartu baru (blok sesudahnya masuk ke kartu itu), <b>Section</b> menaruh gambar kecil atau tombol di samping teks. <b>Select menu</b> memakai satu baris penuh, dan <b>Baris baru</b> memotong deretan tombol jadi baris berikutnya — sama seperti Row di Discohook.</p>
 
   </div>
 
@@ -434,25 +436,50 @@ var BATAS = { total: 40, top: 10, teks: 4000, teksAman: 3500, tombolPerBaris: 5 
  */
 function ukurPemakaian() {
   var total = 0, top = 0, teks = 0;
-  var anak = 0, adaIsi = false, tombol = 0;
+  var anak = 0, adaIsi = false, tombol = 0, luar = false;
+
+  /*
+   * Deretan tombol ditutup menjadi baris utuh.
+   *
+   * Di dalam kartu, baris tombol menambah jumlah ANAK kartu (bukan total),
+   * karena tutup() yang menjumlahkan anak ke total. Menambah ke keduanya
+   * membuat tombol terhitung dua kali.
+   */
+  function selesaiTombol() {
+    if (tombol === 0) return;
+    var baris = Math.ceil(tombol / BATAS.tombolPerBaris);
+    if (luar) { total += baris; top += 1; }
+    else { anak += baris; adaIsi = true; }
+    tombol = 0;
+  }
 
   function tutup() {
+    selesaiTombol();
     if (!adaIsi) return;
     top += 1;
-    total += anak + Math.ceil(tombol / BATAS.tombolPerBaris);
-    anak = 0; tombol = 0; adaIsi = false;
+    total += anak;
+    anak = 0; adaIsi = false;
   }
 
   blocks.forEach(function (b) {
-    if (b.kind === 'container') { tutup(); return; }
+    if (b.kind === 'container') { tutup(); luar = false; return; }
+    if (b.kind === 'close') { tutup(); luar = true; return; }
     if (b.kind === 'button') { tombol += 1; return; }
+    if (b.kind === 'row') { selesaiTombol(); return; }
+    // Blok lain menutup deretan tombol sebelumnya supaya urutannya terjaga.
+    selesaiTombol();
+    if (b.kind === 'select') {
+      if (luar) { total += 1; top += 1; }
+      else { anak += 1; adaIsi = true; }
+      return;
+    }
     if (b.kind === 'divider') { if (adaIsi) anak += 1; return; }
     if (b.kind === 'text' || b.kind === 'section') {
       teks += String(b.value || '').length;
       anak += 1; adaIsi = true;
       return;
     }
-    if (b.kind === 'image') { anak += 1; adaIsi = true; }
+    if (b.kind === 'image' || b.kind === 'file') { anak += 1; adaIsi = true; }
   });
   tutup();
 
@@ -503,7 +530,9 @@ var LABEL = {
   container: 'Container baru',
   section: 'Section (teks + gambar/tombol)',
   close: 'Tutup kartu (di luar kartu)',
-  file: 'File (lampiran)'
+  file: 'File (lampiran)',
+  select: 'Select menu (dropdown)',
+  row: 'Baris baru (Row)'
 };
 
 function lineCount(value) {
@@ -530,6 +559,207 @@ function buatSakelar(index, properti, label) {
   baris.appendChild(kotak);
   baris.appendChild(document.createTextNode(' ' + label));
   return baris;
+}
+
+/**
+ * Nama jenis select menu seperti yang dipakai Discord/Discohook.
+ *
+ * Disalin di sini (bukan diimpor) karena berkas ini dikirim ke browser sebagai
+ * satu blok skrip; modul server tidak ikut. Urutannya sama dengan daftar di
+ * Discohook: String, User, Role, User & Role, Channel.
+ */
+var SELECT_JENIS = [
+  ['string', 'String select (pilihan bebas)'],
+  ['user', 'User select (pilih anggota)'],
+  ['role', 'Role select (pilih role)'],
+  ['mentionable', 'User & Role select'],
+  ['channel', 'Channel select (pilih channel)']
+];
+
+function selectJenisLabel(block) {
+  var jenis = block.selectKind || 'string';
+  for (var i = 0; i < SELECT_JENIS.length; i += 1) {
+    if (SELECT_JENIS[i][0] === jenis) return SELECT_JENIS[i][1].split(' (')[0];
+  }
+  return 'Select';
+}
+
+/**
+ * Editor blok Select menu.
+ *
+ * Susunannya mengikuti panel komponen Discohook: jenis menu, placeholder,
+ * jumlah pilihan minimal/maksimal, dan — khusus jenis string — daftar
+ * pilihannya. Jenis selain string memakai daftar bawaan Discord (anggota,
+ * role, channel), jadi tidak punya daftar pilihan sendiri.
+ */
+function buatEditorSelect(index) {
+  var bungkus = document.createElement('div');
+  bungkus.className = 'block-select';
+
+  var barisJenis = document.createElement('div');
+  barisJenis.className = 'role-style-row';
+
+  var pilihJenis = document.createElement('select');
+  pilihJenis.className = 'role-mode';
+  pilihJenis.title = 'Jenis menu — sama dengan pilihan di Discohook';
+  SELECT_JENIS.forEach(function (pasangan) {
+    var o = document.createElement('option');
+    o.value = pasangan[0];
+    o.textContent = pasangan[1];
+    if ((blocks[index].selectKind || 'string') === pasangan[0]) o.selected = true;
+    pilihJenis.appendChild(o);
+  });
+  pilihJenis.onchange = function () {
+    blocks[index].selectKind = pilihJenis.value;
+    // Menu string tanpa pilihan ditolak Discord: beri satu contoh saat beralih.
+    if (pilihJenis.value === 'string' && (blocks[index].options || []).length === 0) {
+      blocks[index].options = [{ label: 'Pilihan 1', value: 'pilihan-1' }];
+    }
+    renderBlocks();
+    renderPreview();
+  };
+  barisJenis.appendChild(pilihJenis);
+
+  var min = document.createElement('input');
+  min.type = 'number';
+  min.className = 'role-angka';
+  min.min = '0';
+  min.max = '25';
+  min.value = String(blocks[index].minValues === undefined ? 1 : blocks[index].minValues);
+  min.title = 'Pilihan minimal yang harus diambil';
+  min.oninput = function () { blocks[index].minValues = angkaAtau(min.value, 1); renderPreview(); };
+  barisJenis.appendChild(min);
+
+  var max = document.createElement('input');
+  max.type = 'number';
+  max.className = 'role-angka';
+  max.min = '1';
+  max.max = '25';
+  max.value = String(blocks[index].maxValues === undefined ? 1 : blocks[index].maxValues);
+  max.title = 'Pilihan maksimal yang boleh diambil';
+  max.oninput = function () { blocks[index].maxValues = angkaAtau(max.value, 1); renderPreview(); };
+  barisJenis.appendChild(max);
+  bungkus.appendChild(barisJenis);
+
+  var placeholder = document.createElement('input');
+  placeholder.type = 'text';
+  placeholder.value = blocks[index].placeholder || '';
+  placeholder.placeholder = 'Teks ajakan di dalam menu, mis. Pilih role…';
+  placeholder.oninput = function () {
+    blocks[index].placeholder = placeholder.value.slice(0, 150);
+    renderPreview();
+  };
+  bungkus.appendChild(placeholder);
+
+  if ((blocks[index].selectKind || 'string') === 'string') {
+    var daftar = document.createElement('div');
+    daftar.className = 'select-opsi-daftar';
+
+    (blocks[index].options || []).forEach(function (opsi, nomor) {
+      var baris = document.createElement('div');
+      baris.className = 'select-opsi';
+
+      var label = document.createElement('input');
+      label.type = 'text';
+      label.value = opsi.label || '';
+      label.placeholder = 'Label pilihan';
+      label.oninput = function () {
+        blocks[index].options[nomor].label = label.value.slice(0, 100);
+        renderPreview();
+      };
+      baris.appendChild(label);
+
+      var nilai = document.createElement('input');
+      nilai.type = 'text';
+      nilai.value = opsi.value || '';
+      nilai.placeholder = 'Nilai yang dikirim (opsional)';
+      nilai.oninput = function () {
+        blocks[index].options[nomor].value = nilai.value.slice(0, 100);
+        renderPreview();
+      };
+      baris.appendChild(nilai);
+
+      var deskripsi = document.createElement('input');
+      deskripsi.type = 'text';
+      deskripsi.value = opsi.description || '';
+      deskripsi.placeholder = 'Keterangan (opsional)';
+      deskripsi.oninput = function () {
+        blocks[index].options[nomor].description = deskripsi.value.slice(0, 100);
+        renderPreview();
+      };
+      baris.appendChild(deskripsi);
+
+      var emoji = document.createElement('input');
+      emoji.type = 'text';
+      emoji.className = 'role-emoji';
+      emoji.value = opsi.emoji || '';
+      emoji.placeholder = '🎮';
+      emoji.title = 'Emoji di depan label (opsional)';
+      emoji.oninput = function () {
+        blocks[index].options[nomor].emoji = emoji.value.slice(0, 80);
+        renderPreview();
+      };
+      baris.appendChild(emoji);
+
+      var hapus = document.createElement('button');
+      hapus.className = 'btn-danger btn-sm btn-icon';
+      hapus.type = 'button';
+      hapus.title = 'Hapus pilihan';
+      hapus.textContent = '×';
+      hapus.onclick = function () {
+        blocks[index].options.splice(nomor, 1);
+        renderBlocks();
+        renderPreview();
+      };
+      baris.appendChild(hapus);
+
+      daftar.appendChild(baris);
+    });
+    bungkus.appendChild(daftar);
+
+    var tambah = document.createElement('button');
+    tambah.className = 'btn btn-ghost btn-sm';
+    tambah.type = 'button';
+    tambah.textContent = '+ Tambah pilihan';
+    tambah.onclick = function () {
+      var opsi = blocks[index].options || (blocks[index].options = []);
+      if (opsi.length >= 25) return toast('Maksimal 25 pilihan (batas Discord)', true);
+      opsi.push({ label: 'Pilihan ' + (opsi.length + 1), value: '' });
+      renderBlocks();
+      renderPreview();
+    };
+    bungkus.appendChild(tambah);
+  } else {
+    var ket = document.createElement('p');
+    ket.className = 'hint';
+    ket.style.margin = '0';
+    ket.textContent = 'Daftar pilihannya disediakan Discord sendiri (anggota, role, atau channel server), jadi tidak perlu diisi. Menu ini hanya tampilan: pilihan tidak mengubah role siapa pun.';
+    bungkus.appendChild(ket);
+  }
+
+  bungkus.appendChild(buatSakelar(index, 'selectDisabled', 'Nonaktif (tidak bisa dibuka)'));
+
+  /*
+   * Catatan jujur soal fungsi menu ini.
+   *
+   * Discord hanya mengirim nilai select ke aplikasi pemilik komponen, dan akun
+   * bot tidak bisa membaca daftar anggota dari nilai itu; karena itu menu di
+   * sini ditampilkan seperti di Discohook, lalu dijawab singkat saat dipakai.
+   * Untuk role sungguhan, tab Ambil role yang dipakai.
+   */
+  var catatan = document.createElement('p');
+  catatan.className = 'hint';
+  catatan.style.margin = '0';
+  catatan.textContent = 'Menu ini tampil sebagai pratinjau seperti di Discohook; saat member memilih, bot menjawab singkat bahwa menu ini tidak mengubah apa pun. Untuk memberi role, pakai dropdown di tab Ambil role.';
+  bungkus.appendChild(catatan);
+
+  return bungkus;
+}
+
+/** Angka dari input teks: kosong/invalid memakai nilai cadangan. */
+function angkaAtau(nilai, cadangan) {
+  var angka = parseInt(String(nilai), 10);
+  return isNaN(angka) ? cadangan : angka;
 }
 
 /**
@@ -832,6 +1062,26 @@ function normalBlock(b) {
     divider: b.divider === false ? false : true,
     // Alt text gambar, dibaca pembaca layar.
     alt: b.alt || '',
+    /*
+     * Select menu. Tanpa enam baris ini, mengimpor dropdown Discohook lalu
+     * menyimpannya akan mengubahnya jadi select string kosong — pilihan dan
+     * batas min/maks hilang tanpa jejak.
+     */
+    selectKind: typeof b.selectKind === 'string' ? b.selectKind : '',
+    placeholder: b.placeholder || '',
+    minValues: typeof b.minValues === 'number' ? b.minValues : 1,
+    maxValues: typeof b.maxValues === 'number' ? b.maxValues : 1,
+    options: Array.isArray(b.options)
+      ? b.options.filter(function (o) { return o && o.label; }).map(function (o) {
+          return {
+            label: String(o.label),
+            value: String(o.value || o.label),
+            description: o.description ? String(o.description) : '',
+            emoji: o.emoji ? String(o.emoji) : '',
+          };
+        })
+      : [],
+    selectDisabled: Boolean(b.selectDisabled),
   };
 }
 
@@ -944,7 +1194,7 @@ async function importDiscohook() {
  * kartu bawaan — editor menampilkannya sebagai wadah luar biasa (tanpa kotak
  * kartu), karena admin tidak pernah menambahkan kartu itu.
  */
-function kelompokkanBlok(daftar) {
+function kelompokkanBlok(daftar, logika) {
   var kelompok = [];
   var adaContainer = daftar.some(function (b) { return b.kind === 'container'; });
   var aktif = { kartu: null, indeks: -1, isi: [] };
@@ -952,7 +1202,46 @@ function kelompokkanBlok(daftar) {
   // sebelum container pertama tampil polos) atau pesan tanpa container.
   kelompok.push(aktif);
 
-  daftar.forEach(function (block, index) {
+  /**
+   * Mode LOGIKA (dipakai tombol ↑↓ editor).
+   *
+   * Editor mengelompokkan blok per kartu, tetapi blok row hanya bermakna di
+   * dalam deretan tombol: Row di antara teks dan gambar tidak mengubah apa pun.
+   * Saat admin menaikkan sebuah tombol ke atas Row, tombol itu berpindah
+   * kartu — padahal di Discord ia tetap satu baris. Mode ini membuang Row yang
+   * tidak lagi memisahkan tombol, supaya pemindahan tidak berujung pada blok
+   * pengganggu yang harus dihapus manual.
+   */
+  /*
+   * Pasangan blok + posisi ASLINYA di daftar blok.
+   *
+   * Posisi asli dipakai tombol naik/turun dan tombol hapus; kalau memakai
+   * posisi di daftar yang sudah disaring, tombol akan mengubah blok yang
+   * salah. Objek blok tidak bisa dijadikan kunci objek biasa (semuanya jadi
+   * "[object Object]"), jadi pasangannya dikumpulkan di sini.
+   */
+  var pasangan = [];
+  if (logika) {
+    daftar.forEach(function (block, urut) {
+      if (block.kind === 'row') {
+        var sebelum = daftar[urut - 1];
+        var sesudah = daftar[urut + 1];
+        var berguna = Boolean(
+          sebelum && sesudah && sebelum.kind === 'button' && sesudah.kind === 'button',
+        );
+        if (!berguna) return;
+      }
+      pasangan.push({ block: block, indeks: urut });
+    });
+  } else {
+    daftar.forEach(function (block, urut) {
+      pasangan.push({ block: block, indeks: urut });
+    });
+  }
+
+  pasangan.forEach(function (item) {
+    var block = item.block;
+    var index = item.indeks;
     if (block.kind === 'container') {
       aktif = { kartu: block, indeks: index, isi: [] };
       kelompok.push(aktif);
@@ -1212,7 +1501,9 @@ var IKON = {
   container: '▭',
   section: '▤',
   close: '⤴',
-  file: '📄'
+  file: '📄',
+  select: '⌄',
+  row: '⇥'
 };
 
 /**
@@ -1242,6 +1533,11 @@ function buatItemEditor(block, index) {
   if (block.kind === 'section' && block.accessoryLabel) head.appendChild(tagKecil('tombol'));
   if (block.kind === 'section' && !block.accessoryLabel && block.thumbnail) head.appendChild(tagKecil('thumbnail'));
   if (block.kind === 'file' && block.spoiler) head.appendChild(tagKecil('spoiler'));
+  if (block.kind === 'select') head.appendChild(tagKecil(selectJenisLabel(block)));
+  if (block.kind === 'select' && block.selectDisabled) head.appendChild(tagKecil('nonaktif'));
+  if (block.kind === 'select' && block.selectKind === 'string') {
+    head.appendChild(tagKecil((block.options || []).length + ' pilihan'));
+  }
 
   head.appendChild(alatBlok(index));
   baris.appendChild(head);
@@ -1339,6 +1635,26 @@ function buatItemEditor(block, index) {
     isi.appendChild(barisTombol);
 
     isi.appendChild(buatSakelar(index, 'disabled', 'Tombol nonaktif'));
+  } else if (block.kind === 'select') {
+    isi.appendChild(buatEditorSelect(index));
+  } else if (block.kind === 'row') {
+    /*
+     * Row tidak punya isian: ia hanya pemisah. Penjelasan singkat dipakai
+     * supaya admin tahu kenapa tombol di bawahnya pindah baris.
+     */
+    var ketRow = document.createElement('p');
+    ketRow.className = 'hint';
+    ketRow.style.margin = '0';
+    /*
+     * Row hanya berpengaruh di antara tombol: ia memotong deretan tombol yang
+     * sedang menumpuk. Di posisi lain ia tidak mengubah apa pun, dan admin
+     * perlu tahu itu — bukan mengira susunannya sudah terpisah.
+     */
+    var lanjutan = blocks[index + 1];
+    ketRow.textContent = lanjutan && lanjutan.kind === 'button'
+      ? 'Tombol sesudah baris ini dikirim di baris BARU — tombol sebelumnya tetap dikelompokkan sampai lima per baris.'
+      : 'Row hanya berpengaruh di antara tombol. Blok sesudah ini bukan tombol, jadi baris ini belum memisahkan apa pun.';
+    isi.appendChild(ketRow);
   } else if (block.kind === 'close') {
     var ketTutup = document.createElement('p');
     ketTutup.className = 'hint';
@@ -1481,6 +1797,19 @@ function addBlock(kind) {
   var blok = { kind: kind, value: '', url: '' };
   if (kind === 'container') blok.accent = '';
   if (kind === 'section') { blok.thumbnail = ''; blok.accessoryLabel = ''; }
+  /*
+   * Select baru selalu jenis string dengan satu pilihan contoh: menu tanpa
+   * pilihan ditolak Discord, jadi blok yang baru ditambahkan harus langsung
+   * bisa dipakai — bukan menunggu admin mengisi daftar dulu.
+   */
+  if (kind === 'select') {
+    blok.kind = 'select';
+    blok.selectKind = 'string';
+    blok.placeholder = 'Pilih salah satu…';
+    blok.minValues = 1;
+    blok.maxValues = 1;
+    blok.options = [{ label: 'Pilihan 1', value: 'pilihan-1' }];
+  }
   blocks.push(blok);
   renderBlocks();
 }
@@ -1525,6 +1854,18 @@ function moveBlock(index, delta) {
 function payloadBlocks() {
   return blocks.filter(function (b) {
     if (b.kind === 'divider') return true;
+    // Row adalah penanda struktur: tanpa Row, tombol setelahnya bergabung ke
+    // baris sebelumnya dan susunan di Discord berbeda dari editor.
+    if (b.kind === 'row') return true;
+    /*
+     * Select selalu dikirim kalau punya pilihan (jenis string) atau selalu
+     * untuk jenis lain — daftarnya disediakan Discord. Menu string tanpa
+     * pilihan memang ditolak server, dan blok itu dibuang saat render.
+     */
+    if (b.kind === 'select') {
+      if ((b.selectKind || 'string') !== 'string') return true;
+      return (b.options || []).length > 0;
+    }
     // Container & tutup-kartu adalah penanda struktur: tanpa keduanya, blok
     // sesudahnya berpindah tempat dan tampilan pesan berubah tanpa admin sadar.
     if (b.kind === 'container' || b.kind === 'close') return true;
@@ -1567,8 +1908,19 @@ async function savePost(andSend) {
     await saveRoleButtons(result.post.id);
 
     if (andSend) {
-      await api('/api/posts/' + result.post.id + '/send', { method: 'POST' });
-      toast('✅ Terkirim ke Discord');
+      var kirim = await api('/api/posts/' + result.post.id + '/send', { method: 'POST' });
+      /*
+       * Server mengembalikan komponen/berkas yang TIDAK ikut terkirim.
+       * Dulu daftar itu tidak pernah sampai ke dashboard, jadi admin mengira
+       * pesannya utuh padahal ada bagian yang dilewati.
+       */
+      var lewat = [].concat(kirim.dropped || [], kirim.droppedFiles || []);
+      if (lewat.length) {
+        toast('Terkirim, tetapi ' + lewat.length + ' bagian dilewati: ' + lewat[0], true);
+        setAksiStatus('⚠ Terkirim dengan catatan — ' + lewat[0]);
+      } else {
+        toast('✅ Terkirim ke Discord');
+      }
     }
 
     /*
@@ -1763,6 +2115,8 @@ function renderPreviewKe(hostId) {
    */
   var isi = blocks.filter(function (b) {
     if (b.kind === 'divider' || b.kind === 'container' || b.kind === 'close') return true;
+    if (b.kind === 'row') return true;
+    if (b.kind === 'select') return (b.selectKind || 'string') !== 'string' || (b.options || []).length > 0;
     if (b.kind === 'file') return Boolean(b.data || String(b.value || '').trim());
     if (b.kind === 'section') return Boolean(String(b.value || '').trim() || String(b.thumbnail || '').trim());
     if (b.kind === 'image') return Boolean(b.data || b.value);
@@ -1770,7 +2124,7 @@ function renderPreviewKe(hostId) {
   });
 
   var adaIsi = isi.some(function (b) {
-    return b.kind === 'text' || b.kind === 'image' || b.kind === 'section';
+    return b.kind === 'text' || b.kind === 'image' || b.kind === 'section' || b.kind === 'select';
   });
   if (!adaIsi) {
     var kosong = document.createElement('div');
@@ -1879,7 +2233,18 @@ function renderPreviewKe(hostId) {
       return;
     }
     if (blok.kind === 'button') { tertunda.push(blok); return; }
+    if (blok.kind === 'row') {
+      // Baris baru: tombol yang menumpuk dikirim lebih dulu, seperti flushButtons(true).
+      if (tertunda.length) flushTombol();
+      return;
+    }
     if (tertunda.length) flushTombol();
+
+    if (blok.kind === 'select') {
+      targetTulis().appendChild(buatSelectPratinjau(blok));
+      tandaiBerisi();
+      return;
+    }
 
     if (blok.kind === 'section') {
       // Discord: teks di kiri, aksesori (gambar kecil atau tombol) di kanan.
@@ -2038,6 +2403,55 @@ function renderPreviewKe(hostId) {
   });
 
   host.appendChild(kartu);
+}
+
+/**
+ * Pratinjau satu select menu, seperti yang tampil di Discord.
+ *
+ * Bentuknya sama dengan dropdown role (kotak gelap + panah), tetapi pilihannya
+ * ditampilkan semua: admin sedang memeriksa label dan keterangan, dan Discord
+ * pun menampilkannya begitu saat menu dibuka.
+ */
+function buatSelectPratinjau(blok) {
+  var kotak = document.createElement('div');
+  kotak.className = 'pc-select' + (blok.selectDisabled ? ' pc-disabled' : '');
+  var judul = document.createElement('span');
+  judul.textContent = blok.placeholder || selectJenisLabel(blok);
+  kotak.appendChild(judul);
+  kotak.insertAdjacentHTML('beforeend', '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>');
+
+  var bungkus = document.createElement('div');
+  bungkus.className = 'pc-select-wrap';
+  bungkus.appendChild(kotak);
+
+  if ((blok.selectKind || 'string') === 'string') {
+    (blok.options || []).forEach(function (opsi) {
+      var el = document.createElement('div');
+      el.className = 'pc-select-opt';
+      if (opsi.emoji) {
+        var em = document.createElement('span');
+        em.textContent = opsi.emoji;
+        el.appendChild(em);
+      }
+      el.appendChild(document.createTextNode(opsi.label || '(tanpa label)'));
+      if (opsi.description) {
+        var ket = document.createElement('span');
+        ket.className = 'pc-opt-desc';
+        ket.textContent = opsi.description;
+        el.appendChild(ket);
+      }
+      bungkus.appendChild(el);
+    });
+  } else {
+    /* Daftar anggota/role/channel tidak diketahui dari dashboard: tampilkan
+     * jenisnya saja, jangan mengarang isi. */
+    var ket = document.createElement('div');
+    ket.className = 'pc-select-opt';
+    ket.textContent = 'daftar ' + selectJenisLabel(blok).toLowerCase() + ' diisi Discord';
+    bungkus.appendChild(ket);
+  }
+
+  return bungkus;
 }
 
 /**

@@ -143,6 +143,83 @@ function warningDari(judul: string, detail: string): string {
 }
 
 /**
+ * Apakah ActionRow ini MENGHASILKAN baris tombol.
+ *
+ * Dua baris tombol berurutan di Discohook adalah dua Row terpisah. Di
+ * `/pesan`, tombol yang berurutan tanpa blok `row` digabung sampai lima per
+ * baris — jadi impor wajib menyisipkan `row` untuk mempertahankan bentuknya.
+ */
+function mulaiTombol(blocks: PostBlock[]): boolean {
+  return blocks.length > 0 && blocks[0]!.kind === 'button';
+}
+
+function akhiriTombol(blocks: PostBlock[]): boolean {
+  return blocks.length > 0 && blocks[blocks.length - 1]!.kind === 'button';
+}
+
+/**
+ * Jenis select menu Discohook -> jenis blok `/pesan`.
+ *
+ * Semuanya diterjemahkan, bukan dibuang: Discohook sendiri mengirim menu ini
+ * "tampil saja" (tanpa bot yang menanggapinya), dan blok `select` di /pesan
+ * berperilaku sama. Yang TIDAK diimpor adalah menu role buatan bot sendiri
+ * (customId `post-menu:`), karena menu itu hanya bermakna untuk pesan kita.
+ */
+const SELECT_KIND_BY_TYPE: Record<number, string> = {
+  [T.stringSelect]: 'string',
+  [T.userSelect]: 'user',
+  [T.roleSelect]: 'role',
+  [T.mentionableSelect]: 'mentionable',
+  [T.channelSelect]: 'channel',
+};
+
+/** Terjemahkan satu select menu Discohook menjadi blok `select`. */
+function convertSelect(raw: Raw, jenis: string): { block: PostBlock | null; warnings: string[] } {
+  const warnings: string[] = [];
+  const blok: PostBlock = { kind: 'select', value: '', selectKind: jenis as PostBlock['selectKind'] };
+
+  const placeholder = asString(raw.placeholder).trim();
+  if (placeholder) blok.placeholder = placeholder.slice(0, 150);
+
+  const minValues = asNumber(raw.min_values);
+  const maxValues = asNumber(raw.max_values);
+  if (minValues !== null) blok.minValues = Math.max(0, Math.trunc(minValues));
+  if (maxValues !== null) blok.maxValues = Math.max(1, Math.trunc(maxValues));
+  if (raw.disabled === true) blok.selectDisabled = true;
+
+  if (jenis === 'string') {
+    const opsi: NonNullable<PostBlock['options']> = [];
+    for (const item of asArray(raw.options)) {
+      const mentah = asObject(item);
+      if (!mentah) continue;
+      const label = asString(mentah.label).trim();
+      if (!label) continue;
+      const value = asString(mentah.value).trim();
+      const emoji = discohookEmojiToString(mentah.emoji);
+      const description = asString(mentah.description).trim();
+      opsi.push({
+        label: label.slice(0, 100),
+        ...(value ? { value: value.slice(0, 100) } : {}),
+        ...(emoji ? { emoji } : {}),
+        ...(description ? { description: description.slice(0, 100) } : {}),
+      });
+    }
+    if (opsi.length === 0) {
+      warnings.push(
+        warningDari(
+          'Menu pilihan',
+          'tidak punya pilihan sah — Discord menolak menu kosong, jadi menu ini dilewati',
+        ),
+      );
+      return { block: null, warnings };
+    }
+    blok.options = opsi;
+  }
+
+  return { block: blok, warnings };
+}
+
+/**
  * Penerjemah satu komponen Discohook menjadi nol atau lebih blok.
  *
  * Aturan yang dipegang: **tidak ada yang dibuang diam-diam**. Setiap komponen
@@ -174,12 +251,16 @@ function convertComponent(component: Raw): Converted {
      * masih di dalam kartu atau sudah keluar. Menyisipkan di sini akan
      * membuat dua kartu berurutan kehilangan isinya.
      */
+    let barisTerakhirTombol = false;
     for (const child of asArray(component.components)) {
       const raw = asObject(child);
       if (!raw) continue;
       const hasil = convertComponent(raw);
-      blocks.push(...hasil.blocks);
       warnings.push(...hasil.warnings);
+      // Baris tombol kedua dan seterusnya dipisah blok `row`.
+      if (barisTerakhirTombol && mulaiTombol(hasil.blocks)) blocks.push({ kind: 'row', value: '' });
+      blocks.push(...hasil.blocks);
+      if (hasil.blocks.length > 0) barisTerakhirTombol = akhiriTombol(hasil.blocks);
     }
     return { blocks, warnings, card: true };
   }
@@ -291,6 +372,11 @@ function convertComponent(component: Raw): Converted {
   }
 
   if (type === T.actionRow) {
+    /*
+     * Baris select: satu select memenuhi seluruh baris (5 slot dari 5), jadi
+     * blok `row` dipakai supaya baris tombol di sekitarnya tidak ikut
+     * bergabung — persis seperti Row di Discohook.
+     */
     for (const child of asArray(component.components)) {
       const raw = asObject(child);
       if (!raw) continue;
@@ -322,16 +408,11 @@ function convertComponent(component: Raw): Converted {
         });
         continue;
       }
-      if (
-        childType === T.stringSelect ||
-        childType === T.userSelect ||
-        childType === T.roleSelect ||
-        childType === T.mentionableSelect ||
-        childType === T.channelSelect
-      ) {
-        warnings.push(
-          warningDari('Menu pilihan', 'dropdown Discohook tidak bisa diimpor — susun menu role dari dashboard'),
-        );
+      const jenisSelect = childType === null ? undefined : SELECT_KIND_BY_TYPE[childType];
+      if (jenisSelect) {
+        const hasilSelect = convertSelect(raw, jenisSelect);
+        warnings.push(...hasilSelect.warnings);
+        if (hasilSelect.block) blocks.push(hasilSelect.block);
         continue;
       }
       warnings.push(warningDari('Baris komponen', `jenis ${String(childType)} tidak dikenal`));
@@ -374,6 +455,15 @@ export function discohookComponentsToBlocks(components: unknown[]): { blocks: Po
 
   let diDalamKartu = false;
   let totalTeks = 0;
+  /**
+   * Jenis blok terakhir yang dihasilkan.
+   *
+   * Dipakai untuk menyisipkan blok `row` di antara DUA ActionRow berisi
+   * tombol: di Discohook barisnya eksplisit, sedangkan `/pesan` tanpa blok
+   * `row` akan menggabungkan tombolnya sampai lima per baris. Tanpa ini,
+   * dua baris 3 + 2 tombol akan tampil sebagai 5 tombol dalam satu baris.
+   */
+  let blokTerakhir = '';
 
   for (const component of daftar) {
     const hasil = convertComponent(component);
@@ -389,6 +479,15 @@ export function discohookComponentsToBlocks(components: unknown[]): { blocks: Po
       // Komponen di luar kartu sesudah kartu selesai.
       blocks.push({ kind: 'close', value: '' });
       diDalamKartu = false;
+      blokTerakhir = 'close';
+    }
+
+    /*
+     * Baris tombol kedua dan seterusnya: sisipkan `row` supaya ActionRow
+     * Discohook tetap terpisah, bukan digabung otomatis lima per baris.
+     */
+    if (mulaiTombol(hasil.blocks) && blokTerakhir === 'button') {
+      blocks.push({ kind: 'row', value: '' });
     }
 
     for (const block of hasil.blocks) {
@@ -407,6 +506,7 @@ export function discohookComponentsToBlocks(components: unknown[]): { blocks: Po
         totalTeks += block.value.length;
       }
       blocks.push(block);
+      blokTerakhir = block.kind;
     }
   }
 

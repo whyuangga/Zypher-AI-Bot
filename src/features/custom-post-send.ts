@@ -64,6 +64,7 @@ async function buildPayload(
   flags: number;
   files: AttachmentBuilder[];
   droppedFiles: string[];
+  dropped: string[];
 } | null> {
   const built = buildPostPayload(blocks, {
     ContainerBuilder,
@@ -156,6 +157,20 @@ async function buildPayload(
     flags: built.flags,
     files,
     droppedFiles,
+    dropped: built.dropped,
+  };
+}
+
+/**
+ * Bagian hasil kirim yang hanya muncul kalau memang ada yang dilewati.
+ *
+ * Dipisah supaya tiga jalur (perbarui, kirim baru, webhook) melaporkan hal yang
+ * sama — tanpa ini, jalur webhook diam-diam menghilangkan daftarnya.
+ */
+function laporan(payload: { dropped: string[]; droppedFiles: string[] }): Pick<SendResult, 'dropped' | 'droppedFiles'> {
+  return {
+    ...(payload.dropped.length ? { dropped: payload.dropped } : {}),
+    ...(payload.droppedFiles.length ? { droppedFiles: payload.droppedFiles } : {}),
   };
 }
 
@@ -179,6 +194,14 @@ export interface SendResult {
    * bisa memperbaiki URL-nya, bukan mengira berkasnya terkirim.
    */
   droppedFiles?: string[];
+  /**
+   * Komponen yang dilewati penyusun payload (mis. select yang tidak didukung).
+   *
+   * Daftar ini dulu berhenti di dalam penyusun payload, jadi admin tidak pernah
+   * tahu ada komponen yang tidak ikut terkirim. Sekarang diteruskan sampai
+   * dashboard.
+   */
+  dropped?: string[];
 }
 
 /**
@@ -216,13 +239,13 @@ export async function sendOrUpdatePost(options: {
     const lama = await channel.messages.fetch(options.messageId).catch((): null => null);
     if (lama) {
       await lama.edit(editPayload);
-      return { messageId: lama.id, edited: true, ...(payload.droppedFiles.length ? { droppedFiles: payload.droppedFiles } : {}) };
+      return { messageId: lama.id, edited: true, ...laporan(payload) };
     }
     logger.info(`Pesan kustom ${options.messageId} sudah tidak ada di channel — mengirim baru.`);
   }
 
   const sent: Message = await channel.send(payload);
-  return { messageId: sent.id, edited: false, ...(payload.droppedFiles.length ? { droppedFiles: payload.droppedFiles } : {}) };
+  return { messageId: sent.id, edited: false, ...laporan(payload) };
 }
 
 /** Hapus pesan yang pernah dikirim, kalau masih ada. Diam kalau sudah hilang. */
@@ -373,11 +396,33 @@ export async function sendOrUpdatePostViaWebhook(options: {
     throw new PostSendError('Pesan masih kosong — isi minimal satu teks atau gambar.');
   }
 
+  /*
+   * Select menu di pesan webhook TIDAK bisa dijawab bot.
+   *
+   * Discord mengirim interaksi ke aplikasi PEMILIK komponen — untuk pesan
+   * webhook, pemiliknya webhook itu sendiri, bukan bot kita. Menunya tetap
+   * tampil, tetapi memilih tidak menghasilkan apa pun (sama seperti
+   * Discohook). Admin perlu tahu itu sebelum mengira menunya rusak.
+   */
+  if ((options.blocks ?? []).some((blok) => blok.kind === 'select')) {
+    built.dropped.push(
+      'select menu di pesan webhook tidak bisa dijawab bot — menunya tampil, tetapi memilih tidak mengubah apa pun',
+    );
+  }
+
   const hook = await ensureChannelWebhook(options);
   const webhook = new WebhookClient({ id: hook.id, token: hook.token });
 
+  /*
+   * Payload webhook disusun dari field yang dikenal Discord saja.
+   *
+   * `dropped`/`droppedFiles` adalah laporan untuk admin, bukan bagian payload —
+   * menyebarkan seluruh objek `built` akan mengirim dua field asing itu juga.
+   */
   const body = {
-    ...built,
+    components: built.components,
+    flags: built.flags,
+    files: built.files,
     username: options.identity.username.slice(0, 80),
     ...(options.identity.avatarURL ? { avatarURL: options.identity.avatarURL } : {}),
   };
@@ -387,14 +432,10 @@ export async function sendOrUpdatePostViaWebhook(options: {
       const edited = await webhook
         .editMessage(options.messageId, { ...body, attachments: [] })
         .catch((): null => null);
-      if (edited) return { messageId: options.messageId, edited: true };
+      if (edited) return { messageId: options.messageId, edited: true, ...laporan(built) };
     }
     const sent = await webhook.send(body);
-    return {
-      messageId: sent.id,
-      edited: false,
-      ...(built.droppedFiles.length ? { droppedFiles: built.droppedFiles } : {}),
-    };
+    return { messageId: sent.id, edited: false, ...laporan(built) };
   } catch (error) {
     throw new PostSendError(`Gagal mengirim lewat webhook: ${errorMessage(error).slice(0, 160)}`);
   }

@@ -357,10 +357,17 @@ mengeluarkan teks & tombol dari container (pembuka polos di atas, baris tombol d
 bawah — seperti pesan Discohook), **aksesori di komponen mana pun** (tombol link
 atau thumbnail pada teks & gambar, lengkap dengan emoji), **blok File** (lampiran
 PDF/zip dari URL atau unggahan, dengan spoiler), **pemisah tanpa garis**,
-**tombol nonaktif**, **naik/turun/salin/hapus** tiap blok, **impor langsung dari
-Discohook** (tempel tautan `?share=` atau JSON-nya — komponen V2 diterjemahkan
-otomatis), **import/ekspor JSON** (pindah susunan pesan antar server), dan
-**penghitung batas komponen** yang menunjukkan sisa kuota sebelum Discord menolak.
+**tombol nonaktif**, **select menu lengkap** (String, User, Role, User & Role,
+Channel — placeholder, min/maks, sampai 25 pilihan, emoji, nonaktif; tampil
+seperti Discohook dan menjawab sopan saat dipakai), **blok Baris baru (Row)** yang
+memotong deretan tombol secara eksplisit seperti Row Discohook,
+**naik/turun/salin/hapus** tiap blok, **impor langsung dari Discohook** (tempel
+tautan `?share=` atau JSON-nya — komponen V2 **dan** semua jenis select menu
+diterjemahkan otomatis, Row tetap terpisah), **import/ekspor JSON** (pindah
+susunan pesan antar server), dan **penghitung batas komponen** yang menunjukkan
+sisa kuota sebelum Discord menolak. Kalau ada bagian yang tidak ikut terkirim
+(select tanpa pilihan, berkas gagal diunduh), dashboard menyebutkannya setelah
+menekan Kirim — bukan diam-diam menghilang.
 Editornya **bertumpuk ala Discohook** (komponen tampil di dalam kotak container-nya,
 lengkap dengan ⧉ duplikat & × hapus), dan halaman dipecah **empat tab**
 (Susun / Pratinjau / Ambil role / Impor) dengan tombol Simpan di bilah bawah yang
@@ -493,7 +500,7 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke # 389 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
+npm run smoke # 392 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
 npm run smoke:pg       # 21 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # 15 pemeriksaan rantai fallback provider (server tiruan)
 npm run test:ui        # 75 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)

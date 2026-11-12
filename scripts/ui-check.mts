@@ -1033,6 +1033,11 @@ await check('pesan: editor menggambar komponen bertumpuk di dalam kartu', async 
           return jenis + ':' + g.isi.map(function (i) { return i.block.kind; }).join('+');
         });
       }
+      function logika(daftar) {
+        return kelompokkanBlok(daftar, true).map(function (g) {
+          return g.isi.map(function (i) { return i.block.kind + '@' + i.index; }).join('+');
+        });
+      }
       return {
         // Pembuka di luar kartu, satu kartu berisi teks & tombol, penutup
         // mengeluarkan blok sesudahnya.
@@ -1053,6 +1058,30 @@ await check('pesan: editor menggambar komponen bertumpuk di dalam kartu', async 
           { kind: 'text' },
           { kind: 'container' },
           { kind: 'text' }
+        ]),
+        // Select & Row adalah isi kartu biasa: keduanya tidak membuka atau
+        // menutup kartu, hanya mengisi kartu tempatnya berada.
+        selectDanRow: ringkas([
+          { kind: 'container' },
+          { kind: 'text' },
+          { kind: 'select' },
+          { kind: 'row' },
+          { kind: 'button' }
+        ]),
+        /*
+         * Mode logika (dipakai tombol naik/turun): Row hanya dipertahankan
+         * kalau benar-benar memisahkan dua tombol. Row di antara teks dan
+         * gambar dibuang, karena di Discord ia tidak mengubah apa pun.
+         */
+        logikaBerguna: logika([
+          { kind: 'button' },
+          { kind: 'row' },
+          { kind: 'button' }
+        ]),
+        logikaSiaSia: logika([
+          { kind: 'text' },
+          { kind: 'row' },
+          { kind: 'image' }
         ])
       };
     })()
@@ -1078,6 +1107,67 @@ await check('pesan: editor menggambar komponen bertumpuk di dalam kartu', async 
     'kartu:text | kartu:text',
     'dua kartu, tanpa wadah luar kosong',
   );
+  assert.equal(
+    grup.selectDanRow.join(' | '),
+    'kartu:text+select+row+button',
+    'select & row tetap isi kartu, bukan struktur',
+  );
+  assert.equal(
+    grup.logikaBerguna.join(' | '),
+    'button@0+row@1+button@2',
+    'Row yang memisahkan dua tombol dipertahankan',
+  );
+  assert.equal(
+    grup.logikaSiaSia.join(' | '),
+    'text@0+image@2',
+    'Row yang tidak memisahkan tombol dibuang, indeks blok tetap benar',
+  );
+});
+
+await check('pesan: select menu & baris baru bisa disusun dari editor', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+
+  /*
+   * Halaman harus menawarkan KEDUA komponen baru di daftar "tambah komponen".
+   * Tanpa tombolnya, blok select/row hanya bisa muncul dari impor Discohook —
+   * admin tidak punya jalan membuatnya sendiri.
+   */
+  assert.ok(html.includes("addBlock('select')"), 'tombol tambah Select menu ada');
+  assert.ok(html.includes("addBlock('row')"), 'tombol tambah Baris baru ada');
+
+  const page = mountPage(html, 'uji-select-row');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      // Blok baru harus langsung bisa dipakai: select string tanpa pilihan
+      // ditolak Discord, jadi addBlock wajib menyertakan satu pilihan contoh.
+      blocks = [];
+      addBlock('select');
+      addBlock('row');
+      var select = blocks[0];
+      var ringkas = {
+        jenis: select.selectKind,
+        punyaPilihan: select.options.length,
+        min: select.minValues,
+        max: select.maxValues,
+        // Row tidak akan terkirim kalau dibuang payloadBlocks.
+        terkirim: payloadBlocks().map(function (b) { return b.kind; })
+      };
+      renderBlocks();
+      return ringkas;
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.jenis, 'string', 'select baru berjenis string');
+  assert.equal(hasil.punyaPilihan, 1, 'select baru sudah punya satu pilihan contoh');
+  assert.equal(hasil.min, 1, 'minimal 1 pilihan');
+  assert.equal(hasil.max, 1, 'maksimal 1 pilihan');
+  assert.equal(
+    (hasil.terkirim as string[]).join(' | '),
+    'select | row',
+    'select & row ikut terkirim ke server',
+  );
+  assert.equal(page.errors.length, 0, `editor select tidak melempar error: ${page.errors.join('|')}`);
 });
 
 await check('pesan: tombol impor Discohook memanggil endpoint yang benar', async () => {

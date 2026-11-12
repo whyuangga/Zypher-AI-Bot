@@ -1926,7 +1926,18 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
                 roleMenus: menuPayload,
               });
         await setCustomPostMessage(guildId, id, result.messageId);
-        sendJson(response, 200, { ok: true, messageId: result.messageId, edited: result.edited });
+        /*
+         * `dropped`/`droppedFiles` ikut dikirim: komponen yang dilewati
+         * penyusun payload (mis. select yang tidak didukung) dan berkas yang
+         * gagal diunduh. Tanpa ini admin mengira pesannya terkirim utuh.
+         */
+        sendJson(response, 200, {
+          ok: true,
+          messageId: result.messageId,
+          edited: result.edited,
+          ...(result.dropped?.length ? { dropped: result.dropped } : {}),
+          ...(result.droppedFiles?.length ? { droppedFiles: result.droppedFiles } : {}),
+        });
       } catch (error) {
         // PostSendError = kesalahan yang bisa dimengerti admin (channel hilang,
         // pesan kosong). Selain itu tetap dicatat sebagai kesalahan server.

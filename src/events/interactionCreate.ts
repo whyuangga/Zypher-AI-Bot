@@ -2,7 +2,7 @@ import { MessageFlags, type Interaction } from 'discord.js';
 import { commandMap } from '../commands/index.js';
 import { handleButton } from '../features/buttons.js';
 import { handleRoleMenu } from '../features/role-button-handler.js';
-import { parseRoleMenuId } from '../features/role-buttons.js';
+import { CONTEXT_SELECT_PREFIX, parseRoleMenuId } from '../features/role-buttons.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { ownsGuild } from '../lib/shard.js';
 
@@ -51,6 +51,33 @@ export async function onInteractionCreate(interaction: Interaction): Promise<voi
      */
     if (interaction.isStringSelectMenu() && parseRoleMenuId(interaction.customId) !== null) {
       await handleRoleMenu(interaction);
+      return;
+    }
+
+    /*
+     * Select menu "tampilan" (blok Select di /pesan).
+     *
+     * Menu ini sengaja tidak mengubah apa pun: akun bot tidak bisa membaca
+     * pilihan user/role/channel (Discord menyembunyikan nilai @everyone dari
+     * user biasa). Kalau didiamkan, Discord menampilkan "interaksi gagal" dan
+     * member mengira botnya rusak. Jadi dijawab singkat, hanya untuk yang
+     * memilih.
+     */
+    if (
+      (interaction.isStringSelectMenu() ||
+        interaction.isUserSelectMenu() ||
+        interaction.isRoleSelectMenu() ||
+        interaction.isMentionableSelectMenu() ||
+        interaction.isChannelSelectMenu()) &&
+      interaction.customId.startsWith(CONTEXT_SELECT_PREFIX)
+    ) {
+      await interaction
+        .reply({
+          content:
+            'ℹ️ Menu ini hanya tampilan — tidak menyimpan pilihan. Untuk mengambil role, pakai tombol atau dropdown role di pesan yang sama.',
+          flags: MessageFlags.Ephemeral,
+        })
+        .catch(() => undefined);
     }
   } catch (error) {
     logger.error(`Error saat menangani interaksi (${interaction.type})`, errorMessage(error));

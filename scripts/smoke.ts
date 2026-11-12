@@ -7122,6 +7122,201 @@ await testAsync('discohook: komponen v2 diterjemahkan jadi blok dengan kartu & b
   assert.equal(baris.components![1]!.disabled, true, 'tombol nonaktif sampai ke payload');
 });
 
+await testAsync('pesan: select menu dilaporkan saat tak terdukung, bukan hilang diam-diam', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+
+  /*
+   * Versi discord.js lama tidak punya builder select menu. Komponennya memang
+   * harus dilewati, tetapi alasannya WAJIB sampai ke pemanggil: dulu daftar
+   * `dropped` hanya hidup di dalam fungsi dan hilang tanpa jejak.
+   */
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    accent: 0x6d8cff,
+    accentToNumber: (hex: string) => Number.parseInt(hex.slice(1), 16),
+  };
+  const built = buildPostPayload(
+    sanitizeBlocks([
+      { kind: 'text', value: 'Halo' },
+      { kind: 'select', selectKind: 'user' },
+    ]).blocks,
+    deps,
+  );
+  assert.ok(built, 'pesan tetap terbentuk tanpa select');
+  assert.equal(built!.dropped.length, 1, 'satu komponen dilaporkan');
+  assert.match(built!.dropped[0]!, /select/, 'alasannya menyebut select');
+});
+
+await testAsync('pesan: select menu dikirim sebagai ActionRow penuh & row memotong baris tombol', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    StringSelectMenuBuilder: d.StringSelectMenuBuilder,
+    StringSelectMenuOptionBuilder: d.StringSelectMenuOptionBuilder,
+    UserSelectMenuBuilder: d.UserSelectMenuBuilder,
+    RoleSelectMenuBuilder: d.RoleSelectMenuBuilder,
+    MentionableSelectMenuBuilder: d.MentionableSelectMenuBuilder,
+    ChannelSelectMenuBuilder: d.ChannelSelectMenuBuilder,
+    accent: 0x6d8cff,
+    accentToNumber: (hex: string) => Number.parseInt(hex.slice(1), 16),
+  };
+
+  type C = { type: number; components?: Array<Record<string, any>> };
+
+  // Row eksplisit: 3 tombol, satu Row, 2 tombol → dua ActionRow terpisah.
+  const denganRow = buildPostPayload(
+    sanitizeBlocks([
+      { kind: 'text', value: 'Pilih' },
+      { kind: 'button', value: 'A', url: 'https://a.test' },
+      { kind: 'button', value: 'B', url: 'https://b.test' },
+      { kind: 'button', value: 'C', url: 'https://c.test' },
+      { kind: 'row', value: '' },
+      { kind: 'button', value: 'D', url: 'https://d.test' },
+      { kind: 'button', value: 'E', url: 'https://e.test' },
+    ]).blocks,
+    deps,
+  );
+  const isiRow = (denganRow!.components as Array<{ toJSON: () => C }>)[0]!.toJSON().components!;
+  const barisTombol = isiRow.filter((c) => c.type === 1);
+  assert.equal(barisTombol.length, 2, 'dua baris tombol karena ada Row');
+  assert.equal(barisTombol[0]!.components!.length, 3, 'baris pertama 3 tombol');
+  assert.equal(barisTombol[1]!.components!.length, 2, 'baris kedua 2 tombol');
+
+  // Select selalu baris penuh: tombol yang menumpuk ditutup lebih dulu.
+  const campur = buildPostPayload(
+    sanitizeBlocks([
+      { kind: 'button', value: 'A', url: 'https://a.test' },
+      {
+        kind: 'select',
+        selectKind: 'string',
+        placeholder: 'Pilih warna',
+        minValues: 1,
+        maxValues: 2,
+        options: [{ label: 'Merah', value: 'merah' }, { label: 'Biru', emoji: '🔵' }],
+      },
+      { kind: 'button', value: 'B', url: 'https://b.test' },
+    ]).blocks,
+    deps,
+  );
+  const isiCampur = (campur!.components as Array<{ toJSON: () => C }>)[0]!.toJSON().components!;
+  // Urutan yang dipertahankan: baris tombol A, select, baris tombol B.
+  assert.deepEqual(isiCampur.map((c) => c.type), [1, 1, 1], 'tiga baris: tombol, select, tombol');
+  const select = isiCampur[1]!.components![0]!;
+  assert.equal(select.type, 3, 'komponennya StringSelect');
+  assert.match(String(select.custom_id), /^post-ctx:string$/, 'customId menu tampilan');
+  assert.equal(select.placeholder, 'Pilih warna');
+  assert.equal(select.min_values, 1);
+  assert.equal(select.max_values, 2);
+  assert.equal(select.options.length, 2);
+  assert.equal(select.options[1].value, 'Biru', 'nilai kosong memakai label');
+
+  // Empat jenis select lain memakai builder yang sesuai Discord.
+  for (const [jenis, tipe] of [
+    ['user', 5],
+    ['role', 6],
+    ['mentionable', 7],
+    ['channel', 8],
+  ] as const) {
+    const hasil = buildPostPayload(sanitizeBlocks([{ kind: 'select', selectKind: jenis }]).blocks, deps);
+    const isi = (hasil!.components as Array<{ toJSON: () => C }>)[0]!.toJSON().components!;
+    const komponen = isi[0]!.components![0]!;
+    assert.equal(komponen.type, tipe, `select ${jenis} memakai tipe ${tipe}`);
+    assert.equal(komponen.custom_id, `post-ctx:${jenis}`);
+  }
+
+  // Menu string tanpa pilihan ditolak Discord → dibuang, dengan alasan.
+  const kosong = sanitizeBlocks([{ kind: 'select', selectKind: 'string' }]);
+  assert.equal(kosong.blocks.length, 0, 'select string tanpa pilihan dibuang');
+  assert.ok(kosong.dropped.length > 0, 'alasannya dilaporkan');
+});
+
+await testAsync('discohook: select menu & Row diimpor sebagai blok select/row, bukan dibuang', async () => {
+  const { discohookComponentsToBlocks } = await import('../src/features/discohook-import.js');
+  const { sanitizeBlocks } = await import('../src/features/custom-post.js');
+
+  const hasil = discohookComponentsToBlocks([
+    {
+      type: 17,
+      accent_color: 5814783,
+      components: [
+        { type: 10, content: 'Pilih di bawah' },
+        {
+          type: 1,
+          components: [
+            { type: 2, style: 5, label: 'Satu', url: 'https://a.test' },
+            { type: 2, style: 5, label: 'Dua', url: 'https://b.test' },
+          ],
+        },
+        { type: 1, components: [{ type: 2, style: 5, label: 'Tiga', url: 'https://c.test' }] },
+        {
+          type: 1,
+          components: [
+            {
+              type: 3,
+              custom_id: 'menu-warna',
+              placeholder: 'Pilih warna',
+              min_values: 1,
+              max_values: 2,
+              options: [
+                { label: 'Merah', value: 'merah' },
+                { label: 'Biru', description: 'dingin', emoji: { name: '🔵' } },
+              ],
+            },
+          ],
+        },
+        { type: 1, components: [{ type: 6, custom_id: 'menu-role', max_values: 3 }] },
+        { type: 1, components: [{ type: 5, custom_id: 'menu-user' }] },
+        { type: 1, components: [{ type: 7, custom_id: 'menu-dua' }] },
+        { type: 1, components: [{ type: 8, custom_id: 'menu-channel' }] },
+      ],
+    },
+  ]);
+
+  assert.deepEqual(hasil.warnings, [], 'tidak ada menu yang dibuang diam-diam');
+  assert.equal(
+    hasil.blocks.map((b) => (b.kind === 'select' ? 'select:' + b.selectKind : b.kind)).join(' | '),
+    // Row disisipkan karena dua ActionRow berisi tombol berdampingan: di
+    // Discohook keduanya baris terpisah, bukan digabung lima per baris.
+    'container | text | button | button | row | button | select:string | select:role | select:user | select:mentionable | select:channel',
+    'semua jenis menu jadi blok select, baris tombol dipisah Row',
+  );
+
+  const selectString = hasil.blocks.find((b) => b.kind === 'select' && b.selectKind === 'string')!;
+  assert.equal(selectString.placeholder, 'Pilih warna');
+  assert.equal(selectString.minValues, 1);
+  assert.equal(selectString.maxValues, 2);
+  assert.equal(selectString.options?.length, 2, 'dua pilihan ikut');
+  assert.equal(selectString.options?.[1]!.emoji, '🔵', 'emoji pilihan ikut');
+  assert.equal(selectString.options?.[1]!.description, 'dingin', 'keterangan pilihan ikut');
+
+  /*
+   * Sanitizer server harus meloloskan hasil impor apa adanya — dan di sanalah
+   * nilai kosong diisi dengan label (Discord menolak opsi tanpa value).
+   */
+  const bersih = sanitizeBlocks(hasil.blocks);
+  assert.deepEqual(bersih.dropped, [], 'tidak ada blok impor yang dibuang sanitizer');
+  assert.equal(bersih.blocks.filter((b) => b.kind === 'select').length, 5, 'lima select lolos');
+  const stringBersih = bersih.blocks.find((b) => b.kind === 'select' && b.selectKind === 'string')!;
+  assert.equal(stringBersih.options?.[1]!.value, 'Biru', 'nilai kosong memakai label');
+  assert.equal(stringBersih.maxValues, 2, 'batas maksimal ikut tersimpan');
+});
+
 await testAsync('discohook: pesan tanpa container tetap di luar kartu, embed jadi kartu teks', async () => {
   const { parseDiscohookShare } = await import('../src/features/discohook-import.js');
   const { sanitizeBlocks } = await import('../src/features/custom-post.js');

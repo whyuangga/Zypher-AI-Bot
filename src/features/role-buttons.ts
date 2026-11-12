@@ -125,6 +125,15 @@ export function roleButtonId(buttonId: number): string {
  */
 export const ROLE_MENU_PREFIX = 'post-menu:';
 
+/**
+ * Prefix select menu "tampilan" (blok Select di /pesan).
+ *
+ * Dipisah dari `post-menu:` karena artinya berbeda: `post-menu:` menulis role
+ * ke member, sedangkan `post-ctx:` hanya menampilkan menu seperti di
+ * Discohook dan menjawab dengan penjelasan saat dipakai.
+ */
+export const CONTEXT_SELECT_PREFIX = 'post-ctx:';
+
 export function roleMenuId(menuId: number): string {
   return `${ROLE_MENU_PREFIX}${menuId}`;
 }

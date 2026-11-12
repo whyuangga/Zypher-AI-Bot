@@ -1279,6 +1279,44 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   text-align: center;
 }
 
+/* Angka min/maks select menu: sempit, karena isinya hanya 0-25. */
+.role-angka {
+  width: 62px;
+  flex: 0 0 auto;
+}
+
+/*
+ * Daftar pilihan select menu.
+ *
+ * Satu pilihan = satu baris berisi label, nilai, keterangan, emoji, dan tombol
+ * hapus. Grid dipakai supaya keempat kolom sejajar antar baris dan tidak
+ * berubah lebar saat admin mengetik (input teks default selebar isinya).
+ */
+.select-opsi-daftar {
+  display: grid;
+  gap: 6px;
+}
+
+.select-opsi {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr) 76px auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.select-opsi input {
+  min-width: 0;
+  font-size: 12.5px;
+  padding: 6px 8px;
+}
+
+/* Di layar sempit, kolom pilihan ditumpuk supaya tidak jadi satu baris sempit. */
+@media (max-width: 720px) {
+  .select-opsi { grid-template-columns: 1fr 76px auto; }
+  .select-opsi input:nth-child(2),
+  .select-opsi input:nth-child(3) { grid-column: 1 / -1; }
+}
+
 /* Warna tombol role di pratinjau — sama dengan palet Discord. */
 .pc-button-role.style-secondary { background: #4e5058; }
 .pc-button-role.style-success { background: #248046; }
@@ -1543,6 +1581,23 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
 }
 
 .pc-select svg { flex: 0 0 auto; opacity: .8; }
+
+/* Select nonaktif: diredupkan dan kursor dilarang, seperti di Discord. */
+.pc-select.pc-disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+/*
+ * Bungkus select + daftar pilihannya di pratinjau.
+ *
+ * Memakai grid gap 0 supaya kotak dan pilihan pertama menempel (di Discord
+ * keduanya satu komponen), tetapi baris berikutnya tetap punya jarak.
+ */
+.pc-select-wrap {
+  display: grid;
+  gap: 0;
+}
 
 .pc-select-opt {
   display: flex;

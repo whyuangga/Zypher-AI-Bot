@@ -15,7 +15,8 @@ sudah diatur bot. Di sini **kamu yang menentukan isinya**.
    dashboard — tidak ikut terkirim ke Discord.
 3. Pilih **Channel tujuan**.
 4. Tambahkan komponen: **Teks**, **Gambar**, **Tombol**, **Pemisah**,
-   **Container**, **Section**, **File**.
+   **Container**, **Section**, **File**, **Select menu**, **Baris baru**, dan
+   **Tutup kartu**.
 5. **Simpan** dulu. Setelah tersimpan, **Kirim ke Discord**.
 
 Urutan komponen diubah dengan panah ↑ ↓; setiap komponen punya tombol **⧉**
@@ -70,9 +71,66 @@ mengirim pesan baru dan menyimpan ID yang baru.
 | **Pemisah** | garis (bisa dimatikan) + jarak rapat/renggang | `tanpa garis` = hanya jarak kosong, seperti `divider: false` di Discohook |
 | **Container** | warna aksen sendiri | memulai **kartu baru**; blok sesudahnya masuk ke kartu itu |
 | **Section** | teks + gambar kecil **atau** tombol di kanan | Discord hanya mengizinkan satu aksesori |
+| **Select menu** | dropdown: jenis, placeholder, min/maks, daftar pilihan | lima jenis seperti Discohook: String, User, Role, User & Role, Channel. **Tampilan saja** — pilihan tidak mengubah role |
+| **Baris baru** | tidak punya isian | memotong deretan tombol: tombol sesudahnya dikirim di baris baru, seperti **Row** di Discohook |
+| **Tutup kartu** | tidak punya isian | semua blok sesudahnya tampil **di luar** kartu |
 
 Teks kecil: baris yang diawali `-#` (mis. `-# dibuat oleh admin`) tampil kecil dan
 redup di Discord. Ini cara membuat catatan kaki.
+
+### Select menu: semua jenis, seperti Discohook
+
+Editor menyediakan **lima jenis** select menu yang sama dengan menu *Add
+Component* di Discohook:
+
+| Jenis | Isi pilihannya | Menyimpan pilihan? |
+|---|---|---|
+| **String** | daftar yang kamu tulis sendiri (label, nilai, keterangan, emoji) | tidak |
+| **User** | anggota server | tidak |
+| **Role** | role server | tidak |
+| **User & Role** | anggota dan role | tidak |
+| **Channel** | channel server | tidak |
+
+Alasannya jujur: Discord hanya mengirim nilai pilihan ke **aplikasi pemilik
+komponen**, dan bot tidak bisa membaca daftar anggota dari sebuah nilai. Menu di
+sini karena itu berperilaku seperti di Discohook — tampil rapi dan bisa dibuka,
+lalu saat member memilih, bot menjawab singkat bahwa menu itu tidak mengubah
+apa pun. Untuk benar-benar memberi atau melepas role, pakai tombol/dropdown di
+tab **Ambil role**.
+
+Yang bisa diatur per menu: jenis, placeholder (maksimal 150 karakter), jumlah
+**pilihan minimal** dan **maksimal** (0–25), serta sakelar **nonaktif**. Menu
+jenis **String** juga punya daftar pilihan (maksimal 25) — menu String **tanpa
+pilihan ditolak Discord**, jadi blok baru selalu membawa satu pilihan contoh.
+
+Satu select menu selalu memakai **satu baris penuh** di Discord (lebarnya 5 dari
+5 slot baris), jadi ia tidak pernah berbagi baris dengan tombol. Itu juga aturan
+yang dipakai Discohook.
+
+### Baris baru (Row): memotong deretan tombol
+
+Discord menampilkan maksimal **5 tombol per baris**, dan tanpa penanda apa pun
+tombol ke-6 otomatis turun. Blok **Baris baru** membuat pemotongan itu menjadi
+pilihanmu: tombol sesudahnya dikirim di baris berikutnya, walaupun baris
+sebelumnya belum penuh.
+
+```
+Tombol   "Umum"       ┐
+Tombol   "Gaming"     ├ baris 1 (3 tombol)
+Tombol   "Musik"      ┘
+Baris baru                                 ← memotong di sini
+Tombol   "Support"    ┐ baris 2 (2 tombol)
+Tombol   "Situs"      ┘
+```
+
+Catatan:
+
+- Row hanya berpengaruh **di antara tombol**. Kalau blok sesudahnya bukan
+  tombol, Row tidak mengubah apa pun — editor memberi tahu hal ini di kartu Row.
+- Dua Row berurutan diringkas menjadi satu saat disimpan.
+- Saat tombol dipindah dengan panah ↑ ↓, Row yang tidak lagi memisahkan dua
+  tombol otomatis diabaikan oleh editor, sehingga susunan tidak dipaksa
+  melewati baris yang tidak perlu.
 
 ### Container: beberapa kartu dalam satu pesan
 
@@ -173,6 +231,14 @@ Yang perlu diketahui:
 - Kalau unduhan gagal (URL mati, berkas terlalu besar), pesan **tetap terkirim**
   tanpa berkas itu, dan dashboard memberi tahu berkas mana yang gagal.
 
+### Kalau ada bagian yang tidak ikut terkirim
+
+Pesan tetap dikirim, tetapi sebagian komponen bisa dilewati — misalnya select
+menu tanpa pilihan, atau versi `discord.js` yang tidak mendukung salah satu
+jenis menu. Daftar bagian yang dilewati **dikembalikan ke dashboard** dan
+muncul sebagai peringatan tepat setelah menekan **Kirim**; pesannya tidak
+pernah "hilang sebagian" tanpa penjelasan.
+
 ### Impor dari Discohook
 
 Panel **Impor dari Discohook** (dilipat, tepat di atas panel JSON) mengambil
@@ -208,6 +274,10 @@ Komponen Discohook yang diterjemahkan:
 | Media Gallery | blok **Gambar** (alt text & spoiler ikut) |
 | File (`attachment://`) | dilaporkan — lampiran Discohook tidak bisa dibawa lewat tautan |
 | Action Row + tombol **link** | blok **Tombol**, 5 per baris |
+| Dua Action Row tombol berdampingan | blok **Baris baru** disisipkan di antaranya, jadi barisnya tetap terpisah |
+| String Select Menu | blok **Select menu** jenis *String* (placeholder, min/maks, pilihan, emoji) |
+| User / Role / User & Role / Channel Select | blok **Select menu** dengan jenis yang sama |
+| Dua Action Row pilihan berdampingan | tetap tidak digabung: tiap select memakai baris penuh |
 | Tombol/menu **interaktif** (customId) | dilaporkan — pakai tombol/menu **ambil role** dari dashboard |
 | Embed | **kartu teks** (Components V2 tidak bisa membawa embed) + peringatan |
 
@@ -429,6 +499,7 @@ menyamarkan dirinya sebagai server.
 | Webhook baru | dibuat sekali per channel, lalu dipakai ulang |
 | Webhook dihapus orang | bot mendeteksi dan membuat yang baru, tidak gagal terus |
 | Tombol & menu ambil role | **tidak bisa** dipakai di pesan webhook — ditolak dengan penjelasan |
+| Select menu (blok **Select menu**) | **tampil**, tetapi pilihannya tidak dijawab bot — Discord mengirim interaksi ke pemilik komponen, yaitu webhook itu sendiri. Dashboard memberi catatan setelah mengirim |
 
 **Kenapa tombol/menu role tidak bisa:** Discord mengirim interaksi komponen ke
 aplikasi *pengirim* komponen. Kalau pesan dikirim webhook, tidak ada aplikasi
@@ -450,6 +521,13 @@ tidak bisa dibuka lagi — bot akan membuat webhook baru otomatis.
   tidak bisa menyuntik HTML.
 - Menghapus pesan dari dashboard **tidak** menghapus pesan yang sudah terkirim di
   Discord, kecuali diminta lewat `DELETE /api/posts/:id?withMessage=1`.
+- Select menu dari blok **Select menu** memakai customId `post-ctx:<jenis>`.
+  Router interaksi mengenali prefix itu dan menjawab ephemeral ("menu ini hanya
+  tampilan"), sehingga memilih tidak pernah memunculkan "interaksi gagal" di
+  mata member. Prefix ini sengaja dipisah dari `post-menu:` milik dropdown role.
+- Respons `POST /api/posts/:id/send` ikut membawa `dropped` (komponen yang
+  dilewati penyusun payload) dan `droppedFiles` (berkas yang gagal diunduh),
+  kalau ada. Dashboard memakainya untuk memberi peringatan setelah kirim.
 
 ### Endpoint
 
