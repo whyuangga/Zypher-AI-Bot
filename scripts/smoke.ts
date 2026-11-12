@@ -7535,6 +7535,121 @@ await testAsync('pesan: riwayat versi & tautan berbagi', async () => {
   await repo.deleteCustomPost(GUILD, lain.id);
 });
 
+await testAsync('pesan: generator kode & payload JSON dari penyusun yang sama', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { generateCodegen, quoteStr } = await import('../src/features/post-codegen.js');
+  const { payloadUntukPesan } = await import('../src/features/custom-post-send.js');
+  const GUILD = '123456789012345678';
+
+  /* --- escaping: teks admin tidak boleh memutus kode yang dihasilkan --- */
+  assert.equal(quoteStr('a"b'), '"a\\"b"', 'kutip ganda di-escape');
+  assert.equal(quoteStr('baris\nbaru'), '"baris\\nbaru"', 'baris baru di-escape, bukan jadi kode rusak');
+  assert.equal(quoteStr('kembali\\ke'), '"kembali\\\\ke"', 'garis miring di-escape');
+
+  /* --- payload nyata dari database: builder -> JSON --- */
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Kode',
+    channelId: '999',
+    blocks: [
+      { kind: 'container', accent: '#5865f2' },
+      { kind: 'text', value: 'Halo "dunia"' },
+      { kind: 'divider' },
+      { kind: 'button', value: 'Buka', url: 'https://example.com' },
+      { kind: 'close' },
+    ],
+  });
+  await repo.replaceRoleButtons(GUILD, post.id, [
+    { label: 'Gamer', roleId: '900000000000000001', mode: 'toggle' },
+  ]);
+
+  const segar = await repo.getCustomPost(GUILD, post.id);
+  const payload = await payloadUntukPesan(GUILD, segar!);
+  assert.ok(payload, 'payload tersusun');
+  const komponen = payload!.components as Array<Record<string, unknown>>;
+  assert.equal(komponen.length, 1, 'satu container di tingkat atas');
+  assert.equal(komponen[0]!.type, 17, 'container = tipe 17');
+  // toJSON dipakai: hasilnya harus objek polos yang bisa ditempel ke REST API.
+  assert.equal(typeof (komponen[0] as { toJSON?: unknown }).toJSON, 'undefined', 'bukan objek builder');
+
+  const isi = komponen[0]!.components as Array<Record<string, unknown>>;
+  const teks = isi.find((satu) => satu.type === 10)!;
+  assert.equal(teks.content, 'Halo "dunia"', 'teks apa adanya');
+  const semuaTombol = isi
+    .filter((satu) => satu.type === 1)
+    .flatMap((satu) => satu.components as Array<Record<string, unknown>>);
+  // Tombol link admin & tombol role sama-sama ada; cari yang ber-customId bot.
+  const tombolRole = semuaTombol.find((satu) => String(satu.custom_id ?? '').startsWith('post-role:'))!;
+  assert.equal(tombolRole.style, 1, 'tombol role = Primary');
+  assert.match(String(tombolRole.custom_id), /^post-role:\d+$/, 'customId tombol role memakai prefix bot');
+
+  /* --- kode dari payload itu --- */
+  const djs = generateCodegen(komponen, 'djs14');
+  const kode = djs.code.join('\n');
+  assert.ok(djs.imports.join('\n').includes('MessageFlags'), 'flag Components V2 ikut diimpor');
+  assert.ok(kode.includes('new ContainerBuilder()'), 'container diterjemahkan');
+  assert.ok(kode.includes('ButtonStyle.Primary'), 'gaya tombol diterjemahkan');
+  assert.ok(kode.includes('\\"dunia\\"'), 'kutip di teks di-escape di kode');
+  assert.ok(kode.includes('flags: MessageFlags.IsComponentsV2'), 'flag dikirim, bukan hanya diimpor');
+  assert.equal(djs.dropped.length, 0, 'payload sah tidak ada yang dibuang');
+
+  const py = generateCodegen(komponen, 'dpy2');
+  const kodePy = py.code.join('\n');
+  assert.ok(kodePy.includes('ui.Container('), 'discord.py memakai ui.Container');
+  assert.ok(!kodePy.includes(',,'), 'tidak ada koma ganda');
+  assert.ok(kodePy.includes('discord.ui.Button('), 'tombol role diterjemahkan');
+
+  /*
+   * Section dengan thumbnail & blok File: dua kasus yang mudah tertukar karena
+   * nomor tipenya berdekatan (13 = Section, 15 = File).
+   */
+  const pelengkap = [
+    {
+      type: 13,
+      components: [{ type: 10, content: 'Judul' }],
+      accessory: { type: 11, media: { url: 'https://img.test/kecil.png' } },
+    },
+    { type: 15, file: { url: 'https://berkas.test/a.zip' }, spoiler: true },
+  ];
+  const djsLengkap = generateCodegen(pelengkap, 'djs14');
+  const kodeLengkap = djsLengkap.code.join('\n');
+  assert.equal(djsLengkap.dropped.length, 0, 'section & file dikenali, tidak dibuang');
+  assert.ok(kodeLengkap.includes('setThumbnailAccessory'), 'thumbnail pada section diterjemahkan');
+  assert.ok(kodeLengkap.includes('new FileBuilder()'), 'blok file diterjemahkan');
+  assert.ok(kodeLengkap.includes('.setSpoiler(true)'), 'spoiler berkas ikut');
+
+  const pyLengkap = generateCodegen(pelengkap, 'dpy2');
+  const kodePyLengkap = pyLengkap.code.join('\n');
+  assert.equal(pyLengkap.dropped.length, 0, 'discord.py mengenali section & file');
+  assert.ok(kodePyLengkap.includes('ui.Thumbnail('), 'thumbnail discord.py diterjemahkan');
+  assert.ok(kodePyLengkap.includes('ui.File('), 'berkas discord.py diterjemahkan');
+
+  /* --- komponen tak dikenal dilaporkan, bukan hilang diam-diam --- */
+  const asing = generateCodegen([{ type: 99 }], 'djs14');
+  assert.equal(asing.dropped.length, 1, 'komponen asing dilaporkan');
+  const kodeAsing = asing.code.join('\n');
+  assert.ok(kodeAsing.includes('belum didukung'), 'alasan tampil di kode sebagai komentar');
+  /*
+   * Komentar harus gaya JavaScript dan berdiri sendiri: `.addComponents(# …)`
+   * atau `# … ,` bukan kode yang bisa dijalankan.
+   */
+  assert.ok(kodeAsing.includes('// komponen tipe 99'), 'komentar memakai gaya JavaScript');
+  assert.ok(!kodeAsing.includes('#'), 'tidak ada komentar gaya Python di kode JS');
+  assert.ok(!/,\s*$/m.test(kodeAsing.split('//')[0] ?? ''), 'komentar tidak diberi koma');
+
+  // Discord.py: komentar tetap `#`, dan juga tanpa koma.
+  const asingPy = generateCodegen([{ type: 99 }], 'dpy2').code.join('\n');
+  assert.ok(asingPy.includes('# komponen tipe 99'), 'discord.py memakai komentar #');
+  assert.ok(!asingPy.includes('# komponen tipe 99 belum didukung generator kode — lihat JSON pesannya,'), 'komentar py tanpa koma');
+
+  // Pesan tanpa komponen: penjelasan, bukan kode setengah jadi.
+  const kosong = await repo.createCustomPost(GUILD, { name: 'Kosong', channelId: '999', blocks: [] });
+  const kosongPayload = await payloadUntukPesan(GUILD, (await repo.getCustomPost(GUILD, kosong.id))!);
+  assert.equal(kosongPayload, null, 'pesan tanpa komponen menghasilkan null, bukan payload kosong');
+
+  await repo.deleteCustomPost(GUILD, post.id);
+  await repo.deleteCustomPost(GUILD, kosong.id);
+});
+
 await testAsync('multi-pesan: rujukan, urutan kirim, & dokumen tersimpan', async () => {
   const series = await import('../src/features/post-series.js');
 

@@ -273,8 +273,30 @@ function mountPage(html: string, label: string): PageContext {
        * halaman MEMAKAI hasil simpan (id + isi yang sudah disaring server).
        * Halaman lain cukup `{ ok: true }`.
        */
-      const jawaban =
-        String(path) === '/api/documents' && body && typeof body === 'object'
+      const jawaban: Record<string, unknown> =
+        /*
+         * Endpoint payload JSON: balasannya dipakai halaman apa adanya
+         * (`components`, `codegen`, `dropped`), jadi tiruannya harus memuat
+         * ketiganya — dengan begitu tes bisa memeriksa apa yang DITAMPILKAN,
+         * bukan sekadar URL yang dipanggil.
+         */
+        String(path).includes('/json?')
+          ? {
+              ok: true,
+              flags: 32768,
+              allowedMentions: null,
+              threadName: null,
+              components: [{ type: 17, components: [{ type: 10, content: 'Halo' }] }],
+              dropped: [],
+              library: 'dpy2',
+              codegen: {
+                imports: 'import discord\nfrom discord import ui',
+                code: 'view = ui.Container([\n    ui.TextDisplay("Halo"),\n])',
+                documentation: 'https://discordpy.readthedocs.io/en/stable/api.html',
+                dropped: [],
+              },
+            }
+          : String(path) === '/api/documents' && body && typeof body === 'object'
           ? { ok: true, document: { id: 7, name: (body as { name?: string }).name ?? '', series: (body as { series?: boolean }).series === true, messages: (body as { messages?: unknown[] }).messages ?? [] } }
           : { ok: true };
       return Promise.resolve({ ok: true, status: 200, json: async () => jawaban, text: async () => '' });
@@ -1650,6 +1672,60 @@ await check('pesan: izin ping & nama thread ikut dikirim, bawaan tanpa ping', as
   assert.equal((muatan.allowedMentions?.parse ?? []).join(','), 'roles', 'izin ping ikut dikirim');
   assert.equal(muatan.threadName, 'Diskusi umum', 'nama thread ikut dikirim');
   assert.equal(page.errors.length, 0, `editor ping/thread error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: panel payload JSON meminta kode sesuai library yang dipilih', async () => {
+  const html = mounted.find((page) => page.name === '/pesan?isi')?.html ?? '';
+  const page = mountPage(html, 'uji-codegen');
+
+  /*
+   * Tanpa pesan tersimpan, panel harus menjelaskan kenapa kosong — bukan
+   * memanggil endpoint dengan id `null` yang menghasilkan 404 tanpa pesan.
+   */
+  page.fetches.length = 0;
+  const belumSimpan = (await page.evaluate(`
+    (function () {
+      editingId = null;
+      return muatPayloadJson().then(function () {
+        return { status: document.getElementById('codegenStatus').textContent };
+      });
+    })()
+  `)) as { status: string };
+
+  assert.ok(belumSimpan.status.includes('Simpan pesan dulu'), 'menyuruh menyimpan dulu');
+  assert.equal(page.fetches.length, 0, 'tidak ada permintaan saat pesan belum tersimpan');
+
+  /*
+   * Permintaan harus membawa id pesan & library yang dipilih: server memilih
+   * penerjemah dari parameter itu, jadi salah parameter = kode bahasa lain.
+   */
+  const dipanggil = (await page.evaluate(`
+    (function () {
+      editingId = 42;
+      document.getElementById('codegenLib').value = 'dpy2';
+      return muatPayloadJson().then(function () {
+        return {
+          kode: document.getElementById('codegenOut').value,
+          json: document.getElementById('payloadJson').value,
+          docs: document.getElementById('codegenDocs').textContent,
+          status: document.getElementById('codegenStatus').textContent,
+        };
+      });
+    })()
+  `)) as { kode: string; json: string; docs: string; status: string };
+
+  const permintaan = page.fetches.map((call) => call.path).join(', ');
+  assert.ok(permintaan.includes('/api/posts/42/json'), 'memakai id pesan yang sedang disunting');
+  assert.ok(permintaan.includes('library=dpy2'), 'library pilihan ikut dikirim');
+  assert.ok(dipanggil.json.includes('"components"'), 'payload JSON ditampilkan');
+  assert.ok(dipanggil.json.includes('"flags"'), 'flag pesan ikut ditampilkan');
+  assert.ok(dipanggil.kode.includes('ui.Container'), 'kode discord.py tampil');
+  assert.ok(dipanggil.kode.includes('import discord'), 'baris import ikut tampil');
+  // Import dan kode dipisah baris kosong supaya hasil salin bisa langsung tempel.
+  assert.ok(dipanggil.kode.includes('import discord\nfrom discord import ui\n\nview'), 'import & kode dipisah baris kosong');
+  assert.ok(dipanggil.docs.includes('discordpy'), 'tautan dokumentasi sesuai library');
+  assert.equal(dipanggil.status, '', 'tidak ada peringatan saat semua bagian ikut');
+  assert.equal(page.errors.length, 0, `panel kode error: ${page.errors.join('|')}`);
 });
 
 await check('pesan: tab riwayat memuat versi & tautan berbagi bisa dibuat', async () => {

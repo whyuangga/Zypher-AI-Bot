@@ -220,6 +220,32 @@ export function pesanPage(options: PesanPageOptions): string {
         <textarea id="jsonText" rows="8" spellcheck="false" placeholder="Klik Ekspor untuk mengisi, atau tempel JSON di sini lalu klik Impor."></textarea>
       </div>
     </details>
+
+    <details class="json-panel">
+      <summary>${icon('cpu', 15)} JSON payload &amp; generator kode</summary>
+      <div class="json-isi">
+        <p class="hint" style="margin:0">
+          Isinya payload yang <b>benar-benar dikirim</b> ke Discord (hasil penyusun yang sama dengan tombol Kirim), bukan terjemahan dari editor.
+          Generator kode membaca payload itu juga, jadi kode yang dihasilkan tidak bisa menyimpang dari pesan yang tampil.
+        </p>
+        <div class="json-aksi">
+          <button class="btn btn-ghost btn-sm" type="button" onclick="muatPayloadJson()">${icon('download', 15)} Muat payload</button>
+          <span class="select-shell" style="max-width:190px">
+            <select id="codegenLib" onchange="muatPayloadJson()">
+              <option value="djs14">discord.js v14</option>
+              <option value="dpy2">discord.py v2</option>
+            </select>
+          </span>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="salinKode()">${icon('copy', 15)} Salin kode</button>
+          <span class="hint" id="codegenStatus" style="margin:0"></span>
+        </div>
+        <label class="field" for="payloadJson">Payload komponen (JSON Discord)</label>
+        <textarea id="payloadJson" rows="10" spellcheck="false" readonly placeholder="Klik Muat payload untuk mengisi dari pesan yang tersimpan."></textarea>
+        <label class="field" for="codegenOut">Kode</label>
+        <textarea id="codegenOut" rows="12" spellcheck="false" readonly placeholder="Kode muncul di sini."></textarea>
+        <p class="hint" id="codegenDocs" style="margin:0"></p>
+      </div>
+    </details>
   `;
 
   const editorCard = card({
@@ -2349,6 +2375,75 @@ function loadExisting() {
   renderBlocks();
 }
 
+
+/* ---------------- Payload JSON & generator kode ---------------- */
+
+/**
+ * Muat payload komponen asli + kode hasil generate untuk pesan ini.
+ *
+ * Keduanya diambil dari SATU permintaan: server menyusun payload lewat jalur
+ * pengiriman yang sama, lalu menerjemahkannya. Meminta dua kali bisa membuat
+ * JSON dan kode berasal dari versi pesan yang berbeda.
+ */
+async function muatPayloadJson() {
+  var status = document.getElementById('codegenStatus');
+  if (!editingId) {
+    if (status) status.textContent = 'Simpan pesan dulu — payload dihitung dari pesan yang tersimpan.';
+    return;
+  }
+  var lib = (document.getElementById('codegenLib') || {}).value || 'djs14';
+  if (status) status.textContent = 'Menyusun…';
+  try {
+    var hasil = await api('/api/posts/' + editingId + '/json?library=' + encodeURIComponent(lib));
+    var json = document.getElementById('payloadJson');
+    var kode = document.getElementById('codegenOut');
+    if (json) {
+      json.value = hasil.components
+        ? JSON.stringify(
+            {
+              flags: hasil.flags,
+              allowed_mentions: hasil.allowedMentions,
+              thread_name: hasil.threadName || undefined,
+              components: hasil.components
+            },
+            null,
+            2
+          )
+        : 'Pesan ini belum punya komponen yang bisa dikirim.';
+    }
+    if (kode) {
+      kode.value = [String((hasil.codegen && hasil.codegen.imports) || '').trim(), String((hasil.codegen && hasil.codegen.code) || '').trim()]
+        .filter(Boolean)
+        .join(String.fromCharCode(10) + String.fromCharCode(10));
+    }
+    var docs = document.getElementById('codegenDocs');
+    if (docs) {
+      var tautan = (hasil.codegen && hasil.codegen.documentation) || '';
+      docs.textContent = tautan ? 'Dokumentasi: ' + tautan : '';
+    }
+    if (status) {
+      var lewat = (hasil.dropped || []).concat((hasil.codegen && hasil.codegen.dropped) || []);
+      status.textContent = lewat.length ? 'Sebagian bagian tidak ikut: ' + lewat[0] : '';
+    }
+  } catch (error) {
+    if (status) status.textContent = 'Gagal: ' + error.message;
+  }
+}
+
+/** Salin kode hasil generate (atau payload JSON kalau kodenya kosong). */
+async function salinKode() {
+  var kode = document.getElementById('codegenOut');
+  var json = document.getElementById('payloadJson');
+  var teks = (kode && kode.value) || (json && json.value) || '';
+  if (!teks.trim()) return toast('Muat payload dulu', true);
+  try {
+    await navigator.clipboard.writeText(teks);
+    toast('✅ Disalin');
+  } catch (error) {
+    if (kode) kode.select();
+    toast('Salin manual: tekan Ctrl+C', true);
+  }
+}
 
 /* ---------------- Riwayat versi & tautan berbagi ---------------- */
 

@@ -95,6 +95,8 @@ import {
 } from '../features/discohook-import.js';
 import { listGuildRoles } from '../features/role-buttons.js';
 import { sharePage } from './ui/share.js';
+import { payloadUntukPesan } from '../features/custom-post-send.js';
+import { CODEGEN_LIBRARIES, generateCodegen } from '../features/post-codegen.js';
 import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
 import {
   previewAgentReply,
@@ -2027,6 +2029,50 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
    * updateCustomPost), bukan lewat tombol "simpan versi": admin tidak akan
    * ingat menekannya, dan riwayat yang bolong lebih buruk daripada tidak ada.
    */
+  /*
+   * ---------- JSON payload & generator kode ----------
+   *
+   *   GET /api/posts/:id/json?library=djs14|dpy2
+   *
+   * Dua hal sekaligus, dari SATU penyusun: `components` adalah payload yang
+   * benar-benar dikirim ke Discord (hasil buildPostPayload), dan `code`
+   * diterjemahkan dari payload itu — bukan dari state editor. Kalau
+   * diterjemahkan dari editor, kode yang dihasilkan bisa berbeda dari yang
+   * sungguh terkirim, dan justru saat itulah generator kode menyesatkan.
+   */
+  const jsonMatch = /^\/api\/posts\/(\d+)\/json$/.exec(path);
+  if (jsonMatch && method === 'GET') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const post = await getCustomPost(guildId, Number(jsonMatch[1]));
+    if (!post) {
+      sendJson(response, 404, { error: 'Pesan tidak ditemukan.' });
+      return;
+    }
+    const library = new URL(request.url ?? '/', 'http://local').searchParams.get('library');
+    const pilihan = CODEGEN_LIBRARIES.includes(library as (typeof CODEGEN_LIBRARIES)[number])
+      ? (library as (typeof CODEGEN_LIBRARIES)[number])
+      : 'djs14';
+    const built = await payloadUntukPesan(guildId, post);
+    sendJson(response, 200, {
+      post: { id: post.id, name: post.name, channelId: post.channelId },
+      blocks: post.blocks,
+      allowedMentions: post.allowedMentions,
+      threadName: post.threadName,
+      flags: post.flags,
+      // `null` = pesan kosong; dashboard menampilkan penjelasannya.
+      components: built?.components ?? null,
+      dropped: built?.dropped ?? [],
+      codegen: built?.components
+        ? generateCodegen(built.components, pilihan)
+        : { imports: [], code: ['// Pesan ini belum punya komponen — susun blok dulu di tab Susun.'], documentation: '', dropped: [] },
+      library: pilihan,
+    });
+    return;
+  }
+
   const revMatch = /^\/api\/posts\/(\d+)(\/revisions|\/share)$/.exec(path);
   if (revMatch) {
     if (!guildId) {

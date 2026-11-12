@@ -31,7 +31,7 @@ Halaman dibagi empat tab, jadi yang tampil hanya bagian yang sedang dikerjakan:
 | **Susun pesan** | editor komponen + pratinjau kecil yang **menempel** di kanan |
 | **Pratinjau** | pratinjau besar selebar halaman |
 | **Ambil role** | tombol & menu dropdown role |
-| **Impor** | tarik dari Discohook, ekspor/impor JSON |
+| **Impor** | tarik dari Discohook, ekspor/impor JSON, payload JSON & generator kode |
 
 Tombol **Simpan** dan **Kirim ke Discord** ada di bilah bawah yang selalu
 terlihat, dari tab mana pun. Berpindah tab **tidak menghilangkan isian** yang
@@ -629,6 +629,74 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Impor backup | ✅ JSON/URL Discohook di tab **Impor**; ekspor JSON juga ada |
 | Jadwal kirim (sekali / berulang / cron) | ✅ sekali, tiap N jam (min. 2 jam), dan **cron kalender** lima ruas (tiap hari, tiap Senin, tiap tanggal 1, …) memakai zona waktu server. Pola lebih rapat dari 2 jam ditolak dengan alasan |
 | Trigger event (member masuk/keluar) | ❌ (bot punya sambutan sendiri, bukan flow) |
+| Generator kode (payload → kode bot) | ✅ tab **Impor** → panel "JSON payload & generator kode": keluaran `discord.js` v14 & `discord.py` v2, diterjemahkan dari payload yang benar-benar dikirim |
+| Melihat payload JSON mentah | ✅ panel yang sama menampilkan `components` persis seperti yang diterima Discord, siap ditempel ke REST API |
+
+### Batch 6: generator kode (`discord.js` v14 & `discord.py` v2)
+
+Discohook bisa mengubah pesan yang sedang disusun menjadi kode bot, supaya
+tampilan yang sudah pas bisa dipakai di kode tanpa menyusun ulang. Di sini sama,
+dengan satu perbedaan yang menentukan benar-salahnya hasil:
+
+- **Diterjemahkan dari payload, bukan dari editor.** Alurnya
+  `blok → buildPostPayload() → toJSON() → generateCodegen()`. Generator tidak
+  pernah membaca state editor, jadi kode yang dihasilkan selalu menggambarkan
+  pesan yang benar-benar terkirim — termasuk tombol role yang tersimpan di
+  database dan komponen yang dilewati penyusun payload.
+- **Yang dilewati dilaporkan, bukan dihilangkan.** Komponen yang belum dikenal
+  generator muncul sebagai komentar di dalam kode
+  (`# komponen tipe 99 belum didukung generator kode …`) dan id-nya masuk
+  `dropped`. Tanpa itu, kode terlihat lengkap padahal satu bagian pesannya
+  hilang.
+
+Bentuk keluaran sama seperti Discohook: `imports`, `code`, `documentation`.
+
+```ts
+import {
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, ContainerBuilder,
+  MessageFlags, SectionBuilder, SeparatorBuilder, SeparatorSpacingSize,
+  TextDisplayBuilder,
+} from 'discord.js';
+
+const view = new ContainerBuilder()
+  .setAccentColor(5793266)
+  .addComponents(
+    new TextDisplayBuilder().setContent("Halo \"dunia\""),
+    new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Large).setDivider(true),
+  );
+
+await channel.send({
+  components: [view],
+  // Components V2: pesan komponen wajib membawa flag ini
+  flags: MessageFlags.IsComponentsV2,
+});
+```
+
+Hal-hal kecil yang dijaga generator:
+
+| Masalah | Perlakuan |
+|---|---|
+| Teks memuat `"`, `\`, baris baru, tab | Di-escape (`\"`, `\\`, `\n`, `\t`) — satu karakter saja lolos membuat kode hasil salin tidak bisa dijalankan |
+| Import hanya yang terpakai | Dikumpulkan lewat satu himpunan saat menelusuri komponen; `MessageFlags` selalu ikut karena flag-nya ikut dikirim |
+| Array kosong berakhir `,]` | Koma hanya ditempel di baris terakhir tiap blok, dan komentar tidak pernah diberi koma |
+| Komentar di dalam kode `discord.js` | Ditulis `// …` dan berdiri di barisnya sendiri — `.addComponents(# …)` bukan JavaScript yang sah |
+| `discord.py` memakai `ui.` | `ui.Container([...])`, `ui.TextDisplay(...)`, `discord.ui.Button/Select`, `discord.MediaGalleryItem` |
+| Gaya tombol | `ButtonStyle.Primary/Secondary/Success/Danger/Link` (djs), angka `discord.ButtonStyle.*` (dpy) |
+| Pesan tanpa komponen | Penjelasan singkat, bukan kode setengah jadi |
+
+Di dashboard panel ini ada di tab **Impor** → **JSON payload & generator kode**.
+Tombol **Muat payload** mengambil `/api/posts/:id/json?library=djs14|dpy2`, lalu
+menampilkan dua kotak: payload JSON (untuk diperiksa/ditempel ke REST API) dan
+kode. Pesannya harus **sudah tersimpan** — payload dihitung dari baris database,
+bukan dari isian yang belum disimpan, karena itulah yang dikirim bot.
+
+Endpoint-nya satu dan tidak mengirim apa pun ke Discord:
+
+```http
+GET /api/posts/12/json?library=dpy2
+→ { "flags": 32768, "components": [ … ], "dropped": [],
+    "codegen": { "imports": "…", "code": "…", "documentation": "…" } }
+```
 
 ### Batch 4d: jadwal cron (per hari, per hari-pekan, per tanggal)
 

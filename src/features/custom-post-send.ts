@@ -22,6 +22,11 @@ import {
   SeparatorBuilder,
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
+  UserSelectMenuBuilder,
+  RoleSelectMenuBuilder,
+  MentionableSelectMenuBuilder,
+  ChannelSelectMenuBuilder,
+  FileBuilder,
   TextDisplayBuilder,
   ThumbnailBuilder,
   WebhookClient,
@@ -32,8 +37,101 @@ import {
 import { accentToNumber, buildPostPayload, type BuiltPost, type PostBlock } from './custom-post.js';
 import type { SeriesMessage } from './post-series.js';
 import { roleButtonId, roleMenuId } from './role-buttons.js';
-import { deleteChannelWebhook, getChannelWebhook, saveChannelWebhook } from '../db/repo.js';
+import {
+  deleteChannelWebhook,
+  getChannelWebhook,
+  listRoleButtons,
+  listRoleMenus,
+  saveChannelWebhook,
+  type CustomPost,
+} from '../db/repo.js';
 import { errorMessage, logger } from '../lib/logger.js';
+
+/**
+ * Susun payload Discord untuk satu pesan, TANPA mengirim.
+ *
+ * Dipakai endpoint JSON/generator kode. Sengaja memakai penyusun yang sama
+ * dengan pengiriman: kalau JSON yang ditampilkan berasal dari jalur lain, ia
+ * akan menyimpang dari yang benar-benar diterima Discord — dan JSON itu justru
+ * dipakai developer untuk memeriksa kenapa pesannya gagal.
+ */
+export async function payloadUntukPesan(
+  guildId: string,
+  post: CustomPost,
+): Promise<{
+  components: unknown[];
+  dropped: string[];
+} | null> {
+  /*
+   * Tombol & menu role dibaca dari database di sini (bukan diterima sebagai
+   * argumen): endpoint JSON hanya punya `post`, dan daftar role yang dipakai
+   * penyusun payload harus yang TERSIMPAN — kalau dibaca dari state editor,
+   * JSON yang ditampilkan bisa memuat tombol yang belum disimpan.
+   */
+  const tombol = await listRoleButtons(guildId, post.id).catch(() => []);
+  const menu = await listRoleMenus(guildId, post.id).catch(() => []);
+
+  const built = buildPostPayload(post.blocks, {
+    ContainerBuilder,
+    TextDisplayBuilder,
+    SectionBuilder,
+    ThumbnailBuilder,
+    SeparatorBuilder,
+    MediaGalleryBuilder,
+    MediaGalleryItemBuilder,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    StringSelectMenuBuilder,
+    StringSelectMenuOptionBuilder,
+    UserSelectMenuBuilder,
+    RoleSelectMenuBuilder,
+    MentionableSelectMenuBuilder,
+    ChannelSelectMenuBuilder,
+    ...(FileBuilder ? { FileBuilder } : {}),
+    accent: accentToNumber(post.accent),
+    accentToNumber,
+    accentHex: post.accent ?? undefined,
+    roleButtons: tombol.map((satu) => ({
+      id: satu.id,
+      label: satu.label,
+      emoji: satu.emoji ?? undefined,
+      style: satu.style ?? undefined,
+    })),
+    roleButtonId,
+    roleMenus: menu.map((satu) => ({
+      id: satu.id,
+      placeholder: satu.placeholder,
+      minValues: satu.minValues,
+      maxValues: satu.maxValues,
+      options: satu.options.map((opsi) => ({
+        label: opsi.label,
+        value: opsi.roleId,
+        emoji: opsi.emoji ?? undefined,
+        ...(opsi.description ? { description: opsi.description } : {}),
+      })),
+    })),
+    roleMenuId,
+    contextPostId: post.id,
+    allowedMentions: post.allowedMentions,
+    ...(post.threadName ? { threadName: post.threadName } : {}),
+  });
+  if (!built) return null;
+
+  /*
+   * `toJSON()` dipakai, bukan objek builder: builder membawa properti internal
+   * yang tidak ada di payload Discord, dan JSON di dashboard harus bisa
+   * ditempel langsung ke REST API.
+   */
+  return {
+    components: built.components.map((satu) =>
+      typeof (satu as { toJSON?: () => unknown }).toJSON === 'function'
+        ? (satu as { toJSON: () => unknown }).toJSON()
+        : satu,
+    ),
+    dropped: built.dropped,
+  };
+}
 
 /** Error yang pesannya aman ditampilkan ke admin. */
 export class PostSendError extends Error {}
