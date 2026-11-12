@@ -159,6 +159,14 @@ export function parseRoleButtonId(customId: string): number | null {
 export type RoleButtonMode = 'toggle' | 'give';
 
 export interface RoleButtonInput {
+  /**
+   * ID baris tersimpan — dipakai ulang bila admin menyimpan ulang tombol yang
+   * sama.
+   *
+   * Alasannya aksi komponen: aksi menempel pada `button:<id>`, jadi ID yang
+   * berubah setiap simpan akan membuang semua aksi yang sudah disusun admin.
+   */
+  id?: number;
   label: string;
   roleId: string;
   mode: RoleButtonMode;
@@ -211,7 +219,9 @@ export function sanitizeRoleButtons(input: unknown): {
       continue;
     }
     seen.add(roleId);
+    const id = Number(item.id);
     buttons.push({
+      ...(Number.isSafeInteger(id) && id > 0 ? { id } : {}),
       label,
       roleId,
       mode,
@@ -229,6 +239,8 @@ export function sanitizeRoleButtons(input: unknown): {
 
 /** Satu pilihan di dalam dropdown role. */
 export interface RoleOptionInput {
+  /** ID baris tersimpan — alasan sama dengan `RoleButtonInput.id`. */
+  id?: number;
   label: string;
   roleId: string;
   /** Emoji pilihan (unicode atau <:nama:id>). */
@@ -289,7 +301,9 @@ export function sanitizeRoleMenu(input: unknown): RoleMenuInput | null {
       typeof option.description === 'string'
         ? option.description.trim().slice(0, MENU_LIMITS.description)
         : '';
+    const optionId = Number(option.id);
     options.push({
+      ...(Number.isSafeInteger(optionId) && optionId > 0 ? { id: optionId } : {}),
       label,
       roleId,
       ...(emoji ? { emoji } : {}),

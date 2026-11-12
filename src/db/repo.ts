@@ -11,6 +11,11 @@ import {
   type RoleMenuInput,
 } from '../features/role-buttons.js';
 import {
+  ACTION_LIMITS,
+  sanitizeActions,
+  type PostAction,
+} from '../features/post-actions.js';
+import {
   modeFromLegacySettings,
   normalizeDisplayMode,
   type DisplayMode,
@@ -1558,6 +1563,12 @@ export async function setCustomPostMessage(
 }
 
 export async function deleteCustomPost(guildId: string, id: number): Promise<void> {
+  /*
+   * Aksi ikut dibersihkan. Tanpa ini, barisnya tertinggal menunjuk tombol yang
+   * sudah tidak ada, dan `copyPostActions`/daftar aksi bisa memuat data hantu
+   * kalau server memakai ulang ID pesan.
+   */
+  await run('DELETE FROM post_actions WHERE guild_id = ? AND post_id = ?', [guildId, id]);
   await run('DELETE FROM custom_posts WHERE guild_id = ? AND id = ?', [guildId, id]);
 }
 
@@ -1621,9 +1632,10 @@ export async function listRoleButtons(guildId: string, postId: number): Promise<
  * hal yang admin atur, dan mencocokkan "baris lama mana yang jadi baris baru"
  * hanya menambah kerumitan tanpa manfaat. Jumlahnya paling banyak 25.
  *
- * `id` sengaja dibuat ulang. customId tombol lama jadi tidak berlaku lagi —
- * itu yang diinginkan: tombol yang sudah dihapus dari dashboard tidak boleh
- * masih bisa memberi role kalau ada orang yang masih memegang pesan lamanya.
+ * SATU pengecualian: `id` dikirim balik oleh dashboard (dari tombol tersimpan)
+ * dipakai ulang, karena aksi komponen menempel pada `button:<id>`. Tombol tanpa
+ * `id` mendapat ID baru — tombol yang dihapus dari dashboard memang tidak boleh
+ * bisa memberi role lagi walaupun pesan lamanya masih dipegang orang.
  */
 export async function replaceRoleButtons(
   guildId: string,
@@ -1631,24 +1643,31 @@ export async function replaceRoleButtons(
   input: unknown,
 ): Promise<{ buttons: RoleButton[]; dropped: string[] }> {
   const { buttons, dropped } = sanitizeRoleButtons(input);
+  const lama = new Set((await listRoleButtons(guildId, postId)).map((button) => button.id));
   await run('DELETE FROM post_role_buttons WHERE guild_id = ? AND post_id = ?', [guildId, postId]);
 
   let position = 0;
   for (const button of buttons) {
-    await insert(
-      `INSERT INTO post_role_buttons (guild_id, post_id, role_id, label, mode, emoji, style, position)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        guildId,
-        postId,
-        button.roleId,
-        button.label,
-        button.mode,
-        button.emoji ?? null,
-        button.style ?? 'primary',
-        position,
-      ],
-    );
+    const pertahankan = button.id !== undefined && lama.has(button.id);
+    const kolom = 'guild_id, post_id, role_id, label, mode, emoji, style, position';
+    const nilai = [
+      guildId,
+      postId,
+      button.roleId,
+      button.label,
+      button.mode,
+      button.emoji ?? null,
+      button.style ?? 'primary',
+      position,
+    ];
+    if (pertahankan) {
+      await run(`INSERT INTO post_role_buttons (id, ${kolom}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+        button.id!,
+        ...nilai,
+      ]);
+    } else {
+      await insert(`INSERT INTO post_role_buttons (${kolom}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, nilai);
+    }
     position += 1;
   }
 
@@ -1781,6 +1800,22 @@ export async function replaceRoleMenus(
     menus.length = 5;
   }
 
+  /*
+   * ID opsi lama dikumpulkan SEBELUM dihapus: `RoleOptionInput.id` hanya
+   * dipakai ulang kalau barisnya memang milik pesan ini, supaya klien tidak
+   * bisa "mencuri" ID milik pesan lain lewat input.
+   */
+  const opsiLama = new Set(
+    (
+      await all<{ id: number | string }>(
+        `SELECT o.id FROM post_role_options o
+           JOIN post_role_menus m ON m.id = o.menu_id
+          WHERE m.guild_id = ? AND m.post_id = ?`,
+        [guildId, postId],
+      )
+    ).map((row) => Number(row.id)),
+  );
+
   await run('DELETE FROM post_role_options WHERE menu_id IN (SELECT id FROM post_role_menus WHERE guild_id = ? AND post_id = ?)', [
     guildId,
     postId,
@@ -1804,11 +1839,24 @@ export async function replaceRoleMenus(
     );
     let optionPosition = 0;
     for (const option of menu.options) {
-      await insert(
-        `INSERT INTO post_role_options (menu_id, role_id, label, emoji, description, position)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [menuId, option.roleId, option.label, option.emoji ?? null, option.description ?? null, optionPosition],
-      );
+      const pertahankan = option.id !== undefined && opsiLama.has(option.id);
+      const kolom = 'menu_id, role_id, label, emoji, description, position';
+      const nilai = [
+        menuId,
+        option.roleId,
+        option.label,
+        option.emoji ?? null,
+        option.description ?? null,
+        optionPosition,
+      ];
+      if (pertahankan) {
+        await run(`INSERT INTO post_role_options (id, ${kolom}) VALUES (?, ?, ?, ?, ?, ?, ?)`, [
+          option.id!,
+          ...nilai,
+        ]);
+      } else {
+        await insert(`INSERT INTO post_role_options (${kolom}) VALUES (?, ?, ?, ?, ?, ?)`, nilai);
+      }
       optionPosition += 1;
     }
     position += 1;
@@ -1829,6 +1877,177 @@ export async function findRoleMenu(guildId: string, menuId: number): Promise<Rol
 }
 
 export type { RoleButtonInput, RoleMenuInput };
+
+/* ------------------------------------------------------------------ */
+/*  Aksi komponen (flow ringkas)                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Kunci komponen pemilik aksi.
+ *
+ * Tombol dan opsi menu disimpan di tabel berbeda, jadi butuh penanda jenis.
+ * Formatnya sederhana dan stabil: `button:<id>` / `option:<id>`.
+ */
+export type ActionTarget = string;
+
+interface ActionRow {
+  id: number | string;
+  target: string;
+  payload: string;
+}
+
+/** Buang aksi yang targetnya sudah tidak ada (tombol/menu dihapus). */
+function rakitAksi(rows: ActionRow[]): Map<ActionTarget, PostAction[]> {
+  const byTarget = new Map<ActionTarget, PostAction[]>();
+  for (const row of rows) {
+    let isi: unknown;
+    try {
+      isi = JSON.parse(row.payload);
+    } catch {
+      // Payload rusak bukan alasan menggagalkan seluruh halaman: aksi itu
+      // dilewati saja, sama seperti blok yang tidak dikenal.
+      continue;
+    }
+    const { actions } = sanitizeActions([isi]);
+    const action = actions[0];
+    if (!action) continue;
+    const list = byTarget.get(row.target) ?? [];
+    list.push(action);
+    byTarget.set(row.target, list);
+  }
+  return byTarget;
+}
+
+/**
+ * Semua aksi milik satu pesan, dikelompokkan per komponen.
+ *
+ * Satu query untuk semua aksi: halaman /pesan memuat SEMUA pesan, jadi pola
+ * "satu query per tombol" akan terasa saat daftar pesan panjang.
+ */
+export async function listPostActions(
+  guildId: string,
+  postId: number,
+): Promise<Record<ActionTarget, PostAction[]>> {
+  const rows = await all<ActionRow>(
+    'SELECT id, target, payload FROM post_actions WHERE guild_id = ? AND post_id = ? ORDER BY position ASC, id ASC',
+    [guildId, postId],
+  );
+  return Object.fromEntries(rakitAksi(rows));
+}
+
+/**
+ * Aksi untuk SATU komponen — dipakai bot saat tombol/opsi diklik.
+ *
+ * `postId` disertakan supaya bot tahu pesan PEMILIK aksi: aksi "kirim pesan"
+ * yang menunjuk pesan itu sendiri harus dicegah (kalau tidak, satu klik
+ * mengirim pesan yang sama terus-menerus).
+ *
+ * `null` = komponen ini belum punya aksi. Itu bukan kesalahan: tombol role
+ * lama memang belum punya aksi, dan perilakunya dipertahankan.
+ */
+export async function findActions(
+  guildId: string,
+  target: ActionTarget,
+  /** Batasi ke satu pesan — dipakai bila customId membawa ID pesan. */
+  postId?: number | null,
+): Promise<{ postId: number; actions: PostAction[] } | null> {
+  const rows = await all<ActionRow & { post_id: number | string }>(
+    postId
+      ? 'SELECT id, post_id, target, payload FROM post_actions WHERE guild_id = ? AND post_id = ? AND target = ? ORDER BY position ASC, id ASC'
+      : 'SELECT id, post_id, target, payload FROM post_actions WHERE guild_id = ? AND target = ? ORDER BY position ASC, id ASC',
+    postId ? [guildId, postId, target] : [guildId, target],
+  );
+  if (rows.length === 0) return null;
+  const actions = rakitAksi(rows).get(target) ?? [];
+  if (actions.length === 0) return null;
+  return { postId: Number(rows[0]!.post_id), actions };
+}
+
+/**
+ * Ganti SELURUH aksi satu pesan.
+ *
+ * Hapus-lalu-tulis, sama seperti tombol & menu: tombol/opsi dibuat ulang setiap
+ * simpan, jadi aksi lama pasti menunjuk ID yang sudah tidak ada. Menyisakannya
+ * hanya menumpuk sampah di database.
+ */
+export async function replacePostActions(
+  guildId: string,
+  postId: number,
+  input: unknown,
+): Promise<{ actions: Record<ActionTarget, PostAction[]>; dropped: string[] }> {
+  const dropped: string[] = [];
+  const source = input && typeof input === 'object' && !Array.isArray(input)
+    ? (input as Record<string, unknown>)
+    : {};
+
+  await run('DELETE FROM post_actions WHERE guild_id = ? AND post_id = ?', [guildId, postId]);
+
+  let total = 0;
+  for (const target of Object.keys(source)) {
+    /*
+     * Target harus mengikuti bentuk yang dikenal; selain itu diabaikan supaya
+     * data asing tidak bisa menyelipkan baris yatim.
+     *
+     * `select:<jenis>` dipakai blok Select di /pesan, yang tidak punya ID baris
+     * (customId-nya hanya membawa jenis menu). Konsekuensinya aksi untuk jenis
+     * yang sama dipakai bersama oleh semua select jenis itu di satu pesan —
+     * itu disengaja: menunya memang tidak bisa dibedakan dari customId.
+     */
+    if (!/^(button|option):\d+$/.test(target) && !/^select:[a-z]{2,20}$/.test(target)) continue;
+    const { actions, dropped: buang } = sanitizeActions(source[target]);
+    for (const alasan of buang) dropped.push(`${target}: ${alasan}`);
+    let position = 0;
+    for (const action of actions) {
+      if (total >= ACTION_LIMITS.perMessage) {
+        dropped.push(`aksi melebihi batas ${ACTION_LIMITS.perMessage} per pesan`);
+        return { actions: await listPostActions(guildId, postId), dropped };
+      }
+      await insert(
+        'INSERT INTO post_actions (guild_id, post_id, target, position, payload) VALUES (?, ?, ?, ?, ?)',
+        [guildId, postId, target, position, JSON.stringify(action)],
+      );
+      position += 1;
+      total += 1;
+    }
+  }
+
+  return { actions: await listPostActions(guildId, postId), dropped };
+}
+
+/**
+ * Salin aksi saat pesan DIDUPLIKASI (impor / tombol duplikat pesan).
+ *
+ * Peta `petaTarget` menerjemahkan target lama ke target baru; target yang
+ * tidak ada di peta dilewati, karena komponennya memang tidak ikut tersalin.
+ */
+export async function copyPostActions(
+  guildId: string,
+  fromPostId: number,
+  toPostId: number,
+  petaTarget: Record<string, string>,
+): Promise<void> {
+  const perTarget = await listPostActions(guildId, fromPostId);
+  let total = 0;
+  for (const [target, actions] of Object.entries(perTarget)) {
+    const baru = petaTarget[target];
+    if (!baru) continue;
+    let position = 0;
+    for (const action of actions) {
+      if (total >= ACTION_LIMITS.perMessage) return;
+      await insert(
+        'INSERT INTO post_actions (guild_id, post_id, target, position, payload) VALUES (?, ?, ?, ?, ?)',
+        [guildId, toPostId, baru, position, JSON.stringify(action)],
+      );
+      position += 1;
+      total += 1;
+    }
+  }
+}
+
+/** Hapus semua aksi satu pesan (dipanggil saat pesan dihapus). */
+export async function clearPostActions(guildId: string, postId: number): Promise<void> {
+  await run('DELETE FROM post_actions WHERE guild_id = ? AND post_id = ?', [guildId, postId]);
+}
 
 /* ------------------------------------------------------------------ */
 /*  Webhook per channel (pesan atas nama server)                       */

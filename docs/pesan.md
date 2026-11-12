@@ -473,8 +473,77 @@ ID baris tombol, jadi:
 - tombol yang dihapus admin langsung berhenti berlaku — customId lama tidak
   ditemukan di database.
 
-Konsekuensinya: **menyimpan ulang tombol role membatalkan customId lama.**
-Kalau isi tombol berubah, kirim ulang pesannya supaya member melihat tombol baru.
+Catatan: ID tombol **dipakai ulang** bila dashboard mengirimkannya kembali (itu
+yang dilakukan editor). Aksi komponen menempel pada ID itu, jadi menyimpan ulang
+tombol tidak membuang aksinya. Tombol yang benar-benar dihapus tetap berhenti
+berlaku — customId lamanya tidak ditemukan di database.
+
+### Aksi komponen: versi ringkas "flow" Discohook
+
+Setiap tombol role, setiap **pilihan** dropdown role, dan setiap blok **Select
+menu** punya kartu **Aksi**. Isinya deretan tindakan yang dijalankan bot saat
+komponen itu dipakai — padanan sederhana dari *flow* Discohook.
+
+| Aksi | Yang dilakukan |
+|---|---|
+| **Role — beri / lepas** | ubah role pengklik: pasang/lepas bergantian, hanya beri, atau hanya lepas |
+| **Balas pengklik** | kirim teks sendiri, bisa hanya terlihat oleh yang menekan (ephemeral) |
+| **Kirim pesan tersimpan** | kirim salah satu pesan di daftar (mis. pesan aturan), lalu opsional satu kalimat susulan |
+
+Yang perlu diketahui:
+
+- **Urutan dijalankan apa adanya.** Tombol naik/turun mengatur urutannya.
+- **Kalau aksi role gagal, sisa aksi dihentikan** dan member melihat alasannya
+  (izin *Manage Roles* belum ada, posisi role bot di bawah role target, role
+  sudah dihapus, dsb). Ini padanan aksi **Stop** di Discohook, dijalankan
+  otomatis — lebih jujur daripada mengirim balasan "berhasil" untuk perubahan
+  yang tidak terjadi.
+- **Satu balasan per interaksi.** Discord hanya menerima satu jawaban, jadi
+  balasan pertama yang dipakai; balasan kedua dilewati dan dicatat di log.
+  Karena itu aksi **kirim pesan** mengirim ke channel, bukan sebagai balasan.
+- **Maksimal 6 aksi per komponen** dan 40 aksi per pesan.
+- **Tanpa aksi, perilaku lama tetap jalan.** Tombol role yang belum diberi aksi
+  masih memberi/melepas role dengan balasan baku, jadi pesan yang sudah
+  terkirim tidak mendadak mati.
+
+#### Template di dalam teks
+
+Balasan dan kalimat susulan bisa memakai nilai dari saat tombol ditekan:
+
+| Token | Isi |
+|---|---|
+| `{member.name}` | nama tampilan pengklik |
+| `{member.mention}` | sebutan, mis. `@Wahyu` |
+| `{member.id}` | ID pengklik |
+| `{server.name}` | nama server |
+| `{role}` | nama role yang baru saja diubah |
+| `{effect}` | `ditambahkan` atau `dilepas` |
+
+Token yang tidak dikenal **dibiarkan apa adanya** (bukan dihapus), supaya salah
+tulis terlihat — bukan menghilang diam-diam seperti di template yang "pintar".
+
+Contoh balasan paling sering dipakai:
+
+```
+✅ Role {role} sudah {effect}, {member.mention}!
+```
+
+#### Batas yang perlu diketahui
+
+- Aksi menempel pada **ID komponen** yang baru ada setelah pesan disimpan
+  pertama kali. Tombol yang baru ditambahkan menampilkan "Simpan pesan dulu".
+- Aksi untuk blok **Select menu** memakai kunci `select:<jenis>` dan berlaku
+  untuk semua select berjenis sama **di pesan itu**. Setiap pilihan di dalamnya
+  belum bisa diberi aksi berbeda seperti di Discohook (di sana tiap opsi punya
+  flow sendiri); untuk aksi per pilihan, pakai **dropdown role**. Aksi per opsi
+  pada select string butuh ID opsi tersimpan — itu pekerjaan lanjutan.
+- Aksi **tidak bisa dipakai di pesan webhook**: Discord mengirim interaksi ke
+  aplikasi pemilik komponen, dan pemilik pesan webhook adalah webhook itu
+  sendiri. Bot menolaknya lebih awal dengan penjelasan.
+- Belum ada `Wait`, cabang bersyarat (`Check`), variabel buatan sendiri, atau
+  pembuatan thread. Alasannya ditulis di `src/features/post-actions.ts`:
+  aksi-aksi itu baru berguna kalau ada antrean tahan-restart dan percabangan,
+  dan menambahkannya setengah matang lebih membingungkan daripada tidak ada.
 
 ### Kenapa tombol role di baris paling bawah
 
@@ -521,10 +590,14 @@ tidak bisa dibuka lagi — bot akan membuat webhook baru otomatis.
   tidak bisa menyuntik HTML.
 - Menghapus pesan dari dashboard **tidak** menghapus pesan yang sudah terkirim di
   Discord, kecuali diminta lewat `DELETE /api/posts/:id?withMessage=1`.
-- Select menu dari blok **Select menu** memakai customId `post-ctx:<jenis>`.
-  Router interaksi mengenali prefix itu dan menjawab ephemeral ("menu ini hanya
-  tampilan"), sehingga memilih tidak pernah memunculkan "interaksi gagal" di
-  mata member. Prefix ini sengaja dipisah dari `post-menu:` milik dropdown role.
+- Select menu dari blok **Select menu** memakai customId
+  `post-ctx:<postId>:<jenis>`. ID pesan disertakan supaya aksi komponen bisa
+  dicari pasti — tanpa itu, dua pesan yang sama-sama punya select berjenis
+  `role` tidak bisa dibedakan. Pesan lama yang masih memakai bentuk pendek
+  `post-ctx:<jenis>` tetap dikenali. Kalau menunya tidak punya aksi, router
+  menjawab ephemeral ("menu ini hanya tampilan"), sehingga memilih tidak pernah
+  memunculkan "interaksi gagal". Prefix ini sengaja dipisah dari `post-menu:`
+  milik dropdown role.
 - Respons `POST /api/posts/:id/send` ikut membawa `dropped` (komponen yang
   dilewati penyusun payload) dan `droppedFiles` (berkas yang gagal diunduh),
   kalau ada. Dashboard memakainya untuk memberi peringatan setelah kirim.
@@ -538,7 +611,7 @@ tidak bisa dibuka lagi — bot akan membuat webhook baru otomatis.
 | `POST` | `/api/posts/:id/send` | kirim, atau perbarui pesan Discord yang sudah ada |
 | `DELETE` | `/api/posts/:id` | hapus dari dashboard |
 | `DELETE` | `/api/posts/:id?withMessage=1` | hapus dari dashboard **dan** dari Discord |
-| `PUT` | `/api/posts/:id/roles` | ganti seluruh tombol **dan** menu ambil role pesan (`{ buttons, menus }`) |
+| `PUT` | `/api/posts/:id/roles` | ganti seluruh tombol, menu ambil role, **dan** aksi komponen pesan (`{ buttons, menus, actions }`) |
 | `GET` | `/api/roles` | daftar role server + alasan tidak bisa dibagi |
 | `POST` | `/api/posts/import/discohook` | terjemahkan tautan/JSON Discohook jadi blok (`{ url }` atau `{ json }`) |
 
@@ -563,6 +636,26 @@ dijawab `400` dengan pesan yang jelas — bukan `500`.
 Kalau `menus` **tidak dikirim**, menu yang sudah ada dibiarkan apa adanya —
 supaya klien lama yang hanya mengirim `buttons` tidak menghapus dropdown tanpa
 sengaja. Untuk menghapus semua menu, kirim `"menus": []`.
+
+Kunci `actions` memakai bentuk yang sama: tidak dikirim = aksi dibiarkan,
+dikirim sebagai objek = mengganti seluruh aksi pesan itu.
+
+```json
+{
+  "actions": {
+    "button:12": [
+      { "kind": "role", "roleId": "456...", "op": "toggle" },
+      { "kind": "reply", "text": "✅ Role {role} sudah {effect}!", "hidden": true }
+    ],
+    "option:30": [{ "kind": "role", "roleId": "789...", "op": "give" }],
+    "select:role": [{ "kind": "reply", "text": "Menu role dipakai", "hidden": true }]
+  }
+}
+```
+
+Target `button:<id>` dan `option:<id>` memakai ID baris yang dikembalikan
+endpoint ini; `select:<jenis>` untuk blok Select menu. Aksi yang tidak sah
+dibuang dan alasannya muncul di `dropped`.
 
 ### Tabel database
 

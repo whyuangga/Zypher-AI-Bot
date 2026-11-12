@@ -65,6 +65,13 @@ export interface PesanPageOptions extends PageContext {
       options: Array<{ roleId: string; label: string; emoji: string | null; description: string | null }>;
     }>
   >;
+  /**
+   * Aksi komponen per pesan: `{ 'button:12': [aksi…], 'select:string': […] }`.
+   *
+   * Kunci target memakai prefix yang sama dengan yang dipakai bot, jadi
+   * dashboard dan bot tidak perlu tabel terjemahan.
+   */
+  postActions?: Record<number, Record<string, unknown[]>>;
 }
 
 /**
@@ -412,8 +419,25 @@ var ROLES = ${jsonForScript(options.roles)};
 /** Tombol role per pesan: { pesanId: [...] }. */
 var ROLE_BUTTONS = ${jsonForScript(options.roleButtons)};
 var ROLE_MENUS = ${jsonForScript(options.roleMenus ?? {})};
+/**
+ * Aksi komponen per pesan: { pesanId: { 'button:12': [aksi…] } }.
+ *
+ * Kunci target memakai prefix yang sama dengan yang dibaca bot, jadi tidak ada
+ * tabel terjemahan yang bisa menyimpang.
+ */
+var POST_ACTIONS = ${jsonForScript(options.postActions ?? {})};
+/**
+ * Daftar pesan tersimpan (id + nama) — dipakai sebagai tujuan aksi "kirim
+ * pesan". Hanya dua field itu yang dibutuhkan, jadi blok penuh tidak dikirim
+ * ulang ke browser.
+ */
+var POST_LIST = ${jsonForScript(options.posts.map((p) => ({ id: p.id, name: p.name })))};
 /** Tombol role yang sedang disusun (belum disimpan). */
 var roleButtons = [];
+/** Aksi tombol/menu yang sedang disusun, per target. */
+var postActions = {};
+/** Target (komponen) yang kartu aksinya sedang dibuka. */
+var aksiTerbuka = null;
 /** Menu dropdown role yang sedang disusun (biasanya hanya satu). */
 var roleMenus = [];
 var roleEditingId = null;
@@ -1637,6 +1661,15 @@ function buatItemEditor(block, index) {
     isi.appendChild(buatSakelar(index, 'disabled', 'Tombol nonaktif'));
   } else if (block.kind === 'select') {
     isi.appendChild(buatEditorSelect(index));
+    /*
+     * Aksi untuk menu ini. Targetnya select:<jenis> karena customId menu
+     * hanya membawa jenis (bukan ID baris): semua select berjenis sama di satu
+     * pesan memakai aksi yang sama. Itu batas nyata dari customId, dan lebih
+     * jujur ditampilkan begitu daripada menjanjikan aksi per menu.
+     */
+    isi.appendChild(
+      kartuAksi('select:' + (block.selectKind || 'string'), 'menu ' + selectJenisLabel(block)),
+    );
   } else if (block.kind === 'row') {
     /*
      * Row tidak punya isian: ia hanya pemisah. Penjelasan singkat dipakai
@@ -2021,6 +2054,7 @@ function loadExisting() {
   var send = document.getElementById('postSend');
   if (send) send.textContent = 'Simpan & kirim ulang';
   loadRoleButtonsFor(found.id);
+  loadActionsFor(found.id);
   renderRoleButtons();
   renderBlocks();
 }
@@ -2584,6 +2618,10 @@ function renderRoleButtons() {
     gayaRow.appendChild(style);
     row.appendChild(gayaRow);
 
+    // Aksi komponen: tombol role bisa diberi aksi berurutan (versi ringkas
+    // flow Discohook). Tanpa aksi, perilakunya tetap seperti sebelumnya.
+    row.appendChild(kartuAksi(targetTombol(tombol), '@' + (role ? role.name : 'role')));
+
     if (role && role.blockedBy) {
       var warn = document.createElement('p');
       warn.className = 'hint';
@@ -2605,6 +2643,10 @@ function addRoleButton() {
   }
   var role = roleById(pick.value);
   roleButtons.push({
+    // ID dipertahankan bila role ini pernah tersimpan: aksi komponen menempel
+    // pada ID itu, dan membuangnya akan menghapus aksi yang sudah disusun
+    // admin hanya karena tombolnya dihapus lalu ditambahkan lagi.
+    id: cariIdTombol(pick.value) || undefined,
     roleId: pick.value,
     label: 'Ambil role ' + (role ? role.name : ''),
     mode: 'toggle',
@@ -2625,12 +2667,47 @@ async function saveRoleButtons(postId) {
   var result = await api('/api/posts/' + postId + '/roles', {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ buttons: roleButtons, menus: roleMenus }),
+    body: JSON.stringify({ buttons: roleButtons, menus: roleMenus, actions: susunAksi() }),
   });
   if (result.dropped && result.dropped.length) {
-    toast('Sebagian tombol role dibuang: ' + result.dropped[0], true);
+    toast('Sebagian pengaturan dibuang: ' + result.dropped[0], true);
+  }
+  /*
+   * ID tombol & opsi dibuat ulang setiap simpan, jadi kunci aksi ikut berubah.
+   * Hasil server dipakai sebagai sumber kebenaran: tanpa ini, membuka pesan
+   * yang baru disimpan akan kehilangan aksinya (kunci lama tidak cocok lagi).
+   */
+  if (result.actions) {
+    postActions = {};
+    Object.keys(result.actions).forEach(function (target) {
+      postActions[target] = (result.actions[target] || []).map(function (aksi) {
+        return JSON.parse(JSON.stringify(aksi));
+      });
+    });
+    if (editingId) POST_ACTIONS[editingId] = JSON.parse(JSON.stringify(postActions));
   }
   return result;
+}
+
+/**
+ * Aksi yang siap dikirim: kunci target memakai ID yang SUDAH tersimpan.
+ *
+ * Tombol/opsi baru belum punya ID, jadi aksinya tidak bisa ditempelkan pada
+ * tombol itu sebelum disimpan sekali. Ini konsekuensi langsung dari
+ * customId berbasis ID baris (bukan teks bebas), dan sengaja tidak ditutupi:
+ * dashboard memberi tahu admin lewat kartu aksi.
+ */
+function susunAksi() {
+  var hasil = {};
+  Object.keys(postActions).forEach(function (target) {
+    var daftar = (postActions[target] || []).filter(function (aksi) {
+      if (aksi.kind === 'role') return Boolean(aksi.roleId);
+      if (aksi.kind === 'reply') return Boolean(String(aksi.text || '').trim());
+      return Boolean(Number(aksi.postId));
+    });
+    if (daftar.length > 0) hasil[target] = daftar;
+  });
+  return hasil;
 }
 
 /* ---------------- Menu dropdown role ---------------- */
@@ -2761,7 +2838,9 @@ function renderRoleMenus() {
       if (!pick.value) return toast('Pilih role dulu', true);
       if (menu.options.length >= 25) return toast('Satu menu maksimal 25 pilihan', true);
       var role = roleById(pick.value);
+      var idLama = cariIdOpsi(menu, pick.value);
       menu.options.push({
+        ...(idLama ? { id: idLama } : {}),
         roleId: pick.value,
         label: role ? role.name : pick.value,
         emoji: '',
@@ -2836,6 +2915,8 @@ function pilihanMenu(menu, menuIndex) {
     baris.appendChild(ket);
     kotak.appendChild(baris);
 
+    kotak.appendChild(kartuAksi(targetOpsi(menu, opsi), 'pilihan ' + (opsi.label || '')));
+
     if (role && role.blockedBy) {
       var warn = document.createElement('p');
       warn.className = 'hint';
@@ -2873,6 +2954,7 @@ function addRoleMenu() {
 function loadRoleButtonsFor(postId) {
   roleButtons = (ROLE_BUTTONS[postId] || []).map(function (b) {
     return {
+      id: b.id,
       roleId: b.roleId,
       label: b.label,
       mode: b.mode || 'toggle',
@@ -2889,11 +2971,337 @@ function loadRoleButtonsFor(postId) {
       maxValues: m.maxValues,
       exclusive: !!m.exclusive,
       options: (m.options || []).map(function (o) {
-        return { roleId: o.roleId, label: o.label, emoji: o.emoji || '', description: o.description || '' };
+        return {
+          id: o.id,
+          roleId: o.roleId,
+          label: o.label,
+          emoji: o.emoji || '',
+          description: o.description || '',
+        };
       }),
     };
   });
   renderRoleMenus();
+}
+
+/* ---------------- Aksi komponen (flow ringkas) ---------------- */
+
+/**
+ * Muat aksi tersimpan untuk pesan yang sedang diubah.
+ *
+ * Disalin dalam (deep copy) supaya editor bisa mengubahnya bebas tanpa
+ * merusak data sumber — pola yang sama dengan tombol & menu role.
+ */
+function loadActionsFor(postId) {
+  var sumber = POST_ACTIONS[postId] || {};
+  postActions = {};
+  Object.keys(sumber).forEach(function (target) {
+    postActions[target] = (sumber[target] || []).map(function (aksi) {
+      return JSON.parse(JSON.stringify(aksi));
+    });
+  });
+  aksiTerbuka = null;
+}
+
+/**
+ * ID tombol tersimpan untuk role tertentu.
+ *
+ * Dipakai saat admin menghapus lalu menambahkan lagi tombol dengan role yang
+ * sama: ID lamanya dipakai kembali, sehingga aksi yang sudah disusun tidak
+ * ikut hilang tanpa alasan.
+ */
+function cariIdTombol(roleId) {
+  var tersimpan = editingId ? ROLE_BUTTONS[editingId] || [] : [];
+  for (var i = 0; i < tersimpan.length; i += 1) {
+    if (tersimpan[i].roleId === roleId) return tersimpan[i].id;
+  }
+  return null;
+}
+
+/** ID opsi tersimpan untuk role tertentu di dalam satu menu. */
+function cariIdOpsi(menu, roleId) {
+  if (!editingId) return null;
+  var daftar = ROLE_MENUS[editingId] || [];
+  // Menu dicocokkan lewat placeholder + urutan pilihan: menu tidak punya ID
+  // di state editor sebelum disimpan, jadi itu satu-satunya penanda yang ada.
+  for (var i = 0; i < daftar.length; i += 1) {
+    var kandidat = daftar[i];
+    if (kandidat.placeholder !== menu.placeholder) continue;
+    for (var j = 0; j < (kandidat.options || []).length; j += 1) {
+      if (kandidat.options[j].roleId === roleId) return kandidat.options[j].id;
+    }
+  }
+  return null;
+}
+
+/** Daftar aksi milik satu target; dibuatkan array kosong bila belum ada. */
+function aksiUntuk(target) {
+  if (!postActions[target]) postActions[target] = [];
+  return postActions[target];
+}
+
+/** Kunci target tombol role. ID-nya belum ada sebelum disimpan (null). */
+function targetTombol(tombol) {
+  return tombol.id ? 'button:' + tombol.id : '';
+}
+
+/** Kunci target opsi dropdown role. */
+function targetOpsi(menu, opsi) {
+  return opsi.id ? 'option:' + opsi.id : '';
+}
+
+/**
+ * Gambar ulang SEMUA tempat kartu aksi bisa muncul.
+ *
+ * Kartu aksi dipakai tiga tempat: daftar tombol role, pilihan dropdown role,
+ * dan editor blok (untuk Select menu). Menyegarkan hanya salah satunya membuat
+ * tombol "Atur aksi" pada blok Select tidak bereaksi — kartunya sudah berubah
+ * di state, tetapi tidak pernah digambar ulang.
+ */
+function segarkanAksi() {
+  renderBlocks();
+  renderRoleButtons();
+  renderRoleMenus();
+}
+
+/**
+ * Kartu aksi untuk satu komponen.
+ *
+ * Target kosong berarti komponennya belum tersimpan, jadi belum punya ID —
+ * aksi tidak bisa ditempelkan ke sana. Kartu tetap ditampilkan dengan
+ * penjelasan, supaya admin tahu kenapa dan tidak mengira fiturnya rusak.
+ */
+function kartuAksi(target, judul) {
+  var bungkus = document.createElement('div');
+  bungkus.className = 'aksi-kartu';
+
+  var head = document.createElement('div');
+  head.className = 'aksi-head';
+
+  var nama = document.createElement('span');
+  nama.className = 'aksi-judul';
+  var jumlah = target ? aksiUntuk(target).length : 0;
+  nama.textContent = 'Aksi: ' + judul + (jumlah ? ' · ' + jumlah : '');
+  head.appendChild(nama);
+
+  var buka = document.createElement('button');
+  buka.className = 'btn btn-ghost btn-sm';
+  buka.type = 'button';
+  buka.textContent = aksiTerbuka === target && target ? 'Tutup' : 'Atur aksi';
+  buka.onclick = function () {
+    aksiTerbuka = aksiTerbuka === target ? null : target;
+    segarkanAksi();
+  };
+  head.appendChild(buka);
+  bungkus.appendChild(head);
+
+  if (!target) {
+    var hint = document.createElement('p');
+    hint.className = 'hint';
+    hint.style.margin = '0';
+    hint.textContent = 'Simpan pesan dulu — setelah tersimpan, tombol ini bisa diberi aksi.';
+    bungkus.appendChild(hint);
+    return bungkus;
+  }
+
+  if (aksiTerbuka !== target) {
+    var ringkas = document.createElement('p');
+    ringkas.className = 'hint';
+    ringkas.style.margin = '0';
+    ringkas.textContent = jumlah
+      ? aksiUntuk(target).map(function (a) { return ringkasAksi(a); }).join(' → ')
+      : 'Belum ada aksi. Komponen ini hanya tampil (tombol link) atau memakai perilaku role bawaan.';
+    bungkus.appendChild(ringkas);
+    return bungkus;
+  }
+
+  var daftar = document.createElement('div');
+  daftar.className = 'aksi-daftar';
+  aksiUntuk(target).forEach(function (aksi, nomor) {
+    daftar.appendChild(buatBarisAksi(target, nomor, aksi));
+  });
+  bungkus.appendChild(daftar);
+
+  var tambah = document.createElement('div');
+  tambah.className = 'block-add';
+  var pilih = document.createElement('select');
+  pilih.className = 'role-mode';
+  pilih.id = 'aksiJenis-' + target.replace(/[^a-z0-9]/gi, '-');
+  [['role', 'Role — beri / lepas'], ['reply', 'Balas pengklik'], ['message', 'Kirim pesan tersimpan']].forEach(function (opt) {
+    var o = document.createElement('option');
+    o.value = opt[0];
+    o.textContent = opt[1];
+    pilih.appendChild(o);
+  });
+  tambah.appendChild(pilih);
+
+  var tombolTambah = document.createElement('button');
+  tombolTambah.className = 'btn btn-ghost btn-sm';
+  tombolTambah.type = 'button';
+  tombolTambah.textContent = '+ Tambah aksi';
+  tombolTambah.onclick = function () {
+    if (aksiUntuk(target).length >= 6) return toast('Maksimal 6 aksi per komponen', true);
+    var jenis = pilih.value;
+    if (jenis === 'role') {
+      var role = ROLES.filter(function (r) { return !r.blockedBy; })[0];
+      if (!role) return toast('Belum ada role yang bisa dipakai — jalankan bot dulu', true);
+      aksiUntuk(target).push({ kind: 'role', roleId: role.id, op: 'toggle' });
+    } else if (jenis === 'reply') {
+      aksiUntuk(target).push({ kind: 'reply', text: 'Halo {member.name}, selesai!', hidden: true });
+    } else {
+      var lain = POST_LIST.filter(function (p) { return editingId && p.id !== editingId; });
+      if (lain.length === 0) return toast('Belum ada pesan lain yang bisa dikirim', true);
+      aksiUntuk(target).push({ kind: 'message', postId: lain[0].id, toChannel: true });
+    }
+    segarkanAksi();
+  };
+  tambah.appendChild(tombolTambah);
+  bungkus.appendChild(tambah);
+
+  var bantuan = document.createElement('p');
+  bantuan.className = 'hint';
+  bantuan.style.margin = '0';
+  bantuan.textContent = 'Aksi dijalankan berurutan. Bisa memakai {member.name}, {member.mention}, {server.name}, {role}, dan {effect}. Kalau ada aksi role, kegagalannya menghentikan aksi berikutnya.';
+  bungkus.appendChild(bantuan);
+
+  return bungkus;
+}
+
+/** Ringkasan satu aksi untuk daftar tertutup. */
+function ringkasAksi(aksi) {
+  if (aksi.kind === 'role') {
+    var role = roleById(aksi.roleId);
+    var op = aksi.op === 'give' ? 'beri' : aksi.op === 'remove' ? 'lepas' : 'pasang/lepas';
+    return op + ' ' + (role ? '@' + role.name : 'role terhapus');
+  }
+  if (aksi.kind === 'reply') {
+    return 'balas "' + String(aksi.text || '').slice(0, 40) + '"' + (aksi.hidden === false ? ' (publik)' : '');
+  }
+  var tujuan = POST_LIST.filter(function (p) { return p.id === Number(aksi.postId); })[0];
+  return 'kirim "' + (tujuan ? tujuan.name : 'pesan #' + aksi.postId) + '"';
+}
+
+/** Satu baris aksi: semua isian yang dibutuhkan jenisnya. */
+function buatBarisAksi(target, nomor, aksi) {
+  var daftar = aksiUntuk(target);
+  var baris = document.createElement('div');
+  baris.className = 'aksi-baris';
+
+  var head = document.createElement('div');
+  head.className = 'aksi-baris-head';
+  var label = document.createElement('span');
+  label.className = 'aksi-jenis';
+  label.textContent = (nomor + 1) + '. ' + (aksi.kind === 'role' ? 'Role' : aksi.kind === 'reply' ? 'Balasan' : 'Kirim pesan');
+  head.appendChild(label);
+
+  var alat = document.createElement('div');
+  alat.className = 'blok-aksi';
+
+  if (nomor > 0) {
+    var naik = document.createElement('button');
+    naik.className = 'btn-ghost btn-sm btn-icon';
+    naik.type = 'button';
+    naik.title = 'Naikkan aksi';
+    naik.textContent = '↑';
+    naik.onclick = function () {
+      var tmp = daftar[nomor - 1];
+      daftar[nomor - 1] = daftar[nomor];
+      daftar[nomor] = tmp;
+      segarkanAksi();
+    };
+    alat.appendChild(naik);
+  }
+
+  var hapus = document.createElement('button');
+  hapus.className = 'btn-danger btn-sm btn-icon';
+  hapus.type = 'button';
+  hapus.title = 'Hapus aksi';
+  hapus.textContent = '×';
+  hapus.onclick = function () {
+    daftar.splice(nomor, 1);
+    segarkanAksi();
+  };
+  alat.appendChild(hapus);
+  head.appendChild(alat);
+  baris.appendChild(head);
+
+  if (aksi.kind === 'role') {
+    var pilihRole = document.createElement('select');
+    pilihRole.className = 'role-mode';
+    ROLES.forEach(function (r) {
+      var o = document.createElement('option');
+      o.value = r.id;
+      o.textContent = r.name + (r.blockedBy ? ' — ' + r.blockedBy : '');
+      if (aksi.roleId === r.id) o.selected = true;
+      pilihRole.appendChild(o);
+    });
+    pilihRole.onchange = function () { daftar[nomor].roleId = pilihRole.value; };
+    baris.appendChild(pilihRole);
+
+    var pilihOp = document.createElement('select');
+    pilihOp.className = 'role-mode';
+    [['toggle', 'Pasang / lepas'], ['give', 'Hanya beri'], ['remove', 'Hanya lepas']].forEach(function (o) {
+      var opt = document.createElement('option');
+      opt.value = o[0];
+      opt.textContent = o[1];
+      if ((aksi.op || 'toggle') === o[0]) opt.selected = true;
+      pilihOp.appendChild(opt);
+    });
+    pilihOp.onchange = function () { daftar[nomor].op = pilihOp.value; };
+    baris.appendChild(pilihOp);
+    return baris;
+  }
+
+  if (aksi.kind === 'reply') {
+    var teks = document.createElement('textarea');
+    teks.rows = 2;
+    teks.value = aksi.text || '';
+    teks.placeholder = 'mis. ✅ Role {role} sudah {effect}, {member.mention}!';
+    teks.oninput = function () { daftar[nomor].text = teks.value.slice(0, 1800); };
+    baris.appendChild(teks);
+
+    var sembunyi = document.createElement('label');
+    sembunyi.className = 'menu-flags';
+    var cek = document.createElement('input');
+    cek.type = 'checkbox';
+    cek.checked = aksi.hidden !== false;
+    cek.onchange = function () { daftar[nomor].hidden = cek.checked; };
+    sembunyi.appendChild(cek);
+    sembunyi.appendChild(document.createTextNode(' hanya pengklik yang melihat (ephemeral)'));
+    baris.appendChild(sembunyi);
+    return baris;
+  }
+
+  // kind === 'message'
+  var pilihPesan = document.createElement('select');
+  pilihPesan.className = 'role-mode';
+  POST_LIST.filter(function (p) { return !editingId || p.id !== editingId; }).forEach(function (p) {
+    var o = document.createElement('option');
+    o.value = String(p.id);
+    o.textContent = p.name;
+    if (Number(aksi.postId) === p.id) o.selected = true;
+    pilihPesan.appendChild(o);
+  });
+  pilihPesan.onchange = function () { daftar[nomor].postId = Number(pilihPesan.value); };
+  baris.appendChild(pilihPesan);
+
+  var keChannel = document.createElement('label');
+  keChannel.className = 'menu-flags';
+  var cekChannel = document.createElement('input');
+  cekChannel.type = 'checkbox';
+  cekChannel.checked = aksi.toChannel !== false;
+  cekChannel.onchange = function () { daftar[nomor].toChannel = cekChannel.checked; };
+  keChannel.appendChild(cekChannel);
+  keChannel.appendChild(document.createTextNode(' kirim ke channel (bukan balasan)'));
+  baris.appendChild(keChannel);
+
+  var susulan = document.createElement('input');
+  susulan.type = 'text';
+  susulan.value = aksi.followUp || '';
+  susulan.placeholder = 'Teks sesudah terkirim (opsional), mis. "Cek {member.mention}!"';
+  susulan.oninput = function () { daftar[nomor].followUp = susulan.value.slice(0, 300); };
+  baris.appendChild(susulan);
+  return baris;
 }
 
 // Pemantau perubahan warna aksen — pratinjau ikut berubah saat digeser.

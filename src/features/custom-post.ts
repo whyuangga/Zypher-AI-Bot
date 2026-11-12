@@ -1048,6 +1048,15 @@ export function buildPostPayload(
     accentToNumber?: (hex: string) => number;
     /** Warna aksen pilihan admin; kalau kosong, `deps.accent`. */
     accentHex?: string;
+    /**
+     * ID pesan (/pesan) pemilik komponen.
+     *
+     * Disisipkan ke customId blok Select (`post-ctx:<postId>:<jenis>`) supaya
+     * aksi komponen bisa dicari secara pasti. Tanpa ini, dua pesan yang
+     * sama-sama punya select berjenis `role` tidak bisa dibedakan — dan aksi
+     * milik pesan lain bisa ikut dijalankan.
+     */
+    contextPostId?: number | null;
   },
 ): BuiltPost | null {
   /*
@@ -1272,7 +1281,15 @@ export function buildPostPayload(
    * menjawab dengan penjelasan — menu ini memang tidak mengubah apa pun.
    * Isinya cuma jenis menu, jadi jauh di bawah batas 100 karakter Discord.
    */
-  const selectId = (block: PostBlock): string => `post-ctx:${block.selectKind ?? 'string'}`;
+  const selectId = (block: PostBlock): string => {
+    const jenis = block.selectKind ?? 'string';
+    /*
+     * ID pesan ikut dikirim bila diketahui. Pesan lama (yang dikirim sebelum
+     * ini ada) tetap memakai bentuk pendek `post-ctx:<jenis>`; bot mengenali
+     * kedua bentuk, jadi tidak ada komponen yang berhenti bekerja.
+     */
+    return deps.contextPostId ? `post-ctx:${deps.contextPostId}:${jenis}` : `post-ctx:${jenis}`;
+  };
 
   /**
    * Buang SEMUA tombol yang menumpuk menjadi ActionRow, 5 per baris.

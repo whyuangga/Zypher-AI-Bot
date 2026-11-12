@@ -59,6 +59,8 @@ async function buildPayload(
   roleButtons: SendRoleButton[] = [],
   accentHex?: string,
   roleMenus: SendRoleMenu[] = [],
+  /** ID pesan /pesan — disisipkan ke customId select supaya aksi bisa dicari. */
+  contextPostId?: number | null,
 ): Promise<{
   components: ContainerBuilder[];
   flags: number;
@@ -112,6 +114,7 @@ async function buildPayload(
       })),
     })),
     roleMenuId,
+    contextPostId,
   });
   if (!built) return null;
 
@@ -221,8 +224,16 @@ export async function sendOrUpdatePost(options: {
   channelId: string;
   messageId: string | null;
   blocks: PostBlock[];
+  /** ID pesan /pesan — dipakai untuk customId select menu. */
+  postId?: number;
 }): Promise<SendResult> {
-  const built = await buildPayload(options.blocks, options.roleButtons, options.accent, options.roleMenus);
+  const built = await buildPayload(
+    options.blocks,
+    options.roleButtons,
+    options.accent,
+    options.roleMenus,
+    options.postId ?? null,
+  );
   const payload = built;
   if (!payload) {
     throw new PostSendError('Pesan masih kosong — isi minimal satu teks atau gambar.');
@@ -381,6 +392,8 @@ export async function sendOrUpdatePostViaWebhook(options: {
   roleMenus?: SendRoleMenu[];
   accent?: string;
   identity: WebhookIdentity;
+  /** ID pesan /pesan — dipakai untuk customId select menu. */
+  postId?: number;
 }): Promise<SendResult> {
   // Komponen interaktif dikirim oleh WEBHOOK, bukan oleh bot kita. Discord
   // hanya meneruskan klik ke aplikasi pemilik komponen — jadi tombol/menu di
@@ -391,7 +404,7 @@ export async function sendOrUpdatePostViaWebhook(options: {
     );
   }
 
-  const built = await buildPayload(options.blocks, [], options.accent, []);
+  const built = await buildPayload(options.blocks, [], options.accent, [], options.postId ?? null);
   if (!built) {
     throw new PostSendError('Pesan masih kosong — isi minimal satu teks atau gambar.');
   }

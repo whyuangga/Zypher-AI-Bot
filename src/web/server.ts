@@ -56,6 +56,8 @@ import {
   listRoleMenus,
   replaceRoleButtons,
   replaceRoleMenus,
+  listPostActions,
+  replacePostActions,
 } from '../db/repo.js';
 import { invalidateModerationCache } from '../features/moderation.js';
 import { listPanelChannels, PanelError, publishPanel, removePanel } from '../features/panel.js';
@@ -666,7 +668,15 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         options: Array<{ roleId: string; label: string; emoji: string | null; description: string | null }>;
       }>
     > = {};
+    /*
+     * Aksi komponen (versi ringkas flow Discohook). Dimuat bersama tombol &
+     * menu supaya halaman tidak menembak satu permintaan per komponen.
+     */
+    const postActions: Record<number, Record<string, unknown[]>> = {};
+
     for (const post of posts) {
+      const aksi = await listPostActions(guildId, post.id);
+      if (Object.keys(aksi).length > 0) postActions[post.id] = aksi;
       const buttons = await listRoleButtons(guildId, post.id);
       if (buttons.length > 0) {
         roleButtons[post.id] = buttons.map((b) => ({
@@ -695,6 +705,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         }));
       }
     }
+
+    /** Aksi komponen per pesan, dipakai editor untuk menggambar kartu aksi. */
+    const aksiKomponen = postActions;
 
     // Daftar role hanya tersedia saat bot online.
     const roleInfo =
@@ -727,6 +740,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         hasManageRoles: roleInfo.hasManageRoles,
         roleButtons,
         roleMenus,
+        postActions: aksiKomponen,
         status: dashboardStatus(),
         counts: await navCounts(guildId),
       }),
@@ -1900,6 +1914,25 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         // Dua jalur pengiriman, pilihan admin:
         //   bot     -> pengirim bot (bisa tombol role)
         //   webhook -> atas nama server (tidak bisa tombol role)
+        /*
+         * Aksi komponen tidak bisa dipakai di pesan webhook.
+         *
+         * Discord mengirim interaksi komponen ke aplikasi PEMILIK komponen;
+         * untuk pesan webhook, pemiliknya webhook itu sendiri — bukan bot kita.
+         * Jadi tombol/aksinya akan diam. Lebih jujur menolak di sini, sama
+         * seperti tombol & menu role.
+         */
+        if (post.sender === 'webhook') {
+          const aksi = await listPostActions(guildId, id);
+          if (Object.keys(aksi).length > 0) {
+            sendJson(response, 400, {
+              error:
+                'Pesan lewat webhook tidak bisa memakai aksi komponen — Discord hanya mengirim interaksi ke aplikasi pengirim. Matikan mode webhook untuk pesan ini, atau hapus aksinya.',
+            });
+            return;
+          }
+        }
+
         const result =
           post.sender === 'webhook'
             ? await sendOrUpdatePostViaWebhook({
@@ -1910,6 +1943,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
                 blocks: post.blocks,
                 accent: post.accent ?? undefined,
                 identity: await webhookIdentityFor(botClient, guildId),
+                postId: id,
               })
             : await sendOrUpdatePost({
                 client: botClient,
@@ -1917,6 +1951,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
                 messageId: post.messageId,
                 blocks: post.blocks,
                 accent: post.accent ?? undefined,
+                postId: id,
                 roleButtons: roleButtons.map((b) => ({
                   id: b.id,
                   label: b.label,
@@ -1967,11 +2002,23 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         payload.menus === undefined
           ? { menus: await listRoleMenus(guildId, id), dropped: [] as string[] }
           : await replaceRoleMenus(guildId, id, payload.menus);
+      /*
+       * Aksi komponen disimpan di endpoint yang sama.
+       *
+       * `actions` TIDAK dikirim = jangan sentuh aksi yang sudah ada (sama
+       * seperti `menus`), supaya klien lama yang hanya tahu tombol tidak
+       * menghapus aksi tanpa sengaja.
+       */
+      const actionResult =
+        payload.actions === undefined
+          ? { actions: await listPostActions(guildId, id), dropped: [] as string[] }
+          : await replacePostActions(guildId, id, payload.actions);
       sendJson(response, 200, {
         ok: true,
         buttons: result.buttons,
         menus: menuResult.menus,
-        dropped: [...result.dropped, ...menuResult.dropped],
+        actions: actionResult.actions,
+        dropped: [...result.dropped, ...menuResult.dropped, ...actionResult.dropped],
       });
       return;
     }

@@ -44,13 +44,32 @@ function fakeElement(tag = 'div'): Record<string, unknown> {
   const classes = new Set<string>();
   const element: Record<string, unknown> = {
     tagName: tag.toUpperCase(),
-    textContent: '',
+    /*
+     * textContent mengumpulkan teks anak seperti DOM sungguhan. Test perlu
+     * membacanya untuk memastikan tulisan yang dilihat admin benar-benar
+     * tergambar, bukan hanya ada di source.
+     */
+    get textContent(): string {
+      const sendiri = (element._teks as string | undefined) ?? '';
+      return sendiri + children.map((child) => String(child.textContent ?? '')).join('');
+    },
+    set textContent(nilai: string) {
+      element._teks = nilai;
+      children.length = 0;
+    },
     innerText: '',
     value: '',
     checked: false,
     disabled: false,
     hidden: false,
-    innerHTML: '',
+    get innerHTML(): string {
+      return '';
+    },
+    set innerHTML(_nilai: string) {
+      // Halaman memakai innerHTML = '' untuk mengosongkan wadah sebelum
+      // menggambar ulang; anak tiruan harus ikut kosong.
+      children.length = 0;
+    },
     files: [],
     children: [],
     options: [],
@@ -76,18 +95,49 @@ function fakeElement(tag = 'div'): Record<string, unknown> {
   };
 
   const noop = (): void => undefined;
+  const children = element.children as Record<string, unknown>[];
   const methods: Record<string, unknown> = {
     addEventListener: noop,
     removeEventListener: noop,
-    appendChild: noop,
-    removeChild: noop,
-    insertBefore: noop,
+    /*
+     * Pohon anak DILACAK, bukan no-op.
+     *
+     * Beberapa halaman menggambar ulang isi wadah (mis. kartu aksi di editor
+     * /pesan) dan test perlu memeriksa apa yang benar-benar tergambar. Tanpa
+     * pelacakan ini, satu-satunya cara menguji adalah membaca source code —
+     * yang justru tidak membuktikan apa pun.
+     */
+    appendChild: (child: Record<string, unknown>) => {
+      child.parentNode = element;
+      children.push(child);
+      return child;
+    },
+    append: (...isi: Record<string, unknown>[]) => {
+      for (const child of isi) if (child && typeof child === 'object') children.push(child);
+    },
+    prepend: (child: Record<string, unknown>) => {
+      children.unshift(child);
+    },
+    insertBefore: (child: Record<string, unknown>) => {
+      children.unshift(child);
+      return child;
+    },
+    removeChild: (child: Record<string, unknown>) => {
+      const at = children.indexOf(child);
+      if (at !== -1) children.splice(at, 1);
+      return child;
+    },
+    remove: () => {
+      const induk = element.parentNode as Record<string, unknown> | null;
+      const daftar = induk?.children as Record<string, unknown>[] | undefined;
+      const at = daftar ? daftar.indexOf(element) : -1;
+      if (at !== -1) daftar!.splice(at, 1);
+    },
     insertAdjacentHTML: noop,
     setAttribute: noop,
     removeAttribute: noop,
     getAttribute: () => null,
     hasAttribute: () => false,
-    remove: noop,
     focus: noop,
     blur: noop,
     select: noop,
@@ -96,8 +146,6 @@ function fakeElement(tag = 'div'): Record<string, unknown> {
     showModal: noop,
     reset: noop,
     submit: noop,
-    prepend: noop,
-    append: noop,
     after: noop,
     before: noop,
     replaceWith: noop,
@@ -1168,6 +1216,124 @@ await check('pesan: select menu & baris baru bisa disusun dari editor', async ()
     'select & row ikut terkirim ke server',
   );
   assert.equal(page.errors.length, 0, `editor select tidak melempar error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: editor aksi tampil di komponen & tersimpan bersama tombol', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+
+  /*
+   * Halaman harus MEMBAWA aksi tersimpan ke browser: tanpa ini, membuka pesan
+   * yang sudah punya aksi akan menampilkannya kosong dan menyimpan ulang akan
+   * menghapus aksi itu.
+   */
+  assert.ok(html.includes('POST_ACTIONS'), 'aksi tersimpan ditanam ke halaman');
+  assert.ok(html.includes('kartuAksi'), 'penggambar kartu aksi ada');
+  assert.ok(html.includes('susunAksi'), 'penyusun muatan aksi ada');
+
+  const page = mountPage(html, 'uji-aksi');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      // Simulasi pesan yang sudah punya satu tombol tersimpan + aksinya.
+      editingId = 1;
+      roleButtons = [{ id: 7, roleId: ROLES[0] ? ROLES[0].id : '900', label: 'Gamer', mode: 'toggle', emoji: '', style: 'primary' }];
+      POST_ACTIONS = { 1: { 'button:7': [
+        { kind: 'role', roleId: '900', op: 'toggle' },
+        { kind: 'reply', text: 'Hai {member.name}', hidden: true }
+      ] } };
+      loadActionsFor(1);
+      renderRoleButtons();
+
+      var ringkas = {
+        termuat: Object.keys(postActions).join(','),
+        jumlah: aksiUntuk('button:7').length,
+        ringkasan: ringkasAksi(aksiUntuk('button:7')[1]),
+        // Kartu aksi harus muncul di daftar tombol (tombol ada di dalam host).
+        adaKartu: Boolean(document.getElementById('roleList')),
+        // Kunci target memakai ID tombol tersimpan, bukan label.
+        target: targetTombol(roleButtons[0])
+      };
+      // Muatan yang dikirim ke server hanya berisi aksi yang sah.
+      postActions['button:7'].push({ kind: 'reply', text: '' });
+      ringkas.muatan = Object.keys(susunAksi()).join(',');
+      ringkas.muatanJumlah = susunAksi()['button:7'].length;
+      return ringkas;
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.termuat, 'button:7', 'aksi termuat per target');
+  assert.equal(hasil.jumlah, 2, 'dua aksi terbaca');
+  assert.equal(hasil.ringkasan, 'balas "Hai {member.name}"', 'ringkasan aksi bisa dibaca');
+  assert.equal(hasil.target, 'button:7', 'target memakai ID tombol');
+  assert.equal(hasil.muatanJumlah, 2, 'aksi tanpa teks tidak ikut dikirim');
+  assert.equal(page.errors.length, 0, `editor aksi tidak melempar error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: kartu aksi blok Select bisa dibuka & digambar ulang', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-aksi-select');
+
+  /*
+   * Regresi yang dijaga: kartu aksi dipakai di TIGA tempat (tombol role,
+   * pilihan dropdown, dan blok Select). Dulu tombol "Atur aksi" hanya
+   * menyegarkan dua tempat pertama, sehingga kartu di blok Select tidak pernah
+   * terbuka — state berubah, tetapi editor tidak digambar ulang.
+   *
+   * Pemeriksaan HARUS lewat pohon elemen yang tergambar: getElementById pada
+   * DOM tiruan membuat elemen baru sesuai permintaan, jadi memeriksa id saja
+   * akan lolos walaupun tidak ada yang digambar.
+   */
+  const hasil = (await page.evaluate(`
+    (function () {
+      // Wadah luar wajib: renderBlocks hanya menggambar isi container/kartu.
+      blocks = [{ kind: 'container', accent: null, spoiler: false }, { kind: 'select', selectKind: 'role' }];
+      renderBlocks();
+
+      /** Cari SEMUA elemen dengan kelas tertentu di pohon tergambar. */
+      function cariKelas(node, kelas, hasil) {
+        if (!node) return hasil;
+        if (node.className === kelas) hasil.push(node);
+        (node.children || []).forEach(function (c) { cariKelas(c, kelas, hasil); });
+        return hasil;
+      }
+      function cariTeks(node, teks, hasil) {
+        if (!node) return hasil;
+        if (node.textContent === teks) hasil.push(node);
+        (node.children || []).forEach(function (c) { cariTeks(c, teks, hasil); });
+        return hasil;
+      }
+
+      var host = document.getElementById('blockList');
+      var kartuAwal = cariKelas(host, 'aksi-kartu', []);
+      var teksAwal = kartuAwal.length ? kartuAwal[0].textContent : '';
+      var tombol = cariTeks(host, 'Atur aksi', [])[0];
+      if (tombol) tombol.onclick();
+
+      // Sesudah diklik: pohon yang tergambar harus benar-benar berubah.
+      var kartuAkhir = cariKelas(host, 'aksi-kartu', []);
+      var isianAksi = cariKelas(host, 'aksi-daftar', []);
+      var judul = cariKelas(host, 'aksi-judul', []).map(function (n) { return n.textContent; });
+
+      return {
+        adaKartu: kartuAwal.length > 0,
+        adaTombol: Boolean(tombol),
+        teksAwal: teksAwal,
+        terbuka: aksiTerbuka,
+        adaIsianAksi: isianAksi.length > 0,
+        judul: judul.join(' | '),
+        adaTombolTutup: cariTeks(host, 'Tutup', []).length > 0
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.adaKartu, true, 'kartu aksi muncul di blok Select');
+  assert.equal(hasil.adaTombol, true, 'tombol "Atur aksi" ada di pohon tergambar');
+  assert.match(String(hasil.teksAwal), /Belum ada aksi/, 'keadaan awal dijelaskan');
+  assert.equal(hasil.terbuka, 'select:role', 'kartu terbuka untuk target yang benar');
+  assert.equal(hasil.adaIsianAksi, true, 'isian aksi tergambar setelah dibuka');
+  assert.equal(hasil.adaTombolTutup, true, 'tombol berubah jadi "Tutup"');
+  assert.match(String(hasil.judul), /Aksi: menu Role select/, 'judul memakai label jenis menu');
+  assert.equal(page.errors.length, 0, `kartu aksi select error: ${page.errors.join('|')}`);
 });
 
 await check('pesan: tombol impor Discohook memanggil endpoint yang benar', async () => {

@@ -228,6 +228,21 @@ CREATE TABLE IF NOT EXISTS post_role_buttons (
   position INTEGER NOT NULL DEFAULT 0
 );
 
+-- ---------- aksi komponen (versi ringkas flow Discohook) ----------
+-- Satu baris = satu aksi pada satu komponen. Kolom target berisi tombol role
+-- (button:n) atau opsi menu (option:n), jadi aksi tidak perlu kolom sendiri di
+-- tabel tombol/opsi. Kolom payload berisi JSON aksi.
+CREATE TABLE IF NOT EXISTS post_actions (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id  TEXT NOT NULL,
+  post_id   INTEGER NOT NULL,
+  target    TEXT NOT NULL,
+  position  INTEGER NOT NULL DEFAULT 0,
+  payload   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_actions_post ON post_actions (guild_id, post_id);
+
 -- ---------- webhook per channel (pesan atas nama server) ----------
 -- Token menyimpan bagian RAHASIA dari URL webhook, dalam bentuk terenkripsi
 -- (lihat src/features/webhook-secret.ts). Tidak pernah dikirim ke browser.
@@ -494,6 +509,17 @@ CREATE TABLE IF NOT EXISTS post_role_options (
   description TEXT,
   position    INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS post_actions (
+  id       SERIAL PRIMARY KEY,
+  guild_id TEXT NOT NULL,
+  post_id  INTEGER NOT NULL,
+  target   TEXT NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0,
+  payload  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_actions_post ON post_actions (guild_id, post_id);
 
 CREATE TABLE IF NOT EXISTS post_webhooks (
   channel_id TEXT PRIMARY KEY,

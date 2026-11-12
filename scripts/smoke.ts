@@ -6141,6 +6141,230 @@ await testAsync('pesan: tombol role - keputusan beri vs lepas', async () => {
   assert.equal(ditolak.blocker, 'member-posisi');
 });
 
+await testAsync('aksi: sanitizer menerima 3 jenis aksi & menolak yang tidak sah', async () => {
+  const { sanitizeActions, ACTION_LIMITS } = await import('../src/features/post-actions.js');
+
+  const { actions, dropped } = sanitizeActions([
+    { kind: 'role', roleId: '900000000000000001', op: 'give' },
+    { kind: 'reply', text: 'Halo {member.name}!', hidden: false },
+    { kind: 'message', postId: 7, toChannel: false, followUp: 'Cek {member.mention}' },
+    // Tidak sah: dibuang dengan alasan, bukan hilang diam-diam.
+    { kind: 'role', roleId: 'bukan-angka' },
+    { kind: 'reply', text: '   ' },
+    { kind: 'message', postId: 0 },
+    { kind: 'teleport' },
+    null,
+  ]);
+
+  assert.deepEqual(
+    actions.map((a) => a.kind).join(','),
+    'role,reply,message',
+    'tiga aksi sah lolos',
+  );
+  assert.equal(actions[0]!.op, 'give');
+  assert.equal(actions[1]!.hidden, false, 'balasan publik dihormati');
+  assert.equal(actions[2]!.toChannel, false);
+  assert.equal(actions[2]!.followUp, 'Cek {member.mention}');
+  assert.equal(dropped.length, 4, 'empat aksi ditolak dengan alasan');
+
+  // Batas per komponen ditegakkan, bukan dipotong diam-diam.
+  const banyak = sanitizeActions(
+    Array.from({ length: ACTION_LIMITS.perComponent + 3 }, () => ({
+      kind: 'reply',
+      text: 'x',
+    })),
+  );
+  assert.equal(banyak.actions.length, ACTION_LIMITS.perComponent);
+  assert.equal(banyak.dropped.length, 1, 'kelebihan aksi dilaporkan');
+});
+
+await testAsync('aksi: rencana menjaga urutan, satu balasan, dan tidak mengirim diri sendiri', async () => {
+  const { planActions, fillActionText, defaultRoleReply } = await import('../src/features/post-actions.js');
+
+  const plan = planActions(
+    [
+      { kind: 'role', roleId: '1', op: 'toggle' },
+      { kind: 'reply', text: 'Role {role} sudah {effect}', hidden: true },
+      { kind: 'message', postId: 12 },
+      // Balasan kedua: Discord hanya menerima satu — dilewati dengan alasan.
+      { kind: 'reply', text: 'Terima kasih' },
+      // Mengirim pesan ini sendiri akan berulang tanpa henti.
+      { kind: 'message', postId: 5 },
+    ],
+    { selfPostId: 5 },
+  );
+
+  assert.deepEqual(
+    plan.steps.map((s) => s.kind).join(','),
+    'role,reply,message',
+    'urutan dipertahankan, balasan kedua & pesan-sendiri dibuang',
+  );
+  assert.equal(plan.firstReply?.text, 'Role {role} sudah {effect}');
+  assert.equal(plan.skipped.length, 2, 'dua langkah dilaporkan dilewati');
+
+  // Template: token yang dikenal diganti, yang tidak dikenal dibiarkan.
+  const teks = fillActionText('Hai {member.name} di {server.name}, role {role} {effect} untuk {member.mention}{unknown}', {
+    member: 'Wahyu',
+    mention: '<@2>',
+    server: 'Zypher',
+    role: 'Gamer',
+    effect: 'ditambahkan',
+  });
+  assert.equal(teks, 'Hai Wahyu di Zypher, role Gamer ditambahkan untuk <@2>{unknown}');
+  assert.equal(defaultRoleReply({ member: 'A', mention: '<@1>', server: 'S', role: 'Gamer', effect: 'dilepas' }), '✅ Role **Gamer** dilepas.');
+});
+
+await testAsync('aksi: tersimpan per target, menempel ke tombol tersimpan, & dijalankan berurutan', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runComponentActions } = await import('../src/features/post-action-runner.js');
+  const GUILD = '123456789012345678';
+  const ROLE = '900000000000000002';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Aksi uji',
+    channelId: null,
+    blocks: [{ kind: 'text', value: 'Klik' }],
+  });
+
+  const awal = await repo.replaceRoleButtons(GUILD, post.id, [{ label: 'Gamer', roleId: ROLE, mode: 'toggle' }]);
+  const buttonId = awal.buttons[0]!.id;
+
+  // Simpan aksi pada tombol itu.
+  const simpan = await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      { kind: 'role', roleId: ROLE, op: 'toggle' },
+      { kind: 'reply', text: '✅ {role} sudah {effect}, {member.mention}!', hidden: true },
+    ],
+    'select:role': [{ kind: 'reply', text: 'Menu role dipakai', hidden: true }],
+    // Target asing tidak boleh menyelipkan baris yatim.
+    'asal-asalan': [{ kind: 'reply', text: 'x' }],
+  });
+  assert.deepEqual(
+    Object.keys(simpan.actions).sort().join(','),
+    `button:${buttonId},select:role`,
+    'dua target tersimpan, target asing ditolak',
+  );
+  assert.equal(simpan.actions[`button:${buttonId}`]!.length, 2);
+
+  // ID tombol DIPERTAHANKAN saat disimpan ulang — aksi tetap menempel.
+  const ulang = await repo.replaceRoleButtons(GUILD, post.id, [
+    { id: buttonId, label: 'Gamer (baru)', roleId: ROLE, mode: 'toggle' },
+  ]);
+  assert.equal(ulang.buttons[0]!.id, buttonId, 'ID tombol lama dipakai ulang');
+  assert.equal(
+    (await repo.findActions(GUILD, `button:${buttonId}`))?.actions.length,
+    2,
+    'aksi ikut bertahan setelah simpan ulang',
+  );
+
+  /** Interaksi tiruan: mencatat role yang berubah & semua balasan. */
+  const jalankan = async (target: string) => {
+    const catatan = { add: [] as string[], remove: [] as string[], balasan: [] as string[] };
+    const interaction = {
+      customId: target.replace('button:', 'post-role:'),
+      guildId: GUILD,
+      deferred: false,
+      replied: false,
+      user: { id: '2', username: 'wahyu', globalName: 'Wahyu', tag: 'uji#0001' },
+      member: {
+        displayName: 'Wahyu',
+        roles: {
+          cache: { has: () => false },
+          highest: { position: 20 },
+          add: async (id: string) => void catatan.add.push(id),
+          remove: async (id: string) => void catatan.remove.push(id),
+        },
+        permissions: { has: () => true },
+      },
+      guild: {
+        id: GUILD,
+        name: 'Server Uji',
+        roles: {
+          cache: new Map([[ROLE, { id: ROLE, name: 'Gamer', position: 3, managed: false }]]),
+          // Role yang tidak dikenal harus benar-benar null: kalau mock ini
+          // selalu mengembalikan role, kasus "role sudah dihapus" tidak teruji.
+          fetch: async (id: string) =>
+            id === ROLE ? { id: ROLE, name: 'Gamer', position: 3, managed: false } : null,
+        },
+        members: {
+          me: { roles: { highest: { position: 10 } }, permissions: { has: () => true } },
+          fetchMe: async () => null,
+          fetch: async () => null,
+        },
+      },
+      reply: async (payload: { content: string }) => void catatan.balasan.push(payload.content),
+      followUp: async (payload: { content: string }) => void catatan.balasan.push(payload.content),
+    };
+    const ditangani = await runComponentActions({
+      client: {} as never,
+      interaction: interaction as never,
+      target,
+    });
+    return { ...catatan, ditangani };
+  };
+
+  const hasil = await jalankan(`button:${buttonId}`);
+  assert.equal(hasil.ditangani, true, 'aksi dikenali');
+  assert.deepEqual(hasil.add, [ROLE], 'role diberikan oleh aksi pertama');
+  assert.equal(hasil.balasan.length, 1, 'hanya satu balasan');
+  assert.equal(hasil.balasan[0], '✅ Gamer sudah ditambahkan, <@2>!', 'template terisi hasil role');
+
+  // Komponen tanpa aksi: runner mengembalikan false supaya jalur lama dipakai.
+  const tanpa = await jalankan('button:999999');
+  assert.equal(tanpa.ditangani, false, 'komponen tanpa aksi tidak ditangani runner');
+
+  // Aksi role yang gagal menghentikan sisa aksi (padanan Stop).
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      { kind: 'role', roleId: '900000000000000009', op: 'give' },
+      { kind: 'reply', text: 'TIDAK BOLEH TERKIRIM' },
+    ],
+  });
+  const gagal = await jalankan(`button:${buttonId}`);
+  assert.equal(gagal.add.length, 0, 'tidak ada role yang berubah');
+  assert.equal(gagal.balasan.length, 1);
+  assert.match(gagal.balasan[0]!, /dihapus|tidak bisa|menolak/i, 'alasan kegagalan diteruskan');
+  assert.notEqual(gagal.balasan[0], 'TIDAK BOLEH TERKIRIM', 'aksi sesudah kegagalan tidak dijalankan');
+});
+
+await testAsync('pesan: select menu membawa ID pesan supaya aksinya tidak tertukar', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const { targetSelectTampilan } = await import('../src/events/interactionCreate.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    RoleSelectMenuBuilder: d.RoleSelectMenuBuilder,
+  };
+  const blok = sanitizeBlocks([{ kind: 'select', selectKind: 'role' }]).blocks;
+
+  const denganId = buildPostPayload(blok, { ...deps, contextPostId: 12 });
+  const idBaru = (denganId!.components as Array<{ toJSON: () => any }>)[0]!
+    .toJSON()
+    .components[0].components[0].custom_id;
+  assert.equal(idBaru, 'post-ctx:12:role', 'ID pesan ikut di customId');
+  assert.deepEqual(
+    targetSelectTampilan(idBaru),
+    { postId: 12, target: 'select:role' },
+    'router memisahkan ID pesan & jenis menu',
+  );
+
+  // Pesan lama (dikirim sebelum ID pesan disisipkan) tetap dikenali.
+  const lama = buildPostPayload(blok, deps);
+  const idLama = (lama!.components as Array<{ toJSON: () => any }>)[0]!
+    .toJSON()
+    .components[0].components[0].custom_id;
+  assert.equal(idLama, 'post-ctx:role', 'tanpa postId memakai bentuk pendek');
+  assert.deepEqual(targetSelectTampilan(idLama), { postId: null, target: 'select:role' });
+  assert.equal(targetSelectTampilan('post-ctx:')?.target, undefined, 'customId rusak ditolak');
+});
+
 await testAsync('pesan: klik tombol role benar-benar memberi & melepas role', async () => {
   // Memakai database smoke yang sudah terbuka (:memory:). JANGAN menutupnya:
   // driver itu dipakai test-test sesudah ini — percobaan pertama menutupnya

@@ -1655,6 +1655,69 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   flex-wrap: wrap;
   margin-top: 10px;
 }
+
+/*
+ * Kartu aksi komponen (versi ringkas flow Discohook).
+ *
+ * Dibedakan dari isian biasa dengan garis kiri: aksi adalah "perilaku", bukan
+ * tampilan, jadi admin perlu melihat sekilas mana yang mengubah apa saat
+ * tombol diklik.
+ */
+.aksi-kartu {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--brand, #6d8cff);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.02);
+  margin-top: 4px;
+}
+
+.aksi-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.aksi-judul {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  flex: 1;
+}
+
+.aksi-daftar {
+  display: grid;
+  gap: 6px;
+}
+
+.aksi-baris {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--bg-2);
+}
+
+.aksi-baris-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.aksi-jenis {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+}
+
+.aksi-baris textarea {
+  min-height: 46px;
+  font-size: 12.5px;
+}
 .role-mode {
   font-size: 12px;
   padding: 4px 8px;

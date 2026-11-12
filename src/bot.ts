@@ -83,7 +83,8 @@ client.once(Events.ClientReady, async (ready) => {
 });
 
 client.on(Events.InteractionCreate, (interaction) => {
-  void onInteractionCreate(interaction);
+  // `client` diteruskan supaya aksi "kirim pesan tersimpan" bisa mengirim pesan.
+  void onInteractionCreate(interaction, client);
 });
 
 client.on(Events.MessageCreate, (message) => {

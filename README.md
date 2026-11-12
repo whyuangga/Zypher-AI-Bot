@@ -375,7 +375,11 @@ selalu terlihat — tidak perlu menggulir jauh. Ada **pratinjau hidup**, **warna
 **unggah gambar**, dan pilihan pengirim: lewat bot, atau **atas nama server**
 (webhook — tokennya dienkripsi, butuh izin *Manage Webhooks*). Tombol **ambil
 role** memberi role hanya dengan klik, lengkap dengan **emoji** dan **warna**
-tombol (biru/abu/hijau/merah); untuk role yang banyak tersedia **menu dropdown**
+tombol (biru/abu/hijau/merah) — dan tiap tombol, tiap pilihan dropdown, serta
+tiap **Select menu** bisa diberi **aksi berurutan** ala *flow* Discohook: ubah
+role, balas pengklik dengan teks sendiri (template `{member.name}`,
+`{member.mention}`, `{role}`, `{effect}`), atau kirim pesan tersimpan lain;
+untuk role yang banyak tersedia **menu dropdown**
 sampai 25 pilihan, dengan opsi **hanya satu pilihan** yang otomatis mencabut
 role lain di menu yang sama — cocok untuk menu warna nama atau platform. Bot
 butuh izin **Manage Roles** dan posisinya harus di atas role yang dibagikan.
@@ -500,10 +504,10 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke # 392 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
+npm run smoke # 396 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
 npm run smoke:pg       # 21 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # 15 pemeriksaan rantai fallback provider (server tiruan)
-npm run test:ui        # 75 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
+npm run test:ui        # 99 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
 npm run test:browser   # uji klik sungguhan di Chromium (butuh dashboard hidup)
 npm run verify         # semuanya sekaligus: typecheck ketat + smoke + fallback + UI
 npm run dashboard      # nyalakan dashboard web saja (node dist/web/standalone.js)
