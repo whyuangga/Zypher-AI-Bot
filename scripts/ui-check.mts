@@ -1482,6 +1482,119 @@ await check('pesan: cabang syarat bisa diisi & tampil bersarang', async () => {
   assert.equal(page.errors.length, 0, `editor cabang error: ${page.errors.join('|')}`);
 });
 
+await check('pesan: syarat bertingkat bisa disusun di editor', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-syarat');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      editingId = 1;
+      ROLES = [];
+      POST_LIST = [{ id: 2, name: 'Lain' }];
+      postActions = { 'button:9': [
+        { kind: 'condition', check: { type: 'and', items: [
+          { type: 'leaf', value: 'member.name', comparator: 'equals', expected: 'Wahyu' },
+          { type: 'in', value: 'selected', list: ['gamer', 'anime'] }
+        ] } }
+      ] };
+      aksiTerbuka = 'button:9';
+      renderRoleButtons();
+
+      var daftar = aksiUntuk('button:9');
+      // Lewat KARTU aksi (bukan memanggil kotakSyarat langsung): yang harus
+      // dibuktikan adalah editor benar-benar MENGGAMBAR pohon syaratnya.
+      var kartu = buatBarisAksi('button:9', 0, daftar[0]);
+      var kotak = kotakSyarat(daftar[0].check, null, 'check', 0);
+      // Tambah satu anak lewat tombol "+ Tambah syarat" di kotak teratas.
+      var tambah = null;
+      (function cari(node) {
+        if (!node || !node.children) return;
+        for (var i = 0; i < node.children.length; i += 1) {
+          var anak = node.children[i];
+          if (anak.textContent === '+ Tambah syarat') { tambah = anak; return; }
+          cari(anak);
+        }
+      })(kotak);
+      if (tambah) tambah.onclick();
+
+      return {
+        teksKartu: kartu.textContent,
+        ringkas: ringkasSyarat(daftar[0].check),
+        jumlahAnak: (daftar[0].check.items || []).length,
+        teksKotak: kotak.textContent,
+        // Yang disusun editor harus benar-benar terkirim ke server.
+        muatan: (susunAksi()['button:9'] || [])[0],
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.match(String(hasil.teksKartu), /SEMUA benar/, 'kartu aksi menggambar jenis grup syarat');
+  assert.ok(String(hasil.teksKartu).includes('member.name'), 'kartu aksi menggambar isi syarat');
+  assert.match(String(hasil.ringkas), /member\.name sama dengan "Wahyu"/, 'ringkasan simpul daun');
+  assert.match(String(hasil.ringkas), /termasuk \[gamer, anime\]/, 'ringkasan `in`');
+  assert.equal(hasil.jumlahAnak, 3, 'tombol tambah menyisipkan anak baru');
+  assert.ok(String(hasil.teksKotak).includes('SEMUA benar'), 'jenis grup terbaca di editor');
+  const muatan = hasil.muatan as { check?: { type: string; items: unknown[] }; value?: string };
+  assert.ok(muatan.check, 'pohon syarat ikut dikirim, bukan dibuang');
+  assert.equal(muatan.check!.type, 'and');
+  assert.equal(muatan.check!.items.length, 3);
+  assert.equal(page.errors.length, 0, `editor syarat error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: setelan thread & tujuan channel ikut terkirim', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-thread');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      editingId = 1;
+      ROLES = [];
+      POST_LIST = [{ id: 2, name: 'Lain' }];
+      postActions = { 'button:9': [
+        { kind: 'thread', threadName: 'Bantuan', private: true },
+        { kind: 'webhook', postId: 2, toChannel: true, channelId: '123456789012345678' }
+      ] };
+      aksiTerbuka = 'button:9';
+      renderRoleButtons();
+
+      var daftar = aksiUntuk('button:9');
+      daftar[0].autoArchiveMinutes = 10080;
+      daftar[0].slowmodeSeconds = 30;
+      daftar[0].appliedTags = ['111111111111111111'];
+      daftar[0].threadMessage = 'Halo {member.mention}';
+
+      var muatan = susunAksi()['button:9'];
+      return {
+        thread: muatan[0],
+        webhook: muatan[1],
+        ringkasThread: ringkasAksi(muatan[0]),
+        ringkasWebhook: ringkasAksi(muatan[1]),
+        label: jenisAksiLabel('webhook'),
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  const thread = hasil.thread as {
+    autoArchiveMinutes?: number;
+    slowmodeSeconds?: number;
+    appliedTags?: string[];
+    threadMessage?: string;
+  };
+  assert.equal(thread.autoArchiveMinutes, 10080, 'lama arsip ikut terkirim');
+  assert.equal(thread.slowmodeSeconds, 30, 'slowmode ikut terkirim');
+  // deepEqual tidak bisa dipakai di sini: nilai datang dari vm dan array-nya
+  // dari realm lain, jadi perbandingan referensi selalu gagal.
+  assert.equal((thread.appliedTags ?? []).join(','), '111111111111111111');
+  assert.equal(thread.threadMessage, 'Halo {member.mention}');
+
+  const webhook = hasil.webhook as { kind: string; channelId?: string };
+  assert.equal(webhook.kind, 'webhook', 'jenis webhook tidak berubah jadi message');
+  assert.equal(webhook.channelId, '123456789012345678', 'channel tujuan ikut terkirim');
+  assert.match(String(hasil.ringkasWebhook), /via webhook/);
+  assert.equal(hasil.label, 'Kirim webhook');
+  assert.equal(page.errors.length, 0, `editor thread/webhook error: ${page.errors.join('|')}`);
+});
+
 await check('pesan: flag pesan dikirim sebagai bitmask yang benar', async () => {
   const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
   const page = mountPage(html, 'uji-flag');

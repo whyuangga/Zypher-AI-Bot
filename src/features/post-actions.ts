@@ -30,7 +30,16 @@
  * antrean yang rumit: flow yang menunggu disimpan sebagai sesi, lalu dilanjutkan
  * timer — bukan ditahan di memori.
  */
-import { FLOW_LIMITS, isVariableName, normalizeComparator } from './post-flow.js';
+import {
+  CONDITION_LIMITS,
+  FLOW_LIMITS,
+  isVariableName,
+  normalizeComparator,
+  normalizeList,
+  type ConditionNode,
+  type LogicOperator,
+} from './post-flow.js';
+import { COMPARATOR_LABEL } from './post-flow.js';
 
 /* ------------------------------------------------------------------ */
 /*  Jenis aksi                                                         */
@@ -55,6 +64,16 @@ export const ACTION_KINDS = [
   'dud',
   /** Hentikan flow, opsional dengan pesan. Padanan "Stop" di Discohook. */
   'stop',
+  /**
+   * Kirim pesan tersimpan lewat WEBHOOK, bukan lewat bot.
+   *
+   * Padanan `SendWebhookMessage` di Discohook: pesan tampil atas nama server.
+   * Bedanya, webhook di sini TIDAK dipilih per aksi seperti di Discohook
+   * (yang menyimpan daftar webhook di akunnya). Webhook dibuat/dipakai ulang
+   * per channel tujuan — admin tidak perlu menyalin token ke mana pun, dan
+   * tidak ada rahasia tambahan yang harus disimpan.
+   */
+  'webhook',
 ] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
@@ -79,6 +98,7 @@ export const ACTION_KIND_LABEL: Record<ActionKind, string> = {
   delete: 'Hapus pesan ini',
   dud: 'Tidak melakukan apa pun',
   stop: 'Hentikan flow',
+  webhook: 'Kirim pesan lewat webhook (atas nama server)',
 };
 
 /**
@@ -116,6 +136,15 @@ export interface PostAction {
   toChannel?: boolean;
   /** Balasan tambahan sesudah pesan tersimpan terkirim (opsional). */
   followUp?: string;
+  /**
+   * Channel tujuan lain (ID). Kosong = channel pesan pemicu.
+   *
+   * Discohook mengirim pesan ke channel yang dipilih per aksi; di sini
+   * channel ditulis sebagai ID karena bot hanya boleh mengirim ke channel
+   * yang benar-benar ada — dan ID yang salah dilaporkan, bukan diam-diam
+   * jatuh ke channel pemicu.
+   */
+  channelId?: string;
   /* --- kind = 'wait' --- */
   /** Lama penantian dalam detik (1 .. FLOW_LIMITS.waitSeconds). */
   seconds?: number;
@@ -134,6 +163,31 @@ export interface PostAction {
   threadName?: string;
   /** true = thread privat (hanya yang diundang). */
   private?: boolean;
+  /** Lama thread terarsip sendiri: 60, 1440, 4320, atau 10080 menit. */
+  autoArchiveMinutes?: number;
+  /** Slowmode thread (detik per pesan, 0..21600). */
+  slowmodeSeconds?: number;
+  /** Hanya untuk thread privat: apakah orang lain boleh mengundang. */
+  invitable?: boolean;
+  /** Tag forum (snowflake ID tag), maksimal 5 — hanya untuk channel forum. */
+  appliedTags?: string[];
+  /**
+   * Pesan pembuka thread.
+   *
+   * Di channel teks, pesan ini dikirim lebih dulu lalu thread dimulai dari
+   * pesan itu (dipakai forum sebagai isi postingan). Kosong = thread dimulai
+   * dari pesan pemicu, sama seperti sebelumnya.
+   */
+  threadMessage?: string;
+  /* --- kind = 'condition' --- */
+  /**
+   * Pohon syarat bertingkat (`and`/`or`/`not`/`in`).
+   *
+   * Kalau ada, bentuk lama (`value`/`comparator`/`expected`) DIABAIKAN —
+   * memakai keduanya sekaligus membuat hasilnya sulit ditebak. Sanitizer
+   * memilih salah satu, dan UI menampilkan yang mana yang dipakai.
+   */
+  check?: ConditionNode;
   /* --- kind = 'delete' --- */
   /** Apa yang dihapus. `pesan` = pesan pemilik komponen (bawaan). */
   what?: 'pesan';
@@ -204,6 +258,107 @@ function asBoolean(value: unknown): boolean {
 /** Role ID Discord selalu snowflake (angka). */
 function isRoleId(value: string): boolean {
   return /^\d{5,25}$/.test(value);
+}
+
+/** ID channel Discord — snowflake. Sama seperti role, hanya angka. */
+function isChannelId(value: string): boolean {
+  return /^\d{5,25}$/.test(value);
+}
+
+/** Pilihan auto-archive thread yang diizinkan Discord (menit). */
+export const AUTO_ARCHIVE_CHOICES = [60, 1440, 4320, 10080] as const;
+
+/**
+ * Rapikan SATU simpul syarat.
+ *
+ * Mengembalikan `null` kalau simpulnya tidak bisa dipakai. Alasannya
+ * dikumpulkan ke `dropped` supaya admin tahu bagian mana yang hilang — bukan
+ * syarat yang diam-diam jadi "selalu benar".
+ */
+function sanitizeConditionNode(
+  input: unknown,
+  dropped: string[],
+  kedalaman = 0,
+): ConditionNode | null {
+  if (!input || typeof input !== 'object') return null;
+  const item = input as Record<string, unknown>;
+  const tipe = asString(item.type).trim();
+
+  if (tipe === 'in') {
+    const nama = asString(item.value).trim();
+    if (!/^[a-zA-Z][\w.]{0,63}$/.test(nama)) {
+      dropped.push('syarat "termasuk" tanpa nilai yang diperiksa');
+      return null;
+    }
+    const daftar = normalizeList(item.list);
+    if (daftar.length === 0) {
+      dropped.push('syarat "termasuk" tanpa daftar pembanding');
+      return null;
+    }
+    return { type: 'in', value: nama, list: daftar };
+  }
+
+  if (tipe === 'and' || tipe === 'or' || tipe === 'not') {
+    if (kedalaman >= CONDITION_LIMITS.depth) {
+      dropped.push(`syarat bersarang lebih dari ${CONDITION_LIMITS.depth} tingkat tidak didukung`);
+      return null;
+    }
+    const mentah = Array.isArray(item.items) ? item.items : [];
+    const anak: ConditionNode[] = [];
+    for (const satu of mentah) {
+      const bersih = sanitizeConditionNode(satu, dropped, kedalaman + 1);
+      if (bersih) anak.push(bersih);
+      if (anak.length >= CONDITION_LIMITS.nodes) break;
+    }
+    /*
+     * `and`/`or` TANPA anak tidak disimpan: hasilnya akan selalu benar/salah
+     * dan admin mengira syaratnya bekerja. `not` tanpa anak sengaja
+     * DIPERTAHANKAN — artinya "tidak ada yang dilanggar", sama seperti
+     * Discohook, dan itu berguna sebagai cabang "selain itu".
+     */
+    if (anak.length === 0 && tipe !== 'not') {
+      dropped.push(`syarat "${tipe}" tanpa syarat di dalamnya`);
+      return null;
+    }
+    return { type: tipe as LogicOperator, items: anak };
+  }
+
+  // Bentuk daun: memakai pembanding datar (perilaku lama).
+  const nama = asString(item.value).trim();
+  if (!/^[a-zA-Z][\w.]{0,63}$/.test(nama)) {
+    dropped.push('syarat tanpa nilai yang diperiksa');
+    return null;
+  }
+  const comparator = normalizeComparator(item.comparator);
+  const expected = asString(item.expected).slice(0, FLOW_LIMITS.variableValue);
+  if (esCompar(comparator) && !expected) {
+    dropped.push('syarat membutuhkan nilai pembanding');
+    return null;
+  }
+  return { type: 'leaf', value: nama, comparator, ...(expected ? { expected } : {}) };
+}
+
+function esCompar(comparator: string): boolean {
+  return (
+    comparator === 'equals' ||
+    comparator === 'notEquals' ||
+    comparator === 'contains' ||
+    comparator === 'notContains'
+  );
+}
+
+/** Ringkasan simpul syarat untuk pesan yang dilihat admin. */
+export function ringkasSyarat(node: ConditionNode | null | undefined): string {
+  if (!node) return '(kosong)';
+  if (node.type === 'leaf') {
+    const banding = COMPARATOR_LABEL[node.comparator] ?? node.comparator;
+    return node.expected ? `${node.value} ${banding} "${node.expected}"` : `${node.value} ${banding}`;
+  }
+  if (node.type === 'in') return `${node.value ?? '?'} termasuk [${(node.list ?? []).join(', ')}]`;
+  const anak = (node.items ?? []).map(ringkasSyarat);
+  if (anak.length === 0) return `(${node.type})`;
+  const sambung = node.type === 'and' ? ' DAN ' : node.type === 'or' ? ' ATAU ' : ' DAN TIDAK ';
+  return `(${anak.join(sambung)})`;
 }
 
 /**
@@ -297,11 +452,26 @@ function sanitizeActionsDalam(
 
     if (kind === 'condition') {
       /*
-       * Nilai yang diperiksa HARUS disebut. Tanpa itu, syaratnya diam-diam
-       * selalu cocok dan admin mengira percabangannya bekerja.
+       * Dua bentuk syarat:
+       *   - `check` (pohon `and`/`or`/`not`/`in`) — bentuk Discohook;
+       *   - `value`/`comparator`/`expected` (datar) — bentuk lama.
+       * Kalau `check` ada, bentuk datar diabaikan: memakai keduanya sekaligus
+       * membuat hasil yang sulit ditebak admin.
        */
-      const nama = asString(item.value).trim();
-      if (!/^[a-zA-Z][\w.]{0,63}$/.test(nama)) {
+      let pohon: ConditionNode | null = null;
+      if (item.check !== undefined) {
+        const sebelum = dropped.length;
+        pohon = sanitizeConditionNode(item.check, dropped);
+        if (!pohon) {
+          // Alasan SPESIFIK dari penyaring simpul sudah dicatat; menambah
+          // alasan umum hanya membuat admin membaca dua pesan untuk satu
+          // kesalahan yang sama.
+          if (dropped.length === sebelum) dropped.push('aksi syarat dengan pohon kondisi tidak sah');
+          continue;
+        }
+      }
+      const nama = pohon ? '' : asString(item.value).trim();
+      if (!pohon && !/^[a-zA-Z][\w.]{0,63}$/.test(nama)) {
         dropped.push('aksi syarat tanpa nilai yang diperiksa');
         continue;
       }
@@ -309,11 +479,9 @@ function sanitizeActionsDalam(
       const expected = asString(item.expected).slice(0, FLOW_LIMITS.variableValue);
       // `empty`/`notEmpty` tidak butuh pembanding; menyimpan `expected` kosong
       // lebih jujur daripada memaksa admin mengetik sesuatu yang diabaikan.
-      if ((comparator === 'equals' || comparator === 'notEquals' || comparator === 'contains' || comparator === 'notContains')) {
-        if (!expected) {
-          dropped.push('aksi syarat membutuhkan nilai pembanding');
-          continue;
-        }
+      if (!pohon && esCompar(comparator) && !expected) {
+        dropped.push('aksi syarat membutuhkan nilai pembanding');
+        continue;
       }
       /*
        * Cabang bersyarat: `then` dijalankan bila cocok, `else` bila tidak.
@@ -339,9 +507,9 @@ function sanitizeActionsDalam(
 
       actions.push({
         kind: 'condition',
-        value: nama,
+        ...(pohon ? { check: pohon } : { value: nama }),
         comparator,
-        ...(expected ? { expected } : {}),
+        ...(expected && !pohon ? { expected } : {}),
         ...cabang,
       });
       continue;
@@ -364,7 +532,53 @@ function sanitizeActionsDalam(
         dropped.push('aksi thread tanpa nama thread');
         continue;
       }
-      actions.push({ kind: 'thread', threadName, private: asBoolean(item.private) });
+      /*
+       * Pilihan arsip & slowmode divalidasi terhadap daftar Discord. Nilai di
+       * luar daftar DIBUANG (dengan alasan), bukan dibulatkan diam-diam ke
+       * nilai terdekat — admin harus tahu thread-nya memakai setelan lain.
+       */
+      let autoArchiveMinutes: number | undefined;
+      if (item.autoArchiveMinutes !== undefined) {
+        const angka = Math.trunc(Number(item.autoArchiveMinutes));
+        if ((AUTO_ARCHIVE_CHOICES as readonly number[]).includes(angka)) {
+          autoArchiveMinutes = angka;
+        } else {
+          dropped.push('lama arsip thread harus 1 jam, 1 hari, 3 hari, atau 1 minggu');
+        }
+      }
+      let slowmodeSeconds: number | undefined;
+      if (item.slowmodeSeconds !== undefined) {
+        const angka = Math.trunc(Number(item.slowmodeSeconds));
+        if (Number.isFinite(angka) && angka >= 0 && angka <= 21_600) {
+          slowmodeSeconds = angka;
+        } else {
+          dropped.push('slowmode thread harus 0–21600 detik');
+        }
+      }
+      const appliedTags: string[] = [];
+      if (Array.isArray(item.appliedTags)) {
+        for (const satu of item.appliedTags) {
+          const tag = asString(satu).trim();
+          if (!isChannelId(tag)) continue;
+          if (appliedTags.includes(tag)) continue;
+          appliedTags.push(tag);
+          if (appliedTags.length >= 5) break;
+        }
+        if (appliedTags.length === 0 && item.appliedTags.length > 0) {
+          dropped.push('tag forum harus berupa ID tag (angka)');
+        }
+      }
+      const threadMessage = asString(item.threadMessage).trim().slice(0, ACTION_LIMITS.textLength);
+      actions.push({
+        kind: 'thread',
+        threadName,
+        private: asBoolean(item.private),
+        ...(autoArchiveMinutes !== undefined ? { autoArchiveMinutes } : {}),
+        ...(slowmodeSeconds !== undefined ? { slowmodeSeconds } : {}),
+        invitable: item.invitable === undefined ? true : asBoolean(item.invitable),
+        ...(appliedTags.length ? { appliedTags } : {}),
+        ...(threadMessage ? { threadMessage } : {}),
+      });
       continue;
     }
 
@@ -373,19 +587,33 @@ function sanitizeActionsDalam(
       continue;
     }
 
-    // kind === 'message'
-    const postId = Number(item.postId);
-    if (!Number.isSafeInteger(postId) || postId <= 0) {
-      dropped.push('aksi kirim pesan tanpa pesan tujuan');
+    /*
+     * `message` dan `webhook` sama-sama mengirim pesan tersimpan; bedanya
+     * hanya jalur kirimnya (bot vs webhook). Aturan tujuan & channel dipakai
+     * bersama supaya keduanya tidak menyimpang aturan.
+     */
+    if (kind === 'message' || kind === 'webhook') {
+      const postId = Number(item.postId);
+      if (!Number.isSafeInteger(postId) || postId <= 0) {
+        dropped.push(kind === 'webhook' ? 'aksi webhook tanpa pesan tujuan' : 'aksi kirim pesan tanpa pesan tujuan');
+        continue;
+      }
+      let channelId: string | undefined;
+      if (item.channelId !== undefined && asString(item.channelId).trim() !== '') {
+        const cid = asString(item.channelId).trim();
+        if (isChannelId(cid)) channelId = cid;
+        else dropped.push('channel tujuan harus berupa ID channel (angka)');
+      }
+      const followUp = asString(item.followUp).trim().slice(0, ACTION_LIMITS.followUpLength);
+      actions.push({
+        kind,
+        postId,
+        toChannel: item.toChannel === undefined ? true : asBoolean(item.toChannel),
+        ...(channelId ? { channelId } : {}),
+        ...(followUp ? { followUp } : {}),
+      });
       continue;
     }
-    const followUp = asString(item.followUp).trim().slice(0, ACTION_LIMITS.followUpLength);
-    actions.push({
-      kind: 'message',
-      postId,
-      toChannel: item.toChannel === undefined ? true : asBoolean(item.toChannel),
-      ...(followUp ? { followUp } : {}),
-    });
   }
 
   const dibatasi = actions.slice(0, ACTION_LIMITS.perComponent);
@@ -409,13 +637,25 @@ function sanitizeActionsDalam(
 export type ActionStep =
   | { kind: 'role'; roleId: string; op: RoleActionOp }
   | { kind: 'reply'; text: string; hidden: boolean }
-  | { kind: 'message'; postId: number; toChannel: boolean; followUp?: string }
+  | {
+      kind: 'message';
+      postId: number;
+      toChannel: boolean;
+      followUp?: string;
+      /** Channel tujuan selain channel pemicu (kosong = ikut pemicu). */
+      channelId?: string;
+      /** true = kirim lewat webhook, bukan lewat bot. */
+      viaWebhook?: boolean;
+    }
   | { kind: 'wait'; seconds: number }
   | {
       kind: 'condition';
-      value: string;
+      /** Bentuk datar (lama). Kosong bila `check` dipakai. */
+      value?: string;
       comparator: string;
       expected?: string;
+      /** Pohon syarat bertingkat (baru). */
+      check?: ConditionNode;
       /** Cabang yang dijalankan bila cocok / tidak cocok (kosong = hentikan). */
       then?: ActionStep[];
       otherwise?: ActionStep[];
@@ -423,7 +663,16 @@ export type ActionStep =
   | { kind: 'dud' }
   | { kind: 'stop'; message?: string }
   | { kind: 'variable'; name: string; value: string; source: 'static' | 'adaptive' | 'get' }
-  | { kind: 'thread'; threadName: string; private: boolean }
+  | {
+      kind: 'thread';
+      threadName: string;
+      private: boolean;
+      autoArchiveMinutes?: number;
+      slowmodeSeconds?: number;
+      invitable?: boolean;
+      appliedTags?: string[];
+      threadMessage?: string;
+    }
   | { kind: 'delete' };
 
 export interface ActionPlan {
@@ -466,7 +715,7 @@ export function planActions(actions: PostAction[], options: { selfPostId?: numbe
       steps.push({ kind: 'reply', text: action.text!, hidden: action.hidden !== false });
       continue;
     }
-    if (action.kind === 'message') {
+    if (action.kind === 'message' || action.kind === 'webhook') {
       if (options.selfPostId != null && action.postId === options.selfPostId) {
         skipped.push('aksi mengirim pesan ini sendiri dilewati (akan berulang tanpa henti)');
         continue;
@@ -475,6 +724,8 @@ export function planActions(actions: PostAction[], options: { selfPostId?: numbe
         kind: 'message',
         postId: action.postId!,
         toChannel: action.toChannel !== false,
+        ...(action.channelId ? { channelId: action.channelId } : {}),
+        ...(action.kind === 'webhook' ? { viaWebhook: true } : {}),
         ...(action.followUp ? { followUp: action.followUp } : {}),
       });
       continue;
@@ -493,9 +744,14 @@ export function planActions(actions: PostAction[], options: { selfPostId?: numbe
        */
       const dalamThen = action.then && action.then.length > 0 ? planActions(action.then, options).steps : undefined;
       const dalamElse = action.else && action.else.length > 0 ? planActions(action.else, options).steps : undefined;
+      /*
+       * Bentuk datar hanya dipakai kalau tidak ada pohon syaratnya. `value`
+       * bisa berisi string kosong untuk syarat berbentuk pohon, jadi jangan
+       * memaksanya ada.
+       */
       steps.push({
         kind: 'condition',
-        value: action.value!,
+        ...(action.check ? { check: action.check } : { value: action.value ?? '' }),
         comparator: action.comparator ?? 'equals',
         ...(action.expected ? { expected: action.expected } : {}),
         ...(dalamThen ? { then: dalamThen } : {}),
@@ -529,6 +785,11 @@ export function planActions(actions: PostAction[], options: { selfPostId?: numbe
         kind: 'thread',
         threadName: action.threadName!,
         private: action.private === true,
+        ...(action.autoArchiveMinutes !== undefined ? { autoArchiveMinutes: action.autoArchiveMinutes } : {}),
+        ...(action.slowmodeSeconds !== undefined ? { slowmodeSeconds: action.slowmodeSeconds } : {}),
+        ...(action.invitable !== undefined ? { invitable: action.invitable } : {}),
+        ...(action.appliedTags?.length ? { appliedTags: action.appliedTags } : {}),
+        ...(action.threadMessage ? { threadMessage: action.threadMessage } : {}),
       });
       continue;
     }

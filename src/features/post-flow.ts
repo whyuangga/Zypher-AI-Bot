@@ -51,6 +51,145 @@ export type FlowVariables = Record<string, FlowValue>;
 export const COMPARATORS = ['equals', 'notEquals', 'contains', 'notContains', 'empty', 'notEmpty'] as const;
 export type Comparator = (typeof COMPARATORS)[number];
 
+/**
+ * Pembanding LOGIKA — bentuknya sama dengan `FlowActionCheckFunctionType` di
+ * Discohook: `and`, `or`, `not`, `in`. Bedanya, di sana syarat disusun sebagai
+ * pohon fungsi JSON; di sini bentuknya sengaja lebih ramah ditulis tangan:
+ *
+ *   and  — semua syarat anak BENAR
+ *   or   — sedikitnya satu syarat anak benar
+ *   not  — semua syarat anak SALAH (NOR, sama seperti Discohook: bukan
+ *          negasi satu syarat, melainkan "tidak ada yang benar")
+ *   in   — nilai `value` ADA di dalam daftar `list`
+ *
+ * `not` sengaja tidak diartikan "negasi satu syarat": Discohook memakai NOR,
+ * dan dua arti berbeda untuk satu nama adalah cara tercepat membuat admin
+ * salah paham. Kalau admin ingin "bukan X", dia menulis `not` berisi satu
+ * syarat `X`.
+ */
+export const LOGIC_OPERATORS = ['and', 'or', 'not', 'in'] as const;
+export type LogicOperator = (typeof LOGIC_OPERATORS)[number];
+
+export const LOGIC_LABEL: Record<LogicOperator, string> = {
+  and: 'semua benar (dan)',
+  or: 'salah satu benar (atau)',
+  not: 'semua salah (bukan)',
+  in: 'termasuk salah satu dari daftar',
+};
+
+/**
+ * Satu simpul syarat.
+ *
+ * Dua bentuk, sengaja dibedakan supaya tidak ada field yang "kadang berarti":
+ *   - `leaf`: membandingkan satu nilai (`value`) dengan pembanding datar;
+ *   - `logic`: menggabungkan simpul anak (`items`), atau `in` yang memakai
+ *     `list` sebagai daftar pembanding.
+ */
+export type ConditionNode =
+  | {
+      type: 'leaf';
+      /** Nama nilai: `member.name`, `selected`, `var.kode`, … */
+      value: string;
+      comparator: Comparator;
+      expected?: string;
+    }
+  | {
+      type: LogicOperator;
+      /** Anak syarat — untuk `and`/`or`/`not`. */
+      items?: ConditionNode[];
+      /** Daftar pembanding untuk `in`, teks dipisah koma/baris. */
+      list?: string[];
+      /** Untuk `in`: nama nilai yang dicari. */
+      value?: string;
+    };
+
+/** Batas kedalaman pohon syarat — cermin dari `ACTION_LIMITS.branchDepth`. */
+export const CONDITION_LIMITS = {
+  /** Kedalaman sarang simpul logika. */
+  depth: 4,
+  /** Jumlah simpul dalam satu syarat (semua tingkat). */
+  nodes: 40,
+  /** Jumlah nilai di daftar `in`. */
+  listItems: 50,
+} as const;
+
+/** Normalisasi satu nilai pembanding `in`: buang spasi kosong. */
+export function normalizeList(values: unknown): string[] {
+  const sumber = Array.isArray(values)
+    ? values
+    : typeof values === 'string'
+      ? values.split(/[\n,]/)
+      : [];
+  const hasil: string[] = [];
+  for (const satu of sumber) {
+    const teks = String(satu ?? '').trim();
+    if (!teks) continue;
+    if (hasil.includes(teks)) continue;
+    hasil.push(teks.slice(0, 200));
+    if (hasil.length >= CONDITION_LIMITS.listItems) break;
+  }
+  return hasil;
+}
+
+/**
+ * Uji satu simpul syarat terhadap nilai yang tersedia.
+ *
+ * `resolve` dipakai untuk mengambil nilai sebuah nama — dipisah supaya modul
+ * ini tetap murni dan bisa diuji tanpa runtime flow. Simpul yang tidak sah
+ * menghasilkan `false`, bukan melempar: satu syarat cacat tidak boleh membuat
+ * seluruh flow berhenti tanpa penjelasan yang bisa dibaca.
+ */
+export function evaluateCondition(
+  node: ConditionNode | null | undefined,
+  resolve: (name: string) => string,
+): boolean {
+  if (!node) return false;
+  if (node.type === 'leaf') {
+    return testCondition({
+      value: resolve(node.value),
+      comparator: node.comparator,
+      expected: node.expected,
+    });
+  }
+  if (node.type === 'in') {
+    const dicari = resolve(node.value ?? '').trim();
+    const daftar = node.list ?? [];
+    if (!dicari) return false;
+    return daftar.some((satu) => satu === dicari);
+  }
+  const anak = (node.items ?? []).map((satu) => evaluateCondition(satu, resolve));
+  if (node.type === 'and') return anak.length > 0 && anak.every(Boolean);
+  if (node.type === 'or') return anak.some(Boolean);
+  // `not` = NOR: tidak ada anak yang benar. Tanpa anak, hasilnya `true`
+  // (vakum benar) — sama seperti Discohook, dan itu memang yang diharapkan
+  // dari "tidak ada syarat yang dilanggar".
+  return anak.every((satu) => satu === false);
+}
+
+/** Apakah simpul ini memakai daftar pembanding (`in`)? */
+export function isLogicNode(node: ConditionNode | null | undefined): boolean {
+  return Boolean(node && node.type !== 'leaf');
+}
+
+/** Ringkasan satu simpul untuk log & dashboard. */
+export function describeCondition(node: ConditionNode | null | undefined): string {
+  if (!node) return '(kosong)';
+  if (node.type === 'leaf') {
+    const banding = COMPARATOR_LABEL[node.comparator];
+    return node.expected === undefined || node.expected === ''
+      ? `${node.value} ${banding}`
+      : `${node.value} ${banding} "${node.expected}"`;
+  }
+  if (node.type === 'in') {
+    const daftar = (node.list ?? []).join(', ');
+    return `${node.value ?? '?'} termasuk [${daftar}]`;
+  }
+  const anak = (node.items ?? []).map(describeCondition);
+  if (anak.length === 0) return `(${node.type}: kosong)`;
+  const sambung = node.type === 'and' ? ' DAN ' : node.type === 'or' ? ' ATAU ' : ' DAN BUKAN ';
+  return `(${anak.join(sambung)})`;
+}
+
 export const COMPARATOR_LABEL: Record<Comparator, string> = {
   equals: 'sama dengan',
   notEquals: 'tidak sama dengan',

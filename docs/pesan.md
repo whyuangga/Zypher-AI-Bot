@@ -599,14 +599,14 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 |---|---|---|
 | Do nothing | ✅ Tanpa aksi | |
 | Wait | ✅ Tunggu | Discohook maks 60 detik; di sini sampai 7 hari karena penantian disimpan di database |
-| Check (pohon `then`/`else`, `and`/`or`/`not`/`in`/`equals`) | ⚠️ Sebagian | cabang `then`/`else` ada, tetapi pembandingnya datar: `equals`, `notEquals`, `contains`, `notContains`, `empty`, `notEmpty`. `and`/`or`/`not` bersarang belum ada |
+| Check (pohon `then`/`else`, `and`/`or`/`not`/`in`/`equals`) | ✅ | cabang `then`/`else`, pohon `and`/`or`/`not`/`in` bertingkat (maks 4 tingkat, 40 simpul), plus pembanding datar lama (`contains`, `empty`, …). `not` = NOR, sama dengan Discohook. Bentuk datar tetap didukung supaya aksi lama tidak berubah arti |
 | Set variable (static / adaptive / get) | ✅ | ketiga jenisnya ada; nilai `adaptive` terbatas pada `messageId`, `channelId`, `threadId` |
 | Stop (+ pesan) | ✅ Hentikan flow | |
 | Add / Remove / Toggle role | ✅ | |
-| Send message (dari backup) | ✅ Kirim pesan tersimpan | |
-| Send webhook message | ❌ | butuh webhook per channel yang dikelola; belum disambungkan ke flow |
+| Send message (dari backup) | ✅ Kirim pesan tersimpan | bisa ke channel lain lewat `channelId` per aksi, seperti channel per aksi di Discohook |
+| Send webhook message | ✅ Kirim pesan lewat webhook | webhook dibuat/dipakai ulang per channel tujuan (tidak perlu daftar webhook per akun). Komponen role TIDAK ikut — dilaporkan ke pengklik, bukan hilang diam-diam |
 | Send raw message | ❌ | hanya untuk alur impor, bukan penyusunan |
-| Create thread (publik/privat, auto-archive, slowmode, tag forum) | ⚠️ Sebagian | publik & privat ada; `autoArchiveDuration`, `rateLimitPerUser`, dan tag forum belum |
+| Create thread (publik/privat, auto-archive, slowmode, tag forum) | ✅ | publik & privat, `autoArchiveMinutes` (1 jam/1 hari/3 hari/1 minggu), slowmode, `invitable`, tag forum (maks 5, channel diperlakukan sebagai forum), pesan pembuka |
 | Delete message | ✅ Hapus pesan | hanya pesan pemicu; Discohook bisa menghapus pesan hasil aksi sebelumnya |
 
 **Pesan & komponen**
@@ -627,6 +627,39 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Riwayat/undo revisi, impor backup, share link | ⚠️ impor JSON/URL ada; riwayat & share belum |
 | Jadwal kirim (sekali / berulang, cron) | ⚠️ sekali / tiap N jam (min. 2 jam); jadwal cron per hari/bulan belum |
 | Trigger event (member masuk/keluar) | ❌ (bot punya sambutan sendiri, bukan flow) |
+
+### Batch 2 (tutup selisih berikutnya)
+
+Yang ditambahkan sesudah tabel di atas disusun:
+
+**Syarat bertingkat.** Bentuknya bukan JSON pohon-fungsi seperti Discohook,
+melainkan objek dengan `type`: `leaf` (pembanding datar), `and`, `or`, `not`,
+`in`. Alasannya: admin menulis di dashboard, bukan menempel JSON, dan bentuk
+datar lebih mudah dibaca di kotak bersarang. Semantiknya sama:
+
+- `and` — semua anak benar, minimal satu anak;
+- `or` — sedikitnya satu anak benar;
+- `not` — SEMUA anak salah (NOR). `not` berisi satu syarat = "bukan X";
+- `in` — nilai ada di daftar (pencocokan persis, bukan "mengandung").
+
+`and`/`or` tanpa anak DIBUANG dengan alasan; `not` tanpa anak dipertahankan
+(vakum benar) karena begitulah Discohook, dan berguna untuk cabang "selain itu".
+
+**CreateThread lengkap.** Lama arsip divalidasi terhadap daftar Discord (60,
+1440, 4320, 10080) — angka lain dibuang dengan alasan, bukan dibulatkan
+diam-diam. Tag forum membuat bot memperlakukan channel sebagai forum. Setelan
+yang tidak sah tidak membatalkan aksinya: thread tetap dibuat dengan setelan
+bawaan, dan admin diberi tahu.
+
+**SendWebhookMessage.** Aksi `webhook` mengirim pesan tersimpan lewat webhook.
+Bedanya dengan Discohook: webhook TIDAK dipilih per aksi dari daftar akun.
+Webhook dibuat/dipakai ulang per channel tujuan (token terenkripsi di
+`post_webhooks`), jadi tidak ada rahasia baru yang perlu admin salin. Kalau
+pesannya punya tombol/menu role, komponennya tidak ikut dan itu dilaporkan.
+
+**Bug yang ketahuan tes baru (dan sudah diperbaiki).** Balasan yang berada di
+DALAM cabang bersyarat tidak dihitung sebagai balasan, sehingga member menerima
+jawaban cabang lalu "✅ Selesai." sesudahnya. Pemeriksaannya sekarang rekursif.
 
 Yang **sengaja berbeda** dan lebih ketat dari Discohook:
 

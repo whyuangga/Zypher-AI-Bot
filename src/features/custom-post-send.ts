@@ -442,6 +442,8 @@ export async function sendOrUpdatePostViaWebhook(options: {
   postId?: number;
   /** Flag pesan dari admin (suppress embeds/notifikasi). */
   flags?: number;
+  /** Nilai template teks (`{member.name}`, …). Kosong = apa adanya. */
+  template?: Record<string, string> | null;
 }): Promise<SendResult> {
   // Komponen interaktif dikirim oleh WEBHOOK, bukan oleh bot kita. Discord
   // hanya meneruskan klik ke aplikasi pemilik komponen — jadi tombol/menu di
@@ -452,7 +454,14 @@ export async function sendOrUpdatePostViaWebhook(options: {
     );
   }
 
-  const built = await buildPayload(options.blocks, [], options.accent, [], options.postId ?? null);
+  const built = await buildPayload(
+    options.blocks,
+    [],
+    options.accent,
+    [],
+    options.postId ?? null,
+    options.template ?? null,
+  );
   if (!built) {
     throw new PostSendError('Pesan masih kosong — isi minimal satu teks atau gambar.');
   }

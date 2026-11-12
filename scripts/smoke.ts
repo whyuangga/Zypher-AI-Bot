@@ -6968,6 +6968,299 @@ await testAsync('aksi: cabang bersyarat, dud, stop, & variabel adaptif', async (
   assert.equal(plan.steps[1]!.kind, 'dud', 'dud tetap jadi langkah (urutan terjaga)');
 });
 
+await testAsync('syarat: and / or / not / in bertingkat', async () => {
+  const flow = await import('../src/features/post-flow.js');
+
+  // Nilai yang dipakai bersama oleh semua simpul di bawah.
+  const nilai: Record<string, string> = {
+    'member.name': 'Wahyu',
+    'member.id': '123456789012345678',
+    selected: 'gamer',
+    'var.kode': 'B',
+    kosong: '',
+  };
+  const ambil = (nama: string) => nilai[nama] ?? '';
+
+  // `in`: nilai harus ADA di daftar — pencocokan persis, bukan "mengandung".
+  assert.equal(
+    flow.evaluateCondition({ type: 'in', value: 'selected', list: ['gamer', 'anime'] }, ambil),
+    true,
+  );
+  assert.equal(
+    flow.evaluateCondition({ type: 'in', value: 'var.kode', list: ['gamer'] }, ambil),
+    false,
+    'pencocokan `in` tidak boleh sebagian',
+  );
+  assert.equal(
+    flow.evaluateCondition({ type: 'in', value: 'kosong', list: [''] }, ambil),
+    false,
+    'nilai kosong tidak pernah "termasuk"',
+  );
+
+  // `and` butuh SEMUA benar; `or` cukup satu.
+  const dan = {
+    type: 'and' as const,
+    items: [
+      { type: 'leaf' as const, value: 'member.name', comparator: 'equals' as const, expected: 'Wahyu' },
+      { type: 'leaf' as const, value: 'selected', comparator: 'equals' as const, expected: 'gamer' },
+    ],
+  };
+  assert.equal(flow.evaluateCondition(dan, ambil), true);
+  assert.equal(
+    flow.evaluateCondition(
+      { ...dan, items: [...dan.items, { type: 'leaf', value: 'kosong', comparator: 'notEmpty' }] },
+      ambil,
+    ),
+    false,
+    'satu anak salah membuat `and` salah',
+  );
+  assert.equal(flow.evaluateCondition({ type: 'or', items: dan.items }, ambil), true);
+  assert.equal(
+    flow.evaluateCondition(
+      {
+        type: 'or',
+        items: [
+          { type: 'leaf', value: 'kosong', comparator: 'notEmpty' },
+          { type: 'leaf', value: 'selected', comparator: 'equals', expected: 'gamer' },
+        ],
+      },
+      ambil,
+    ),
+    true,
+  );
+
+  /*
+   * `not` = NOR (semua anak salah), sama seperti Discohook. Ini yang paling
+   * mudah salah diartikan, jadi diuji dua arah.
+   */
+  const bukan = {
+    type: 'not' as const,
+    items: [{ type: 'leaf' as const, value: 'kosong', comparator: 'notEmpty' as const }],
+  };
+  assert.equal(flow.evaluateCondition(bukan, ambil), true, '`not` benar saat anaknya salah');
+  assert.equal(
+    flow.evaluateCondition({ ...bukan, items: [...bukan.items, dan.items[0]!] }, ambil),
+    false,
+    '`not` salah saat ADA anak yang benar (bukan sekadar negasi satu syarat)',
+  );
+  assert.equal(flow.evaluateCondition({ type: 'not', items: [] }, ambil), true, '`not` tanpa anak = benar');
+
+  // Bersarang: (nama=Wahyu DAN (id tidak kosong ATAU kode in [A,B]))
+  assert.equal(
+    flow.evaluateCondition(
+      {
+        type: 'and',
+        items: [
+          { type: 'leaf', value: 'member.name', comparator: 'equals', expected: 'Wahyu' },
+          {
+            type: 'or',
+            items: [
+              { type: 'leaf', value: 'member.id', comparator: 'notEmpty' },
+              { type: 'in', value: 'var.kode', list: ['A', 'B'] },
+            ],
+          },
+        ],
+      },
+      ambil,
+    ),
+    true,
+  );
+
+  // `and`/`or` tanpa anak tidak masuk akal; `not` tanpa anak tetap berarti.
+  const { sanitizeActions } = await import('../src/features/post-actions.js');
+  const kosong = sanitizeActions([
+    { kind: 'condition', check: { type: 'and', items: [] } },
+    { kind: 'condition', check: { type: 'not', items: [] }, then: [{ kind: 'dud' }] },
+  ]);
+  assert.equal(kosong.actions.length, 1, '`and` tanpa anak dibuang');
+  assert.ok(
+    kosong.dropped.some((alasan) => alasan.includes('tanpa syarat di dalamnya')),
+    'alasannya dilaporkan',
+  );
+  assert.equal(kosong.actions[0]!.check!.type, 'not');
+
+  // `in` tanpa daftar juga dibuang — bukan diam-diam selalu salah.
+  const tanpaDaftar = sanitizeActions([{ kind: 'condition', check: { type: 'in', value: 'selected' } }]);
+  assert.equal(tanpaDaftar.actions.length, 0);
+  assert.ok(tanpaDaftar.dropped.some((alasan) => alasan.includes('daftar pembanding')));
+
+  // Daftar `in` dirapikan: dipisah koma/baris, duplikat & kosong dibuang.
+  assert.deepEqual(flow.normalizeList('gamer, anime\n gamer\n\nfilm'), ['gamer', 'anime', 'film']);
+  assert.deepEqual(flow.normalizeList(['a', ' a ', 'b']), ['a', 'b']);
+  assert.deepEqual(flow.normalizeList(undefined), []);
+
+  // Kedalaman: pohon yang terlalu dalam dilaporkan, bukan dipotong diam-diam.
+  let dalam: Record<string, unknown> = { type: 'leaf', value: 'a', comparator: 'notEmpty' };
+  for (let i = 0; i < 6; i += 1) dalam = { type: 'and', items: [dalam] };
+  const terlaluDalam = sanitizeActions([{ kind: 'condition', check: dalam }]);
+  assert.ok(
+    terlaluDalam.dropped.some((alasan) => alasan.includes('tingkat')),
+    'pohon terlalu dalam dilaporkan',
+  );
+
+  // Ringkasan untuk log/dashboard tidak melempar untuk bentuk apa pun.
+  assert.match(flow.describeCondition({ type: 'leaf', value: 'a', comparator: 'equals', expected: 'b' }), /a sama dengan "b"/);
+  assert.match(flow.describeCondition({ type: 'in', value: 'x', list: ['1', '2'] }), /x termasuk \[1, 2\]/);
+});
+
+await testAsync('aksi: thread lengkap & kirim webhook divalidasi', async () => {
+  const { sanitizeActions, planActions } = await import('../src/features/post-actions.js');
+
+  const { actions, dropped } = sanitizeActions([
+    {
+      kind: 'thread',
+      threadName: 'Bantuan {member.name}',
+      private: true,
+      autoArchiveMinutes: 10080,
+      slowmodeSeconds: 30,
+      invitable: false,
+      appliedTags: ['111111111111111111', 'bukan-id', '111111111111111111'],
+      threadMessage: 'Halo {member.mention}',
+    },
+    // Pilihan arsip di luar daftar Discord = dibuang, bukan dibulatkan.
+    { kind: 'thread', threadName: 'Arsip salah', autoArchiveMinutes: 999 },
+    { kind: 'thread', threadName: 'Slowmode salah', slowmodeSeconds: 99999 },
+    { kind: 'webhook', postId: 7 },
+    // Channel tujuan harus ID, bukan nama channel.
+    { kind: 'webhook', postId: 8, channelId: '#umum' },
+    { kind: 'message', postId: 9, channelId: '123456789012345678' },
+    { kind: 'webhook' },
+  ]);
+
+  assert.deepEqual(
+    actions.map((a) => a.kind).join(','),
+    'thread,thread,thread,webhook,webhook,message',
+    'aksi tetap ada; hanya bagian yang tidak sah yang dibuang & dilaporkan',
+  );
+  /*
+   * Setelan yang tidak sah dibuang TANPA membuang aksinya: thread-nya tetap
+   * dibuat dengan setelan bawaan Discord, dan admin diberi tahu. Ini keputusan
+   * sadar — menghapus seluruh aksi karena satu angka salah akan membuat tombol
+   * yang seharusnya membuat thread tidak melakukan apa pun.
+   */
+  assert.equal(actions[1]!.autoArchiveMinutes, undefined, 'arsip tidak sah dibuang, aksi tetap');
+  assert.equal(actions[2]!.slowmodeSeconds, undefined, 'slowmode tidak sah dibuang, aksi tetap');
+  assert.equal(actions[4]!.channelId, undefined, 'channel bukan ID dibuang, aksi tetap');
+  assert.equal(actions[0]!.autoArchiveMinutes, 10080);
+  assert.equal(actions[0]!.slowmodeSeconds, 30);
+  assert.equal(actions[0]!.invitable, false);
+  assert.deepEqual(actions[0]!.appliedTags, ['111111111111111111'], 'tag ganda & bukan angka dibuang');
+  assert.equal(actions[0]!.threadMessage, 'Halo {member.mention}');
+  assert.equal(dropped.length, 4, 'empat bagian tidak sah dilaporkan');
+
+  /*
+   * Rencana: `webhook` jadi langkah pesan dengan `viaWebhook`, dan channel
+   * tujuan tetap dibawa. Tanpa penanda ini, aksi webhook diam-diam terkirim
+   * lewat bot — pesan tampil atas nama bot padahal admin minta server.
+   */
+  const plan = planActions([
+    { kind: 'webhook', postId: 7, toChannel: true },
+    { kind: 'message', postId: 9, toChannel: true, channelId: '123456789012345678' },
+    { kind: 'thread', threadName: 'T', private: true, autoArchiveMinutes: 60, slowmodeSeconds: 5, appliedTags: ['1'] },
+  ]);
+  const [webhook, pesan, thread] = plan.steps as Array<Record<string, unknown>>;
+  assert.equal(webhook!.kind, 'message');
+  assert.equal(webhook!.viaWebhook, true, 'penanda webhook ikut ke langkah');
+  assert.equal(pesan!.channelId, '123456789012345678', 'channel tujuan ikut ke langkah');
+  assert.equal(webhook!.channelId, undefined, 'tanpa channel tujuan = ikut channel pemicu');
+  assert.equal(thread!.autoArchiveMinutes, 60);
+  assert.equal(thread!.slowmodeSeconds, 5);
+});
+
+await testAsync('flow: syarat bertingkat dijalankan lewat cabang nyata', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runComponentActions } = await import('../src/features/post-action-runner.js');
+  const GUILD = '123456789012345678';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Syarat bertingkat',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Klik' }],
+  });
+  const tombol = await repo.replaceRoleButtons(GUILD, post.id, [
+    { label: 'Pilih', roleId: '900000000000000001', mode: 'toggle' },
+  ]);
+  const buttonId = tombol.buttons[0]!.id;
+
+  const balasan: string[] = [];
+  const jalankan = async (values?: string[]) => {
+    const interaction = {
+      customId: `post-role:${buttonId}`,
+      guildId: GUILD,
+      channelId: '999',
+      deferred: false,
+      replied: false,
+      user: { id: '2', username: 'wahyu', globalName: 'Wahyu', tag: 'uji#0001' },
+      ...(values ? { values } : {}),
+      member: {
+        displayName: 'Wahyu',
+        roles: { cache: { has: () => false }, highest: { position: 20 } },
+        permissions: { has: () => true },
+      },
+      guild: {
+        id: GUILD,
+        name: 'Server Uji',
+        roles: { cache: new Map(), fetch: async () => null },
+        members: { me: { roles: { highest: { position: 10 } }, permissions: { has: () => true } }, fetchMe: async () => null },
+      },
+      reply: async (payload: { content: string }) => void balasan.push(payload.content),
+      followUp: async (payload: { content: string }) => void balasan.push(payload.content),
+    };
+    return runComponentActions({
+      client: {} as never,
+      interaction: interaction as never,
+      target: `button:${buttonId}`,
+      postId: post.id,
+    });
+  };
+
+  /*
+   * Syarat gabungan: (nama = "Wahyu" DAN selected termasuk [gamer, anime]).
+   * Yang diuji bukan hanya "cocok/tidak", tetapi bahwa aksi cabang benar-benar
+   * DIJALANKAN berdasarkan hasil pohonnya.
+   */
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      {
+        kind: 'condition',
+        check: {
+          type: 'and',
+          items: [
+            { type: 'leaf', value: 'member.name', comparator: 'equals', expected: 'Wahyu' },
+            { type: 'in', value: 'selected', list: ['gamer', 'anime'] },
+          ],
+        },
+        then: [{ kind: 'reply', text: 'masuk gamer' }],
+        else: [{ kind: 'reply', text: 'bukan gamer' }],
+      },
+    ],
+  });
+
+  await jalankan(['gamer']);
+  assert.deepEqual(balasan, ['masuk gamer'], 'pohon `and` + `in` benar-benar dievaluasi');
+
+  balasan.length = 0;
+  await jalankan(['film']);
+  assert.deepEqual(balasan, ['bukan gamer'], 'nilai di luar daftar masuk cabang lain');
+
+  /*
+   * `not` = semua anak salah. Dengan satu syarat di dalamnya, ini berarti
+   * "bukan X" — cara yang sama dipakai admin untuk menulis negasi.
+   */
+  balasan.length = 0;
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      {
+        kind: 'condition',
+        check: { type: 'not', items: [{ type: 'leaf', value: 'member.name', comparator: 'equals', expected: 'Orang Lain' }] },
+        then: [{ kind: 'reply', text: 'bukan orang lain' }],
+      },
+    ],
+  });
+  await jalankan();
+  assert.deepEqual(balasan, ['bukan orang lain'], '`not` menjalankan cabang saat anaknya salah');
+});
+
 await testAsync('flow: cabang dijalankan, lalu flow lanjut — bukan berhenti', async () => {
   const repo = await import('../src/db/repo.js');
   const { runComponentActions } = await import('../src/features/post-action-runner.js');

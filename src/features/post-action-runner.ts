@@ -40,7 +40,12 @@ import {
   listDueFlowSessions,
   type FlowSession,
 } from '../db/repo.js';
-import { sendOrUpdatePost } from './custom-post-send.js';
+import {
+  sendOrUpdatePost,
+  sendOrUpdatePostViaWebhook,
+  webhookIdentityFor,
+} from './custom-post-send.js';
+import { listRoleButtons, listRoleMenus } from '../db/repo.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import {
   defaultRoleReply,
@@ -53,6 +58,7 @@ import {
 } from './post-actions.js';
 import {
   describeWait,
+  evaluateCondition,
   isDue,
   testCondition,
   waitUntil,
@@ -361,8 +367,20 @@ async function jalankanLangkah(
     }
 
     if (step.kind === 'condition') {
-      const nilai = runtime.variables[step.value] ?? '';
-      const cocok = testCondition({ value: nilai, comparator: step.comparator as never, expected: step.expected });
+      /*
+       * Dua bentuk syarat, satu tempat evaluasi:
+       *   - `check` (pohon and/or/not/in) dievaluasi rekursif;
+       *   - `value`/`comparator`/`expected` (datar) memakai testCondition.
+       * Yang tidak ada variabelnya menghasilkan string kosong, sehingga
+       * `empty` berlaku apa adanya — tidak ada nilai "ajaib".
+       */
+      let cocok: boolean;
+      if (step.check) {
+        cocok = evaluateCondition(step.check, (nama) => runtime.variables[nama] ?? '');
+      } else {
+        const nilai = runtime.variables[step.value ?? ''] ?? '';
+        cocok = testCondition({ value: nilai, comparator: step.comparator as never, expected: step.expected });
+      }
 
       /*
        * Dua bentuk, keduanya sah:
@@ -375,7 +393,7 @@ async function jalankanLangkah(
       const punyaCabang = Boolean(step.then?.length || step.otherwise?.length);
       if (!punyaCabang) {
         if (!cocok) {
-          const alasan = `⏹️ Syarat "${step.value}" tidak terpenuhi, jadi aksi berikutnya tidak dijalankan.`;
+          const alasan = `⏹️ Syarat "${step.value ?? 'bertingkat'}" tidak terpenuhi, jadi aksi berikutnya tidak dijalankan.`;
           await runtime.jawab(alasan, true);
           return { hasil: 'berhenti', alasan };
         }
@@ -411,7 +429,16 @@ async function jalankanLangkah(
 
     if (step.kind === 'thread') {
       const nama = fillActionText(step.threadName, runtime.konteks).trim().slice(0, 100) || 'Thread baru';
-      const berhasil = await buatThread(runtime, nama, step.private);
+      const berhasil = await buatThread(runtime, nama, {
+        private: step.private,
+        ...(step.autoArchiveMinutes !== undefined ? { autoArchiveMinutes: step.autoArchiveMinutes } : {}),
+        ...(step.slowmodeSeconds !== undefined ? { rateLimitPerUser: step.slowmodeSeconds } : {}),
+        ...(step.invitable !== undefined ? { invitable: step.invitable } : {}),
+        ...(step.appliedTags?.length ? { appliedTags: step.appliedTags } : {}),
+        ...(step.threadMessage
+          ? { pesanPembuka: fillActionText(step.threadMessage, runtime.konteks).trim() }
+          : {}),
+      });
       if (!berhasil) return { hasil: 'berhenti', alasan: 'thread gagal dibuat' };
       continue;
     }
@@ -421,48 +448,96 @@ async function jalankanLangkah(
       continue;
     }
 
-    // step.kind === 'message'
+    // step.kind === 'message' (termasuk `viaWebhook`)
     const tujuan = await getCustomPost(runtime.guildId, step.postId).catch((): null => null);
     if (!tujuan) {
       logger.warn(`Aksi kirim pesan: pesan ${step.postId} tidak ada di server ${runtime.guildId}`);
       await runtime.peringatan('⚠️ Pesan lanjutan yang dituju sudah dihapus — aksi dilewati.');
       continue;
     }
-    if (!tujuan.channelId) {
+    /*
+     * Channel tujuan: pilihan aksi MENANG atas channel pesan tersimpan.
+     * Discohook juga begitu — pesan dipakai sebagai ISI, channel ditentukan
+     * per aksi. Tanpa channel di keduanya, tidak ada tempat mengirim.
+     */
+    const channelTujuan = step.channelId ?? tujuan.channelId;
+    if (!channelTujuan) {
       logger.warn(`Aksi kirim pesan: pesan ${step.postId} belum punya channel tujuan`);
       await runtime.peringatan('⚠️ Pesan lanjutan belum punya channel tujuan — aksi dilewati.');
       continue;
     }
 
     try {
-      /*
-       * Dikirim lewat jalur yang SAMA dengan tombol "Kirim ke Discord":
-       * batas komponen, berkas, dan pemetaan tombol/menu role otomatis
-       * berlaku, jadi tidak ada perilaku kedua yang bisa menyimpang.
-       */
-      const terkirim = await sendOrUpdatePost({
-        client: runtime.client,
-        channelId: tujuan.channelId,
-        // Nesting: balasan hanya bisa dipasang di channel yang sama.
-        messageId: step.toChannel ? null : runtime.messageId,
-        replyTo: step.toChannel || !runtime.messageId || tujuan.channelId !== runtime.channelId
-          ? undefined
-          : runtime.messageId,
-        blocks: tujuan.blocks,
-        accent: tujuan.accent ?? undefined,
-        postId: tujuan.id,
+      let terkirim: { messageId: string };
+      if (step.viaWebhook) {
         /*
-         * Nilai template diteruskan supaya teks pesan tujuan bisa memakai
-         * `{member.name}`, `{server.name}`, `{selected}`, dan variabel flow.
-         * Tanpa ini, tombol yang mengirim "pesan aturan" akan selalu menyapa
-         * dengan nama kosong — padahal itu inti dari nesting.
+         * Jalur webhook: pesan tampil atas nama server. Komponen role tidak
+         * bisa ikut — Discord hanya mengirim interaksi ke aplikasi pemilik
+         * komponen, dan di pesan webhook pemiliknya webhook itu sendiri.
+         * Karena itu komponen role TIDAK diteruskan; kalau pesannya punya,
+         * admin diberi tahu alih-alih mendapat tombol yang diam.
          */
-        template: runtime.variables,
-      });
+        const tombol = await listRoleButtons(runtime.guildId, tujuan.id).catch(() => []);
+        const menu = await listRoleMenus(runtime.guildId, tujuan.id).catch(() => []);
+        if (tombol.length > 0 || menu.length > 0) {
+          await runtime.peringatan(
+            '⚠️ Tombol/menu role pada pesan webhook tidak bisa diklik — Discord hanya mengirim interaksi ke aplikasi pengirim. Komponennya tidak ikut terkirim.',
+          );
+        }
+        terkirim = await sendOrUpdatePostViaWebhook({
+          client: runtime.client,
+          guildId: runtime.guildId,
+          channelId: channelTujuan,
+          messageId: null,
+          blocks: tujuan.blocks,
+          accent: tujuan.accent ?? undefined,
+          identity: await webhookIdentityFor(runtime.client, runtime.guildId),
+          postId: tujuan.id,
+          flags: tujuan.flags || undefined,
+          template: runtime.variables,
+        });
+      } else {
+        const tombol = await listRoleButtons(runtime.guildId, tujuan.id).catch(() => []);
+        const menu = await listRoleMenus(runtime.guildId, tujuan.id).catch(() => []);
+        /*
+         * Dikirim lewat jalur yang SAMA dengan tombol "Kirim ke Discord":
+         * batas komponen, berkas, dan pemetaan tombol/menu role otomatis
+         * berlaku, jadi tidak ada perilaku kedua yang bisa menyimpang.
+         */
+        terkirim = await sendOrUpdatePost({
+          client: runtime.client,
+          roleButtons: tombol.map((satu) => ({
+            id: satu.id,
+            label: satu.label,
+            emoji: satu.emoji,
+            style: satu.style,
+            roleId: satu.roleId,
+          })) as never,
+          roleMenus: menu as never,
+          channelId: channelTujuan,
+          // Nesting: balasan hanya bisa dipasang di channel yang sama.
+          messageId: step.toChannel ? null : runtime.messageId,
+          replyTo:
+            step.toChannel || !runtime.messageId || channelTujuan !== runtime.channelId
+              ? undefined
+              : runtime.messageId,
+          blocks: tujuan.blocks,
+          accent: tujuan.accent ?? undefined,
+          flags: tujuan.flags || undefined,
+          postId: tujuan.id,
+          /*
+           * Nilai template diteruskan supaya teks pesan tujuan bisa memakai
+           * `{member.name}`, `{server.name}`, `{selected}`, dan variabel flow.
+           * Tanpa ini, tombol yang mengirim "pesan aturan" akan selalu menyapa
+           * dengan nama kosong — padahal itu inti dari nesting.
+           */
+          template: runtime.variables,
+        });
+      }
       // Hasil dikirim untuk variabel `adaptive`.
       runtime.hasil = {
         messageId: terkirim.messageId,
-        channelId: tujuan.channelId ?? undefined,
+        channelId: channelTujuan,
       };
     } catch (error) {
       logger.error(`Aksi kirim pesan ${step.postId} gagal`, errorMessage(error));
@@ -479,16 +554,73 @@ async function jalankanLangkah(
   return { hasil: 'selesai' };
 }
 
-/** Buat thread dari pesan pemicu. Gagal = flow berhenti dengan penjelasan. */
-async function buatThread(runtime: FlowRuntime, nama: string, privat: boolean): Promise<boolean> {
-  if (!runtime.channelId || !runtime.messageId) {
-    await runtime.jawab('❌ Thread hanya bisa dibuat dari pesan yang masih ada di channel.', true);
+/**
+ * Buat thread. Gagal = flow berhenti dengan penjelasan.
+ *
+ * Yang ditiru dari `CreateThread` Discohook: lama arsip, slowmode, jenis
+ * (publik/privat), `invitable`, tag forum, dan pesan pembuka. Yang TIDAK
+ * ditiru: memilih channel tujuan lewat variabel bebas — di sini thread selalu
+ * dibuat di channel pesan pemicu, karena itu satu-satunya channel yang pasti
+ * boleh disentuh bot untuk interaksi ini.
+ *
+ * Channel FORUM punya aturan sendiri: thread tidak bisa dimulai dari pesan
+ * yang sudah ada, melainkan dari postingan baru. Kalau admin menambahkan tag
+ * forum, kita memperlakukannya sebagai forum.
+ */
+async function buatThread(
+  runtime: FlowRuntime,
+  nama: string,
+  opsi: {
+    private: boolean;
+    autoArchiveMinutes?: number;
+    rateLimitPerUser?: number;
+    invitable?: boolean;
+    appliedTags?: string[];
+    pesanPembuka?: string;
+  },
+): Promise<boolean> {
+  if (!runtime.channelId) {
+    await runtime.jawab('❌ Thread hanya bisa dibuat dari pesan di channel.', true);
     return false;
   }
   try {
     const channel = await runtime.client.channels.fetch(runtime.channelId);
-    if (!channel || !channel.isTextBased() || !('messages' in channel)) {
+    if (!channel || !('messages' in channel)) {
       await runtime.jawab('❌ Channel pesan ini tidak mendukung thread.', true);
+      return false;
+    }
+
+    const arsip = opsi.autoArchiveMinutes as
+      | 60
+      | 1440
+      | 4320
+      | 10080
+      | undefined;
+
+    /* --- Forum: thread = postingan baru dengan tag --- */
+    if ((channel.type as number) === ChannelType.GuildForum) {
+      const forum = channel as unknown as {
+        threads: {
+          create: (options: Record<string, unknown>) => Promise<{ id: string }>;
+        };
+      };
+      const thread = await forum.threads.create({
+        name: nama,
+        message: { content: opsi.pesanPembuka?.slice(0, 2000) || nama },
+        ...(opsi.appliedTags?.length
+          ? { appliedTags: opsi.appliedTags.filter((tag) => /^\d{5,25}$/.test(tag)) }
+          : {}),
+        ...(arsip ? { autoArchiveDuration: arsip } : {}),
+        ...(opsi.rateLimitPerUser ? { rateLimitPerUser: opsi.rateLimitPerUser } : {}),
+        reason: 'Aksi komponen /pesan dari dashboard',
+      });
+      runtime.hasil = { ...runtime.hasil, threadId: thread.id, channelId: thread.id };
+      await runtime.jawab(`🧵 Postingan forum dibuat: <#${thread.id}>`, false);
+      return true;
+    }
+
+    if (!runtime.messageId) {
+      await runtime.jawab('❌ Thread hanya bisa dibuat dari pesan yang masih ada di channel.', true);
       return false;
     }
     const pesan = await channel.messages.fetch(runtime.messageId).catch((): null => null);
@@ -496,36 +628,78 @@ async function buatThread(runtime: FlowRuntime, nama: string, privat: boolean): 
       await runtime.jawab('❌ Pesan ini sudah tidak ada, jadi thread tidak bisa dibuat.', true);
       return false;
     }
+
+    /*
+     * Pesan pembuka: dikirim lebih dulu, lalu thread dimulai DARI pesan itu.
+     * Dengan begitu isi pembuka terlihat sebagai pesan pertama thread, bukan
+     * pesan lepas di channel — persis yang diharapkan admin.
+     */
+    const induk = opsi.pesanPembuka
+      ? await (channel as { send: (isi: { content: string }) => Promise<typeof pesan> })
+          .send({ content: opsi.pesanPembuka.slice(0, 2000) })
+          .catch((): null => null)
+      : pesan;
+    if (!induk) {
+      await runtime.jawab('❌ Pesan pembuka thread gagal dikirim (izin kirim pesan?).', true);
+      return false;
+    }
+
     /*
      * Thread privat dibuat lewat `channel.threads.create` — `startThread` pada
      * pesan hanya bisa membuat thread publik. Kalau channel-nya tidak punya
      * pengelola thread, admin diberi tahu alih-alih mendapat thread publik
      * padahal yang diminta privat.
      */
-    const thread: { id: string } | null = privat
+    const thread: { id: string } | null = opsi.private
       ? 'threads' in channel && channel.threads
         ? await (channel.threads as GuildTextThreadManager<ChannelType.PrivateThread>).create({
             name: nama,
             type: ChannelType.PrivateThread,
+            ...(arsip ? { autoArchiveDuration: arsip } : {}),
+            ...(opsi.rateLimitPerUser ? { rateLimitPerUser: opsi.rateLimitPerUser } : {}),
+            ...(opsi.invitable !== undefined ? { invitable: opsi.invitable } : {}),
             reason: 'Aksi komponen /pesan dari dashboard',
           })
         : null
-      : await pesan.startThread({ name: nama, reason: 'Aksi komponen /pesan dari dashboard' });
+      : await induk.startThread({
+          name: nama,
+          ...(arsip ? { autoArchiveDuration: arsip } : {}),
+          ...(opsi.rateLimitPerUser ? { rateLimitPerUser: opsi.rateLimitPerUser } : {}),
+          reason: 'Aksi komponen /pesan dari dashboard',
+        });
     if (!thread) {
       await runtime.jawab('❌ Channel ini tidak mendukung thread privat.', true);
       return false;
     }
-    runtime.hasil = { ...runtime.hasil, threadId: thread.id };
+    runtime.hasil = { ...runtime.hasil, threadId: thread.id, channelId: thread.id };
     await runtime.jawab(`🧵 Thread dibuat: <#${thread.id}>`, false);
     return true;
   } catch (error) {
     logger.warn(`Aksi thread gagal: ${errorMessage(error)}`);
     await runtime.jawab(
-      '❌ Thread gagal dibuat. Bot butuh izin **Create Public/Private Threads** di channel ini.',
+      '❌ Thread gagal dibuat. Bot butuh izin **Create Public/Private Threads** (dan **Manage Threads** untuk tag forum) di channel ini.',
       true,
     );
     return false;
   }
+}
+
+/**
+ * Apakah rencana ini (termasuk cabang bersyarat) memuat balasan?
+ *
+ * Dulu pemeriksaannya hanya melihat tingkat teratas, sehingga balasan yang
+ * berada di dalam cabang tidak dihitung — akibatnya member menerima balasan
+ * cabang LALU "✅ Selesai." sesudahnya. Dua jawaban untuk satu klik terlihat
+ * seperti bot yang tidak yakin apa yang baru dilakukannya.
+ */
+function adaBalasan(steps: ActionStep[]): boolean {
+  return steps.some((step) => {
+    if (step.kind === 'reply') return true;
+    if (step.kind === 'condition') {
+      return adaBalasan(step.then ?? []) || adaBalasan(step.otherwise ?? []);
+    }
+    return false;
+  });
 }
 
 /** Jawaban interaksi: `reply` pertama, `followUp` sesudahnya. */
@@ -674,7 +848,7 @@ export async function runComponentActions(options: {
         dueAt,
       }).catch((error: unknown) => logger.error('Gagal menyimpan sesi flow', errorMessage(error)));
     }
-  } else if (hasil.hasil === 'selesai' && !plan.steps.some((step) => step.kind === 'reply')) {
+  } else if (hasil.hasil === 'selesai' && !adaBalasan(plan.steps)) {
     /*
      * Tidak ada aksi `reply`: member tetap harus tahu hasilnya — kecuali kalau
      * pesannya sudah dihapus oleh aksi `delete` (tidak ada yang tersisa untuk

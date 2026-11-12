@@ -2812,7 +2812,9 @@ function susunAksi() {
       if (aksi.kind === 'role') return Boolean(aksi.roleId);
       if (aksi.kind === 'reply') return Boolean(String(aksi.text || '').trim());
       if (aksi.kind === 'wait') return Number(aksi.seconds) >= 1;
-      if (aksi.kind === 'condition') return Boolean(String(aksi.value || '').trim());
+      if (aksi.kind === 'condition') {
+        return Boolean(aksi.check) || Boolean(String(aksi.value || '').trim());
+      }
       if (aksi.kind === 'variable') return /^[a-zA-Z][a-zA-Z0-9_]{0,31}$/.test(String(aksi.name || ''));
       if (aksi.kind === 'thread') return Boolean(String(aksi.threadName || '').trim());
       if (aksi.kind === 'delete') return true;
@@ -3252,7 +3254,8 @@ function kartuAksi(target, judul) {
     ['thread', 'Buat thread'],
     ['delete', 'Hapus pesan ini'],
     ['dud', 'Tidak melakukan apa pun'],
-    ['stop', 'Hentikan flow']
+    ['stop', 'Hentikan flow'],
+    ['webhook', 'Kirim pesan lewat webhook']
   ].forEach(function (opt) {
     var o = document.createElement('option');
     o.value = opt[0];
@@ -3288,6 +3291,10 @@ function kartuAksi(target, judul) {
       aksiUntuk(target).push({ kind: 'dud' });
     } else if (jenis === 'stop') {
       aksiUntuk(target).push({ kind: 'stop' });
+    } else if (jenis === 'webhook') {
+      var lewatWebhook = POST_LIST.filter(function (p) { return editingId && p.id !== editingId; });
+      if (lewatWebhook.length === 0) return toast('Belum ada pesan lain yang bisa dikirim', true);
+      aksiUntuk(target).push({ kind: 'webhook', postId: lewatWebhook[0].id, toChannel: true });
     } else {
       var lain = POST_LIST.filter(function (p) { return editingId && p.id !== editingId; });
       if (lain.length === 0) return toast('Belum ada pesan lain yang bisa dikirim', true);
@@ -3417,10 +3424,222 @@ function kotakCabang(daftar, nomor, kunci, judul) {
   return kotak;
 }
 
+/* ---------------- Syarat bertingkat (and / or / not / in) ---------------- */
+
+/**
+ * Ringkasan satu simpul syarat.
+ *
+ * Ditulis ulang di sisi browser (bukan diimpor dari server) karena halaman
+ * ini hanya menerima HTML+JS jadi: nilai yang dikirim server sudah berbentuk
+ * data, dan label yang dibaca admin harus tetap muncul walau server sedang
+ * lambat. Bentuknya SENGAJA sama dengan ringkasSyarat di post-actions.ts.
+ */
+function ringkasSyarat(node) {
+  if (!node) return '(kosong)';
+  if (node.type === 'in') {
+    var daftar = (node.list || []).join(', ');
+    return String(node.value || '?') + ' termasuk [' + daftar + ']';
+  }
+  if (node.type !== 'leaf') {
+    var anak = (node.items || []).map(ringkasSyarat);
+    if (anak.length === 0) return '(' + node.type + ')';
+    var sambung = node.type === 'and' ? ' DAN ' : node.type === 'or' ? ' ATAU ' : ' DAN TIDAK ';
+    return '(' + anak.join(sambung) + ')';
+  }
+  var banding = {
+    equals: 'sama dengan', notEquals: 'tidak sama dengan',
+    contains: 'mengandung', notContains: 'tidak mengandung',
+    empty: 'kosong', notEmpty: 'tidak kosong'
+  }[node.comparator || 'equals'];
+  return String(node.value || '?') + ' ' + banding + (node.expected ? ' "' + node.expected + '"' : '');
+}
+
+/**
+ * Karakter baris baru.
+ *
+ * Ditulis lewat fromCharCode, BUKAN lewat escape di dalam string: seluruh
+ * fungsi ini hidup di dalam template literal halaman, dan escape seperti
+ * backslash-n di sana berubah jadi baris baru sungguhan — yang membuat
+ * JavaScript halaman gagal di-parse (dan halaman /pesan mati total).
+ */
+function barisBaru() {
+  return String.fromCharCode(10);
+}
+
+/** Simpul baru sesuai jenis yang dipilih. */
+function simpulBaru(tipe) {
+  if (tipe === 'in') return { type: 'in', value: 'member.name', list: ['Wahyu'] };
+  if (tipe === 'and' || tipe === 'or' || tipe === 'not') {
+    return { type: tipe, items: [{ type: 'leaf', value: 'member.name', comparator: 'notEmpty' }] };
+  }
+  return { type: 'leaf', value: 'member.name', comparator: 'notEmpty' };
+}
+
+/**
+ * Kotak editor satu simpul syarat, bersarang untuk and/or/not.
+ *
+ * Kedalaman dibatasi 3 tingkat di UI (server mengizinkan 4) — bukan karena
+ * teknis, tetapi karena kotak yang lebih dalam dari itu tidak terbaca di
+ * layar ponsel, dan syarat 4 tingkat hampir selalu bisa ditulis lebih jelas
+ * sebagai beberapa aksi syarat berurutan.
+ */
+function kotakSyarat(node, induk, kunci, kedalaman) {
+  var kotak = document.createElement('div');
+  kotak.className = 'aksi-cabang';
+
+  var head = document.createElement('div');
+  head.className = 'aksi-cabang-head';
+  var judul = document.createElement('span');
+  judul.className = 'aksi-cabang-judul';
+  judul.textContent = ringkasSyarat(node).slice(0, 70);
+  head.appendChild(judul);
+
+  var pilihTipe = document.createElement('select');
+  pilihTipe.className = 'role-mode';
+  [
+    ['leaf', 'Bandingkan satu nilai'],
+    ['and', 'SEMUA benar (dan)'],
+    ['or', 'SALAH SATU benar (atau)'],
+    ['not', 'SEMUA salah (bukan)'],
+    ['in', 'Termasuk daftar']
+  ].forEach(function (o) {
+    var opt = document.createElement('option');
+    opt.value = o[0];
+    opt.textContent = o[1];
+    if ((node.type || 'leaf') === o[0]) opt.selected = true;
+    pilihTipe.appendChild(opt);
+  });
+  pilihTipe.onchange = function () {
+    var baru = simpulBaru(pilihTipe.value);
+    // Ganti ISI objek, bukan referensinya: pemanggil memegang objek yang sama
+    // (pola yang sama dengan kotakCabang), jadi mengganti referensi akan
+    // membuat perubahan tidak terkirim.
+    Object.keys(node).forEach(function (k) { delete node[k]; });
+    Object.keys(baru).forEach(function (k) { node[k] = baru[k]; });
+    segarkanAksi();
+  };
+  head.appendChild(pilihTipe);
+
+  if (induk) {
+    var hapus = document.createElement('button');
+    hapus.className = 'btn-danger btn-sm btn-icon';
+    hapus.type = 'button';
+    hapus.textContent = '×';
+    hapus.title = 'Hapus syarat ini';
+    hapus.onclick = function () {
+      var daftar = induk.items || [];
+      var posisi = daftar.indexOf(node);
+      if (posisi >= 0) daftar.splice(posisi, 1);
+      segarkanAksi();
+    };
+    head.appendChild(hapus);
+  }
+  kotak.appendChild(head);
+
+  if (node.type === 'in') {
+    var masuk = document.createElement('input');
+    masuk.type = 'text';
+    masuk.value = node.value || '';
+    masuk.placeholder = 'nilai yang dicari, mis. selected';
+    masuk.oninput = function () { node.value = masuk.value.slice(0, 64); };
+    kotak.appendChild(masuk);
+
+    var list = document.createElement('textarea');
+    list.rows = 3;
+    list.value = (node.list || []).join(barisBaru());
+    list.placeholder = 'satu nilai per baris';
+    list.oninput = function () {
+      node.list = list.value.split(barisBaru()).map(function (t) { return t.trim(); }).filter(Boolean).slice(0, 50);
+    };
+    kotak.appendChild(list);
+    return kotak;
+  }
+
+  if (node.type === 'leaf') {
+    var nilai = document.createElement('input');
+    nilai.type = 'text';
+    nilai.value = node.value || '';
+    nilai.placeholder = 'member.name / selected / var.nama';
+    nilai.oninput = function () { node.value = nilai.value.slice(0, 64); };
+    kotak.appendChild(nilai);
+
+    var banding = document.createElement('select');
+    banding.className = 'role-mode';
+    [
+      ['equals', 'sama dengan'], ['notEquals', 'tidak sama dengan'],
+      ['contains', 'mengandung'], ['notContains', 'tidak mengandung'],
+      ['empty', 'kosong'], ['notEmpty', 'tidak kosong']
+    ].forEach(function (o) {
+      var opt = document.createElement('option');
+      opt.value = o[0];
+      opt.textContent = o[1];
+      if ((node.comparator || 'equals') === o[0]) opt.selected = true;
+      banding.appendChild(opt);
+    });
+    banding.onchange = function () {
+      node.comparator = banding.value;
+      segarkanAksi();
+    };
+    kotak.appendChild(banding);
+
+    if ((node.comparator || 'equals') !== 'empty' && (node.comparator || 'equals') !== 'notEmpty') {
+      var harap = document.createElement('input');
+      harap.type = 'text';
+      harap.value = node.expected || '';
+      harap.placeholder = 'Nilai pembanding';
+      harap.oninput = function () { node.expected = harap.value.slice(0, 500); };
+      kotak.appendChild(harap);
+    }
+    return kotak;
+  }
+
+  // and / or / not: daftar anak bersarang.
+  (node.items || []).forEach(function (anak) {
+    kotak.appendChild(kotakSyarat(anak, node, 'items', kedalaman + 1));
+  });
+
+  if (kedalaman < 3) {
+    var tambah = document.createElement('select');
+    tambah.className = 'role-mode';
+    [['leaf', 'Bandingkan satu nilai'], ['in', 'Termasuk daftar'], ['and', 'Semua benar'], ['or', 'Salah satu benar']]
+      .forEach(function (o) {
+        var opt = document.createElement('option');
+        opt.value = o[0];
+        opt.textContent = o[1];
+        tambah.appendChild(opt);
+      });
+
+    var tombol = document.createElement('button');
+    tombol.className = 'btn btn-ghost btn-sm';
+    tombol.type = 'button';
+    tombol.textContent = '+ Tambah syarat';
+    tombol.onclick = function () {
+      node.items = node.items || [];
+      if (node.items.length >= 10) return toast('Maksimal 10 syarat di satu grup', true);
+      node.items.push(simpulBaru(tambah.value));
+      segarkanAksi();
+    };
+    var barisTambah = document.createElement('div');
+    barisTambah.className = 'block-add';
+    barisTambah.appendChild(tambah);
+    barisTambah.appendChild(tombol);
+    kotak.appendChild(barisTambah);
+  } else {
+    var batas = document.createElement('p');
+    batas.className = 'hint';
+    batas.style.margin = '0';
+    batas.textContent = 'Batas 3 tingkat sarang di editor. Syarat lebih dalam bisa ditulis sebagai beberapa aksi syarat berurutan.';
+    kotak.appendChild(batas);
+  }
+
+  return kotak;
+}
+
 /** Ringkasan satu aksi untuk daftar tertutup. */
 function ringkasAksi(aksi) {
   if (aksi.kind === 'wait') return 'tunggu ' + jamAksi(Number(aksi.seconds) || 0);
   if (aksi.kind === 'condition') {
+    if (aksi.check) return 'syarat ' + ringkasSyarat(aksi.check);
     var banding = {
       equals: 'sama dengan', notEquals: 'tidak sama dengan',
       contains: 'mengandung', notContains: 'tidak mengandung',
@@ -3442,7 +3661,9 @@ function ringkasAksi(aksi) {
     return 'balas "' + String(aksi.text || '').slice(0, 40) + '"' + (aksi.hidden === false ? ' (publik)' : '');
   }
   var tujuan = POST_LIST.filter(function (p) { return p.id === Number(aksi.postId); })[0];
-  return 'kirim "' + (tujuan ? tujuan.name : 'pesan #' + aksi.postId) + '"';
+  var lewat = aksi.kind === 'webhook' ? ' via webhook' : '';
+  var keChannel = aksi.channelId ? ' ke channel ' + aksi.channelId : '';
+  return 'kirim "' + (tujuan ? tujuan.name : 'pesan #' + aksi.postId) + '"' + lewat + keChannel;
 }
 
 /** Label pendek tiap jenis aksi, dipakai di kepala baris aksi. */
@@ -3457,7 +3678,8 @@ function jenisAksiLabel(jenis) {
     thread: 'Thread',
     delete: 'Hapus pesan',
     dud: 'Tanpa aksi',
-    stop: 'Hentikan'
+    stop: 'Hentikan',
+    webhook: 'Kirim webhook'
   }[jenis] || jenis;
 }
 
@@ -3636,6 +3858,39 @@ function buatBarisAksi(target, nomor, aksi) {
   }
 
   if (aksi.kind === 'condition') {
+    /*
+     * Pilihan bentuk syarat. "Gabungan" = pohon dan/or/not/in (seperti
+     * Discohook), datar = bentuk lama. Salah satu saja yang dipakai — memakai
+     * keduanya membuat hasilnya sulit ditebak, dan server pun memilih pohon
+     * lebih dulu.
+     */
+    var bentuk = document.createElement('select');
+    bentuk.className = 'role-mode';
+    [['flat', 'Satu pembanding (bentuk lama)'], ['tree', 'Gabungan syarat (dan / atau / bukan / termasuk)']]
+      .forEach(function (o) {
+        var opt = document.createElement('option');
+        opt.value = o[0];
+        opt.textContent = o[1];
+        if ((aksi.check ? 'tree' : 'flat') === o[0]) opt.selected = true;
+        bentuk.appendChild(opt);
+      });
+    bentuk.onchange = function () {
+      if (bentuk.value === 'tree') {
+        daftar[nomor].check = simpulBaru('and');
+        delete daftar[nomor].value;
+        delete daftar[nomor].expected;
+      } else {
+        delete daftar[nomor].check;
+        daftar[nomor].value = 'member.name';
+        daftar[nomor].comparator = 'notEmpty';
+      }
+      segarkanAksi();
+    };
+    baris.appendChild(bentuk);
+
+    if (aksi.check) {
+      baris.appendChild(kotakSyarat(aksi.check, null, 'check', 0));
+    } else {
     var nilai = document.createElement('input');
     nilai.type = 'text';
     nilai.value = aksi.value || 'member.name';
@@ -3674,6 +3929,7 @@ function buatBarisAksi(target, nomor, aksi) {
       harap.placeholder = 'Nilai pembanding';
       harap.oninput = function () { daftar[nomor].expected = harap.value.slice(0, 500); };
       baris.appendChild(harap);
+    }
     }
 
     /*
@@ -3804,10 +4060,99 @@ function buatBarisAksi(target, nomor, aksi) {
     var cekPrivat = document.createElement('input');
     cekPrivat.type = 'checkbox';
     cekPrivat.checked = aksi.private === true;
-    cekPrivat.onchange = function () { daftar[nomor].private = cekPrivat.checked; };
+    cekPrivat.onchange = function () {
+      daftar[nomor].private = cekPrivat.checked;
+      segarkanAksi();
+    };
     privatLabel.appendChild(cekPrivat);
     privatLabel.appendChild(document.createTextNode(' thread privat (hanya yang diundang)'));
     baris.appendChild(privatLabel);
+
+    /*
+     * Setelan lanjutan yang ada di Discohook. Tanpa pilihan ini, thread yang
+     * dibuat selalu memakai bawaan Discord (arsip 24 jam, tanpa slowmode) —
+     * padahal admin sering ingin arsip lebih lama supaya thread tidak
+     * menghilang dari daftar.
+     */
+    var setelan = document.createElement('div');
+    setelan.className = 'role-style-row';
+
+    var arsip = document.createElement('select');
+    arsip.className = 'role-mode';
+    [
+      ['', 'Arsip: bawaan Discord'],
+      ['60', 'Arsip 1 jam'],
+      ['1440', 'Arsip 1 hari'],
+      ['4320', 'Arsip 3 hari'],
+      ['10080', 'Arsip 1 minggu']
+    ].forEach(function (o) {
+      var opt = document.createElement('option');
+      opt.value = o[0];
+      opt.textContent = o[1];
+      if (String(aksi.autoArchiveMinutes || '') === o[0]) opt.selected = true;
+      arsip.appendChild(opt);
+    });
+    arsip.onchange = function () {
+      if (arsip.value) daftar[nomor].autoArchiveMinutes = Number(arsip.value);
+      else delete daftar[nomor].autoArchiveMinutes;
+    };
+    setelan.appendChild(arsip);
+
+    var lambat = document.createElement('input');
+    lambat.type = 'number';
+    lambat.min = '0';
+    lambat.max = '21600';
+    lambat.value = String(Number(aksi.slowmodeSeconds) || 0);
+    lambat.title = 'Slowmode thread (detik per pesan, 0 = mati)';
+    lambat.oninput = function () {
+      var angka = Math.max(0, Math.min(21600, Math.trunc(Number(lambat.value) || 0)));
+      if (angka > 0) daftar[nomor].slowmodeSeconds = angka;
+      else delete daftar[nomor].slowmodeSeconds;
+    };
+    setelan.appendChild(lambat);
+    baris.appendChild(setelan);
+
+    if (aksi.private) {
+      var undangLabel = document.createElement('label');
+      undangLabel.className = 'menu-flags';
+      var cekUndang = document.createElement('input');
+      cekUndang.type = 'checkbox';
+      cekUndang.checked = aksi.invitable !== false;
+      cekUndang.onchange = function () { daftar[nomor].invitable = cekUndang.checked; };
+      undangLabel.appendChild(cekUndang);
+      undangLabel.appendChild(document.createTextNode(' orang lain boleh mengundang ke thread ini'));
+      baris.appendChild(undangLabel);
+    }
+
+    var tagForum = document.createElement('input');
+    tagForum.type = 'text';
+    tagForum.value = (aksi.appliedTags || []).join(', ');
+    tagForum.placeholder = 'ID tag forum, dipisah koma (maks. 5) — kosongkan untuk channel teks';
+    tagForum.oninput = function () {
+      var tag = tagForum.value.split(',').map(function (t) { return t.trim(); })
+        .filter(function (t) { return /^[0-9]{5,25}$/.test(t); }).slice(0, 5);
+      if (tag.length) daftar[nomor].appliedTags = tag;
+      else delete daftar[nomor].appliedTags;
+    };
+    baris.appendChild(tagForum);
+
+    var pembuka = document.createElement('input');
+    pembuka.type = 'text';
+    pembuka.value = aksi.threadMessage || '';
+    pembuka.placeholder = 'Pesan pembuka thread (opsional), boleh pakai {member.name}';
+    pembuka.oninput = function () {
+      var isi = pembuka.value.slice(0, 1800);
+      if (isi.trim()) daftar[nomor].threadMessage = isi;
+      else delete daftar[nomor].threadMessage;
+    };
+    baris.appendChild(pembuka);
+
+    var catatanThread = document.createElement('p');
+    catatanThread.className = 'hint';
+    catatanThread.style.margin = '0';
+    catatanThread.textContent =
+      'Tag forum membuat bot memperlakukan channel ini sebagai FORUM: thread dibuat sebagai postingan baru dengan tag tersebut.';
+    baris.appendChild(catatanThread);
     return baris;
   }
 
@@ -3821,7 +4166,7 @@ function buatBarisAksi(target, nomor, aksi) {
     return baris;
   }
 
-  // kind === 'message'
+  // kind === 'message' atau 'webhook'
   var pilihPesan = document.createElement('select');
   pilihPesan.className = 'role-mode';
   POST_LIST.filter(function (p) { return !editingId || p.id !== editingId; }).forEach(function (p) {
@@ -3834,6 +4179,15 @@ function buatBarisAksi(target, nomor, aksi) {
   pilihPesan.onchange = function () { daftar[nomor].postId = Number(pilihPesan.value); };
   baris.appendChild(pilihPesan);
 
+  if (aksi.kind === 'webhook') {
+    var catatanWebhook = document.createElement('p');
+    catatanWebhook.className = 'hint';
+    catatanWebhook.style.margin = '0';
+    catatanWebhook.textContent =
+      'Dikirim lewat webhook: pesan tampil atas nama server. Tombol/menu role TIDAK ikut (Discord hanya mengirim interaksi ke aplikasi pengirim), dan bot butuh izin Manage Webhooks.';
+    baris.appendChild(catatanWebhook);
+  }
+
   var keChannel = document.createElement('label');
   keChannel.className = 'menu-flags';
   var cekChannel = document.createElement('input');
@@ -3843,6 +4197,23 @@ function buatBarisAksi(target, nomor, aksi) {
   keChannel.appendChild(cekChannel);
   keChannel.appendChild(document.createTextNode(' kirim ke channel (bukan balasan)'));
   baris.appendChild(keChannel);
+
+  /*
+   * Channel tujuan lain. Kosong = channel pesan pemicu. Ditulis sebagai ID
+   * (bukan dropdown) karena daftar channel tidak selalu tersedia di halaman
+   * ini saat bot sedang offline — dan ID yang salah DILAPORKAN oleh server,
+   * bukan diam-diam jatuh ke channel pemicu.
+   */
+  var channelTujuan = document.createElement('input');
+  channelTujuan.type = 'text';
+  channelTujuan.value = aksi.channelId || '';
+  channelTujuan.placeholder = 'ID channel tujuan (kosong = channel pesan ini)';
+  channelTujuan.oninput = function () {
+    var isi = channelTujuan.value.trim();
+    if (isi) daftar[nomor].channelId = isi;
+    else delete daftar[nomor].channelId;
+  };
+  baris.appendChild(channelTujuan);
 
   var susulan = document.createElement('input');
   susulan.type = 'text';
