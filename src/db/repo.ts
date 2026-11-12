@@ -1707,6 +1707,115 @@ export async function listPostsByTrigger(guildId: string, trigger: PostTrigger):
   return rows.map(toCustomPost);
 }
 
+/* ------------------------------------------------------------------ */
+/*  Tujuan kirim tambahan (targets[])                                  */
+/* ------------------------------------------------------------------ */
+
+/** Satu channel tambahan tempat pesan yang sama dikirim. */
+export interface PostTarget {
+  id: number;
+  channelId: string;
+  /** ID pesan Discord di channel itu (null = belum pernah terkirim). */
+  messageId: string | null;
+}
+
+interface PostTargetRow {
+  id: number | string;
+  channel_id: string;
+  message_id: string | null;
+}
+
+/** Batas jumlah channel tambahan per pesan. */
+export const POST_TARGET_LIMITS = { perPost: 5 } as const;
+
+/**
+ * Daftar channel tambahan untuk satu pesan.
+ *
+ * Channel UTAMA tidak ada di sini — ia tetap di `custom_posts.channel_id`.
+ * Dua sumber untuk hal yang sama akan menyimpang cepat atau lambat (mis.
+ * admin mengubah channel utama, salinan lamanya tertinggal).
+ */
+export async function listPostTargets(guildId: string, postId: number): Promise<PostTarget[]> {
+  const rows = await all<PostTargetRow>(
+    'SELECT id, channel_id, message_id FROM post_targets WHERE guild_id = ? AND post_id = ? ORDER BY position ASC, id ASC',
+    [guildId, postId],
+  );
+  return rows.map((row) => ({
+    id: Number(row.id),
+    channelId: row.channel_id,
+    messageId: row.message_id,
+  }));
+}
+
+/**
+ * Ganti seluruh channel tambahan satu pesan.
+ *
+ * Penggantian utuh (bukan tambah/hapus satu per satu) mengikuti pola tombol
+ * role: dashboard mengirim keadaan akhir, jadi tidak ada urutan operasi yang
+ * bisa membuat daftar setengah jadi.
+ *
+ * `message_id` LAMA DIPERTAHANKAN untuk channel yang masih ada di daftar:
+ * menghapus lalu menambah lagi akan membuat pesan baru dikirim di channel itu
+ * padahal pesan lamanya masih tampil.
+ */
+export async function replacePostTargets(
+  guildId: string,
+  postId: number,
+  channelIds: unknown,
+): Promise<{ targets: PostTarget[]; dropped: string[] }> {
+  const dropped: string[] = [];
+  const lama = await listPostTargets(guildId, postId);
+  const idPesanLama = new Map(lama.map((satu) => [satu.channelId, satu.messageId]));
+  const bersih: string[] = [];
+
+  const daftar = Array.isArray(channelIds) ? channelIds : [];
+  if (daftar.length > POST_TARGET_LIMITS.perPost) {
+    dropped.push(
+      `channel tambahan dibatasi ${POST_TARGET_LIMITS.perPost}; ${daftar.length - POST_TARGET_LIMITS.perPost} sisanya tidak disimpan`,
+    );
+  }
+  for (const satu of daftar.slice(0, POST_TARGET_LIMITS.perPost)) {
+    const id = typeof satu === 'string' ? satu.trim() : '';
+    // ID channel Discord: 17-20 digit. Nilai lain ditolak, bukan disimpan
+    // sebagai channel yang tidak akan pernah bisa dikirimi.
+    if (!/^\d{17,20}$/.test(id)) {
+      dropped.push(`channel "${id || '(kosong)'}" bukan ID channel Discord yang sah`);
+      continue;
+    }
+    if (bersih.includes(id)) {
+      dropped.push(`channel ${id} disebut dua kali`);
+      continue;
+    }
+    bersih.push(id);
+  }
+
+  await run('DELETE FROM post_targets WHERE guild_id = ? AND post_id = ?', [guildId, postId]);
+  let posisi = 0;
+  for (const channelId of bersih) {
+    await run(
+      'INSERT INTO post_targets (guild_id, post_id, channel_id, message_id, position) VALUES (?, ?, ?, ?, ?)',
+      [guildId, postId, channelId, idPesanLama.get(channelId) ?? null, posisi],
+    );
+    posisi += 1;
+  }
+  return { targets: await listPostTargets(guildId, postId), dropped };
+}
+
+/** Simpan ID pesan Discord di satu channel tambahan. */
+export async function setPostTargetMessage(
+  guildId: string,
+  postId: number,
+  channelId: string,
+  messageId: string | null,
+): Promise<void> {
+  await run('UPDATE post_targets SET message_id = ? WHERE guild_id = ? AND post_id = ? AND channel_id = ?', [
+    messageId,
+    guildId,
+    postId,
+    channelId,
+  ]);
+}
+
 /** Simpan ID pesan Discord setelah berhasil dikirim. */
 export async function setCustomPostMessage(
   guildId: string,
@@ -1736,6 +1845,9 @@ export async function deleteCustomPost(guildId: string, id: number): Promise<voi
   // sudah tidak ada, dan tautan yang tertinggal akan membuka halaman kosong.
   await run('DELETE FROM post_revisions WHERE guild_id = ? AND post_id = ?', [guildId, id]);
   await run('DELETE FROM post_shares WHERE guild_id = ? AND post_id = ?', [guildId, id]);
+  // Tujuan tambahan ikut dibersihkan: barisnya menunjuk channel & pesan yang
+  // sudah tidak ada, dan akan dikirimi ulang kalau ID pesannya dipakai lagi.
+  await run('DELETE FROM post_targets WHERE guild_id = ? AND post_id = ?', [guildId, id]);
   await run('DELETE FROM custom_posts WHERE guild_id = ? AND id = ?', [guildId, id]);
 }
 

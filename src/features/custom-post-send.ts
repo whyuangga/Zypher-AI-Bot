@@ -573,6 +573,45 @@ function gayaTombol(style: string | null | undefined): ButtonStyle {
 }
 
 /**
+ * Kirim pesan yang sama ke beberapa channel tambahan (padanan `targets[]`).
+ *
+ * Aturan yang dipegang:
+ *   - **Channel utama bukan urusan fungsi ini.** Ia dikirim lewat jalur biasa
+ *     (dengan penyimpanan ID pesannya sendiri), jadi tidak ada dua jalur yang
+ *     mengklaim pesan yang sama.
+ *   - **Gagal di satu channel tidak menghentikan sisanya.** Channel yang
+ *     bot-nya tidak punya izin bukan alasan tiga channel lain tidak menerima
+ *     pengumuman.
+ *   - **ID pesan per channel dipakai lagi**, jadi mengirim ulang memperbarui
+ *     pesan lama di channel itu, bukan menumpuk salinan.
+ */
+export async function sendToTargets(options: {
+  client: Client;
+  /** Penyusun payload: mengembalikan cara mengirim ke satu channel. */
+  kirim: (channelId: string, messageId: string | null) => Promise<SendResult>;
+  targets: Array<{ channelId: string; messageId: string | null }>;
+}): Promise<{ hasil: Array<{ channelId: string; messageId?: string; error?: string }>; dropped: string[] }> {
+  const hasil: Array<{ channelId: string; messageId?: string; error?: string }> = [];
+  const dropped: string[] = [];
+
+  for (const target of options.targets) {
+    try {
+      const dikirim = await options.kirim(target.channelId, target.messageId);
+      hasil.push({ channelId: target.channelId, messageId: dikirim.messageId });
+      if (dikirim.dropped?.length) {
+        dropped.push(`#${target.channelId}: ${dikirim.dropped[0]}`);
+      }
+    } catch (error) {
+      // Alasan disimpan per channel: admin perlu tahu channel MANA yang gagal,
+      // bukan hanya bahwa "sebagian gagal".
+      hasil.push({ channelId: target.channelId, error: errorMessage(error) });
+      logger.warn(`Gagal mengirim ke channel tambahan ${target.channelId}`, errorMessage(error));
+    }
+  }
+  return { hasil, dropped };
+}
+
+/**
  * Kirim BEBERAPA pesan sebagai satu rangkaian (multi-pesan).
  *
  * Aturan yang dipegang, dan alasannya:

@@ -7650,6 +7650,63 @@ await testAsync('pesan: generator kode & payload JSON dari penyusun yang sama', 
   await repo.deleteCustomPost(GUILD, kosong.id);
 });
 
+await testAsync('pesan: channel tambahan (targets[]) disaring & ID pesan dipertahankan', async () => {
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+  const CH1 = '111111111111111111';
+  const CH2 = '222222222222222222';
+
+  const pesan = await repo.createCustomPost(GUILD, {
+    name: 'Pengumuman',
+    channelId: '999999999999999999',
+    blocks: [{ kind: 'text', value: 'Halo semua' }],
+  });
+
+  /*
+   * Penyaringan: hanya ID channel Discord (17-20 digit), tanpa duplikat, dan
+   * dibatasi POST_TARGET_LIMITS.perPost. Tanpa ini, "channel" berisi nama atau
+   * ID salah akan tersimpan dan baru gagal saat pengumuman dikirim.
+   */
+  const awal = await repo.replacePostTargets(GUILD, pesan.id, [
+    CH1,
+    CH1,
+    'bukan-id',
+    '',
+    CH2,
+  ]);
+  assert.equal(awal.targets.length, 2, 'hanya dua channel sah yang disimpan');
+  assert.equal(awal.targets[0]!.channelId, CH1, 'urutan dipertahankan');
+  assert.equal(awal.targets[1]!.channelId, CH2, 'channel kedua ikut');
+  assert.equal(awal.dropped.length, 3, 'tiga masukan dilaporkan (duplikat, bukan-id, kosong)');
+  assert.ok(awal.dropped.some((satu) => satu.includes('dua kali')), 'duplikat disebut alasannya');
+  assert.ok(awal.dropped.some((satu) => satu.includes('bukan ID channel')), 'nilai bukan ID ditolak');
+
+  // ID pesan yang sudah terkirim dipertahankan saat daftar disimpan ulang.
+  await repo.setPostTargetMessage(GUILD, pesan.id, CH1, '888888888888888888');
+  const ulang = await repo.replacePostTargets(GUILD, pesan.id, [CH1, CH2]);
+  assert.equal(ulang.targets[0]!.messageId, '888888888888888888', 'ID pesan lama tidak hilang');
+  assert.equal(ulang.targets[1]!.messageId, null, 'channel baru belum punya ID pesan');
+
+  // Menghapus channel dari daftar membuang barisnya, bukan menyisakan hantu.
+  const sisa = await repo.replacePostTargets(GUILD, pesan.id, [CH2]);
+  assert.equal(sisa.targets.length, 1, 'hanya channel yang dikirim yang tersimpan');
+  assert.equal(sisa.targets[0]!.channelId, CH2, 'channel yang tersisa benar');
+
+  // Batas jumlah channel tambahan ditegakkan di repo, bukan hanya di dashboard.
+  // 18 digit: '30' + 16 digit nomor, supaya tiap ID unik dan sah.
+  const banyak = Array.from({ length: 8 }, (_, i) => `30${String(i).padStart(16, '0')}`);
+  const dibatasi = await repo.replacePostTargets(GUILD, pesan.id, banyak);
+  assert.equal(dibatasi.targets.length, repo.POST_TARGET_LIMITS.perPost, 'dipotong sesuai batas');
+  assert.ok(dibatasi.dropped.some((satu) => satu.includes('dibatasi')), 'pemotongan dilaporkan');
+
+  /*
+   * Menghapus pesan harus menghapus tujuan tambahannya: baris yang tertinggal
+   * akan dikirimi lagi kalau ID pesannya dipakai ulang.
+   */
+  await repo.deleteCustomPost(GUILD, pesan.id);
+  assert.equal((await repo.listPostTargets(GUILD, pesan.id)).length, 0, 'target ikut terhapus');
+});
+
 await testAsync('pesan: embed klasik dibangun dari blok & aturannya dijaga', async () => {
   const { buildClassicEmbed, validateEmbed, warnaDari } = await import('../src/features/post-embed.js');
   const repo = await import('../src/db/repo.js');

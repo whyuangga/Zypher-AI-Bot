@@ -381,6 +381,23 @@ export function pesanPage(options: PesanPageOptions): string {
     <p class="hint">Sama seperti "Message Flags" di Discohook. Flag lain (Components V2) diurus bot dan tidak perlu diatur.</p>
   </div>
   <div style="grid-column:1/-1">
+    <label class="field">Kirim juga ke channel lain</label>
+    <div class="role-style-row">
+      <span class="select-wrap" style="flex:1">
+        <select id="targetPilih">
+          <option value="">Pilih channel tambahan…</option>
+          ${options.channels
+            .map((c) => `<option value="${esc(c.id)}">#${esc(c.name)}</option>`)
+            .join('')}
+        </select>
+        ${icon('chevron', 15)}
+      </span>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="tambahTarget()">${icon('plus', 15)} Tambah</button>
+    </div>
+    <div id="targetDaftar" class="block-list"></div>
+    <p class="hint" id="targetStatus" style="margin:0"></p>
+  </div>
+  <div style="grid-column:1/-1">
     <label class="field" for="postTrigger">Kirim otomatis saat</label>
     <span class="select-shell full">
       <select id="postTrigger">
@@ -691,6 +708,11 @@ const GUILD = ${jsonForScript(options.guildId)};
 /** Daftar role server + alasan tidak bisa dibagi (kalau ada). */
 var ROLES = ${jsonForScript(options.roles)};
 /** Tombol role per pesan: { pesanId: [...] }. */
+/**
+ * Channel server (id + nama). Dipakai daftar channel tambahan: menampilkan
+ * nama channel, bukan ID mentah, supaya admin tahu channel mana yang dipilih.
+ */
+var CHANNELS = ${jsonForScript(options.channels.map((c) => ({ id: c.id, name: c.name })))};
 var ROLE_BUTTONS = ${jsonForScript(options.roleButtons)};
 var ROLE_MENUS = ${jsonForScript(options.roleMenus ?? {})};
 /**
@@ -2248,6 +2270,133 @@ function payloadBlocks() {
   });
 }
 
+/* ---------------- Channel tambahan (targets[]) ---------------- */
+
+/**
+ * Channel tambahan untuk pesan yang sedang dibuka.
+ *
+ * Disimpan terpisah dari postChannel karena sifatnya berbeda: channel utama
+ * bisa diganti tanpa mengubah pesan yang sudah terkirim di channel tambahan,
+ * dan tiap channel punya ID pesan Discord sendiri.
+ */
+var TARGET_CHANNEL = [];
+
+/** Batas channel tambahan — sama dengan POST_TARGET_LIMITS di server. */
+var TARGET_MAKS = 5;
+
+function renderTarget() {
+  var host = document.getElementById('targetDaftar');
+  if (!host) return;
+  host.innerHTML = '';
+  var status = document.getElementById('targetStatus');
+
+  if (TARGET_CHANNEL.length === 0) {
+    var kosong = document.createElement('p');
+    kosong.className = 'hint';
+    kosong.style.margin = '0';
+    kosong.textContent = 'Hanya ke channel utama.';
+    host.appendChild(kosong);
+  }
+
+  TARGET_CHANNEL.forEach(function (target, urutan) {
+    var baris = document.createElement('div');
+    baris.className = 'aksi-cabang-baris';
+
+    var teks = document.createElement('span');
+    teks.className = 'aksi-cabang-teks';
+    teks.textContent = (urutan + 1) + '. #' + namaChannel(target.channelId);
+    if (!target.messageId) teks.textContent += ' (belum terkirim)';
+    baris.appendChild(teks);
+
+    var hapus = document.createElement('button');
+    hapus.className = 'btn-danger btn-sm btn-icon';
+    hapus.type = 'button';
+    hapus.title = 'Hapus channel ini';
+    hapus.textContent = '×';
+    hapus.onclick = function () {
+      TARGET_CHANNEL.splice(urutan, 1);
+      renderTarget();
+    };
+    baris.appendChild(hapus);
+    host.appendChild(baris);
+  });
+
+  if (status) {
+    status.textContent = TARGET_CHANNEL.length
+      ? TARGET_CHANNEL.length + ' channel tambahan — pesan yang sama dikirim ke semuanya'
+      : '';
+  }
+}
+
+/** Nama channel dari daftar di halaman; ID mentah kalau tidak dikenal. */
+function namaChannel(id) {
+  var ketemu = (CHANNELS || []).filter(function (c) { return c.id === id; })[0];
+  return ketemu ? ketemu.name : id;
+}
+
+function tambahTarget() {
+  var pilih = document.getElementById('targetPilih');
+  var id = pilih ? String(pilih.value || '').trim() : '';
+  if (!id) return toast('Pilih channel dulu', true);
+  if (id === ((document.getElementById('postChannel') || {}).value || '')) {
+    return toast('Channel itu sudah jadi tujuan utama', true);
+  }
+  if (TARGET_CHANNEL.some(function (c) { return c.channelId === id; })) {
+    return toast('Channel itu sudah ada di daftar', true);
+  }
+  if (TARGET_CHANNEL.length >= TARGET_MAKS) {
+    return toast('Maksimal ' + TARGET_MAKS + ' channel tambahan', true);
+  }
+  TARGET_CHANNEL.push({ channelId: id, messageId: null });
+  if (pilih) pilih.value = '';
+  renderTarget();
+}
+
+/** Ambil daftar channel tambahan milik pesan yang dibuka. */
+async function loadTargetsFor(postId) {
+  resetTarget();
+  if (!postId) return;
+  try {
+    var hasil = await api('/api/posts/' + postId + '/targets');
+    TARGET_CHANNEL = (hasil.targets || []).map(function (c) {
+      return { channelId: c.channelId, messageId: c.messageId };
+    });
+    renderTarget();
+  } catch (error) {
+    // Daftar kosong lebih jujur daripada daftar lama milik pesan lain.
+    resetTarget();
+  }
+}
+
+/** Kosongkan daftar saat membuka pesan lain / pesan baru. */
+function resetTarget() {
+  TARGET_CHANNEL = [];
+  renderTarget();
+}
+
+/**
+ * Simpan daftar channel tambahan setelah pesan punya ID.
+ *
+ * Dipisah dari simpan pesan karena endpoint-nya per pesan (targets), sama
+ * seperti tombol role. Gagal di sini TIDAK menggagalkan simpan pesan: isi
+ * pesannya sudah tersimpan, dan admin diberi tahu channel mana yang gagal.
+ */
+async function saveTargets(postId) {
+  if (!postId) return;
+  try {
+    var hasil = await apiMetode('/api/posts/' + postId + '/targets', {
+      channels: TARGET_CHANNEL.map(function (c) { return c.channelId; }),
+    }, 'PUT');
+    if (hasil.targets) {
+      TARGET_CHANNEL = hasil.targets.map(function (c) { return { channelId: c.channelId, messageId: c.messageId }; });
+      renderTarget();
+    }
+    if (hasil.dropped && hasil.dropped.length) toast(hasil.dropped[0], true);
+  } catch (error) {
+    toast('Channel tambahan gagal disimpan: ' + error.message, true);
+  }
+}
+
 async function savePost(andSend) {
   var name = document.getElementById('postName').value.trim();
   var channelId = document.getElementById('postChannel').value || null;
@@ -2287,8 +2436,10 @@ async function savePost(andSend) {
     } else {
       toast('✅ Pesan tersimpan');
     }
-    // Tombol role disimpan setelah pesan punya ID — endpoint-nya per pesan.
+    // Tombol role & channel tambahan disimpan setelah pesan punya ID —
+    // endpoint-nya per pesan.
     await saveRoleButtons(result.post.id);
+    await saveTargets(result.post.id);
 
     if (andSend) {
       var kirim = await api('/api/posts/' + result.post.id + '/send', { method: 'POST' });
@@ -2434,6 +2585,7 @@ function loadExisting() {
    * tambahan saat membuka pesan), lalu tetap bisa dimuat ulang dari tab.
    */
   if (RIWAYAT_AWAL[found.id]) RIWAYAT[found.id] = RIWAYAT_AWAL[found.id];
+  loadTargetsFor(found.id);
   renderRiwayat();
   muatJadwal();
   renderRoleButtons();
@@ -5780,6 +5932,7 @@ function showPesanTab(key) {
 
 loadExisting();
 renderBlocks();
+renderTarget();
 renderRoleButtons();
 renderGrup();
 muatJadwal();

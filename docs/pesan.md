@@ -625,6 +625,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Message flags: voice message, `IS_COMPONENTS_V2` manual | ❌ (v2 diurus pengirim) |
 | Multi-pesan dalam satu backup (beberapa pesan, `reference`, `thread_id`) | ✅ tab **Multi-pesan** (`?tab=grup`): sampai 20 pesan per dokumen, `reference` antar pesan, nama thread per pesan, disimpan di `post_documents` |
 | JSON editor dokumen | ✅ kartu **JSON dokumen** di tab Multi-pesan: ekspor/impor satu dokumen (semua pesan, rujukan balasan, nama thread, mode rangkaian) |
+| `targets[]` (satu pesan, beberapa channel) | ✅ **Kirim juga ke channel lain** di kartu pengaturan: sampai 5 channel tambahan, tiap channel punya ID pesan sendiri |
 | Riwayat/undo revisi (padanan backup) | ✅ 20 versi terakhir per pesan, dibuat otomatis setiap pesan diubah; kartu "Riwayat & bagikan" (tab **Riwayat**) |
 | Share link (tautan berbagi) | ✅ tautan `/bagi/<token>` bisa dibuka tanpa login, hanya berisi blok pesan, bisa dicabut |
 | Impor backup | ✅ JSON/URL Discohook di tab **Impor**; ekspor JSON juga ada |
@@ -634,6 +635,32 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Melihat payload JSON mentah | ✅ panel yang sama menampilkan `components` persis seperti yang diterima Discord, siap ditempel ke REST API |
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, satu gambar besar, tombol/menu tetap di luar embed |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 11: `targets[]` — satu pesan, beberapa channel
+
+Discohook bisa mengirim satu backup ke beberapa channel sekaligus. Di sini
+padanannya **Kirim juga ke channel lain** di kartu pengaturan: sampai
+`POST_TARGET_LIMITS.perPost` (5) channel tambahan per pesan.
+
+| Aspek | Keputusan |
+|---|---|
+| Channel utama | tetap di `custom_posts.channel_id` — **bukan** baris di `post_targets` |
+| Channel tambahan | tabel `post_targets` (satu baris per channel, dengan `message_id` sendiri) |
+| Penggantian daftar | `PUT /api/posts/:id/targets` mengganti seluruh daftar, seperti tombol role |
+| ID pesan | **dipertahankan** untuk channel yang masih ada di daftar |
+| Kirim | tiap channel dikirim lewat penyusun payload yang sama; gagal di satu channel dilaporkan per channel |
+| Hapus pesan | baris `post_targets` ikut dihapus |
+
+Kenapa channel utama tidak ikut di tabel itu: dua sumber untuk hal yang sama
+akan menyimpang — admin mengganti channel utama, salinan lamanya tertinggal, dan
+pengumuman terkirim ke channel yang sudah tidak dipakai.
+
+Penyaringan di repo (bukan hanya di dashboard, karena API bisa dipanggil
+langsung): hanya ID channel Discord 17–20 digit, tanpa duplikat, maksimal lima.
+Nilai lain dilaporkan di `dropped` dengan alasannya.
+
+Pesan webhook juga bisa dikirim ke beberapa channel, tetapi **identitas webhook
+diambil per channel** — nama & avatar servernya sama, webhook-nya berbeda.
 
 ### Batch 10: JSON editor dokumen multi-pesan
 

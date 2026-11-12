@@ -299,6 +299,20 @@ CREATE TABLE IF NOT EXISTS post_role_buttons (
   position INTEGER NOT NULL DEFAULT 0
 );
 
+-- ---------- tujuan kirim tambahan (padanan targets[] Discohook) ----------
+-- Satu baris = satu channel tambahan untuk satu pesan. Channel utama tetap
+-- disimpan di custom_posts.channel_id (sumber kebenaran lama), dan baris di
+-- sini adalah TAMBAHAN-nya. Dengan begitu pesan yang sudah ada tidak berubah
+-- perilaku, dan "channel tujuan" tetap bisa dibaca dari satu tempat.
+CREATE TABLE IF NOT EXISTS post_targets (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id   TEXT NOT NULL,
+  post_id    INTEGER NOT NULL,
+  channel_id TEXT NOT NULL,
+  message_id TEXT,
+  position   INTEGER NOT NULL DEFAULT 0
+);
+
 -- ---------- aksi komponen (versi ringkas flow Discohook) ----------
 -- Satu baris = satu aksi pada satu komponen. Kolom target berisi tombol role
 -- (button:n) atau opsi menu (option:n), jadi aksi tidak perlu kolom sendiri di
@@ -376,6 +390,16 @@ CREATE INDEX IF NOT EXISTS idx_post_schedules_due ON post_schedules (due_at);
 -- ---------- menu role (select menu) ----------
 -- Satu baris = satu menu. Opsinya disimpan di post_role_options supaya
 -- jumlah role per menu tidak terbatas kolom.
+-- Tujuan kirim tambahan (targets[]). Lihat komentar di SCHEMA_SQLITE.
+CREATE TABLE IF NOT EXISTS post_targets (
+  id         SERIAL PRIMARY KEY,
+  guild_id   TEXT NOT NULL,
+  post_id    INTEGER NOT NULL,
+  channel_id TEXT NOT NULL,
+  message_id TEXT,
+  position   INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS post_role_menus (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   guild_id    TEXT NOT NULL,

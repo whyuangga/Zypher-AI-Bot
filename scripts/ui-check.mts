@@ -2209,6 +2209,67 @@ await check('pesan: flag pesan dikirim sebagai bitmask yang benar', async () => 
   assert.equal(page.errors.length, 0, `flag pesan error: ${page.errors.join('|')}`);
 });
 
+await check('pesan: channel tambahan dikelola & dikirim ke endpoint targets', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-target');
+
+  const awal = (await page.evaluate(`
+    (function () {
+      document.getElementById('postChannel').value = '9001';
+      document.getElementById('targetPilih').value = '9001';
+      tambahTarget();
+      var samaUtama = TARGET_CHANNEL.length;
+      document.getElementById('targetPilih').value = '9002';
+      tambahTarget();
+      tambahTarget();
+      var sekali = TARGET_CHANNEL.length;
+      document.getElementById('targetPilih').value = '9003';
+      tambahTarget();
+      return { samaUtama: samaUtama, sekali: sekali, sesudah: TARGET_CHANNEL.length, status: document.getElementById('targetStatus').textContent };
+    })()
+  `)) as { samaUtama: number; sekali: number; sesudah: number; status: string };
+
+  assert.equal(awal.samaUtama, 0, 'channel utama tidak boleh jadi channel tambahan');
+  assert.equal(awal.sekali, 1, 'channel tambahan ditambahkan sekali saja walau ditekan dua kali');
+  assert.equal(awal.sesudah, 2, 'channel berbeda ditambahkan');
+  assert.ok(awal.status.includes('2 channel'), 'jumlah channel tambahan terlihat');
+
+  // Selesai menyimpan, daftar dikirim ke endpoint per pesan (bukan ikut /api/posts).
+  page.fetches.length = 0;
+  await page.evaluate(`
+    (function () {
+      document.getElementById('postName').value = 'Pengumuman';
+      document.getElementById('postChannel').value = '9001';
+      blocks = [{ kind: 'text', value: 'Halo' }];
+      return savePost(false).then(function () { return saveTargets(12); });
+    })()
+  `);
+
+  const keTarget = page.fetches.find((call) => call.path.includes('/targets'));
+  assert.ok(keTarget, 'daftar channel dikirim ke endpoint targets');
+  assert.ok(keTarget!.path.includes('/api/posts/12/targets'), 'memakai id pesan yang baru disimpan');
+  assert.equal(keTarget!.method, 'PUT', 'penggantian utuh memakai PUT');
+  const muatan = keTarget!.body as { channels?: string[] };
+  assert.equal((muatan.channels ?? []).length, 2, 'hanya ID channel yang dikirim');
+
+  // Menghapus satu baris mengubah daftar, bukan menyisakan channel hantu.
+  const dihapus = (await page.evaluate(`
+    (function () {
+      TARGET_CHANNEL[0].__tombol = true;
+      var sebelum = TARGET_CHANNEL.length;
+      // Tombol hapus memanggil splice lewat handler baris; diuji langsung di sini.
+      TARGET_CHANNEL.splice(0, 1);
+      renderTarget();
+      return { sebelum: sebelum, sesudah: TARGET_CHANNEL.length, teks: document.getElementById('targetDaftar').textContent, status: document.getElementById('targetStatus').textContent };
+    })()
+  `)) as { sebelum: number; sesudah: number; teks: string; status: string };
+  assert.equal(dihapus.sesudah, dihapus.sebelum - 1, 'channel terhapus dari daftar');
+  // Satu channel masih tersisa, dan itulah yang tampil — bukan yang tadi dihapus.
+  assert.ok(dihapus.teks.includes('1. '), 'daftar digambar ulang setelah penghapusan');
+  assert.ok(dihapus.status.includes('1 channel tambahan'), 'jumlah di status ikut turun');
+  assert.equal(page.errors.length, 0, `target error: ${page.errors.join('|')}`);
+});
+
 await check('pesan: JSON dokumen multi-pesan bolak-balik dengan rujukan yang dijaga', async () => {
   const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
   const page = mountPage(html, 'uji-json-dokumen');

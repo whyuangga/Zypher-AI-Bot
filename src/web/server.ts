@@ -69,6 +69,9 @@ import {
   deletePostDocument,
   listPostRevisions,
   restorePostRevision,
+  listPostTargets,
+  replacePostTargets,
+  setPostTargetMessage,
   createPostShare,
   deletePostShare,
   getSharedPost,
@@ -81,6 +84,7 @@ import {
   sendPostSeries,
   sendOrUpdatePost,
   sendOrUpdateEmbedPost,
+  sendToTargets,
   sendOrUpdatePostViaWebhook,
   webhookIdentityFor,
 } from '../features/custom-post-send.js';
@@ -205,6 +209,35 @@ function readRawBody(request: IncomingMessage, limit: number): Promise<Buffer> {
 
 function readBody(request: IncomingMessage, limit: number): Promise<string> {
   return readRawBody(request, limit).then((buffer) => buffer.toString('utf8'));
+}
+
+/**
+ * Kirim pesan yang sama ke channel tambahan, lalu simpan ID pesan per channel.
+ *
+ * Dibungkus di satu tempat supaya jalur embed dan jalur container memakai
+ * aturan yang SAMA: gagal di satu channel dilaporkan per channel, dan ID pesan
+ * yang berhasil disimpan supaya pengiriman berikutnya memperbarui pesan lama
+ * di channel itu alih-alih menumpuk salinan.
+ */
+async function kirimTarget(options: {
+  client: Client;
+  guildId: string;
+  postId: number;
+  kirim: (channelId: string, messageId: string | null) => Promise<{ messageId: string; edited: boolean; dropped?: string[] }>;
+}): Promise<Array<{ channelId: string; messageId?: string; error?: string }>> {
+  const targets = await listPostTargets(options.guildId, options.postId);
+  if (targets.length === 0) return [];
+  const hasil = await sendToTargets({
+    client: options.client,
+    targets,
+    kirim: options.kirim,
+  });
+  for (const satu of hasil.hasil) {
+    if (satu.messageId) {
+      await setPostTargetMessage(options.guildId, options.postId, satu.channelId, satu.messageId);
+    }
+  }
+  return hasil.hasil;
 }
 
 /**
@@ -2277,7 +2310,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
 
-  const postMatch = /^\/api\/posts\/(\d+)(\/send|\/roles|\/schedules)?$/.exec(path);
+  const postMatch = /^\/api\/posts\/(\d+)(\/send|\/roles|\/schedules|\/targets)?$/.exec(path);
   if (postMatch) {
     if (!guildId) {
       sendJson(response, 400, { error: 'Server belum dipilih.' });
@@ -2287,6 +2320,25 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     const isSend = postMatch[2] === '/send';
     const isRoles = postMatch[2] === '/roles';
     const isSchedules = postMatch[2] === '/schedules';
+    const isTargets = postMatch[2] === '/targets';
+
+    /* Channel tambahan (targets[]): diganti seluruhnya tiap simpan. */
+    if (isTargets && (method === 'GET' || method === 'PUT')) {
+      const post = await getCustomPost(guildId, id);
+      if (!post) {
+        sendJson(response, 404, { error: 'Pesan tidak ditemukan.' });
+        return;
+      }
+      if (method === 'GET') {
+        sendJson(response, 200, { targets: await listPostTargets(guildId, id) });
+        return;
+      }
+      const payload = await readJson(request, response);
+      if (!payload) return;
+      const hasil = await replacePostTargets(guildId, id, payload.channels);
+      sendJson(response, 200, { ok: true, ...hasil });
+      return;
+    }
 
     if (isSend && method === 'POST') {
       const post = await getCustomPost(guildId, id);
@@ -2317,6 +2369,12 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         sendJson(response, 400, { error: 'Bot sedang offline di proses ini, jadi pesan tidak bisa dikirim.' });
         return;
       }
+      /*
+       * Setelah pemeriksaan di atas, `botClient` sempit ke Client yang siap.
+       * Disimpan ke variabel lokal supaya callback pengiriman ke channel
+       * tambahan tidak perlu `!` di belasan tempat.
+       */
+      const bot = botClient;
       if (!post.channelId) {
         sendJson(response, 400, { error: 'Channel tujuan belum dipilih.' });
         return;
@@ -2358,7 +2416,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
          */
         if (post.layout === 'embed') {
           const hasilEmbed = await sendOrUpdateEmbedPost({
-            client: botClient,
+            client: bot,
             channelId: post.channelId,
             messageId: post.messageId,
             blocks: post.blocks,
@@ -2376,11 +2434,41 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
             roleMenus: menuPayload,
           });
           await setCustomPostMessage(guildId, id, hasilEmbed.messageId);
+          /*
+           * Channel tambahan (targets[]): pesan yang sama dikirim ke tiap
+           * channel, dengan ID pesannya masing-masing. Gagal di satu channel
+           * tidak membatalkan yang lain.
+           */
+          const targetEmbed = await kirimTarget({
+            client: bot,
+            guildId,
+            postId: id,
+            kirim: (channelId, messageId) =>
+              sendOrUpdateEmbedPost({
+                client: bot,
+                channelId,
+                messageId,
+                blocks: post.blocks,
+                accent: post.accent,
+                title: post.name,
+                postId: id,
+                flags: post.flags,
+                allowedMentions: post.allowedMentions,
+                roleButtons: roleButtons.map((b) => ({
+                  id: b.id,
+                  label: b.label,
+                  emoji: b.emoji ?? null,
+                  style: b.style ?? null,
+                })),
+                roleMenus: menuPayload,
+              }),
+          });
           sendJson(response, 200, {
             ok: true,
             messageId: hasilEmbed.messageId,
             edited: hasilEmbed.edited,
             ...(hasilEmbed.dropped?.length ? { dropped: hasilEmbed.dropped } : {}),
+            ...(targetEmbed.length ? { targets: targetEmbed } : {}),
           });
           return;
         }
@@ -2399,19 +2487,19 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         const result =
           post.sender === 'webhook'
             ? await sendOrUpdatePostViaWebhook({
-                client: botClient,
+                client: bot,
                 guildId,
                 channelId: post.channelId,
                 messageId: post.messageId,
                 blocks: post.blocks,
                 accent: post.accent ?? undefined,
-                identity: await webhookIdentityFor(botClient, guildId),
+                identity: await webhookIdentityFor(bot, guildId),
                 postId: id,
                 flags: post.flags,
                 template: null,
               })
             : await sendOrUpdatePost({
-                client: botClient,
+                client: bot,
                 channelId: post.channelId,
                 messageId: post.messageId,
                 blocks: post.blocks,
@@ -2435,12 +2523,58 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
          * penyusun payload (mis. select yang tidak didukung) dan berkas yang
          * gagal diunduh. Tanpa ini admin mengira pesannya terkirim utuh.
          */
+        /*
+         * Channel tambahan. Pesan webhook & pesan bot sama-sama bisa dikirim ke
+         * beberapa channel; penyusunnya dipanggil ulang per channel supaya ID
+         * pesan tiap channel tercatat sendiri-sendiri.
+         */
+        const targetUtama = await kirimTarget({
+          client: bot,
+          guildId,
+          postId: id,
+          kirim: async (channelId, messageId) =>
+            post.sender === 'webhook'
+              ? sendOrUpdatePostViaWebhook({
+                  client: bot,
+                  guildId,
+                  channelId,
+                  messageId,
+                  blocks: post.blocks,
+                  accent: post.accent ?? undefined,
+                  // Identitas webhook diambil per channel: nama & avatar server
+                  // sama, tetapi webhook-nya berbeda per channel.
+                  identity: await webhookIdentityFor(bot, guildId),
+                  postId: id,
+                  flags: post.flags,
+                  template: null,
+                })
+              : sendOrUpdatePost({
+                  client: bot,
+                  channelId,
+                  messageId,
+                  blocks: post.blocks,
+                  accent: post.accent ?? undefined,
+                  postId: id,
+                  flags: post.flags,
+                  allowedMentions: post.allowedMentions,
+                  ...(post.threadName ? { threadName: post.threadName } : {}),
+                  roleButtons: roleButtons.map((b) => ({
+                    id: b.id,
+                    label: b.label,
+                    emoji: b.emoji ?? null,
+                    style: b.style ?? null,
+                  })),
+                  roleMenus: menuPayload,
+                }),
+        });
+
         sendJson(response, 200, {
           ok: true,
           messageId: result.messageId,
           edited: result.edited,
           ...(result.dropped?.length ? { dropped: result.dropped } : {}),
           ...(result.droppedFiles?.length ? { droppedFiles: result.droppedFiles } : {}),
+          ...(targetUtama.length ? { targets: targetUtama } : {}),
         });
       } catch (error) {
         // PostSendError = kesalahan yang bisa dimengerti admin (channel hilang,
