@@ -670,6 +670,33 @@ const pages: Array<{ name: string; render: () => string }> = [
         stats: { messages: 120, rooms: 3, documents: 2 },
       } as never),
   },
+  {
+    // Halaman dengan pesan ber-pemicu: badge pemicu harus terlihat di daftar.
+    name: '/pesan?pemicu',
+    render: () =>
+      pesanPage({
+        ...base,
+        posts: [
+          {
+            id: 3,
+            name: 'Sambutan otomatis',
+            channelId: channel.id,
+            blocks: [{ kind: 'text', value: 'Selamat datang!' }],
+            messageId: '1000',
+            updatedAt: Date.now(),
+            accent: null,
+            sender: 'bot' as const,
+            trigger: 'member_add' as const,
+          },
+        ],
+        channels: [channel],
+        botReady: true,
+        roles: [],
+        hasManageRoles: false,
+        roleButtons: {},
+        roleMenus: {},
+      } as never),
+  },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -2180,6 +2207,75 @@ await check('pesan: flag pesan dikirim sebagai bitmask yang benar', async () => 
   assert.equal(hasil.satu, 4, 'satu flag');
   assert.equal(hasil.nol, 0, 'tanpa flag');
   assert.equal(page.errors.length, 0, `flag pesan error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: pemicu event ikut tersimpan & tampil di daftar pesan', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-pemicu');
+
+  // Pilihan pemicu harus ada di form, bukan hanya diterima API.
+  const pilihan = (await page.evaluate(`
+    (function () {
+      var select = document.getElementById('postTrigger');
+      return {
+        ada: !!select,
+        nilai: ['', 'member_add', 'member_remove'],
+      };
+    })()
+  `)) as { ada: boolean; nilai: string[] };
+  assert.equal(pilihan.ada, true, 'pilihan pemicu ada di kartu pengaturan');
+
+  /*
+   * Nilai '' berarti "hanya manual" dan harus dikirim sebagai null, bukan
+   * string kosong — server membaca string kosong sebagai pemicu tak dikenal.
+   */
+  const muatan = (await page.evaluate(`
+    (function () {
+      document.getElementById('postName').value = 'Sambutan';
+      document.getElementById('postChannel').value = '9001';
+      blocks = [{ kind: 'text', value: 'Halo' }];
+      document.getElementById('postTrigger').value = 'member_add';
+      return savePost(false);
+    })()
+  `)) as null;
+
+  const kirim = page.fetches.filter((call) => call.path === '/api/posts').pop();
+  assert.ok(kirim, 'pesan disimpan lewat /api/posts');
+  const isi = kirim!.body as { trigger?: unknown; blocks?: unknown };
+  assert.equal(isi.trigger, 'member_add', 'pemicu terkirim bersama isian lain');
+  assert.ok(Array.isArray(isi.blocks) && (isi.blocks as unknown[]).length === 1, 'blok tetap terkirim');
+
+  // Pemicu yang tidak dipilih dikirim sebagai null, bukan ''.
+  const kosong = (await page.evaluate(`
+    (function () {
+      document.getElementById('postName').value = 'Manual';
+      document.getElementById('postTrigger').value = '';
+      return savePost(false);
+    })()
+  `)) as unknown;
+  const kedua = page.fetches.filter((call) => call.path === '/api/posts').pop();
+  assert.equal((kedua!.body as { trigger?: unknown }).trigger, null, 'tanpa pemicu = null');
+
+  /*
+   * Daftar pesan harus menandai pesan ber-pemicu: pesan yang mengirim sendiri
+   * tiap ada anggota baru tidak boleh jadi kejutan.
+   */
+  const daftar = mounted.find((page) => page.name === '/pesan?pemicu')?.html ?? '';
+  assert.ok(daftar.includes('member masuk'), 'badge pemicu tampil di daftar');
+  // Isian pemicu harus terisi ulang saat pesan dibuka: pesan yang dipasangi
+  // pemicu tapi tampil "hanya manual" akan membuat admin mematikannya tanpa sengaja.
+  const halamanIsi = mounted.find((page) => page.name === '/pesan?isi')?.html ?? '';
+  const dibuka = mountPage(halamanIsi, 'uji-pemicu-isi');
+  const terisi = (await dibuka.evaluate(`
+    (function () {
+      loadExisting();
+      return document.getElementById('postTrigger').value;
+    })()
+  `)) as string;
+  assert.equal(terisi, '', 'pesan tanpa pemicu tampil sebagai hanya manual');
+  assert.equal(page.errors.length, 0, `pemicu error: ${page.errors.join('|')}`);
+  void muatan;
+  void kosong;
 });
 
 await check('pesan: tombol impor Discohook memanggil endpoint yang benar', async () => {

@@ -48,6 +48,8 @@ import {
   setPersona,
   listCustomPosts,
   getCustomPost,
+  parseTrigger,
+  type PostTrigger,
   createCustomPost,
   updateCustomPost,
   deleteCustomPost,
@@ -405,6 +407,16 @@ function sanitizeAllowedMentions(value: unknown): { parse: Array<'users' | 'role
     }
   }
   return { parse: sah };
+}
+
+/**
+ * Pemicu event dari dashboard.
+ *
+ * Nilai asing dibaca sebagai `null` (hanya manual), bukan diteruskan: pemicu
+ * yang tidak dikenal akan membuat pesan diam selamanya tanpa pesan galat.
+ */
+function sanitizeTrigger(value: unknown): PostTrigger | null {
+  return parseTrigger(typeof value === 'string' ? value : null);
 }
 
 /** Nama thread dari dashboard: dipotong ke batas Discord, kosong = null. */
@@ -868,6 +880,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
           updatedAt: post.updatedAt,
           accent: post.accent,
           sender: post.sender,
+          trigger: post.trigger,
         })),
         channels,
         botReady: Boolean(botClient?.isReady()),
@@ -2242,6 +2255,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       flags,
       allowedMentions: sanitizeAllowedMentions(payload.allowedMentions),
       threadName: sanitizeThreadName(payload.threadName),
+      trigger: sanitizeTrigger(payload.trigger),
     });
     const { blocks: blokSah, dropped } = sanitizeBlocks(payload.blocks);
     // `usage` = hitungan versi SERVER. Dashboard boleh menghitung sendiri
@@ -2477,6 +2491,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         allowedMentions:
           payload.allowedMentions === undefined ? undefined : sanitizeAllowedMentions(payload.allowedMentions),
         threadName: payload.threadName === undefined ? undefined : sanitizeThreadName(payload.threadName),
+        trigger: payload.trigger === undefined ? undefined : sanitizeTrigger(payload.trigger),
         channelId:
           payload.channelId === undefined
             ? undefined

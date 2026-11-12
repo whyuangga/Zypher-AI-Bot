@@ -1460,7 +1460,29 @@ export interface CustomPost {
   allowedMentions: { parse: Array<'users' | 'roles' | 'everyone'> };
   /** Nama thread yang dibuka pesan ini (null = tanpa thread). */
   threadName: string | null;
+  /**
+   * Pemicu kirim otomatis (padanan trigger event Discohook).
+   *
+   * `null` = hanya dikirim manual. Nilai yang dikenal:
+   *   - `member_add`    — pesan dikirim ke channel tujuannya tiap ada member baru;
+   *   - `member_remove` — idem untuk member keluar.
+   *
+   * Yang dikirim adalah pesan yang SAMA (bukan salinan): ID pesan Discord yang
+   * sudah ada diperbarui, jadi channel tidak dipenuhi pesan lama tiap ada
+   * orang bergabung.
+   */
+  trigger: PostTrigger | null;
   updatedAt: number;
+}
+
+/** Nilai `trigger` yang dikenal. Selain ini dibaca sebagai `null`. */
+export const POST_TRIGGERS = ['member_add', 'member_remove'] as const;
+export type PostTrigger = (typeof POST_TRIGGERS)[number];
+
+/** Ubah nilai kolom `trigger` jadi bentuk yang aman dipakai kode. */
+export function parseTrigger(raw: string | null | undefined): PostTrigger | null {
+  const nilai = (raw ?? '').trim();
+  return (POST_TRIGGERS as readonly string[]).includes(nilai) ? (nilai as PostTrigger) : null;
 }
 
 interface CustomPostRow {
@@ -1476,6 +1498,7 @@ interface CustomPostRow {
   series?: number | string | null;
   mentions?: string | null;
   thread_name?: string | null;
+  trigger?: string | null;
   updated_at: number | string;
 }
 
@@ -1517,6 +1540,7 @@ function toCustomPost(row: CustomPostRow): CustomPost {
     series: Number(row.series ?? 0) === 1,
     allowedMentions: parseMentions(row.mentions),
     threadName: row.thread_name?.trim() ? row.thread_name.trim().slice(0, 100) : null,
+    trigger: parseTrigger(row.trigger),
     updatedAt: Number(row.updated_at),
   };
 }
@@ -1559,12 +1583,13 @@ export async function createCustomPost(
     series?: boolean;
     allowedMentions?: { parse?: Array<'users' | 'roles' | 'everyone'> };
     threadName?: string | null;
+    trigger?: PostTrigger | null;
   },
 ): Promise<CustomPost> {
   const blocks = sanitizeBlocks(input.blocks).blocks;
   const id = await insert(
-    `INSERT INTO custom_posts (guild_id, name, channel_id, blocks, message_id, accent, sender, flags, series, mentions, thread_name, updated_at)
-     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO custom_posts (guild_id, name, channel_id, blocks, message_id, accent, sender, flags, series, mentions, thread_name, trigger, updated_at)
+     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       guildId,
       input.name.slice(0, 120),
@@ -1576,6 +1601,7 @@ export async function createCustomPost(
       input.series === true ? 1 : 0,
       JSON.stringify(parseMentions(JSON.stringify({ parse: input.allowedMentions?.parse ?? [] }))),
       input.threadName?.trim() ? input.threadName.trim().slice(0, 100) : null,
+      parseTrigger(input.trigger ?? null),
       Date.now(),
     ],
   );
@@ -1596,6 +1622,7 @@ export async function updateCustomPost(
     series?: boolean;
     allowedMentions?: { parse?: Array<'users' | 'roles' | 'everyone'> };
     threadName?: string | null;
+    trigger?: PostTrigger | null;
   },
 ): Promise<CustomPost | null> {
   const current = await getCustomPost(guildId, id);
@@ -1612,7 +1639,7 @@ export async function updateCustomPost(
 
   const blocks = input.blocks === undefined ? current.blocks : sanitizeBlocks(input.blocks).blocks;
   await run(
-    'UPDATE custom_posts SET name = ?, channel_id = ?, blocks = ?, accent = ?, sender = ?, flags = ?, series = ?, mentions = ?, thread_name = ?, updated_at = ? WHERE guild_id = ? AND id = ?',
+    'UPDATE custom_posts SET name = ?, channel_id = ?, blocks = ?, accent = ?, sender = ?, flags = ?, series = ?, mentions = ?, thread_name = ?, trigger = ?, updated_at = ? WHERE guild_id = ? AND id = ?',
     [
       (input.name ?? current.name).slice(0, 120),
       input.channelId === undefined ? current.channelId : input.channelId,
@@ -1633,12 +1660,28 @@ export async function updateCustomPost(
         : input.threadName?.trim()
           ? input.threadName.trim().slice(0, 100)
           : null,
+      input.trigger === undefined ? current.trigger : parseTrigger(input.trigger ?? null),
       Date.now(),
       guildId,
       id,
     ],
   );
   return getCustomPost(guildId, id);
+}
+
+/**
+ * Pesan /pesan yang terpasang pada satu pemicu event.
+ *
+ * Dipakai event `guildMemberAdd`/`guildMemberRemove`. Urutannya tetap
+ * (`updated_at DESC`) supaya kalau admin memasang dua pesan pada pemicu yang
+ * sama, keduanya terkirim dengan urutan yang sama tiap kali — bukan acak.
+ */
+export async function listPostsByTrigger(guildId: string, trigger: PostTrigger): Promise<CustomPost[]> {
+  const rows = await all<CustomPostRow>(
+    'SELECT * FROM custom_posts WHERE guild_id = ? AND trigger = ? ORDER BY updated_at DESC LIMIT 20',
+    [guildId, trigger],
+  );
+  return rows.map(toCustomPost);
 }
 
 /** Simpan ID pesan Discord setelah berhasil dikirim. */

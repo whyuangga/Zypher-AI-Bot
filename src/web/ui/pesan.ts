@@ -37,6 +37,8 @@ export interface PostRowView {
   accent: string | null;
   /** `webhook` = tampil atas nama server. */
   sender: 'bot' | 'webhook';
+  /** Pemicu kirim otomatis (`member_add`/`member_remove`); null = manual. */
+  trigger?: 'member_add' | 'member_remove' | null;
 }
 
 /** Satu pesan di dalam dokumen multi-pesan (bentuk dari post-series.ts). */
@@ -159,10 +161,21 @@ export function pesanPage(options: PesanPageOptions): string {
           const status = post.messageId
             ? badge('terkirim', 'brand')
             : badge('belum dikirim', 'neutral');
+          /*
+           * Pemicu ditampilkan di daftar, bukan hanya di tab Susun: pesan yang
+           * mengirim sendiri tiap ada member masuk adalah hal yang harus
+           * langsung terlihat, bukan kejutan saat anggota bergabung.
+           */
+          const pemicu =
+            post.trigger === 'member_add'
+              ? badge('member masuk', 'warn')
+              : post.trigger === 'member_remove'
+                ? badge('member keluar', 'warn')
+                : '';
           return `<div class="list-row">
   <span class="avatar-sm">${icon('file', 15)}</span>
   <div class="list-body">
-    <div class="list-title">${esc(post.name)} ${status}</div>
+    <div class="list-title">${esc(post.name)} ${status}${pemicu}</div>
     <div class="list-text">${esc(summarize(post.blocks))}</div>
     <div class="list-meta">diperbarui ${esc(relativeTime(post.updatedAt))}</div>
   </div>
@@ -353,6 +366,18 @@ export function pesanPage(options: PesanPageOptions): string {
       <input type="checkbox" id="postFlagNotif" /> tanpa notifikasi
     </label>
     <p class="hint">Sama seperti "Message Flags" di Discohook. Flag lain (Components V2) diurus bot dan tidak perlu diatur.</p>
+  </div>
+  <div style="grid-column:1/-1">
+    <label class="field" for="postTrigger">Kirim otomatis saat</label>
+    <span class="select-shell full">
+      <select id="postTrigger">
+        <option value="">Hanya saat saya klik Kirim</option>
+        <option value="member_add">Ada member baru bergabung</option>
+        <option value="member_remove">Ada member keluar</option>
+      </select>
+      ${icon('chevron', 15)}
+    </span>
+    <p class="hint">Pesan yang sama diperbarui tiap kejadian, bukan dikirim ulang berulang — channel tidak dipenuhi versi lama. Sambutan &amp; perpisahan ber-AI tetap berjalan sendiri di halamannya.</p>
   </div>
   <div style="grid-column:1/-1">
     <label class="field">Izinkan ping (allowed_mentions)</label>
@@ -2224,6 +2249,8 @@ async function savePost(andSend) {
         flags: flagPesan(),
         allowedMentions: allowedMentionsPesan(),
         threadName: ((document.getElementById('postThreadName') || {}).value || '').trim().slice(0, 100),
+        // '' = hanya manual; server membaca nilai asing sebagai null juga.
+        trigger: (document.getElementById('postTrigger') || {}).value || null,
       }),
     });
     if (result.dropped && result.dropped.length) {
@@ -2357,6 +2384,13 @@ function loadExisting() {
   var flagNotif = document.getElementById('postFlagNotif');
   if (flagEmbeds) flagEmbeds.checked = Boolean((found.flags || 0) & 4);
   if (flagNotif) flagNotif.checked = Boolean((found.flags || 0) & 4096);
+  /*
+   * Pemicu event: nilai asing ditampilkan sebagai "hanya manual", bukan
+   * dibiarkan memilih opsi pertama secara diam-diam — admin harus tahu
+   * pesannya tidak lagi punya pemicu.
+   */
+  var pemicu = document.getElementById('postTrigger');
+  if (pemicu) pemicu.value = found.trigger === 'member_add' || found.trigger === 'member_remove' ? found.trigger : '';
   // normalBlock memuat SEMUA field yang dikenal, termasuk spoiler dan nama
   // berkas — dulu daftarnya ditulis ulang di sini dan dua field itu tertinggal.
   blocks = found.blocks.map(normalBlock);

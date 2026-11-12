@@ -110,6 +110,9 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
     // tetap berjalan apa adanya setelah upgrade.
     'ALTER TABLE post_schedules ADD COLUMN cron TEXT',
     'ALTER TABLE post_schedules ADD COLUMN cron_offset INTEGER',
+    // Pemicu event pesan /pesan. NULL = hanya dikirim manual, jadi pesan lama
+    // tidak tiba-tiba terkirim sendiri setelah upgrade.
+    'ALTER TABLE custom_posts ADD COLUMN trigger TEXT',
     'ALTER TABLE post_role_buttons ADD COLUMN emoji TEXT',
     'ALTER TABLE post_role_buttons ADD COLUMN style TEXT',
   ];

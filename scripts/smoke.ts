@@ -7650,6 +7650,79 @@ await testAsync('pesan: generator kode & payload JSON dari penyusun yang sama', 
   await repo.deleteCustomPost(GUILD, kosong.id);
 });
 
+await testAsync('pesan: pemicu member masuk/keluar tersimpan & dijalankan hanya untuk pemicunya', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runTriggers } = await import('../src/features/post-trigger.js');
+  const GUILD = '123456789012345678';
+
+  /* Nilai asing dibaca sebagai "hanya manual", bukan diteruskan apa adanya. */
+  assert.equal(repo.parseTrigger('member_add'), 'member_add', 'nilai sah diterima');
+  assert.equal(repo.parseTrigger('member_remove'), 'member_remove', 'pemicu keluar diterima');
+  assert.equal(repo.parseTrigger('member_join'), null, 'nama pemicu yang salah tidak diteruskan');
+  assert.equal(repo.parseTrigger(''), null, 'kosong = manual');
+  assert.equal(repo.parseTrigger(null), null, 'null = manual');
+
+  const blok = [{ kind: 'text', value: 'Selamat datang!' }];
+  const masuk = await repo.createCustomPost(GUILD, {
+    name: 'Sambutan pemicu',
+    channelId: '999',
+    blocks: blok,
+    trigger: 'member_add',
+  });
+  const keluar = await repo.createCustomPost(GUILD, {
+    name: 'Perpisahan pemicu',
+    channelId: '999',
+    blocks: blok,
+    trigger: 'member_remove',
+  });
+  const manual = await repo.createCustomPost(GUILD, { name: 'Manual', channelId: '999', blocks: blok });
+
+  assert.equal(masuk.trigger, 'member_add', 'pemicu tersimpan saat dibuat');
+  assert.equal(manual.trigger, null, 'tanpa pemicu = manual (pesan lama tidak berubah perilaku)');
+
+  /*
+   * Pemisahan per pemicu: memasang pesan "member masuk" tidak boleh membuatnya
+   * ikut terkirim saat ada yang keluar.
+   */
+  const daftarMasuk = await repo.listPostsByTrigger(GUILD, 'member_add');
+  assert.equal(daftarMasuk.length, 1, 'hanya pesan ber-pemicu member_add');
+  assert.equal(daftarMasuk[0]!.name, 'Sambutan pemicu', 'pesan yang benar');
+  assert.ok(!daftarMasuk.some((satu) => satu.id === keluar.id), 'pesan member_remove tidak ikut');
+
+  /* Mengubah pemicu jadi kosong mematikan kirim otomatis. */
+  const dimatikan = await repo.updateCustomPost(GUILD, masuk.id, { trigger: null });
+  assert.equal(dimatikan!.trigger, null, 'pemicu bisa dimatikan');
+  assert.equal((await repo.listPostsByTrigger(GUILD, 'member_add')).length, 0, 'tidak lagi terdaftar');
+  /* Menyimpan field lain tidak boleh menghapus pemicu yang sedang aktif. */
+  const tanpaPerubahan = await repo.updateCustomPost(GUILD, keluar.id, { name: 'Perpisahan pemicu 2' });
+  assert.equal(tanpaPerubahan!.trigger, 'member_remove', 'pemicu bertahan saat field lain diubah');
+
+  /*
+   * Pesan ber-pemicu TANPA channel tujuan: harus dilaporkan sebagai kegagalan
+   * beralasan, bukan dilewati diam-diam dan bukan melempar sampai event mati.
+   * Jalur ini juga tidak menyentuh Discord, jadi bisa diuji tanpa client asli.
+   */
+  const tanpaChannel = await repo.createCustomPost(GUILD, {
+    name: 'Belum ada channel',
+    channelId: null,
+    blocks: blok,
+    trigger: 'member_add',
+  });
+  const hasil = await runTriggers({
+    client: {} as never,
+    guildId: GUILD,
+    trigger: 'member_add',
+  });
+  assert.equal(hasil.terkirim, 0, 'tidak ada yang bisa dikirim');
+  assert.equal(hasil.gagal.length, 1, 'kegagalan dilaporkan');
+  assert.ok(hasil.gagal[0]!.includes('Belum ada channel'), 'pesan yang bermasalah disebut namanya');
+  assert.ok(hasil.gagal[0]!.includes('channel'), 'alasannya jelas: channel belum dipilih');
+
+  for (const pesan of [keluar, manual, tanpaChannel]) {
+    await repo.deleteCustomPost(GUILD, pesan.id);
+  }
+});
+
 await testAsync('multi-pesan: rujukan, urutan kirim, & dokumen tersimpan', async () => {
   const series = await import('../src/features/post-series.js');
 

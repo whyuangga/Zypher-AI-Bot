@@ -628,10 +628,43 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Share link (tautan berbagi) | ✅ tautan `/bagi/<token>` bisa dibuka tanpa login, hanya berisi blok pesan, bisa dicabut |
 | Impor backup | ✅ JSON/URL Discohook di tab **Impor**; ekspor JSON juga ada |
 | Jadwal kirim (sekali / berulang / cron) | ✅ sekali, tiap N jam (min. 2 jam), dan **cron kalender** lima ruas (tiap hari, tiap Senin, tiap tanggal 1, …) memakai zona waktu server. Pola lebih rapat dari 2 jam ditolak dengan alasan |
-| Trigger event (member masuk/keluar) | ❌ (bot punya sambutan sendiri, bukan flow) |
+| Trigger event (member masuk/keluar) | ✅ pilihan **Kirim otomatis saat**: `member_add` / `member_remove`; pesan yang sama diperbarui tiap kejadian, bukan dikirim ulang |
 | Generator kode (payload → kode bot) | ✅ tab **Impor** → panel "JSON payload & generator kode": keluaran `discord.js` v14 & `discord.py` v2, diterjemahkan dari payload yang benar-benar dikirim |
 | Melihat payload JSON mentah | ✅ panel yang sama menampilkan `components` persis seperti yang diterima Discord, siap ditempel ke REST API |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 8: pemicu event member masuk/keluar
+
+Discohook punya "trigger" di samping jadwal: pesan dikirim saat event terjadi,
+bukan saat jam tertentu. Di sini pilihannya di kartu pengaturan:
+
+| Pilihan | Artinya |
+|---|---|
+| *Hanya saat saya klik Kirim* | bawaan; perilaku pesan biasa |
+| *Ada member baru bergabung* | dikirim/diperbarui tiap `guildMemberAdd` |
+| *Ada member keluar* | dikirim/diperbarui tiap `guildMemberRemove` |
+
+Yang dijaga:
+
+- **Pesan yang sama diperbarui, bukan dikirim ulang.** ID pesan Discord yang
+  tersimpan dipakai lagi, jadi channel tidak dipenuhi salinan tiap ada orang
+  bergabung. Kalau pesannya sudah dihapus seseorang, kirim baru lalu simpan ID
+  yang baru — tanpa itu, tiap kejadian membuat pesan tambahan selamanya.
+- **Pemicu tidak jalan sendiri setelah upgrade.** Kolom `trigger` baru berisi
+  NULL untuk semua pesan lama, dan NULL berarti manual.
+- **Satu pesan gagal tidak menghentikan sisanya.** Tiap pesan punya try/catch
+  sendiri; alasannya dicatat di log **dan** dikembalikan sebagai daftar
+  `gagal` dari `runTriggers()`.
+- **Pesan tanpa channel tujuan dilaporkan**, bukan dilewati diam-diam — itu
+  kesalahan penyusunan yang membuat admin bertanya "kenapa tidak pernah muncul".
+- **Nilai pemicu asing dibaca sebagai manual** (`parseTrigger`), bukan
+  diteruskan: pemicu tak dikenal akan membuat pesan diam selamanya.
+
+Order di event: sambutan AI (`welcome.ts`) lebih dulu, lalu pesan ber-pemicu.
+Keduanya di try/catch terpisah, jadi kegagalan satu tidak menahan yang lain.
+Sambutan & perpisahan ber-AI **tetap** berjalan sendiri — pemicu di sini tidak
+menggantikannya, karena teks pesan /pesan dikirim apa adanya (template
+`{member.name}` tidak diisi otomatis, sama seperti pengiriman manual).
 
 ### Batch 7: diff versi (apa yang berubah dari satu versi ke versi lain)
 
@@ -1112,6 +1145,9 @@ Target yang dikenali:
 Aksi yang tidak sah dibuang dan alasannya muncul di `dropped`.
 
 ### Tabel database
+
+`custom_posts.trigger` menyimpan pemicu event (`member_add`/`member_remove`,
+NULL = hanya manual). Tidak ada tabel baru: pemicu adalah sifat pesannya.
 
 Tabel jadwal menyimpan tiga kolom tambahan: `cron` (ekspresi lima ruas, NULL =
 jadwal lama tiap N menit), `cron_offset` (offset zona saat jadwal dibuat), dan

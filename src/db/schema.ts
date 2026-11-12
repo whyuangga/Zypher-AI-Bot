@@ -220,6 +220,9 @@ CREATE TABLE IF NOT EXISTS custom_posts (
   mentions   TEXT,
   -- Nama thread yang dibuka pesan ini (thread_name). NULL = tanpa thread.
   thread_name TEXT,
+  -- Pemicu kirim otomatis: 'member_add' / 'member_remove' (padanan trigger
+  -- event Discohook). NULL = hanya dikirim manual dari dashboard.
+  trigger    TEXT,
   updated_at INTEGER NOT NULL
 );
 
@@ -604,6 +607,8 @@ CREATE TABLE IF NOT EXISTS custom_posts (
   series     INTEGER,
   mentions    TEXT,
   thread_name TEXT,
+  -- 'member_add' / 'member_remove'; NULL = hanya manual.
+  trigger     TEXT,
   updated_at BIGINT NOT NULL
 );
 

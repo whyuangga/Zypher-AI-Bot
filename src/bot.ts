@@ -140,14 +140,14 @@ async function leaveOtherGuilds(client: Client): Promise<void> {
   }
 }
 
-// Member baru bergabung → sambutan (AI atau template, sesuai pengaturan).
+// Member baru bergabung → sambutan + pesan /pesan ber-pemicu `member_add`.
 client.on(Events.GuildMemberAdd, (member) => {
-  void onGuildMemberAdd(member);
+  void onGuildMemberAdd(member, client);
 });
 
-// Member keluar → salam perpisahan (satu kesatuan dengan sambutan).
+// Member keluar → salam perpisahan + pesan /pesan ber-pemicu `member_remove`.
 client.on(Events.GuildMemberRemove, (member) => {
-  void onGuildMemberRemove(member);
+  void onGuildMemberRemove(member, client);
 });
 
 /**
