@@ -614,7 +614,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Discohook | Di sini |
 |---|---|
 | Container / Text Display / Section / Separator / Media Gallery / File / Action Row | ✅ |
-| Embed klasik (judul, penulis, footer, field, thumbnail, gambar) | ❌ (pesan memakai Components V2) |
+| Embed klasik (judul, penulis, footer, field, thumbnail, gambar) | ⚠️ sebagian: judul, warna, isi, satu gambar, thumbnail (lihat **Batch 9**). Penulis, footer, dan field belum ada di editor |
 | Poll | ❌ di Discohook pun masih dinonaktifkan |
 | Tombol link & tombol interaktif ber-flow | ✅ |
 | Select menu: string (flow per opsi), user/role/mentionable/channel | ✅ |
