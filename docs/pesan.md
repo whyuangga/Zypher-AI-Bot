@@ -624,6 +624,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Message flags: suppress embeds, suppress notifications | ✅ |
 | Message flags: voice message, `IS_COMPONENTS_V2` manual | ❌ (v2 diurus pengirim) |
 | Multi-pesan dalam satu backup (beberapa pesan, `reference`, `thread_id`) | ✅ tab **Multi-pesan** (`?tab=grup`): sampai 20 pesan per dokumen, `reference` antar pesan, nama thread per pesan, disimpan di `post_documents` |
+| JSON editor dokumen | ✅ kartu **JSON dokumen** di tab Multi-pesan: ekspor/impor satu dokumen (semua pesan, rujukan balasan, nama thread, mode rangkaian) |
 | Riwayat/undo revisi (padanan backup) | ✅ 20 versi terakhir per pesan, dibuat otomatis setiap pesan diubah; kartu "Riwayat & bagikan" (tab **Riwayat**) |
 | Share link (tautan berbagi) | ✅ tautan `/bagi/<token>` bisa dibuka tanpa login, hanya berisi blok pesan, bisa dicabut |
 | Impor backup | ✅ JSON/URL Discohook di tab **Impor**; ekspor JSON juga ada |
@@ -633,6 +634,44 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Melihat payload JSON mentah | ✅ panel yang sama menampilkan `components` persis seperti yang diterima Discord, siap ditempel ke REST API |
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, satu gambar besar, tombol/menu tetap di luar embed |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 10: JSON editor dokumen multi-pesan
+
+Discohook menaruh seluruh backup dalam satu kotak JSON yang bisa disunting
+langsung. Di sini bentuk itu ada untuk **dokumen** (multi-pesan), karena di
+sanalah ia paling berguna: menyunting rangkaian 12 pesan lewat kartu satu per
+satu jauh lebih lambat daripada menyunting satu blok teks.
+
+Bentuk berkasnya:
+
+```json
+{
+  "format": "zypher-document",
+  "version": 1,
+  "name": "Pengumuman berurutan",
+  "series": true,
+  "messages": [
+    { "id": "m1", "name": "Pembuka", "blocks": [{ "kind": "text", "value": "Halo" }] },
+    { "id": "m2", "name": "Lanjutan", "blocks": [], "reference": "m1", "threadName": "Diskusi" }
+  ]
+}
+```
+
+Yang dijaga saat impor:
+
+| Kasus | Perlakuan |
+|---|---|
+| `id` dipakai dua kali | pesan kedua dibuang, alasannya ditampilkan |
+| `reference` menunjuk pesan yang tidak ada | rujukan dibuang — menyimpannya membuat kiriman gagal di tengah rangkaian |
+| pesan membalas dirinya sendiri | rujukan dibuang |
+| lebih dari 20 pesan | sisanya dibuang (batas `SERIES_LIMITS.messages`) |
+| `format` bukan `zypher-document` | ditolak, dokumen yang sedang terbuka **tidak** dirusak |
+| field kosong (`""`, `null`) | dibuang supaya berkasnya ringkas dan tidak mengirim nilai kosong |
+
+Ekspor memakai keadaan **editor**, bukan salinan terakhir dari server: admin
+menekan Ekspor justru untuk menyimpan perubahan yang belum disimpan. Blok pesan
+dokumen diekspor apa adanya (tanpa dinormalkan ulang), supaya field hasil impor
+Discohook yang tidak dikenal editor tidak hilang saat bolak-balik.
 
 ### Batch 9: embed klasik (bentuk lama, di samping Components V2)
 

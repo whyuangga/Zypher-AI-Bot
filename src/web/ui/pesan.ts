@@ -662,6 +662,21 @@ ${listCard}
         <div class="subhead">${icon('file', 15)} Dokumen tersimpan</div>
         <div id="grupTersimpan" class="block-list"></div>
       </div>
+
+      <div class="card">
+        <div class="subhead">${icon('sliders', 15)} JSON dokumen</div>
+        <p class="hint" style="margin-top:0">
+          Seluruh dokumen — semua pesan, rujukan balasan, nama thread — dalam satu kotak JSON.
+          Berguna untuk menyunting rangkaian panjang sekaligus atau menyimpan cadangan sebelum mengubah banyak hal.
+          Isinya disaring dengan aturan yang sama dengan editor, jadi blok asing tidak bisa menyusup.
+        </p>
+        <div class="json-aksi">
+          <button class="btn btn-ghost btn-sm" type="button" onclick="eksporDokumen()">${icon('upload', 15)} Ekspor dokumen</button>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="imporDokumen()">${icon('download', 15)} Impor dokumen</button>
+          <span class="hint" id="grupJsonStatus" style="margin:0"></span>
+        </div>
+        <textarea id="grupJson" rows="12" spellcheck="false" placeholder="Klik Ekspor dokumen untuk mengisi, atau tempel JSON dokumen di sini lalu klik Impor."></textarea>
+      </div>
     </div>
   </div>
 </div>
@@ -5235,6 +5250,154 @@ function tambahPesanGrup() {
   var empat = document.getElementById('grupNama');
   if (empat && !grupAktif.name) grupAktif.name = (document.getElementById('postName').value || 'Dokumen').slice(0, 80);
   renderGrup();
+}
+
+/* ---------------- JSON dokumen multi-pesan ---------------- */
+
+/**
+ * Bentuk baku dokumen untuk ekspor/impor.
+ *
+ * Kolom format dan version disertakan supaya berkas lama bisa dikenali dan ditolak
+ * dengan alasan yang jelas, bukan dibaca setengah lalu merusak dokumen yang
+ * sedang terbuka.
+ */
+var DOKUMEN_FORMAT = { format: 'zypher-document', version: 1 };
+
+/** Ekspor dokumen yang sedang dibuka ke kotak JSON. */
+function eksporDokumen() {
+  var status = document.getElementById('grupJsonStatus');
+  if (!grupAktif.messages.length) return toast('Dokumen ini belum punya pesan', true);
+  /*
+   * Yang diekspor adalah keadaan EDITOR, bukan salinan terakhir dari server:
+   * admin menekan ekspor justru untuk menyimpan perubahan yang belum disimpan.
+   */
+  var data = {
+    format: DOKUMEN_FORMAT.format,
+    version: DOKUMEN_FORMAT.version,
+    name: grupAktif.name || (document.getElementById('grupNama') || {}).value || '',
+    series: (document.getElementById('grupSeries') || {}).checked === true,
+    messages: grupAktif.messages.map(function (pesan) {
+      var satu = { id: pesan.id, name: pesan.name, blocks: payloadBlokPesan(pesan) };
+      if (pesan.reference) satu.reference = pesan.reference;
+      if (pesan.threadName) satu.threadName = pesan.threadName;
+      return satu;
+    }),
+  };
+  var teks = JSON.stringify(data, null, 2);
+  var kotak = document.getElementById('grupJson');
+  if (kotak) kotak.value = teks;
+  if (status) {
+    status.textContent = '✅ ' + data.messages.length + ' pesan (' + Math.round(teks.length / 1024) + ' KB)';
+  }
+}
+
+/**
+ * Blok satu pesan dokumen, dalam bentuk yang bisa dikirim ke server.
+ *
+ * Pesan dokumen menyimpan blok yang sudah "baku" (bukan blok editor), jadi
+ * hanya dibersihkan dari field kosong — bukan diubah bentuknya. Menormalkan
+ * ulang di sini akan membuat blok hasil impor Discohook kehilangan field yang
+ * tidak dikenal editor.
+ */
+function payloadBlokPesan(pesan) {
+  return (pesan.blocks || []).map(function (satu) {
+    var salinan = {};
+    Object.keys(satu).forEach(function (kunci) {
+      var nilai = satu[kunci];
+      if (nilai === undefined || nilai === null || nilai === '') return;
+      salinan[kunci] = nilai;
+    });
+    return salinan;
+  });
+}
+
+/**
+ * Impor JSON dokumen ke editor.
+ *
+ * Rujukan balasan yang menunjuk pesan yang tidak ada DIBUANG dan dilaporkan:
+ * menyimpannya akan membuat pengiriman gagal di tengah rangkaian, dan admin
+ * hanya melihat sebagian pesan muncul tanpa tahu sebabnya.
+ */
+function imporDokumen() {
+  var kotak = document.getElementById('grupJson');
+  var status = document.getElementById('grupJsonStatus');
+  var teks = kotak ? String(kotak.value || '').trim() : '';
+  if (!teks) return toast('Tempel JSON dokumen dulu', true);
+
+  var data;
+  try {
+    data = JSON.parse(teks);
+  } catch (error) {
+    toast('JSON tidak valid: ' + error.message, true);
+    return;
+  }
+  if (!data || !Array.isArray(data.messages)) {
+    toast('JSON dokumen harus punya bagian "messages" berupa daftar', true);
+    return;
+  }
+  if (data.format && data.format !== DOKUMEN_FORMAT.format) {
+    toast('Berkas ini bukan ekspor dokumen multi-pesan', true);
+    return;
+  }
+
+  var batas = 20;
+  var dipakai = {};
+  var pesanBaru = [];
+  var dibuang = [];
+  data.messages.slice(0, batas).forEach(function (satu, urutan) {
+    if (!satu || typeof satu !== 'object') {
+      dibuang.push('pesan ke-' + (urutan + 1) + ' bukan objek');
+      return;
+    }
+    var id = String(satu.id || '').trim() || 'm' + (urutan + 1);
+    if (dipakai[id]) {
+      dibuang.push('id pesan "' + id + '" dipakai dua kali');
+      return;
+    }
+    dipakai[id] = true;
+    var baru = {
+      id: id,
+      name: String(satu.name || 'Pesan ' + (urutan + 1)).slice(0, 120),
+      blocks: payloadBlokPesan({ blocks: Array.isArray(satu.blocks) ? satu.blocks : [] }),
+    };
+    if (satu.threadName) baru.threadName = String(satu.threadName).slice(0, 100);
+    pesanBaru.push(baru);
+  });
+
+  // Rujukan diperiksa SETELAH semua id terkumpul, supaya balasan ke pesan
+  // yang berada di bawahnya (urutan terbalik) tetap sah.
+  data.messages.slice(0, batas).forEach(function (satu, urutan) {
+    if (!satu || !satu.reference) return;
+    var target = pesanBaru[urutan];
+    if (!target) return;
+    if (!dipakai[String(satu.reference)]) {
+      dibuang.push('balasan pesan ' + (urutan + 1) + ' menunjuk pesan yang tidak ada');
+      return;
+    }
+    if (String(satu.reference) === target.id) {
+      dibuang.push('pesan ' + (urutan + 1) + ' membalas dirinya sendiri');
+      return;
+    }
+    target.reference = String(satu.reference);
+  });
+
+  if (pesanBaru.length === 0) {
+    toast('Tidak ada pesan yang bisa dipakai: ' + (dibuang[0] || 'isinya kosong'), true);
+    return;
+  }
+
+  grupAktif = {
+    id: null,
+    name: String(data.name || '').slice(0, 120),
+    series: data.series === true,
+    messages: pesanBaru,
+  };
+  renderGrup();
+  renderGrupTersimpan();
+  var info = '✅ ' + pesanBaru.length + ' pesan dimuat — tekan Simpan untuk menyimpan sebagai dokumen baru';
+  if (dibuang.length) info += '. ' + dibuang.length + ' bagian dibuang: ' + dibuang[0];
+  if (status) status.textContent = info;
+  toast(info);
 }
 
 /** Simpan dokumen (baru atau perbarui yang sedang dibuka). */

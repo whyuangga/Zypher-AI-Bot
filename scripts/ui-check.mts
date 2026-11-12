@@ -2209,6 +2209,95 @@ await check('pesan: flag pesan dikirim sebagai bitmask yang benar', async () => 
   assert.equal(page.errors.length, 0, `flag pesan error: ${page.errors.join('|')}`);
 });
 
+await check('pesan: JSON dokumen multi-pesan bolak-balik dengan rujukan yang dijaga', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-json-dokumen');
+
+  /*
+   * Dokumen dua pesan, yang kedua membalas yang pertama. Ekspor harus memuat
+   * rujukan itu — tanpa itu, rangkaian yang diimpor ke server lain berubah
+   * jadi dua pesan lepas.
+   */
+  const ekspor = (await page.evaluate(`
+    (function () {
+      document.getElementById('grupSeries').checked = true;
+      grupAktif = {
+        id: null,
+        name: 'Rangkaian uji',
+        series: true,
+        messages: [
+          { id: 'm1', name: 'Pembuka', blocks: [{ kind: 'text', value: 'Halo' }] },
+          { id: 'm2', name: 'Lanjutan', blocks: [{ kind: 'text', value: 'Lagi' }], reference: 'm1', threadName: 'Diskusi' }
+        ]
+      };
+      eksporDokumen();
+      var isi = JSON.parse(document.getElementById('grupJson').value);
+      return {
+        format: isi.format,
+        jumlah: isi.messages.length,
+        rujukan: isi.messages[1].reference,
+        thread: isi.messages[1].threadName,
+        series: isi.series,
+        status: document.getElementById('grupJsonStatus').textContent
+      };
+    })()
+  `)) as { format: string; jumlah: number; rujukan: string; thread: string; series: boolean; status: string };
+
+  assert.equal(ekspor.format, 'zypher-document', 'format ditandai supaya bisa dikenali');
+  assert.equal(ekspor.jumlah, 2, 'semua pesan ikut');
+  assert.equal(ekspor.rujukan, 'm1', 'rujukan balasan ikut diekspor');
+  assert.equal(ekspor.thread, 'Diskusi', 'nama thread ikut diekspor');
+  assert.equal(ekspor.series, true, 'mode rangkaian ikut diekspor');
+  assert.ok(ekspor.status.includes('2 pesan'), 'status menyebut jumlahnya');
+
+  /*
+   * Impor mengembalikan dokumen ke editor. Rujukan ke pesan yang tidak ada
+   * harus DIBUANG: menyimpannya membuat pengiriman gagal di tengah rangkaian.
+   */
+  const impor = (await page.evaluate(`
+    (function () {
+      var data = {
+        format: 'zypher-document',
+        name: 'Hasil impor',
+        series: true,
+        messages: [
+          { id: 'a', name: 'Satu', blocks: [{ kind: 'text', value: 'x' }] },
+          { id: 'b', name: 'Dua', blocks: [], reference: 'a' },
+          { id: 'c', name: 'Tiga', blocks: [], reference: 'hilang' },
+          { id: 'c', name: 'Id ganda', blocks: [] }
+        ]
+      };
+      document.getElementById('grupJson').value = JSON.stringify(data);
+      imporDokumen();
+      return {
+        jumlah: grupAktif.messages.length,
+        nama: grupAktif.name,
+        rujukan: grupAktif.messages[1].reference || '',
+        ketiga: grupAktif.messages[2].reference || '',
+        status: document.getElementById('grupJsonStatus').textContent
+      };
+    })()
+  `)) as { jumlah: number; nama: string; rujukan: string; ketiga: string; status: string };
+
+  assert.equal(impor.jumlah, 3, 'id ganda dibuang, sisanya dimuat');
+  assert.equal(impor.nama, 'Hasil impor', 'nama dokumen ikut');
+  assert.equal(impor.rujukan, 'a', 'rujukan yang sah dipertahankan');
+  assert.equal(impor.ketiga, '', 'rujukan ke pesan yang tidak ada dibuang');
+  assert.ok(impor.status.includes('dibuang'), 'yang dibuang dilaporkan ke admin');
+
+  // Berkas dari halaman lain ditolak dengan alasan, bukan dibaca setengah.
+  const salahFormat = (await page.evaluate(`
+    (function () {
+      var sebelum = grupAktif.messages.length;
+      document.getElementById('grupJson').value = JSON.stringify({ format: 'zypher-post', blocks: [] });
+      imporDokumen();
+      return { sebelum: sebelum, sesudah: grupAktif.messages.length, status: document.getElementById('grupJsonStatus').textContent };
+    })()
+  `)) as { sebelum: number; sesudah: number; status: string };
+  assert.equal(salahFormat.sesudah, salahFormat.sebelum, 'dokumen terbuka tidak dirusak berkas yang salah');
+  assert.equal(page.errors.length, 0, `json dokumen error: ${page.errors.join('|')}`);
+});
+
 await check('pesan: bentuk embed menyimpan layout & pratinjaunya memakai aturan embed', async () => {
   const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
   const page = mountPage(html, 'uji-embed');
