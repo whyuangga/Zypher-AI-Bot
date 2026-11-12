@@ -6890,6 +6890,53 @@ await testAsync('pesan: teks blok bisa memakai template, dan tanpa konteks tetap
   assert.match(teksTanpa, /\{member\.name\}/, 'tanpa konteks token dibiarkan');
 });
 
+await testAsync('aksi: kirim teks mentah & hapus pesan bertarget', async () => {
+  const { sanitizeActions, planActions, fillActionText } = await import('../src/features/post-actions.js');
+
+  const { actions, dropped } = sanitizeActions([
+    { kind: 'raw', rawText: '  Halo {member.name}  ', channelId: '123456789012345678' },
+    { kind: 'raw', rawText: '   ' },
+    { kind: 'raw', rawText: 'Halo', channelId: 'bukan-channel' },
+    { kind: 'delete', what: 'sebelumnya' },
+    { kind: 'delete' },
+    { kind: 'delete', what: 'bukan-sasaran' },
+  ]);
+
+  // Teks kosong = pesan kosong, dan Discord menolaknya. Aksi seperti itu
+  // dibuang sekarang, bukan gagal di Discord nanti.
+  assert.deepEqual(
+    actions.map((a) => a.kind + ':' + (a.what ?? '')).join(','),
+    'raw:,raw:,delete:sebelumnya,delete:pesan,delete:pesan',
+    'teks kosong dibuang, sasaran hapus tak dikenal jatuh ke pesan ini',
+  );
+  assert.equal(actions[0]!.rawText, 'Halo {member.name}', 'teks dirapikan');
+  assert.equal(actions[0]!.channelId, '123456789012345678', 'channel sah dipertahankan');
+  assert.equal(actions[1]!.channelId, undefined, 'channel bukan ID dibuang, aksinya tetap');
+  assert.equal(dropped.length, 2, 'dua bagian dilaporkan');
+  assert.ok(dropped.some((alasan) => alasan.includes('tanpa isi')), 'teks kosong dilaporkan');
+  assert.ok(dropped.some((alasan) => alasan.includes('bukan ID channel')), 'channel salah dilaporkan');
+
+  // Rencana: teks mentah membawa isi & channel, hapus membawa sasarannya.
+  const plan = planActions([
+    { kind: 'raw', rawText: 'Halo {member.mention}' },
+    { kind: 'delete', what: 'sebelumnya' },
+  ]);
+  const [teks, hapus] = plan.steps as Array<Record<string, unknown>>;
+  assert.equal(teks!.kind, 'raw');
+  assert.equal(teks!.text, 'Halo {member.mention}');
+  assert.equal(teks!.channelId, undefined, 'tanpa channel = ikut channel pemicu');
+  assert.equal(hapus!.kind, 'delete');
+  assert.equal(hapus!.what, 'sebelumnya', 'sasaran hapus ikut ke langkah');
+
+  // Templat tetap berlaku di teks mentah.
+  const terisi = fillActionText('Halo {member.name} di {server.name}', {
+    member: 'Wahyu',
+    mention: '<@1>',
+    server: 'Zypher',
+  } as never);
+  assert.equal(terisi, 'Halo Wahyu di Zypher');
+});
+
 await testAsync('aksi: cabang bersyarat, dud, stop, & variabel adaptif', async () => {
   const { sanitizeActions, planActions } = await import('../src/features/post-actions.js');
 
@@ -7625,6 +7672,118 @@ await testAsync('flow: syarat bertingkat dijalankan lewat cabang nyata', async (
   });
   await jalankan();
   assert.deepEqual(balasan, ['bukan orang lain'], '`not` menjalankan cabang saat anaknya salah');
+});
+
+await testAsync('aksi: teks mentah benar-benar terkirim & hapus bertarget jalan', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runComponentActions } = await import('../src/features/post-action-runner.js');
+  const GUILD = '123456789012345678';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Teks mentah',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Klik' }],
+  });
+  const tombol = await repo.replaceRoleButtons(GUILD, post.id, [
+    { label: 'Mulai', roleId: '900000000000000001', mode: 'toggle' },
+  ]);
+  const buttonId = tombol.buttons[0]!.id;
+
+  const balasan: string[] = [];
+  const terkirim: Array<{ content: string }> = [];
+  const dihapus: string[] = [];
+  const pesanTerkirim = { id: 'pesan-baru', delete: async () => void dihapus.push('pesan-baru') };
+
+  const jalankan = async (opsi: { pesanPemicu?: boolean } = {}) => {
+    const interaction = {
+      customId: `post-role:${buttonId}`,
+      guildId: GUILD,
+      channelId: '999',
+      deferred: false,
+      replied: false,
+      user: { id: '2', username: 'wahyu', globalName: 'Wahyu', tag: 'uji#0001' },
+      member: {
+        displayName: 'Wahyu',
+        roles: { cache: { has: () => false }, highest: { position: 20 } },
+        permissions: { has: () => true },
+      },
+      guild: {
+        id: GUILD,
+        name: 'Server Uji',
+        roles: { cache: new Map(), fetch: async () => null },
+        members: { me: { roles: { highest: { position: 10 } }, permissions: { has: () => true } }, fetchMe: async () => null },
+      },
+      ...(opsi.pesanPemicu
+        ? { message: { id: 'pesan-pemicu', delete: async () => void dihapus.push('pesan-pemicu') } }
+        : {}),
+      reply: async (payload: { content: string }) => void balasan.push(payload.content),
+      followUp: async (payload: { content: string }) => void balasan.push(payload.content),
+    };
+    const client = {
+      channels: {
+        fetch: async () => ({
+          id: '999',
+          isTextBased: () => true,
+          send: async (payload: { content: string }) => {
+            terkirim.push(payload);
+            return pesanTerkirim;
+          },
+          messages: { fetch: async () => pesanTerkirim },
+        }),
+      },
+    };
+    return runComponentActions({
+      client: client as never,
+      interaction: interaction as never,
+      target: `button:${buttonId}`,
+      postId: post.id,
+    });
+  };
+
+  /* --- teks mentah: templat terisi & benar-benar dikirim --- */
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [{ kind: 'raw', rawText: 'Halo {member.name} di {server.name}' }],
+  });
+  await jalankan();
+  assert.equal(terkirim.length, 1, 'teks mentah dikirim satu kali');
+  assert.equal(terkirim[0]!.content, 'Halo Wahyu di Server Uji', 'templat terisi sebelum dikirim');
+
+  /* --- hapus pesan hasil aksi sebelumnya --- */
+  terkirim.length = 0;
+  dihapus.length = 0;
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      { kind: 'raw', rawText: 'Pesan sementara' },
+      { kind: 'delete', what: 'sebelumnya' },
+    ],
+  });
+  await jalankan();
+  assert.equal(terkirim.length, 1, 'pesan tetap terkirim dulu');
+  assert.deepEqual(dihapus, ['pesan-baru'], 'pesan hasil aksi sebelumnya yang dihapus, bukan pesan pemicu');
+
+  /* --- tidak ada yang bisa dihapus: dilaporkan, bukan diam --- */
+  dihapus.length = 0;
+  balasan.length = 0;
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [{ kind: 'delete', what: 'sebelumnya' }],
+  });
+  await jalankan();
+  assert.equal(dihapus.length, 0, 'tidak ada pesan yang dihapus');
+  assert.ok(
+    balasan.some((teks) => teks.includes('Tidak ada pesan dari aksi sebelumnya')),
+    'pengklik diberi tahu, bukan dibiarkan menebak',
+  );
+
+  /* --- hapus pesan pemicu tetap seperti sebelumnya --- */
+  balasan.length = 0;
+  dihapus.length = 0;
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [{ kind: 'delete', what: 'pesan' }],
+  });
+  await jalankan({ pesanPemicu: true });
+  assert.deepEqual(dihapus, ['pesan-pemicu'], 'sasaran `pesan` menghapus pesan pemilik komponen');
+
+  await repo.deleteCustomPost(GUILD, post.id);
 });
 
 await testAsync('flow: cabang dijalankan, lalu flow lanjut — bukan berhenti', async () => {

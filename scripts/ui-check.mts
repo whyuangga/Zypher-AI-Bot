@@ -1720,6 +1720,52 @@ await check('pesan: tab riwayat memuat versi & tautan berbagi bisa dibuat', asyn
   assert.equal(page.errors.length, 0, `editor riwayat error: ${page.errors.join('|')}`);
 });
 
+await check('pesan: aksi teks mentah & hapus pesan bertarget tersusun', async () => {
+  const html = mounted.find((page) => page.name === '/pesan?isi')?.html ?? '';
+  const page = mountPage(html, 'uji-aksi-baru');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      editingId = 1;
+      roleButtons = [{ id: 9, roleId: '9001', label: 'Gamer', mode: 'toggle', emoji: '', style: 'primary' }];
+      POST_ACTIONS = { 1: { 'button:9': [] } };
+      loadActionsFor(1);
+      renderRoleButtons();
+
+      var daftar = aksiUntuk('button:9');
+      // Teks mentah: isi kosong harus dibuang dari muatan, isi terisi dikirim.
+      daftar.push({ kind: 'raw', rawText: '   ' });
+      var muatanKosong = (susunAksi()['button:9'] || []).length;
+      daftar[0].rawText = 'Halo {member.mention}';
+
+      // Hapus bertarget & ringkasannya.
+      daftar.push({ kind: 'delete', what: 'sebelumnya' });
+      daftar.push({ kind: 'delete', what: 'pesan' });
+
+      var muatan = susunAksi()['button:9'] || [];
+      return {
+        muatanKosong: muatanKosong,
+        jenis: muatan.map(function (a) { return a.kind + ':' + (a.what || ''); }).join(','),
+        ringkasMentah: ringkasAksi(muatan[0]),
+        ringkasHapus: ringkasAksi(muatan[1]),
+        labelMentah: jenisAksiLabel('raw'),
+        labelHapus: jenisAksiLabel('delete'),
+        // Editor harus bisa digambar tanpa error untuk jenis aksi baru.
+        gambar: (function () { renderRoleButtons(); return true; })()
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.muatanKosong, 0, 'teks kosong tidak ikut dikirim');
+  assert.equal(hasil.jenis, 'raw:,delete:sebelumnya,delete:pesan', 'jenis & sasaran hapus tersimpan');
+  assert.ok(String(hasil.ringkasMentah).includes('kirim teks'), 'ringkasan teks mentah terbaca');
+  assert.equal(hasil.ringkasHapus, 'hapus pesan dari aksi sebelumnya', 'sasaran hapus terbaca di ringkasan');
+  assert.equal(hasil.labelMentah, 'Kirim teks');
+  assert.equal(hasil.labelHapus, 'Hapus pesan');
+  assert.equal(hasil.gambar, true, 'editor bisa digambar dengan aksi baru');
+  assert.equal(page.errors.length, 0, `editor aksi baru error: ${page.errors.join('|')}`);
+});
+
 await check('pesan: dokumen multi-pesan bisa disusun & dikirim', async () => {
   const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
   const page = mountPage(html, 'uji-grup');

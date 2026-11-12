@@ -3172,6 +3172,8 @@ function susunAksi() {
       if (aksi.kind === 'delete') return true;
       if (aksi.kind === 'dud') return true;
       if (aksi.kind === 'stop') return true;
+      // Teks mentah tanpa isi tidak dikirim: pesan kosong ditolak Discord.
+      if (aksi.kind === 'raw') return Boolean(String(aksi.rawText || '').trim());
       return Boolean(Number(aksi.postId));
     });
     if (daftar.length > 0) hasil[target] = daftar;
@@ -3604,10 +3606,11 @@ function kartuAksi(target, judul) {
     ['condition', 'Periksa syarat (berhenti bila tidak cocok)'],
     ['variable', 'Simpan variabel'],
     ['thread', 'Buat thread'],
-    ['delete', 'Hapus pesan ini'],
+    ['delete', 'Hapus pesan (ini / hasil aksi sebelumnya)'],
     ['dud', 'Tidak melakukan apa pun'],
     ['stop', 'Hentikan flow'],
-    ['webhook', 'Kirim pesan lewat webhook']
+    ['webhook', 'Kirim pesan lewat webhook'],
+    ['raw', 'Kirim teks biasa (tanpa komponen)']
   ].forEach(function (opt) {
     var o = document.createElement('option');
     o.value = opt[0];
@@ -3637,6 +3640,8 @@ function kartuAksi(target, judul) {
       aksiUntuk(target).push({ kind: 'variable', name: 'pilihan', value: '{member.name}' });
     } else if (jenis === 'thread') {
       aksiUntuk(target).push({ kind: 'thread', threadName: 'Diskusi {member.name}', private: false });
+    } else if (jenis === 'raw') {
+      aksiUntuk(target).push({ kind: 'raw', rawText: 'Halo {member.mention}!' });
     } else if (jenis === 'delete') {
       aksiUntuk(target).push({ kind: 'delete', what: 'pesan' });
     } else if (jenis === 'dud') {
@@ -4001,7 +4006,12 @@ function ringkasAksi(aksi) {
   }
   if (aksi.kind === 'variable') return 'simpan ' + aksi.name + ' = "' + String(aksi.value || '').slice(0, 24) + '"';
   if (aksi.kind === 'thread') return 'buat thread "' + String(aksi.threadName || '').slice(0, 30) + '"';
-  if (aksi.kind === 'delete') return 'hapus pesan ini';
+  if (aksi.kind === 'delete') {
+    return aksi.what === 'sebelumnya' ? 'hapus pesan dari aksi sebelumnya' : 'hapus pesan ini';
+  }
+  if (aksi.kind === 'raw') {
+    return 'kirim teks "' + String(aksi.rawText || '').slice(0, 40) + '"';
+  }
   if (aksi.kind === 'dud') return 'tidak melakukan apa pun';
   if (aksi.kind === 'stop') return 'hentikan flow' + (aksi.stopMessage ? ' ("' + String(aksi.stopMessage).slice(0, 30) + '")' : '');
   if (aksi.kind === 'role') {
@@ -4031,7 +4041,8 @@ function jenisAksiLabel(jenis) {
     delete: 'Hapus pesan',
     dud: 'Tanpa aksi',
     stop: 'Hentikan',
-    webhook: 'Kirim webhook'
+    webhook: 'Kirim webhook',
+    raw: 'Kirim teks'
   }[jenis] || jenis;
 }
 
@@ -4509,12 +4520,60 @@ function buatBarisAksi(target, nomor, aksi) {
   }
 
   if (aksi.kind === 'delete') {
+    var pilihHapus = document.createElement('select');
+    pilihHapus.className = 'role-mode';
+    [
+      ['pesan', 'Pesan yang memuat komponen ini'],
+      ['sebelumnya', 'Pesan hasil aksi kirim sebelumnya']
+    ].forEach(function (opt) {
+      var o = document.createElement('option');
+      o.value = opt[0];
+      o.textContent = opt[1];
+      if ((aksi.what || 'pesan') === opt[0]) o.selected = true;
+      pilihHapus.appendChild(o);
+    });
+    pilihHapus.onchange = function () { daftar[nomor].what = pilihHapus.value; };
+    baris.appendChild(pilihHapus);
+
     var catatanHapus = document.createElement('p');
     catatanHapus.className = 'hint';
     catatanHapus.style.margin = '0';
     catatanHapus.textContent =
-      'Pesan yang memuat komponen ini dihapus dari channel. Bot butuh izin Manage Messages; kegagalannya diberitahukan ke pengklik. Aksi sesudah ini tidak akan terlihat.';
+      'Bot butuh izin Manage Messages; kegagalannya diberitahukan ke pengklik, bukan hilang diam-diam. Aksi sesudah ini tidak akan terlihat — pesannya sudah hilang.';
     baris.appendChild(catatanHapus);
+    return baris;
+  }
+
+  if (aksi.kind === 'raw') {
+    var isiMentah = document.createElement('textarea');
+    isiMentah.rows = 3;
+    isiMentah.spellcheck = false;
+    isiMentah.value = aksi.rawText || '';
+    isiMentah.placeholder = 'Teks biasa: Halo {member.mention}, cek #pengumuman';
+    isiMentah.oninput = function () {
+      var isi = isiMentah.value.slice(0, 1800);
+      if (isi.trim()) daftar[nomor].rawText = isi;
+      else delete daftar[nomor].rawText;
+    };
+    baris.appendChild(isiMentah);
+
+    var channelMentah = document.createElement('input');
+    channelMentah.type = 'text';
+    channelMentah.placeholder = 'ID channel tujuan (kosong = channel pesan ini)';
+    channelMentah.value = aksi.channelId || '';
+    channelMentah.oninput = function () {
+      var id = channelMentah.value.replace(/[^0-9]/g, '');
+      if (id) daftar[nomor].channelId = id;
+      else delete daftar[nomor].channelId;
+    };
+    baris.appendChild(channelMentah);
+
+    var catatanMentah = document.createElement('p');
+    catatanMentah.className = 'hint';
+    catatanMentah.style.margin = '0';
+    catatanMentah.textContent =
+      'Teks dikirim sebagai pesan biasa tanpa komponen — padanan SendRawMessage di Discohook. Templat {member.name}, {server.name}, dan {var.*} berlaku di sini.';
+    baris.appendChild(catatanMentah);
     return baris;
   }
 

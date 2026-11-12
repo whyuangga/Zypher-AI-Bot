@@ -278,8 +278,15 @@ interface FlowRuntime {
   variables: FlowVariables;
   /** Kirim jawaban ke pengklik. `hidden=false` hanya berarti publik. */
   jawab: (teks: string, hidden: boolean) => Promise<void>;
-  /** Hapus pesan pemicu (aksi `delete`). */
-  hapusPesan: () => Promise<void>;
+  /**
+   * Hapus pesan (aksi `delete`).
+   *
+   * `sasaran` = `pesan` (pesan pemilik komponen) atau `sebelumnya` (pesan yang
+   * dikirim aksi kirim terakhir di flow ini). Mengembalikan `false` kalau
+   * tidak ada yang bisa dihapus, supaya runner bisa melaporkannya alih-alih
+   * diam.
+   */
+  hapusPesan: (sasaran: 'pesan' | 'sebelumnya') => Promise<boolean>;
   /** Untuk peringatan yang tidak boleh menghentikan flow. */
   peringatan: (teks: string) => Promise<void>;
   /** Hasil aksi terakhir (diisi runner), dipakai variabel `adaptive`. */
@@ -444,7 +451,53 @@ async function jalankanLangkah(
     }
 
     if (step.kind === 'delete') {
-      await runtime.hapusPesan();
+      const berhasil = await runtime.hapusPesan(step.what);
+      if (!berhasil) {
+        /*
+         * Tidak ada yang dihapus. Discohook menggagalkan flow di kasus ini
+         * ("No messageId variable was set"), dan itu masuk akal: admin yang
+         * menyusun "hapus pesan sebelumnya" mengharapkan pesannya hilang.
+         * Bedanya, di sini alasannya diberitahukan ke pengklik lebih dulu.
+         */
+        const alasan =
+          step.what === 'sebelumnya'
+            ? '❌ Tidak ada pesan dari aksi sebelumnya yang bisa dihapus.'
+            : '❌ Pesan ini tidak bisa dihapus. Bot butuh izin Manage Messages.';
+        await runtime.jawab(alasan, true);
+        await runtime.peringatan(alasan);
+        return { hasil: 'berhenti', alasan };
+      }
+      continue;
+    }
+
+    if (step.kind === 'raw') {
+      const isi = fillActionText(step.text, runtime.konteks).trim();
+      if (!isi) {
+        // Templat yang seluruhnya kosong: pesan kosong ditolak Discord, jadi
+        // dilewati dengan laporan alih-alih gagal di API.
+        await runtime.peringatan('⚠️ Teks aksi kosong setelah templat diisi — aksi dilewati.');
+        continue;
+      }
+      try {
+        const channelId = step.channelId ?? runtime.channelId;
+        if (!channelId) throw new Error('channel tidak dikenali');
+        const channel = await runtime.client.channels.fetch(channelId);
+        if (!channel || !('send' in channel) || typeof channel.send !== 'function') {
+          throw new Error('channel tidak bisa dikirimi pesan');
+        }
+        const terkirim = (await channel.send({ content: isi.slice(0, 2000) })) as {
+          id: string;
+          channelId?: string;
+        };
+        runtime.hasil = {
+          messageId: terkirim.id,
+          channelId: terkirim.channelId ?? channelId,
+        };
+      } catch (error) {
+        logger.warn(`Aksi kirim teks gagal: ${errorMessage(error)}`);
+        await runtime.peringatan('❌ Teks gagal dikirim. Beri tahu admin.');
+        return { hasil: 'berhenti', alasan: 'teks gagal dikirim' };
+      }
       continue;
     }
 
@@ -798,20 +851,35 @@ export async function runComponentActions(options: {
     peringatan: async (teks: string) => {
       await runtime.jawab(teks, true);
     },
-    hapusPesan: async () => {
+    hapusPesan: async (sasaran: 'pesan' | 'sebelumnya') => {
       /*
-       * Hapus pesan pemicu. Sengaja dilaporkan kalau gagal: tombol yang tetap
-       * ada sesudah admin memilih "hapus pesan" terlihat seperti fitur rusak.
+       * Hapus pesan pemicu ATAU pesan hasil aksi kirim sebelumnya. Sengaja
+       * dilaporkan kalau gagal: tombol yang tetap ada sesudah admin memilih
+       * "hapus pesan" terlihat seperti fitur rusak.
        */
       try {
-        if (!interaction.message) throw new Error('pesan tidak dikenali');
+        if (sasaran === 'sebelumnya') {
+          const sebelumnya = runtime.hasil;
+          if (!sebelumnya?.messageId) return false;
+          const channelId = sebelumnya.channelId ?? interaction.channelId ?? null;
+          if (!channelId) return false;
+          const channel = await options.client.channels.fetch(channelId);
+          if (!channel || !('messages' in channel)) return false;
+          const pesan = await (channel as unknown as {
+            messages: { fetch: (id: string) => Promise<{ delete: () => Promise<unknown> }> };
+          }).messages.fetch(sebelumnya.messageId);
+          await pesan.delete();
+          // Hasil dipakai ulang: sesudah dihapus, aksi berikutnya tidak boleh
+          // menghapus pesan yang sama lagi (Discord menjawab 404).
+          runtime.hasil = { ...sebelumnya, messageId: '' };
+          return true;
+        }
+        if (!interaction.message) return false;
         await interaction.message.delete();
+        return true;
       } catch (error) {
         logger.warn(`Aksi hapus pesan gagal: ${errorMessage(error)}`);
-        await runtime.jawab(
-          '❌ Pesan gagal dihapus. Bot butuh izin **Manage Messages** di channel ini.',
-          true,
-        );
+        return false;
       }
     },
   };
@@ -940,16 +1008,35 @@ export async function resumeFlowSession(client: Client, session: FlowSession): P
         logger.warn(`Sesi flow ${session.id}: channel ${session.channelId} tidak bisa dikirimi pesan.`);
       }
     },
-    hapusPesan: async () => {
-      if (!session.messageId) return;
+    hapusPesan: async (sasaran: 'pesan' | 'sebelumnya') => {
+      /*
+       * Sesi yang dilanjutkan timer tidak punya objek interaksi, jadi pesan
+       * pemilik komponen dicari lewat ID yang disimpan di sesi. Sasaran
+       * `sebelumnya` memakai `runtime.hasil`, sama seperti jalur interaksi.
+       */
       try {
-        const channel = await client.channels.fetch(session.channelId);
-        if (channel && channel.isTextBased() && 'messages' in channel) {
-          const pesan = await channel.messages.fetch(session.messageId).catch((): null => null);
-          await pesan?.delete();
+        if (sasaran === 'sebelumnya') {
+          const sebelumnya = runtime.hasil;
+          if (!sebelumnya?.messageId) return false;
+          const channelId = sebelumnya.channelId ?? session.channelId;
+          const channel = await client.channels.fetch(channelId);
+          if (!channel || !channel.isTextBased() || !('messages' in channel)) return false;
+          const pesan = await channel.messages.fetch(sebelumnya.messageId).catch((): null => null);
+          if (!pesan) return false;
+          await pesan.delete();
+          runtime.hasil = { ...sebelumnya, messageId: '' };
+          return true;
         }
+        if (!session.messageId) return false;
+        const channel = await client.channels.fetch(session.channelId);
+        if (!channel || !channel.isTextBased() || !('messages' in channel)) return false;
+        const pesan = await channel.messages.fetch(session.messageId).catch((): null => null);
+        if (!pesan) return false;
+        await pesan.delete();
+        return true;
       } catch (error) {
         logger.warn(`Sesi flow ${session.id}: gagal menghapus pesan`, errorMessage(error));
+        return false;
       }
     },
   };

@@ -605,9 +605,9 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Add / Remove / Toggle role | ✅ | |
 | Send message (dari backup) | ✅ Kirim pesan tersimpan | bisa ke channel lain lewat `channelId` per aksi, seperti channel per aksi di Discohook |
 | Send webhook message | ✅ Kirim pesan lewat webhook | webhook dibuat/dipakai ulang per channel tujuan (tidak perlu daftar webhook per akun). Komponen role TIDAK ikut — dilaporkan ke pengklik, bukan hilang diam-diam |
-| Send raw message | ❌ | hanya untuk alur impor, bukan penyusunan |
+| Send raw message | ✅ Kirim teks biasa | teks bebas + templat (`{member.name}`, `{var.*}`), boleh ke channel lain lewat `channelId`. Teks kosong setelah templat diisi dilewati & dilaporkan, bukan dikirim sebagai pesan kosong |
 | Create thread (publik/privat, auto-archive, slowmode, tag forum) | ✅ | publik & privat, `autoArchiveMinutes` (1 jam/1 hari/3 hari/1 minggu), slowmode, `invitable`, tag forum (maks 5, channel diperlakukan sebagai forum), pesan pembuka |
-| Delete message | ✅ Hapus pesan | hanya pesan pemicu; Discohook bisa menghapus pesan hasil aksi sebelumnya |
+| Delete message | ✅ Hapus pesan | dua sasaran: pesan pemilik komponen, atau pesan hasil aksi kirim sebelumnya (padanan penghapusan lewat `messageId` di Discohook). Kalau tidak ada yang bisa dihapus, pengklik diberi tahu dan flow berhenti |
 
 **Pesan & komponen**
 
@@ -629,6 +629,40 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Impor backup | ✅ JSON/URL Discohook di tab **Impor**; ekspor JSON juga ada |
 | Jadwal kirim (sekali / berulang, cron) | ⚠️ sekali / tiap N jam (min. 2 jam); jadwal cron per hari/bulan belum |
 | Trigger event (member masuk/keluar) | ❌ (bot punya sambutan sendiri, bukan flow) |
+
+### Batch 4c: SendRawMessage & hapus pesan hasil aksi sebelumnya
+
+**Kirim teks biasa (`raw`).** Padanan `SendRawMessage` Discohook. Isinya `content`
+bebas (bukan blok container) dan boleh memakai templat yang sudah ada —
+`{member.name}`, `{member.mention}`, `{server.name}`, `{selected}`, `{var.*}`.
+Template diisi SEBELUM dikirim; kalau hasil akhirnya kosong (mis. variabel yang
+dirujuk tidak ada), aksi dilewati dengan laporan alih-alih mengirim pesan kosong
+yang pasti ditolak Discord. Channel tujuan opsional: kosong = channel pesan
+pemicu, dan ID yang bukan angka dilaporkan sebagai `dropped`.
+
+Kenapa tidak cukup memakai "kirim pesan tersimpan": pesan singkat seperti
+"Sedang diproses…" tidak perlu disusun sebagai dokumen container, dan menyusun
+dokumen baru hanya untuk satu baris teks membuat daftar pesan penuh oleh pesan
+sekali pakai.
+
+**Hapus pesan bertarget.** Aksi hapus kini punya dua sasaran:
+
+| Sasaran | Yang dihapus |
+|---|---|
+| `pesan` (bawaan) | pesan yang memuat komponen pemicu — perilaku lama, tidak berubah |
+| `sebelumnya` | pesan yang DIKIRIM aksi kirim terakhir di flow yang sama |
+
+Discohook menghapus lewat variabel `messageId` yang disusun admin; di sini satu
+pilihan itu cukup karena hasil aksi terakhir selalu yang paling masuk akal untuk
+dihapus, dan tidak perlu menyuruh admin mengingat nama variabel. Sesudah
+dihapus, `messageId` di hasil dikosongkan supaya aksi hapus berikutnya tidak
+mencoba menghapus pesan yang sama (Discord menjawab 404) dan melaporkan "tidak
+ada yang bisa dihapus".
+
+Kalau tidak ada yang bisa dihapus (belum ada aksi kirim, atau pesan sudah hilang),
+flow **berhenti** dengan penjelasan ke pengklik — sama seperti Discohook yang
+menggagalkan flow saat `messageId` kosong, bedanya di sini alasannya
+diberitahukan lebih dulu.
 
 ### Batch 4b: riwayat versi & tautan berbagi
 

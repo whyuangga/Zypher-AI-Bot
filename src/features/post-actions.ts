@@ -74,6 +74,15 @@ export const ACTION_KINDS = [
    * tidak ada rahasia tambahan yang harus disimpan.
    */
   'webhook',
+  /**
+   * Kirim teks MENTAH (tanpa pesan tersimpan) ke channel.
+   *
+   * Padanan `SendRawMessage` Discohook: isinya `content` bebas, bukan blok
+   * container. Discohook memakai ini untuk pesan singkat yang tidak perlu
+   * disusun di editor komponen — di sini sama, dan teksnya boleh memakai
+   * templat yang sudah ada.
+   */
+  'raw',
 ] as const;
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
@@ -99,6 +108,7 @@ export const ACTION_KIND_LABEL: Record<ActionKind, string> = {
   dud: 'Tidak melakukan apa pun',
   stop: 'Hentikan flow',
   webhook: 'Kirim pesan lewat webhook (atas nama server)',
+  raw: 'Kirim teks biasa (tanpa komponen)',
 };
 
 /**
@@ -189,8 +199,20 @@ export interface PostAction {
    */
   check?: ConditionNode;
   /* --- kind = 'delete' --- */
-  /** Apa yang dihapus. `pesan` = pesan pemilik komponen (bawaan). */
-  what?: 'pesan';
+  /**
+   * Apa yang dihapus:
+   *   - `pesan` (bawaan): pesan pemilik komponen;
+   *   - `sebelumnya`: pesan yang DIKIRIM aksi sebelumnya di flow yang sama.
+   *
+   * Padanan `DeleteMessage` versi Discohook yang menghapus lewat variabel
+   * `messageId` — di sana admin menyusun urutannya sendiri dengan variabel,
+   * di sini cukup satu pilihan karena hasil aksi terakhir selalu yang paling
+   * masuk akal untuk dihapus.
+   */
+  what?: 'pesan' | 'sebelumnya';
+  /* --- kind = 'raw' --- */
+  /** Isi teks mentah (boleh memakai templat). */
+  rawText?: string;
   /* --- kind = 'stop' --- */
   /** Pesan yang ditampilkan saat flow berhenti (opsional). */
   stopMessage?: string;
@@ -583,7 +605,30 @@ function sanitizeActionsDalam(
     }
 
     if (kind === 'delete') {
-      actions.push({ kind: 'delete', what: 'pesan' });
+      /*
+       * Dua sasaran hapus. `sebelumnya` hanya berguna kalau flow memang
+       * mengirim sesuatu lebih dulu — tetapi itu tidak bisa diperiksa di sini
+       * (urutan aksi bisa berisi cabang), jadi diperiksa saat dijalankan dan
+       * dilaporkan ke pengklik kalau tidak ada yang bisa dihapus.
+       */
+      actions.push({ kind: 'delete', what: item.what === 'sebelumnya' ? 'sebelumnya' : 'pesan' });
+      continue;
+    }
+
+    if (kind === 'raw') {
+      const rawText = asString(item.rawText).trim().slice(0, ACTION_LIMITS.textLength);
+      if (!rawText) {
+        dropped.push('aksi kirim teks tanpa isi');
+        continue;
+      }
+      const channelTeks = asString(item.channelId).trim();
+      const channelSah = isChannelId(channelTeks);
+      if (channelTeks && !channelSah) dropped.push('channel tujuan aksi teks bukan ID channel');
+      actions.push({
+        kind: 'raw',
+        rawText,
+        ...(channelSah ? { channelId: channelTeks } : {}),
+      });
       continue;
     }
 
@@ -673,7 +718,16 @@ export type ActionStep =
       appliedTags?: string[];
       threadMessage?: string;
     }
-  | { kind: 'delete' };
+  | {
+      kind: 'delete';
+      /**
+       * `pesan` = pesan pemilik komponen, `sebelumnya` = pesan hasil aksi
+       * kirim terakhir di flow ini. Runner memutuskan siapa yang dihapus.
+       */
+      what: 'pesan' | 'sebelumnya';
+    }
+  /** Kirim teks mentah (padanan `SendRawMessage`). */
+  | { kind: 'raw'; text: string; channelId?: string };
 
 export interface ActionPlan {
   /** Langkah yang dijalankan, urut. */
@@ -795,7 +849,16 @@ export function planActions(actions: PostAction[], options: { selfPostId?: numbe
     }
 
     if (action.kind === 'delete') {
-      steps.push({ kind: 'delete' });
+      steps.push({ kind: 'delete', what: action.what === 'sebelumnya' ? 'sebelumnya' : 'pesan' });
+      continue;
+    }
+
+    if (action.kind === 'raw') {
+      steps.push({
+        kind: 'raw',
+        text: action.rawText!,
+        ...(action.channelId ? { channelId: action.channelId } : {}),
+      });
     }
   }
 
