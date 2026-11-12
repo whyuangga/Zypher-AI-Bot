@@ -631,6 +631,45 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Trigger event (member masuk/keluar) | ❌ (bot punya sambutan sendiri, bukan flow) |
 | Generator kode (payload → kode bot) | ✅ tab **Impor** → panel "JSON payload & generator kode": keluaran `discord.js` v14 & `discord.py` v2, diterjemahkan dari payload yang benar-benar dikirim |
 | Melihat payload JSON mentah | ✅ panel yang sama menampilkan `components` persis seperti yang diterima Discord, siap ditempel ke REST API |
+| Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 7: diff versi (apa yang berubah dari satu versi ke versi lain)
+
+Discohook tidak punya ini — backup hanya bisa dibandingkan dengan mata. Karena
+di sini riwayat versi tersimpan otomatis tiap kali pesan diubah, pertanyaan yang
+sebenarnya muncul adalah **"versi itu bedanya apa dengan yang sekarang?"**, dan
+jawabannya tidak seharusnya menuntut admin menatap dua blok JSON.
+
+Di tab **Riwayat**, tiap versi punya tombol **Bandingkan**. Panelnya menampilkan:
+
+| Bagian | Isi |
+|---|---|
+| Kepala | `5 perubahan (1 tambah, 2 ubah, 2 pengaturan)` |
+| Rincian | `+ blok 7: tombol ditambahkan`, `− blok 3: gambar dihapus`, `~ blok 1: teks diubah`, `~ warna aksen: #111111 → #222222` |
+| Teks | isi blok teks lama & baru berdampingan, berwarna − / + |
+
+Keputusan yang dipegang:
+
+- **Dibandingkan dengan isi editor, bukan versi tersimpan.** Admin bisa
+  membandingkan versi lama dengan perubahan yang **belum ia simpan** — justru
+  itu momen ia butuh membandingkan. Kalau pembanding memakai data server, ia
+  hanya akan melihat "tidak ada perbedaan" sampai menekan Simpan.
+- **Posisi, bukan LCS.** Blok ditata berurutan dan diubah di tempat, jadi
+  "blok ke-3 berubah" lebih mudah dipahami daripada "satu elemen disisipkan,
+  sisanya bergeser semua". Konsekuensinya jelas dan disebut di sini: menyisipkan
+  satu blok di tengah akan tampil sebagai perubahan pada blok itu dan semua blok
+  sesudahnya.
+- **Blok dibandingkan utuh** (`JSON.stringify`), bukan per field. Field yang lupa
+  dibandingkan membuat perubahan tidak terlihat — dan diff yang tidak bisa
+  dipercaya lebih buruk daripada tidak ada diff.
+- **Pengaturan ikut dihitung:** warna aksen, pengirim, izin ping, nama thread,
+  mode rangkaian, flag pesan.
+
+Snapshot satu versi diambil lewat `GET /api/posts/:id/revisions?revision=<id>`,
+bukan ikut daftar: 20 versi × blok penuh membuat halaman berat, padahal yang
+dibandingkan biasanya satu-dua. Pembandingnya sendiri
+(`diffRingkas`/`ringkasDiff`) ada di JS bersama, fungsi murni tanpa DOM — jadi
+bisa diuji langsung, bukan hanya lewat klik.
 
 ### Batch 6: generator kode (`discord.js` v14 & `discord.py` v2)
 

@@ -280,7 +280,30 @@ function mountPage(html: string, label: string): PageContext {
          * ketiganya — dengan begitu tes bisa memeriksa apa yang DITAMPILKAN,
          * bukan sekadar URL yang dipanggil.
          */
-        String(path).includes('/json?')
+        /*
+         * Satu versi riwayat: dipakai panel Bandingkan. Snapshot-nya sengaja
+         * BEDA dari isi editor tiruan (teks blok pertama diganti), supaya tes
+         * memeriksa diff yang benar-benar dihitung, bukan panel kosong.
+         */
+        String(path).includes('/revisions?revision=')
+          ? {
+              ok: true,
+              revision: {
+                id: 77,
+                name: 'Rules',
+                createdAt: 1700000000000,
+                snapshot: {
+                  blocks: [{ kind: 'text', value: 'versi lama' }],
+                  accent: '#6d8cff',
+                  sender: 'bot',
+                  flags: 0,
+                  series: false,
+                  allowedMentions: { parse: [] },
+                  threadName: null,
+                },
+              },
+            }
+          : String(path).includes('/json?')
           ? {
               ok: true,
               flags: 32768,
@@ -1004,7 +1027,7 @@ await check('pesan: ekspor dan impor JSON mempertahankan semua field', async () 
         namaPesanan: document.getElementById('postName').value
       };
     })()
-  `)) as Record<string, unknown>;
+  `)) as { tampil: boolean; html: string };
 
   assert.ok(Number(hasil.panjang) > 200, 'JSON terisi');
   assert.equal(hasil.versi, 1, 'versi format ikut');
@@ -1726,6 +1749,126 @@ await check('pesan: panel payload JSON meminta kode sesuai library yang dipilih'
   assert.ok(dipanggil.docs.includes('discordpy'), 'tautan dokumentasi sesuai library');
   assert.equal(dipanggil.status, '', 'tidak ada peringatan saat semua bagian ikut');
   assert.equal(page.errors.length, 0, `panel kode error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: diff versi menghitung tambah/hapus/ubah & menampilkan teks lama-baru', async () => {
+  const html = mounted.find((page) => page.name === '/pesan?isi')?.html ?? '';
+  const page = mountPage(html, 'uji-diff');
+
+  /*
+   * Fungsi murni lebih dulu: hasilnya harus menyebut jenis perubahan dan arah
+   * yang benar. Arah terbalik membuat admin mengembalikan versi yang salah.
+   */
+  const hitung = (await page.evaluate(`
+    (function () {
+      var hasil = diffRingkas(
+        { blocks: [{ kind: 'text', value: 'lama' }, { kind: 'button', value: 'A' }], accent: '#111111', flags: 0 },
+        { blocks: [{ kind: 'text', value: 'baru' }, { kind: 'button', value: 'B' }, { kind: 'separator' }], accent: '#222222', flags: 4 }
+      );
+      return {
+        total: hasil.total,
+        diubah: hasil.diubah,
+        ditambah: hasil.ditambah,
+        dihapus: hasil.dihapus,
+        baris: hasil.baris.join('|'),
+        teks: hasil.teks.map(function (satu) { return satu.lama + '>' + satu.baru + '@' + satu.posisi; }).join('|'),
+        judul: ringkasDiff(hasil),
+      };
+    })()
+  `)) as {
+    total: number;
+    diubah: number;
+    ditambah: number;
+    dihapus: number;
+    baris: string;
+    teks: string;
+    judul: string;
+  };
+
+  assert.equal(hitung.diubah, 2, 'dua blok berubah (teks & tombol)');
+  assert.equal(hitung.ditambah, 1, 'satu blok ditambahkan');
+  assert.equal(hitung.dihapus, 0, 'tidak ada yang dihapus');
+  // 2 blok + 1 tambah + 2 pengaturan (aksen & flag) = 5.
+  assert.equal(hitung.total, 5, 'pengaturan ikut dihitung sebagai perubahan');
+  assert.ok(hitung.baris.includes('+ blok 3'), 'blok baru disebut posisinya');
+  assert.ok(hitung.baris.includes('warna aksen'), 'perubahan aksen terlihat');
+  assert.ok(hitung.baris.includes('#111111 → #222222'), 'nilai aksen lama → baru');
+  assert.equal(hitung.teks, 'lama>baru@1', 'teks lama & baru dipasangkan dengan posisinya');
+  assert.equal(hitung.judul, '5 perubahan (1 tambah, 2 ubah, 2 pengaturan)', 'ringkasan judul');
+
+  // Blok yang dihapus di ujung harus terbaca sebagai hapusan, bukan ubahan.
+  const hapus = (await page.evaluate(`
+    (function () {
+      var hasil = diffRingkas(
+        { blocks: [{ kind: 'text', value: 'a' }, { kind: 'image' }] },
+        { blocks: [{ kind: 'text', value: 'a' }] }
+      );
+      return { dihapus: hasil.dihapus, baris: hasil.baris.join('|') };
+    })()
+  `)) as { dihapus: number; baris: string };
+  assert.equal(hapus.dihapus, 1, 'blok yang hilang terhitung');
+  assert.ok(hapus.baris.includes('− blok 2: gambar dihapus'), 'menyebut blok & jenisnya');
+  assert.ok(!hapus.baris.includes('undefined'), 'tidak ada nilai undefined di tampilan');
+
+  /*
+   * Lalu jalur UI-nya: tombol Bandingkan mengambil snapshot versi itu saja,
+   * menghitung diff terhadap EDITOR (bukan terhadap versi tersimpan), dan
+   * menampilkan panelnya. Tombol yang sama menutup panel.
+   */
+  page.fetches.length = 0;
+  const panel = (await page.evaluate(`
+    (function () {
+      editingId = 1;
+      // Data riwayat yang dipegang halaman (sama seperti setelah memuat pesan).
+      RIWAYAT[1] = RIWAYAT_AWAL[1];
+      blocks = [{ kind: 'text', value: 'isi sekarang' }];
+      // Panel diff baru ada setelah daftar versi digambar.
+      document.getElementById('riwayatList').innerHTML = riwayatHtml();
+
+      return bandingkanVersi(77).then(function () {
+        var el = document.getElementById('diff-77');
+        return { tampil: !el.hidden, html: el.innerHTML };
+      });
+    })()
+  `)) as Record<string, unknown>;
+
+
+  const alamat = page.fetches.map((call) => call.path).join(', ');
+
+
+  assert.ok(alamat.includes('/revisions?revision=77'), 'hanya versi yang dibandingkan yang diambil');
+  assert.equal(panel.tampil, true, 'panel diff terbuka');
+
+  /*
+   * Isi panel diperiksa lewat `renderDiff` langsung: elemen tiruan tidak
+   * menyimpan HTML, sama seperti pemeriksaan lain di berkas ini. Yang diuji
+   * adalah HTML yang BENAR-BENAR dibuat fungsi itu, bukan string di source.
+   */
+  const tampilan = (await page.evaluate(`
+    (function () {
+      var isi = renderDiff(diffRingkas(
+        { blocks: [{ kind: 'text', value: 'versi lama' }] },
+        { blocks: [{ kind: 'text', value: 'isi sekarang' }] }
+      ));
+      return { html: isi };
+    })()
+  `)) as { html: string };
+
+  assert.ok(tampilan.html.includes('teks diubah'), 'perubahan teks terlihat di panel');
+  assert.ok(tampilan.html.includes('isi sekarang'), 'isi editor sekarang ditampilkan');
+  assert.ok(tampilan.html.includes('versi lama'), 'isi versi lama ditampilkan');
+  assert.ok(tampilan.html.includes('diff-baris diff-ubah'), 'baris diberi kelas warna');
+  assert.ok(tampilan.html.includes('1 perubahan'), 'ringkasan jumlah perubahan di kepala panel');
+
+  const ditutup = (await page.evaluate(`
+    (function () {
+      return bandingkanVersi(77).then(function () {
+        return document.getElementById('diff-77').hidden;
+      });
+    })()
+  `)) as boolean;
+  assert.equal(ditutup, true, 'menekan Bandingkan lagi menutup panel');
+  assert.equal(page.errors.length, 0, `diff error: ${page.errors.join('|')}`);
 });
 
 await check('pesan: tab riwayat memuat versi & tautan berbagi bisa dibuat', async () => {

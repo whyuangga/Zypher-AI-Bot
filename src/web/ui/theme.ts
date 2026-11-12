@@ -671,6 +671,39 @@ details.user-group[open] > summary { background: rgba(226, 209, 204, .05); }
 .chev { margin-left: auto; color: var(--text-3); transition: transform .18s; }
 details[open] .chev { transform: rotate(180deg); }
 
+/* ---------------- diff versi pesan ---------------- */
+/* Panel di bawah baris riwayat: ringkasan dulu, lalu rincian per blok. */
+.diff-panel {
+  padding: 12px 24px 16px 60px; border-bottom: 1px solid var(--line);
+  background: rgba(226, 209, 204, .022);
+}
+.diff-kepala {
+  font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-2); margin-bottom: 8px;
+}
+.diff-daftar { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.diff-baris {
+  font-size: 12.5px; line-height: 1.5; color: var(--text-2);
+  padding-left: 16px; position: relative; font-variant-numeric: tabular-nums;
+}
+.diff-baris::before { position: absolute; left: 0; font-weight: 700; }
+.diff-tambah::before { content: '+'; color: #7fbf9a; }
+.diff-hapus::before { content: '−'; color: #d99a9a; }
+.diff-ubah::before { content: '~'; color: var(--warn); }
+.diff-teks {
+  margin-top: 10px; display: grid; gap: 4px; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface);
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.55;
+}
+.diff-label {
+  font-family: var(--font); font-size: 9px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text-3); font-weight: 500;
+}
+.diff-lama { color: #d99a9a; white-space: pre-wrap; }
+.diff-lama::before { content: '− '; opacity: .6; }
+.diff-baru { color: #7fbf9a; white-space: pre-wrap; }
+.diff-baru::before { content: '+ '; opacity: .6; }
+
 .toast {
   position: fixed; right: 24px; bottom: 24px; z-index: 90; display: flex; align-items: center; gap: 10px;
   background: var(--text); border: 1px solid var(--text); border-left: 3px solid var(--ink);

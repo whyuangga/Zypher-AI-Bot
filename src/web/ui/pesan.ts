@@ -2520,6 +2520,89 @@ function renderRiwayat() {
  * HTML daftar versi — dipisah dari penggambarnya supaya isinya bisa diperiksa
  * tanpa DOM sungguhan (uji UI memakai elemen tiruan yang tidak menyimpan HTML).
  */
+/* ---------------- Diff versi ---------------- */
+
+/**
+ * Bandingkan satu versi lama dengan isi EDITOR saat ini.
+ *
+ * Pembanding dijalankan di browser, bukan server, karena isi editor bisa belum
+ * disimpan. Membandingkan dengan versi tersimpan akan menjawab pertanyaan yang
+ * tidak ditanyakan admin ("apa yang berubah sejak simpan terakhir") dan
+ * menyembunyikan perubahan yang justru sedang ia kerjakan.
+ */
+async function bandingkanVersi(revisionId) {
+  var panel = document.getElementById('diff-' + revisionId);
+  if (!panel) return;
+  /*
+   * Status buka disimpan di atribut data-buka, bukan dibaca dari properti
+   * hidden. Elemen panel dibuat dengan atribut hidden, tetapi hidden juga
+   * dipakai saat gagal memuat — memakai properti yang sama untuk dua arti
+   * membuat klik kedua justru membuka panel kosong.
+   */
+  if (panel.dataset.buka === '1') {
+    panel.dataset.buka = '';
+    panel.hidden = true;
+    panel.innerHTML = '';
+    return;
+  }
+  if (!editingId) return;
+  panel.dataset.buka = '1';
+  panel.hidden = false;
+  panel.innerHTML = '<p class="hint" style="margin:6px 0 0">Memuat versi…</p>';
+  try {
+    /*
+     * Snapshot diambil per versi, bukan ikut daftar: 20 versi × blok penuh
+     * membuat halaman berat, padahal yang dibandingkan biasanya satu-dua saja.
+     */
+    var hasil = await api('/api/posts/' + editingId + '/revisions?revision=' + revisionId);
+    if (!hasil.revision) throw new Error('versi tidak ditemukan');
+    panel.innerHTML = renderDiff(diffRingkas(hasil.revision.snapshot, snapshotEditor()));
+  } catch (error) {
+    panel.dataset.buka = '';
+    panel.hidden = true;
+    panel.innerHTML = '';
+    toast('Gagal memuat versi: ' + error.message, true);
+  }
+}
+
+/** Kondisi editor saat ini dalam bentuk yang sama dengan snapshot versi. */
+function snapshotEditor() {
+  return {
+    blocks: blocks.map(function (satu) {
+      // Salin: pembanding tidak boleh menyentuh state editor.
+      var salinan = {};
+      Object.keys(satu).forEach(function (kunci) { salinan[kunci] = satu[kunci]; });
+      return salinan;
+    }),
+    accent: accentNow(),
+    sender: (document.getElementById('postSender') || {}).value || 'bot',
+    flags: flagPesan(),
+    allowedMentions: allowedMentionsPesan(),
+    threadName: ((document.getElementById('postThreadName') || {}).value || '').trim() || null
+  };
+}
+
+/** HTML panel diff: ringkasan, daftar perubahan, lalu teks lama/baru. */
+function renderDiff(hasil) {
+  var kepala = '<div class="diff-kepala">' + escAman(ringkasDiff(hasil)) + '</div>';
+  if (!hasil.total) {
+    return kepala + '<p class="hint" style="margin:6px 0 0">Isi editor sekarang sama dengan versi ini.</p>';
+  }
+  var daftar = hasil.baris.map(function (satu) {
+    var jenis = satu.charAt(0) === '+' ? 'tambah' : satu.charAt(0) === '−' ? 'hapus' : 'ubah';
+    // Karakter penanda dibuang; warnanya dibawa oleh kelas.
+    return '<li class="diff-baris diff-' + jenis + '">' + escAman(satu.slice(2)) + '</li>';
+  }).join('');
+  var teks = hasil.teks.map(function (satu) {
+    return '<div class="diff-teks">' +
+      '<div class="diff-label">blok ' + satu.posisi + '</div>' +
+      '<div class="diff-lama">' + escAman(satu.lama) + '</div>' +
+      '<div class="diff-baru">' + escAman(satu.baru) + '</div>' +
+    '</div>';
+  }).join('');
+  return kepala + '<ul class="diff-daftar">' + daftar + '</ul>' + teks;
+}
+
 function riwayatHtml() {
   if (!editingId) {
     return '<p class="hint" style="margin:0">Riwayat muncul untuk pesan yang sudah tersimpan.</p>';
@@ -2536,9 +2619,12 @@ function riwayatHtml() {
         '<div class="list-meta">disimpan ' + escAman(waktuLokal(versi.createdAt)) + '</div>' +
       '</div>' +
       '<div class="list-actions">' +
+        '<button class="btn btn-ghost btn-sm" type="button" onclick="bandingkanVersi(' + versi.id + ')">Bandingkan</button>' +
         '<button class="btn btn-ghost btn-sm" type="button" onclick="kembalikanVersi(' + versi.id + ')">Kembalikan</button>' +
       '</div>' +
-    '</div>';
+    '</div>' +
+    // Panel diff: diisi saat "Bandingkan" ditekan, bukan dirender di muka.
+    '<div class="diff-panel" id="diff-' + versi.id + '" hidden></div>';
   }).join('');
 }
 

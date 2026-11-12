@@ -510,7 +510,7 @@ npm run models         # daftar model yang benar-benar tersedia di provider kamu
 npm run smoke # 418 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
 npm run smoke:pg       # 21 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # 15 pemeriksaan rantai fallback provider (server tiruan)
-npm run test:ui        # 107 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
+npm run test:ui        # 112 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
 npm run test:browser   # uji klik sungguhan di Chromium (butuh dashboard hidup)
 npm run verify         # semuanya sekaligus: typecheck ketat + smoke + fallback + UI
 npm run dashboard      # nyalakan dashboard web saja (node dist/web/standalone.js)

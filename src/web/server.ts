@@ -2088,7 +2088,28 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     }
 
     if (jenis === '/revisions' && method === 'GET') {
-      sendJson(response, 200, { revisions: await listPostRevisions(guildId, postId) });
+      const daftar = await listPostRevisions(guildId, postId);
+      /*
+       * `?revision=<id>` = minta isi blok satu versi saja.
+       *
+       * Daftar versi sengaja tidak membawa snapshot penuh (20 versi × blok
+       * pesan besar = halaman berat). Diff di dashboard memintanya hanya saat
+       * tombol Bandingkan ditekan, untuk versi yang benar-benar dibandingkan.
+       */
+      const ingin = new URL(request.url ?? '/', 'http://local').searchParams.get('revision');
+      if (ingin) {
+        const id = Number(ingin);
+        const satu = daftar.find((revisi) => revisi.id === id);
+        if (!satu) {
+          sendJson(response, 404, { error: 'Versi itu tidak ada di riwayat pesan ini.' });
+          return;
+        }
+        sendJson(response, 200, {
+          revision: { id: satu.id, name: satu.name, createdAt: satu.createdAt, snapshot: satu.snapshot },
+        });
+        return;
+      }
+      sendJson(response, 200, { revisions: daftar });
       return;
     }
 
