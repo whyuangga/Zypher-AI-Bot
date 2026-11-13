@@ -319,6 +319,31 @@ function mountPage(html: string, label: string): PageContext {
                 dropped: [],
               },
             }
+          : String(path) === '/api/posts/import/discohook'
+          ? {
+              ok: true,
+              format: 'discohook',
+              /*
+               * Bentuk jawaban /api/posts/import/discohook setelah Batch 33:
+               * pengaturan tingkat pesan ikut, dengan nama field yang sama
+               * seperti respons /api/posts/load.
+               */
+              messages: [
+                {
+                  name: 'Pesan Discohook 1',
+                  blocks: [{ kind: 'text', value: 'Halo dari Discohook' }],
+                  layout: 'container',
+                  embed: [],
+                  sender: 'webhook',
+                  webhookName: 'Tim Pengumuman',
+                  webhookAvatar: 'https://img.test/tim.png',
+                  threadName: 'Diskusi',
+                  flags: 4096,
+                  warnings: [],
+                },
+              ],
+              warnings: [],
+            }
           : String(path) === '/api/posts/from-json'
           ? {
               ok: true,
@@ -3333,6 +3358,42 @@ await check('pesan: tombol impor Discohook memanggil endpoint yang benar', async
     (kedua[1]!.body as { json?: unknown }).json,
     'JSON mentah diteruskan sebagai "json", bukan "url"',
   );
+});
+
+await check('pesan: impor Discohook memulihkan pengaturan tingkat pesan', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-disco-tingkat');
+
+  /*
+   * Discohook menyimpan nama & avatar pengirim webhook, nama thread, dan flag
+   * di tiap pesan. Dulu semuanya dibuang saat impor: pesan yang disusun atas
+   * nama "Tim Pengumuman" muncul atas nama server tanpa penjelasan.
+   */
+  page.elements.get('discoText')!.value = 'https://discohook.app/?share=CpazsKTm';
+  await page.evaluate('importDiscohook()');
+
+  const tingkat = (await page.evaluate(`
+    (function () {
+      return {
+        sender: document.getElementById('postSender').value,
+        nama: document.getElementById('postWebhookName').value,
+        avatar: document.getElementById('postWebhookAvatar').value,
+        thread: document.getElementById('postThreadName').value,
+        flagTautan: document.getElementById('postFlagEmbeds').checked,
+        flagNotif: document.getElementById('postFlagNotif').checked,
+        bentuk: document.getElementById('postLayout').value
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(tingkat.sender, 'webhook', 'pengirim webhook dari Discohook dipulihkan');
+  assert.equal(tingkat.nama, 'Tim Pengumuman', 'nama pengirim dipulihkan');
+  assert.equal(tingkat.avatar, 'https://img.test/tim.png', 'avatar pengirim dipulihkan');
+  assert.equal(tingkat.thread, 'Diskusi', 'nama thread dipulihkan');
+  assert.equal(tingkat.flagTautan, false, 'flag tanpa-kartu tidak dicentang kalau tidak ada di berkas');
+  assert.equal(tingkat.flagNotif, true, 'flag tanpa notifikasi dipulihkan');
+  assert.equal(tingkat.bentuk, 'container', 'bentuk pesan mengikuti berkas');
+  assert.equal(page.errors.length, 0, `impor Discohook error: ${page.errors.join('|')}`);
 });
 
 await check('pesan: impor JSON rusak tidak merusak editor', async () => {

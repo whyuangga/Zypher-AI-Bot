@@ -2023,6 +2023,20 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
            */
           layout: pesan.layout,
           embed: pesan.embed,
+          /*
+           * Pengaturan tingkat pesan ikut dikirim dengan NAMA FIELD yang sama
+           * seperti respons /api/posts/load (sender, webhookName, ...), supaya
+           * editor memakai satu penerjemah untuk kedua sumber. Discohook
+           * menyimpannya per pesan; membuangnya di sini berarti impor
+           * menghapus nama pengirim, thread, dan flag diam-diam.
+           */
+          ...(pesan.settings.webhookName || pesan.settings.webhookAvatar
+            ? { sender: 'webhook' as const }
+            : {}),
+          ...(pesan.settings.webhookName ? { webhookName: pesan.settings.webhookName } : {}),
+          ...(pesan.settings.webhookAvatar ? { webhookAvatar: pesan.settings.webhookAvatar } : {}),
+          ...(pesan.settings.threadName ? { threadName: pesan.settings.threadName } : {}),
+          ...(pesan.settings.flags ? { flags: pesan.settings.flags } : {}),
           warnings: [...pesan.warnings, ...bersih.dropped.map((alasan) => `Blok dibuang: ${alasan}`)],
           usage: measureBlocks(bersih.blocks),
         };

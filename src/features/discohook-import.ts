@@ -29,6 +29,16 @@ export interface DiscohookMessage {
   name: string | null;
   blocks: PostBlock[];
   /**
+   * Pengaturan tingkat pesan yang dibawa berkas Discohook.
+   *
+   * Discohook menyimpan `username`, `avatar_url`, `thread_name`, dan `flags`
+   * di tiap pesan (lihat `MessageData` di repo itu). Dulu semuanya DIBUANG
+   * saat impor: pesan yang disusun atas nama "Tim Pengumuman" muncul atas nama
+   * server, thread tidak dibuat, dan flag senyap hilang — tanpa satu pun
+   * peringatan, karena memang tidak ada yang dilaporkan.
+   */
+  settings: DiscohookMessageSettings;
+  /**
    * Embed asli dari Discohook, siap disimpan ke `custom_posts.embed`.
    *
    * Dulu embed diterjemahkan menjadi kartu teks karena bot belum bisa mengirim
@@ -42,6 +52,24 @@ export interface DiscohookMessage {
   /** Bagian yang tidak bisa diwakili blok — ditampilkan ke admin. */
   warnings: string[];
 }
+
+export interface DiscohookMessageSettings {
+  /** Nama pengirim webhook; null = tidak diatur (pakai nama server). */
+  webhookName: string | null;
+  /** Avatar pengirim webhook yang sah (http/https); null = tidak diatur. */
+  webhookAvatar: string | null;
+  /** Nama thread yang dibuka pesan ini; null = tanpa thread. */
+  threadName: string | null;
+  /** Hanya dua flag yang boleh diatur admin: 4 dan 4096. */
+  flags: number;
+}
+
+export const DISCOHOOK_SETTINGS_KOSONG: DiscohookMessageSettings = {
+  webhookName: null,
+  webhookAvatar: null,
+  threadName: null,
+  flags: 0,
+};
 
 export interface DiscohookImport {
   messages: DiscohookMessage[];
@@ -82,6 +110,13 @@ const STYLE_LINK = 5;
 const MAX_TEXT = 3500;
 
 type Raw = Record<string, unknown>;
+
+/**
+ * Nama pengirim webhook yang DITOLAK Discord, sama seperti validator Discohook
+ * (`common/form/validators/isUsername.ts`). Membiarkannya lolos berarti pesan
+ * impor gagal terkirim dengan galat yang tidak menyebut nama sebagai penyebab.
+ */
+const NAMA_WEBHOOK_TERLARANG = /(^(everyone|here)$)|discord|clyde|```|system message/i;
 
 function asObject(value: unknown): Raw | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Raw) : null;
@@ -726,6 +761,64 @@ export function gabungGaleriEmbeds(list: Raw[]): Raw[] {
   return hasil;
 }
 
+/**
+ * Pengaturan tingkat pesan dari satu `MessageData` Discohook.
+ *
+ * Disaring dengan batas yang SAMA seperti penyimpanan dashboard, supaya berkas
+ * impor tidak bisa menyelipkan nilai yang nanti ditolak Discord saat dikirim:
+ * nama 80 karakter (tanpa "discord"/"clyde"/"system message" — Discord
+ * menolaknya), avatar http/https 2048, nama thread 100, dan flag hanya dua bit
+ * yang boleh diatur admin.
+ *
+ * Alasan tiap pembuangan dikembalikan, bukan didiamkan: admin yang mengimpor
+ * pesan dengan nama "Discord" berhak tahu kenapa namanya berubah.
+ */
+export function discohookSettings(
+  data: Raw,
+  label: string,
+): { settings: DiscohookMessageSettings; warnings: string[] } {
+  const warnings: string[] = [];
+  const settings: DiscohookMessageSettings = { ...DISCOHOOK_SETTINGS_KOSONG };
+
+  const nama = asString(data.username).trim();
+  if (nama) {
+    if (NAMA_WEBHOOK_TERLARANG.test(nama)) {
+      warnings.push('nama pengirim webhook ditolak Discord (tidak boleh berisi "discord"/"clyde"/"system message" atau bernama everyone/here)');
+    } else {
+      settings.webhookName = nama.slice(0, 80);
+    }
+  }
+
+  const avatar = asString(data.avatar_url).trim();
+  if (avatar) {
+    if (isHttpUrl(avatar)) settings.webhookAvatar = avatar.slice(0, 2048);
+    else warnings.push('avatar pengirim webhook harus alamat http/https');
+  }
+
+  const thread = asString(data.thread_name).trim();
+  if (thread) settings.threadName = thread.slice(0, 100);
+
+  const flags = asNumber(data.flags);
+  if (flags !== null && Number.isFinite(flags)) {
+    settings.flags = Math.trunc(flags) & (4 | 4096);
+    if (Math.trunc(flags) & ~(4 | 4096)) {
+      warnings.push('flag lain di berkas diabaikan — hanya "tanpa kartu tautan" dan "tanpa notifikasi" yang bisa diatur');
+    }
+  }
+
+  /*
+   * Aturan Discord yang tidak bisa dilanggar: pesan berisi embed tidak boleh
+   * membawa flag SUPPRESS_EMBEDS. Membiarkannya berarti pesan itu ditolak saat
+   * dikirim, dan admin sudah terlanjur mengira impornya berhasil.
+   */
+  if (settings.flags & 4 && asArray(data.embeds).length > 0) {
+    settings.flags &= ~4;
+    warnings.push('"tanpa kartu tautan" dilepas: pesan ini berisi embed, dan Discord tidak mengizinkan keduanya');
+  }
+
+  return { settings, warnings: warnings.map((isi) => `${label}: ${isi}`) };
+}
+
 export function parseDiscohookShare(input: unknown): DiscohookImport {
   const warnings: string[] = [];
   const root = asObject(input);
@@ -858,7 +951,23 @@ export function parseDiscohookShare(input: unknown): DiscohookImport {
       continue;
     }
 
-    messages.push({ name: nama, blocks, embed, layout, warnings: pesanWarnings });
+    /*
+     * Pengaturan tingkat pesan dibaca dari `data` yang sama, bukan dari
+     * `item`: Discohook menaruh `username`/`avatar_url`/`thread_name`/`flags`
+     * di dalam `data` (MessageData), bukan di pembungkusnya.
+     */
+    const atur = discohookSettings(data, nama);
+    pesanWarnings.push(...atur.warnings.map((isi) => isi.replace(`${nama}: `, '')));
+    warnings.push(...atur.warnings);
+
+    messages.push({
+      name: nama,
+      blocks,
+      settings: atur.settings,
+      embed,
+      layout,
+      warnings: pesanWarnings,
+    });
   }
 
   if (messages.length === 0) {

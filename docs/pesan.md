@@ -260,6 +260,7 @@ Yang perlu diketahui:
 | **Host yang diterima** | hanya `discohook.app` / `discohook.org`. Host lain ditolak, supaya endpoint ini tidak bisa disuruh membaca alamat internal |
 | **Masa berlaku tautan** | maksimal 4 minggu (aturan Discohook). Kalau kedaluwarsa, tempel JSON-nya |
 | **Multi-pesan** | Discohook menyimpan beberapa pesan sekaligus; yang diimpor adalah **pesan pertama**, jumlah sisanya disebutkan |
+| **Pengaturan tingkat pesan** | `username`, `avatar_url`, `thread_name`, dan `flags` dari berkas ikut dipulihkan (pengirim webhook, nama thread, dua flag) — lihat **Batch 33** |
 | **Hasil** | selalu **pesan baru** di editor, belum tersimpan — periksa dulu, lalu **Simpan** |
 | **Validasi** | hasil terjemahan dilewatkan `sanitizeBlocks` yang sama, jadi tidak bisa menyelipkan blok tidak sah |
 
@@ -640,7 +641,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | `targets[]` (satu pesan, beberapa channel) | ✅ **Kirim juga ke channel lain** di kartu pengaturan: sampai 5 channel tambahan, tiap channel punya ID pesan sendiri |
 | Riwayat/undo revisi (padanan backup) | ✅ 20 versi terakhir per pesan, dibuat otomatis setiap pesan diubah; kartu "Riwayat & bagikan" (tab **Riwayat**). Versi menyimpan blok, bentuk pesan, bagian embed, **dan identitas pengirim webhook** |
 | Share link (tautan berbagi) | ✅ tautan `/bagi/<token>` bisa dibuka tanpa login, berisi blok **dan** embed pesan (bentuk pesan & seluruh gambar galeri ikut), bisa dicabut |
-| Impor backup | ✅ JSON/URL Discohook di tab **Impor**; ekspor JSON juga ada, memakai nama field Discohook (`username`, `avatar_url`, `thread_name`, `flags`, `allowed_mentions`) supaya berkasnya bisa dibaca bolak-balik oleh alat lain |
+| Impor backup | ✅ JSON/URL Discohook di tab **Impor** — **pengaturan tingkat pesannya ikut** (pengirim webhook, nama & avatar, nama thread, flag; lihat **Batch 33**); ekspor JSON juga ada, memakai nama field Discohook (`username`, `avatar_url`, `thread_name`, `flags`, `allowed_mentions`) supaya berkasnya bisa dibaca bolak-balik oleh alat lain |
 | **Load** pesan Discord yang sudah terkirim | ✅ kartu **Muat pesan Discord** di tab **Impor**: tempel Message Link, pesan dibuka di editor (bot butuh *Read Message History*) **beserta pengaturan tingkat pesannya** — pengirim webhook, nama & avatar, nama thread, flag (lihat **Batch 27**); galeri gambar yang di Discord tampil sebagai beberapa embed dibaca kembali sebagai **satu galeri** (lihat **Batch 24**) |
 | Jadwal kirim (sekali / berulang / cron) | ✅ sekali, tiap N jam (min. 2 jam), dan **cron kalender** lima ruas (tiap hari, tiap Senin, tiap tanggal 1, …) memakai zona waktu server. Pola lebih rapat dari 2 jam ditolak dengan alasan |
 | Trigger event (member masuk/keluar) | ✅ pilihan **Kirim otomatis saat**: `member_add` / `member_remove`; pesan yang sama diperbarui tiap kejadian, bukan dikirim ulang |
@@ -650,6 +651,35 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, sampai **4 gambar besar** per embed, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 33: impor Discohook memulihkan pengaturan tingkat pesan
+
+Discohook menyimpan `username`, `avatar_url`, `thread_name`, dan `flags` di
+**tiap** pesan (`MessageData` di repo itu). Impor di sini hanya membaca
+`content`, `embeds`, dan `components`: pesan yang disusun atas nama "Tim
+Pengumuman" muncul atas nama server, thread tidak dibuat, dan flag senyap
+hilang — tanpa satu pun catatan, karena memang tidak ada yang dilaporkan.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Pengirim webhook | selalu balik ke bot | mengikuti `username`/`avatar_url` berkas |
+| Nama & avatar pengirim | hilang | dipulihkan (disaring: tolak "discord"/"clyde"/"system message", avatar http/https 2048) |
+| Nama thread | hilang | dipulihkan, dipotong ke 100 karakter |
+| Flag pesan | hilang | dipulihkan, disaring ke `4` dan `4096` |
+| Alasan bagian yang dibuang | tidak ada | dilaporkan di `warnings` |
+
+Catatan:
+
+- Penyaringan memakai batas yang sama dengan penyimpanan dashboard, jadi
+  berkas impor tidak bisa menyelipkan nilai yang nanti ditolak Discord.
+- `tanpa kartu tautan` (4) **dilepas** kalau pesan itu berisi embed: Discord
+  tidak mengizinkan keduanya, dan pesan akan gagal terkirim seluruhnya.
+- Nama yang ditolak Discord (mengandung `discord`, `clyde`, `system message`,
+  atau bernama `everyone`/`here`) tidak diteruskan — aturan yang sama dipakai
+  validator Discohook sendiri.
+- Nama field yang dikirim server sengaja sama dengan respons `/api/posts/load`
+  (`sender`, `webhookName`, `webhookAvatar`, `threadName`, `flags`), supaya
+  editor punya **satu** penerjemah untuk kedua sumber.
 
 ### Batch 32: flag per pesan di dokumen multi-pesan
 

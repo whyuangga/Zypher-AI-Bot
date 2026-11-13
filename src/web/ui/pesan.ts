@@ -1987,6 +1987,29 @@ async function importDiscohook() {
   loadEmbedExtra(pesan.embed);
   var bentukImpor = document.getElementById('postLayout');
   if (bentukImpor) bentukImpor.value = pesan.layout === 'embed' ? 'embed' : 'container';
+
+  /*
+   * Pengaturan tingkat pesan dari berkas Discohook. Discohook menyimpan nama &
+   * avatar pengirim webhook, nama thread, dan flag DI TIAP pesan; tanpa empat
+   * baris ini impor mengubah tampilan pesan tanpa memberi tahu admin.
+   *
+   * Isian yang tidak ada di berkas DIKOSONGKAN, sama seperti impor JSON:
+   * menyisakan nama pengirim milik pesan sebelumnya membuat pesan hasil impor
+   * tampil atas nama orang lain.
+   */
+  var senderImporDisco = document.getElementById('postSender');
+  if (senderImporDisco) senderImporDisco.value = pesan.sender === 'webhook' ? 'webhook' : 'bot';
+  var whNamaDisco = document.getElementById('postWebhookName');
+  if (whNamaDisco) whNamaDisco.value = typeof pesan.webhookName === 'string' ? pesan.webhookName.slice(0, 80) : '';
+  var whAvatarDisco = document.getElementById('postWebhookAvatar');
+  if (whAvatarDisco) whAvatarDisco.value = typeof pesan.webhookAvatar === 'string' ? pesan.webhookAvatar.slice(0, 2048) : '';
+  var threadDisco = document.getElementById('postThreadName');
+  if (threadDisco) threadDisco.value = typeof pesan.threadName === 'string' ? pesan.threadName.slice(0, 100) : '';
+  var bitFlagDisco = typeof pesan.flags === 'number' && isFinite(pesan.flags) ? pesan.flags : 0;
+  var flagTautanDisco = document.getElementById('postFlagEmbeds');
+  if (flagTautanDisco) flagTautanDisco.checked = Boolean(bitFlagDisco & 4);
+  var flagNotifDisco = document.getElementById('postFlagNotif');
+  if (flagNotifDisco) flagNotifDisco.checked = Boolean(bitFlagDisco & 4096);
   if (pesan.name) {
     var nama = document.getElementById('postName');
     if (nama && !nama.value) nama.value = String(pesan.name).slice(0, 120);

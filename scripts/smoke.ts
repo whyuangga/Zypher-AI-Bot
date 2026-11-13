@@ -11342,6 +11342,65 @@ await testAsync('discohook: pesan tanpa container tetap di luar kartu, embed dip
   );
 });
 
+await testAsync('discohook: pengaturan tingkat pesan (pengirim, thread, flag) ikut diimpor', async () => {
+  const { parseDiscohookShare } = await import('../src/features/discohook-import.js');
+
+  const hasil = parseDiscohookShare({
+    data: {
+      messages: [
+        {
+          data: {
+            content: 'Halo',
+            username: 'Tim Pengumuman',
+            avatar_url: 'https://cdn.test/a.png',
+            thread_name: 'Diskusi',
+            flags: 4096,
+          },
+        },
+        {
+          // Nama yang ditolak Discord, avatar bukan http, flag asing, dan
+          // suppress-embeds pada pesan berisi embed.
+          data: {
+            content: 'Kedua',
+            username: 'Discord Official',
+            avatar_url: 'ftp://bukan-http/a.png',
+            thread_name: 'T'.repeat(160),
+            flags: 4 | 32768,
+            embeds: [{ title: 'Ada embed', description: 'isi' }],
+          },
+        },
+        { data: { content: 'Tanpa pengaturan' } },
+      ],
+    },
+  });
+
+  /*
+   * Tanpa ini, pesan yang disusun atas nama "Tim Pengumuman" muncul atas nama
+   * server, thread tidak dibuat, dan flag senyap hilang — tanpa peringatan.
+   */
+  assert.deepEqual(hasil.messages[0]!.settings, {
+    webhookName: 'Tim Pengumuman',
+    webhookAvatar: 'https://cdn.test/a.png',
+    threadName: 'Diskusi',
+    flags: 4096,
+  });
+  assert.equal(hasil.messages[2]!.settings.flags, 0, 'pesan tanpa pengaturan tetap kosong');
+
+  const kedua = hasil.messages[1]!;
+  assert.equal(kedua.settings.webhookName, null, 'nama terlarang dibuang, bukan diteruskan');
+  assert.equal(kedua.settings.webhookAvatar, null, 'avatar non-http dibuang');
+  assert.equal(kedua.settings.threadName!.length, 100, 'nama thread dipotong ke batas Discord');
+  assert.equal(kedua.settings.flags, 0, 'flag asing & suppress-embeds dilepas');
+  assert.ok(
+    hasil.warnings.some((isi) => isi.includes('nama pengirim webhook ditolak Discord')),
+    'alasan nama ditolak dilaporkan',
+  );
+  assert.ok(
+    hasil.warnings.some((isi) => isi.includes('tidak mengizinkan keduanya')),
+    'alasan suppress-embeds dilepas dilaporkan',
+  );
+});
+
 await testAsync('discohook: data asing & lampiran attachment:// dilaporkan, bukan gagal senyap', async () => {
   const { parseDiscohookShare } = await import('../src/features/discohook-import.js');
 
