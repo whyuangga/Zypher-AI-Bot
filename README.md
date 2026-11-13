@@ -680,6 +680,7 @@ docs/rag.md                  # dokumen pengetahuan AI (RAG)
 docs/dashboard.md            # dashboard web: setup, halaman, keamanan
 docs/sambutan-agent.md       # sambutan, perpisahan, AI Agent, banner & pratinjau
 docs/pesan.md               # pesan container: susun sendiri, kirim & perbarui
+docs/uji-nyata.md           # checklist uji di Discord sungguhan sebelum merge
 docs/postgres.md             # Postgres, migrasi data, multi-shard
 docs/moderation.md           # moderasi otomatis + log pelanggaran
 docs/vision-voice.md         # vision gambar, STT/TTS, /ucap
