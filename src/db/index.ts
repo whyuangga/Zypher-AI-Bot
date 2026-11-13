@@ -96,6 +96,9 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
     // Bentuk pesan: 'container' (bawaan, Components V2) atau 'embed' (klasik).
     // NULL dibaca sebagai container, jadi pesan lama tidak berubah tampilan.
     'ALTER TABLE custom_posts ADD COLUMN layout TEXT',
+    // Bagian embed klasik yang diisi admin (penulis, footer, bidang, stempel
+    // waktu, URL judul). NULL = tidak ada, jadi pesan lama tidak berubah.
+    'ALTER TABLE custom_posts ADD COLUMN embed TEXT',
     // Flag pesan Discord (suppress embeds/notifikasi). NULL = tidak ada flag,
     // jadi pesan yang dibuat sebelum kolom ini ada tetap dikirim seperti dulu.
     'ALTER TABLE custom_posts ADD COLUMN flags INTEGER',

@@ -209,6 +209,10 @@ CREATE TABLE IF NOT EXISTS custom_posts (
   accent     TEXT,
   sender     TEXT,
   layout     TEXT,
+  -- Bagian embed klasik yang DIISI ADMIN (JSON): url judul, penulis, footer,
+  -- bidang, stempel waktu. NULL = tidak ada, jadi pesan lama tidak berubah.
+  -- Disimpan terpisah dari blocks karena bentuknya bukan blok.
+  embed      TEXT,
   -- Bitmask flag pesan Discord (suppress embeds/notifikasi/voice). NULL = 0.
   flags      INTEGER,
   -- true = kirim SELURUH pesan di dokumen ini berurutan sebagai satu
@@ -625,6 +629,8 @@ CREATE TABLE IF NOT EXISTS custom_posts (
   accent     TEXT,
   sender     TEXT,
   layout     TEXT,
+  -- Bagian embed klasik yang diisi admin (JSON). NULL = tidak ada.
+  embed      TEXT,
   -- Bitmask flag pesan Discord. NULL = 0.
   flags      INTEGER,
   -- true = pesan-pesan dokumen ini dikirim berurutan sebagai balasan.

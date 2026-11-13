@@ -625,7 +625,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Discohook | Di sini |
 |---|---|
 | Container / Text Display / Section / Separator / Media Gallery / File / Action Row | ✅ |
-| Embed klasik (judul, penulis, footer, field, thumbnail, gambar) | ⚠️ sebagian: judul, warna, isi, satu gambar, thumbnail (lihat **Batch 9**). Penulis, footer, dan field belum ada di editor |
+| Embed klasik (judul, penulis, footer, field, thumbnail, gambar) | ✅ judul, warna, isi, satu gambar, thumbnail, **penulis, footer, bidang (maks 25), URL judul, stempel waktu** (lihat **Batch 9** & **Batch 13**) |
 | Poll | ❌ di Discohook pun masih dinonaktifkan |
 | Tombol link & tombol interaktif ber-flow | ✅ |
 | Select menu: string (flow per opsi), user/role/mentionable/channel | ✅ |
@@ -644,8 +644,63 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Trigger event (member masuk/keluar) | ✅ pilihan **Kirim otomatis saat**: `member_add` / `member_remove`; pesan yang sama diperbarui tiap kejadian, bukan dikirim ulang |
 | Generator kode (payload → kode bot) | ✅ tab **Impor** → panel "JSON payload & generator kode": keluaran `discord.js` v14 & `discord.py` v2, diterjemahkan dari payload yang benar-benar dikirim |
 | Melihat payload JSON mentah | ✅ panel yang sama menampilkan `components` persis seperti yang diterima Discord, siap ditempel ke REST API |
-| Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, satu gambar besar, tombol/menu tetap di luar embed |
+| Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, satu gambar besar, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
+| Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 13: variabel ala Discohook & bagian embed yang belum ada
+
+Dua selisih ditutup di batch ini: penggantian variabel, dan bagian embed klasik
+yang sebelumnya hanya bisa diisi lewat impor.
+
+**Variabel.** Discohook mengganti token `{...}` di **semua** teks (isi blok, teks
+aksi, nama penulis, footer, nama & isi bidang). Dulu bot hanya mengenal delapan
+token di teks aksi, dan teks blok bahkan tidak diganti sama sekali.
+
+| Token | Isi |
+|---|---|
+| `{member.name}`, `{member.display_name}` | nama tampilan member |
+| `{member.username}`, `{member.tag}` | username; diskriminator `0` → username saja |
+| `{member.id}`, `{member.mention}`, `{member.avatar_url}` | ID, sebutan, URL avatar |
+| `{member.role_ids}` | daftar ID role sebagai JSON (sama seperti Discohook) |
+| `{server.id}`, `{server.name}`, `{server.icon_url}` | identitas server |
+| `{server.members}`, `{server.boosts}`, `{server.roles}` | jumlah member, boost, role |
+| `{server.created}`, `{server.created_relative}`, `{server.created_long}` | kapan server dibuat |
+| `{channel.id}`, `{channel.name}`, `{channel.mention}`, `{channel.link}` | channel tempat komponen diklik |
+| `{role}`, `{role.name}`, `{effect}` | hasil aksi role (`ditambahkan`/`dilepas`) |
+| `{selected}`, `{selected_value}`, `{selected_values.N}` | pilihan menu; `N` mulai 1, maks 25 |
+| `{now}`, `{now_relative}`, `{now_long}`, `{now_short_date}` | waktu sekarang |
+| `{var.nama}` | variabel flow yang disetel aksi sebelumnya |
+
+Aturannya:
+
+1. **Token asing dibiarkan.** Salah tulis terlihat di pesan (`{member.nmae}`),
+   bukan hilang diam-diam. Di tab editor, sisa token juga bisa dilaporkan.
+2. **Nilai kosong dibiarkan kosong.** Di teks aksi, delapan token lama tetap
+   diisi string kosong supaya `{role}` pada tombol tanpa aksi role hilang dari
+   balasan — bukan tercetak mentah.
+3. **Kunci terpanjang menang.** `{member.name_x}` tidak lagi dirusak oleh
+   penggantian `{member.name}` lebih dulu; dulu urutan objek menentukan hasil.
+4. **Stempel waktu memakai gaya Discord** (`<t:…:d>`, `<t:…:R>`), jadi waktunya
+   tampil sesuai zona pembaca, bukan zona server.
+
+**Bagian embed.** Kartu pengaturan sekarang punya satu blok isian untuk URL
+judul, penulis (nama/ikon/tautan), footer (teks/ikon), bidang (maks 25, tiap
+bidang boleh `inline`), dan stempel waktu ISO 8601. Semuanya opsional; tidak ada
+yang dikirim kalau kosong.
+
+- Nilai yang bukan URL `http/https` dibuang dan alasannya muncul di `dropped`.
+  Ini termasuk `javascript:` pada ikon — ikon yang sama tampil di pratinjau.
+- Stempel waktu yang tidak bisa diurai ditolak, bukan diteruskan ke Discord
+  (Discord akan menolak seluruh pesannya).
+- Total panjang embed (judul + isi + penulis + footer + bidang) tetap dijaga di
+  bawah 6000 karakter; yang dipotong adalah isi, dan pemotongan itu dilaporkan.
+- Bagian ini **hanya** dipakai saat bentuk pesan = embed klasik. Mengubah bentuk
+  pesan tidak menghapus tulisannya, jadi bisa dicoba bolak-balik.
+
+Kolom baru: `custom_posts.embed` (TEXT, JSON). Disimpan sebagai `NULL` saat
+semua isian kosong, jadi pesan lama tidak berubah perilakunya. `embed` yang tidak
+dikirim saat menyimpan berarti **dipertahankan**; `null` berarti dikosongkan.
 
 ### Batch 12: flow bertingkat penuh (padanan Discohook Actions)
 
@@ -1304,6 +1359,11 @@ Aksi yang tidak sah dibuang dan alasannya muncul di `dropped`.
 
 `custom_posts.trigger` menyimpan pemicu event (`member_add`/`member_remove`,
 NULL = hanya manual). Tidak ada tabel baru: pemicu adalah sifat pesannya.
+
+`custom_posts.embed` menyimpan bagian embed klasik (penulis, footer, bidang, URL
+judul, stempel waktu) sebagai JSON, NULL = tidak ada. Bentuknya sengaja datar —
+bukan tabel bidang terpisah — karena bagian ini selalu dibaca & ditulis sebagai
+satu kesatuan bersama pesannya.
 
 Tabel jadwal menyimpan tiga kolom tambahan: `cron` (ekspresi lima ruas, NULL =
 jadwal lama tiap N menit), `cron_offset` (offset zona saat jadwal dibuat), dan

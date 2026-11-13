@@ -47,6 +47,7 @@ import {
 } from './custom-post-send.js';
 import { listRoleButtons, listRoleMenus } from '../db/repo.js';
 import { errorMessage, logger } from '../lib/logger.js';
+import { buildTemplateValues } from './post-template.js';
 import {
   defaultRoleReply,
   fillActionText,
@@ -124,6 +125,58 @@ function sinkronKonteks(runtime: {
   runtime.konteks.selected = runtime.variables['selected'] ?? '';
   runtime.konteks.role = runtime.variables['role.name'] ?? runtime.konteks.role;
   runtime.konteks.effect = runtime.variables['effect'] ?? runtime.konteks.effect;
+}
+
+/**
+ * Nilai template tambahan dari objek Discord.
+ *
+ * Dipisah sebagai fungsi supaya jalur interaksi dan jalur sesi (timer) memakai
+ * isi yang sama. Tanpa ini, `{channel.name}` terisi saat tombol diklik tetapi
+ * kosong saat flow dilanjutkan timer — perbedaan yang mustahil dilihat admin
+ * kecuali kebetulan memakai token itu di aksi sesudah penantian.
+ */
+function nilaiKonteks(opsi: {
+  guild: NonNullable<KomponenInteraction['guild']>;
+  member: GuildMember;
+  channelId: string | null;
+}): Record<string, string> {
+  const { guild, member, channelId } = opsi;
+  /*
+   * Semua dibaca BERSYARAT. `member.user` selalu ada di Discord sungguhan,
+   * tetapi objek member yang datang dari cache lama atau interaksi sebagian
+   * bisa tidak membawanya — dan merakit nilai template tidak boleh membuat
+   * seluruh flow gagal hanya karena satu token tidak bisa diisi.
+   */
+  const user = member.user;
+  const pengelolaChannel = guild.channels?.cache as
+    | { get?: (id: string) => unknown }
+    | undefined;
+  const channel = channelId
+    ? (pengelolaChannel?.get?.(channelId) as { name?: string } | undefined)
+    : undefined;
+  const avatar = member.displayAvatarURL?.({ size: 256 });
+  const ikon = guild.iconURL?.({ size: 256 });
+  return buildTemplateValues({
+    memberName: member.displayName ?? user?.globalName ?? user?.username,
+    ...(user?.username ? { username: user.username } : {}),
+    ...(user?.discriminator !== undefined ? { discriminator: user.discriminator } : {}),
+    ...(user?.id ? { memberId: user.id } : {}),
+    ...(user?.tag ? { tag: user.tag } : {}),
+    ...(avatar ? { avatarUrl: avatar } : {}),
+    ...(typeof (member.roles?.cache as { keys?: unknown } | undefined)?.keys === 'function'
+      ? { roleIds: [...(member.roles.cache as unknown as Map<string, unknown>).keys()] }
+      : {}),
+    serverId: guild.id,
+    ...(guild.name ? { serverName: guild.name } : {}),
+    ...(ikon ? { serverIconUrl: ikon } : {}),
+    ...(typeof guild.memberCount === 'number' ? { memberCount: guild.memberCount } : {}),
+    ...(typeof guild.premiumSubscriptionCount === 'number'
+      ? { boostCount: guild.premiumSubscriptionCount }
+      : {}),
+    ...(typeof guild.roles?.cache?.size === 'number' ? { roleCount: guild.roles.cache.size } : {}),
+    ...(channelId ? { channelId } : {}),
+    ...(channel?.name ? { channelName: channel.name } : {}),
+  });
 }
 
 function teksBlocker(blocker: RoleBlocker): string {
@@ -857,6 +910,7 @@ export async function runComponentActions(options: {
     mention: `<@${interaction.user.id}>`,
     memberId: interaction.user.id,
     server: guild.name ?? 'server ini',
+    values: nilaiKonteks({ guild, member, channelId: interaction.channelId ?? null }),
   };
   /*
    * `selected` ikut ke konteks, bukan hanya ke variabel: teks balasan admin
@@ -994,6 +1048,7 @@ export async function resumeFlowSession(client: Client, session: FlowSession): P
     mention: `<@${session.userId}>`,
     memberId: session.userId,
     server: session.serverName,
+    values: nilaiKonteks({ guild, member, channelId: session.channelId }),
   };
   const variables = nilaiFlow({ ...konteks, variables: session.variables });
   konteks.variables = Object.fromEntries(

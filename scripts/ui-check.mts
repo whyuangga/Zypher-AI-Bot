@@ -1861,6 +1861,79 @@ await check('pesan: setelan thread & tujuan channel ikut terkirim', async () => 
   assert.equal(page.errors.length, 0, `editor thread/webhook error: ${page.errors.join('|')}`);
 });
 
+await check('pesan: bidang embed bisa ditambah/dihapus & bagian kosong tidak dikirim', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-embed-extra');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      resetEmbedExtra();
+      var awal = payloadEmbed();
+      tambahBidangEmbed();
+      tambahBidangEmbed();
+      EMBED_EXTRA.fields[0].name = 'Harga';
+      EMBED_EXTRA.fields[0].value = 'Rp10.000';
+      EMBED_EXTRA.fields[0].inline = true;
+      /* Bidang kedua sengaja dibiarkan kosong: tidak boleh ikut terkirim. */
+      EMBED_EXTRA.url = 'https://contoh.test/x';
+      EMBED_EXTRA.author = { name: 'Tim' };
+      EMBED_EXTRA.footer = { text: 'kaki' };
+      EMBED_EXTRA.timestamp = '2026-11-12T09:00:00Z';
+      var terisi = payloadEmbed();
+      /* Dibaca SEBELUM dimuat ulang: muat ulang membuang bidang kosong. */
+      var jumlahBaris = document.getElementById('embedFieldList').children.length;
+      loadEmbedExtra(terisi);
+      var dibacaUlang = payloadEmbed();
+      var maks = EMBED_FIELDS_MAKS;
+      return {
+        awal: awal,
+        terisi: terisi,
+        dibacaUlang: dibacaUlang,
+        jumlahBaris: jumlahBaris,
+        maks: maks,
+      };
+    })()
+  `)) as {
+    awal: unknown;
+    terisi: {
+      url?: string;
+      author?: { name?: string };
+      footer?: { text?: string };
+      fields?: Array<{ name: string; inline: boolean }>;
+      timestamp?: string;
+    };
+    dibacaUlang: { fields?: Array<{ name: string }> };
+    jumlahBaris: number;
+    maks: number;
+  };
+
+  assert.equal(hasil.awal, null, 'bagian kosong tidak dikirim sebagai objek setengah jadi');
+  assert.equal(hasil.terisi.fields!.length, 1, 'hanya bidang berisi yang dikirim');
+  assert.equal(hasil.terisi.fields![0].inline, true, 'penanda sebaris ikut');
+  assert.equal(hasil.terisi.author!.name, 'Tim');
+  assert.equal(hasil.terisi.footer!.text, 'kaki');
+  assert.equal(hasil.jumlahBaris, 2, 'editor menggambar semua bidang, termasuk yang belum diisi');
+  assert.equal(hasil.dibacaUlang.fields!.length, 1, 'isi bertahan setelah dimuat ulang ke editor');
+  assert.equal(hasil.maks, 25, 'batas bidang sama dengan Discord');
+
+  // Ikut terkirim saat Simpan.
+  await page.evaluate(`
+    (async function () {
+      blocks = [{ kind: 'text', value: 'Pengumuman' }];
+      document.getElementById('postName').value = 'Embed bagian';
+      document.getElementById('postLayout').value = 'embed';
+      if (typeof renderBlocks === 'function') renderBlocks();
+      await savePost();
+    })()
+  `);
+  const simpan = page.fetches.find((call) => call.path === '/api/posts' || /^\/api\/posts\/\d+$/.test(call.path));
+  assert.ok(simpan, 'Simpan memanggil /api/posts');
+  const muatan = simpan!.body as { embed?: { fields?: unknown[] } | null; layout?: string };
+  assert.equal(muatan.layout, 'embed');
+  assert.equal((muatan.embed?.fields ?? []).length, 1, 'bidang ikut di muatan Simpan');
+  assert.equal(page.errors.length, 0, `editor embed error: ${page.errors.join('|')}`);
+});
+
 await check('pesan: izin ping & nama thread ikut dikirim, bawaan tanpa ping', async () => {
   const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
   const page = mountPage(html, 'uji-mention');

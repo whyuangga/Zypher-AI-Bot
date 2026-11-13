@@ -682,6 +682,20 @@ details[open] .chev { transform: rotate(180deg); }
   max-width: 520px;
 }
 .preview-embed-title { font-size: 14.5px; font-weight: 600; color: var(--text); }
+/*
+ * Penulis, bidang, dan footer embed klasik.
+ *
+ * Warnanya lebih redup dari isi utama, sama seperti embed Discord sungguhan:
+ * bagian ini adalah keterangan, bukan isi pesan.
+ */
+.preview-embed-author { font-size: 12px; font-weight: 600; color: var(--text); }
+.preview-embed-fields { display: grid; gap: 4px; }
+.preview-embed-field {
+  font-size: 12.5px; line-height: 1.5; color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.preview-embed-field b { color: var(--text); font-weight: 600; }
+.preview-embed-footer { font-size: 11.5px; color: var(--text-3, var(--text-2)); }
 .preview-embed-text {
   font-size: 13px; line-height: 1.55; color: var(--text-2);
   white-space: pre-wrap; overflow-wrap: anywhere;

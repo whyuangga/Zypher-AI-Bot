@@ -377,12 +377,19 @@ selalu terlihat — tidak perlu menggulir jauh. Ada **pratinjau hidup**, **warna
 role** memberi role hanya dengan klik, lengkap dengan **emoji** dan **warna**
 tombol (biru/abu/hijau/merah) — dan tiap tombol, tiap pilihan dropdown, serta
 tiap **Select menu** (bahkan tiap **pilihan** di dalamnya) bisa diberi **aksi
-berurutan** ala *flow* Discohook: ubah role, balas pengklik dengan teks sendiri
-(template `{member.name}`, `{member.mention}`, `{role}`, `{effect}`,
-`{selected}`, `{var.nama}`), kirim pesan tersimpan lain, **tunggu** (tahan
-restart), **periksa syarat**, simpan variabel, buat thread, atau hapus pesan;
+berurutan** ala *flow* Discohook: ubah role, balas pengklik dengan teks sendiri,
+kirim pesan tersimpan lain, **tunggu** (tahan restart), **periksa syarat**
+bertingkat, simpan variabel, buat thread, atau hapus pesan;
 pesan juga bisa **dijadwalkan** kirim sekali atau berulang;
-untuk role yang banyak tersedia **menu dropdown**
+untuk Setiap teks — isi blok, balasan aksi, sampai nama penulis & footer embed —
+menerima **variabel ala Discohook** (`{member.name}`, `{member.username}`,
+`{member.mention}`, `{server.name}`, `{server.members}`, `{channel.name}`,
+`{role}`, `{effect}`, `{selected_value}`, `{now}`, `{var.nama}`, …; daftar
+lengkapnya ada di kartu pengaturan), dan token yang salah tulis dibiarkan apa
+adanya supaya terlihat. Bentuk **Embed klasik** juga sudah bisa diisi penuh:
+**penulis**, **footer**, sampai **25 bidang** sebaris, **URL pada judul**, dan
+**stempel waktu** — bukan hanya lewat impor lagi.
+Untuk role yang banyak tersedia **menu dropdown**
 sampai 25 pilihan, dengan opsi **hanya satu pilihan** yang otomatis mencabut
 role lain di menu yang sama — cocok untuk menu warna nama atau platform. Bot
 butuh izin **Manage Roles** dan posisinya harus di atas role yang dibagikan.
@@ -507,10 +514,10 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke # 424 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
+npm run smoke # 426 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
 npm run smoke:pg       # 21 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # 15 pemeriksaan rantai fallback provider (server tiruan)
-npm run test:ui        # 125 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
+npm run test:ui        # 126 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
 npm run test:browser   # uji klik sungguhan di Chromium (butuh dashboard hidup)
 npm run verify         # semuanya sekaligus: typecheck ketat + smoke + fallback + UI
 npm run dashboard      # nyalakan dashboard web saja (node dist/web/standalone.js)

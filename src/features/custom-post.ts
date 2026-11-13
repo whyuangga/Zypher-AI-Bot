@@ -1,3 +1,4 @@
+import { applyTemplate } from './post-template.js';
 /**
  * Blok pesan container buatan admin — halaman "/pesan".
  *
@@ -1191,11 +1192,13 @@ export function buildPostPayload(
   const isiTeks = (nilai: string): string => {
     const nilaiTemplate = deps.template;
     if (!nilaiTemplate) return nilai;
-    let hasil = nilai;
-    for (const [token, isi] of Object.entries(nilaiTemplate)) {
-      hasil = hasil.split(`{${token}}`).join(isi);
-    }
-    return hasil;
+    /*
+     * Memakai penggantian yang SAMA dengan teks aksi (`applyTemplate`):
+     * kunci terpanjang dulu, token tak dikenal dibiarkan. Dulu di sini
+     * `{member.name}` dan `{member.name_x}` bisa saling merusak karena
+     * penggantian mengikuti urutan objek, bukan panjang kunci.
+     */
+    return applyTemplate(nilai, nilaiTemplate);
   };
 
   const adaIsi = blocks.some(

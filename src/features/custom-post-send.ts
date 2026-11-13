@@ -36,7 +36,7 @@ import {
 } from 'discord.js';
 import { accentToNumber, buildPostPayload, type BuiltPost, type PostBlock } from './custom-post.js';
 import type { SeriesMessage } from './post-series.js';
-import { buildClassicEmbed, validateEmbed } from './post-embed.js';
+import { buildClassicEmbed, validateEmbed, type EmbedExtra } from './post-embed.js';
 import { roleButtonId, roleMenuId } from './role-buttons.js';
 import {
   deleteChannelWebhook,
@@ -471,10 +471,19 @@ export async function sendOrUpdateEmbedPost(options: {
   /** Flag admin (suppress notifikasi). Flag V2 TIDAK ikut dipasang di sini. */
   flags?: number;
   allowedMentions?: BuiltPost['allowedMentions'];
+  /**
+   * Bagian embed yang diisi admin (penulis, footer, bidang, stempel waktu,
+   * URL judul). Sudah disaring saat disimpan.
+   */
+  embed?: EmbedExtra | null;
+  /** Nilai template teks (`{member.name}`, …) — berlaku juga di footer/bidang. */
+  template?: Record<string, string> | null;
 }): Promise<SendResult> {
   const hasil = buildClassicEmbed(options.blocks, {
     accent: options.accent ?? null,
     title: options.title ?? null,
+    extra: options.embed ?? null,
+    template: options.template ?? null,
   });
   if (!hasil) {
     throw new PostSendError('Embed masih kosong — isi minimal satu teks atau gambar.');

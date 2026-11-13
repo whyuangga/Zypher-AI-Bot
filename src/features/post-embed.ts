@@ -47,6 +47,147 @@ export interface EmbedBuildResult {
   dropped: string[];
 }
 
+/**
+ * Bagian embed yang DIISI ADMIN, bukan diturunkan dari blok.
+ *
+ * Dipisah dari `ClassicEmbed` karena bentuknya disimpan di database
+ * (kolom `custom_posts.embed` sebagai JSON) dan harus bertahan dari input
+ * asing: dashboard bisa memanggil API langsung, jadi penyaringnya ada di sini
+ * — satu tempat, dipakai server dan pratinjau.
+ *
+ * Batasnya batas Discord, bukan karangan: judul 256, footer 2048, penulis 256,
+ * nama bidang 256, isi bidang 1024, maksimal 25 bidang dan TOTAL 6000 karakter
+ * untuk seluruh embed (judul + isi + footer + penulis + bidang).
+ */
+export interface EmbedExtra {
+  /** URL yang dibuka saat judul diklik (embed `url`). */
+  url?: string;
+  author?: { name: string; url?: string; icon_url?: string };
+  footer?: { text: string; icon_url?: string };
+  fields?: EmbedField[];
+  /** ISO 8601. Kosong = tanpa stempel waktu. */
+  timestamp?: string;
+}
+
+const BATAS_EXTRA = {
+  url: 2048,
+  iconUrl: 2048,
+  authorName: 256,
+  footer: 2048,
+  fieldName: 256,
+  fieldValue: 1024,
+  fields: 25,
+} as const;
+
+function teksAtauKosong(nilai: unknown, batas: number): string {
+  return typeof nilai === 'string' ? nilai.trim().slice(0, batas) : '';
+}
+
+/** URL yang aman dikirim Discord: hanya http/https. */
+function urlSah(nilai: unknown): string | undefined {
+  const teks = teksAtauKosong(nilai, BATAS_EXTRA.url);
+  if (!teks) return undefined;
+  try {
+    const url = new URL(teks);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? teks : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Saring `EmbedExtra` dari input dashboard/JSON.
+ *
+ * Tidak pernah melempar. Bagian yang tidak sah DIBUANG dengan alasan yang bisa
+ * dibaca admin — sama seperti `sanitizeBlocks` dan `sanitizeActions`.
+ */
+export function sanitizeEmbedExtra(input: unknown): { extra: EmbedExtra; dropped: string[] } {
+  const dropped: string[] = [];
+  const extra: EmbedExtra = {};
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return { extra, dropped };
+  const source = input as Record<string, unknown>;
+
+  const url = urlSah(source.url);
+  if (url) extra.url = url;
+  else if (teksAtauKosong(source.url, 2048)) dropped.push('URL judul harus alamat http/https');
+
+  /* --- penulis --- */
+  if (source.author && typeof source.author === 'object' && !Array.isArray(source.author)) {
+    const author = source.author as Record<string, unknown>;
+    const name = teksAtauKosong(author.name, BATAS_EXTRA.authorName);
+    if (name) {
+      const icon = urlSah(author.icon_url);
+      const tautan = urlSah(author.url);
+      extra.author = {
+        name,
+        ...(tautan ? { url: tautan } : {}),
+        ...(icon ? { icon_url: icon } : {}),
+      };
+    } else if (teksAtauKosong(author.name, 1) === '' && author.name !== undefined) {
+      dropped.push('penulis embed butuh nama');
+    }
+  }
+
+  /* --- footer --- */
+  if (source.footer && typeof source.footer === 'object' && !Array.isArray(source.footer)) {
+    const footer = source.footer as Record<string, unknown>;
+    const text = teksAtauKosong(footer.text, BATAS_EXTRA.footer);
+    if (text) {
+      const icon = urlSah(footer.icon_url);
+      extra.footer = { text, ...(icon ? { icon_url: icon } : {}) };
+    } else if (footer.text !== undefined) {
+      dropped.push('footer embed butuh teks');
+    }
+  }
+
+  /* --- bidang --- */
+  if (Array.isArray(source.fields)) {
+    const fields: EmbedField[] = [];
+    for (const satu of source.fields) {
+      if (!satu || typeof satu !== 'object') continue;
+      const field = satu as Record<string, unknown>;
+      const name = teksAtauKosong(field.name, BATAS_EXTRA.fieldName);
+      const value = teksAtauKosong(field.value, BATAS_EXTRA.fieldValue);
+      if (!name || !value) {
+        dropped.push('bidang embed butuh nama DAN isi');
+        continue;
+      }
+      fields.push({ name, value, inline: field.inline === true });
+      if (fields.length >= BATAS_EXTRA.fields) {
+        if (source.fields.length > BATAS_EXTRA.fields) {
+          dropped.push(`bidang embed dibatasi ${BATAS_EXTRA.fields}`);
+        }
+        break;
+      }
+    }
+    if (fields.length) extra.fields = fields;
+  }
+
+  /* --- stempel waktu (ISO 8601) --- */
+  const timestamp = teksAtauKosong(source.timestamp, 64);
+  if (timestamp) {
+    const waktu = new Date(timestamp);
+    // Discord menolak stempel waktu yang tidak bisa diurai; lebih baik
+    // dilaporkan di sini daripada pesannya gagal terkirim seluruhnya.
+    if (Number.isNaN(waktu.getTime())) dropped.push('stempel waktu embed harus tanggal ISO 8601');
+    else extra.timestamp = waktu.toISOString();
+  }
+
+  return { extra, dropped };
+}
+
+/** Ada isi admin yang perlu dikirim? (dipakai untuk memutuskan validasi) */
+export function embedExtraKosong(extra: EmbedExtra | null | undefined): boolean {
+  if (!extra) return true;
+  return (
+    !extra.url &&
+    !extra.author?.name &&
+    !extra.footer?.text &&
+    !(extra.fields?.length ?? 0) &&
+    !extra.timestamp
+  );
+}
+
 const BATAS = {
   title: 256,
   description: 4096,
@@ -81,7 +222,19 @@ function potong(teks: string, batas: number): string {
  */
 export function buildClassicEmbed(
   blocks: EmbedBlock[],
-  opsi: { accent?: string | null; title?: string | null } = {},
+  opsi: {
+    accent?: string | null;
+    title?: string | null;
+    /**
+     * Bagian yang diisi admin: URL judul, penulis, footer, bidang, stempel
+     * waktu. Sudah disaring `sanitizeEmbedExtra` sebelum sampai ke sini —
+     * fungsi ini tidak memotong lagi, supaya tidak ada dua tempat yang bisa
+     * berbeda pendapat soal batas.
+     */
+    extra?: EmbedExtra | null;
+    /** Nilai template untuk teks admin ({member.name}, {var.*}, …). */
+    template?: Record<string, string> | null;
+  } = {},
 ): EmbedBuildResult | null {
   const dropped: string[] = [];
   const embed: ClassicEmbed = {};
@@ -143,7 +296,51 @@ export function buildClassicEmbed(
   const isi = bagian.join('\n').trim();
   if (isi) embed.description = potong(isi, BATAS.description);
 
-  if (!embed.title && !embed.description && !embed.image) return null;
+  /* ---------- bagian yang diisi admin ---------- */
+  const extra = opsi.extra ?? null;
+  if (extra) {
+    /*
+     * Template berlaku juga di sini: footer "dikirim oleh {member.name}" pada
+     * pesan yang dipicu member masuk harus terisi, bukan tercetak mentah.
+     * Token yang tidak dikenal DIBIARKAN apa adanya, sama seperti di blok.
+     */
+    const isiTemplate = (nilai: string): string => {
+      const tabel = opsi.template;
+      if (!tabel) return nilai;
+      let hasil = nilai;
+      for (const [token, isiToken] of Object.entries(tabel)) {
+        hasil = hasil.split(`{${token}}`).join(isiToken);
+      }
+      return hasil;
+    };
+
+    if (extra.url) embed.url = extra.url;
+    if (extra.timestamp) embed.timestamp = extra.timestamp;
+    if (extra.author?.name) {
+      embed.author = {
+        name: isiTemplate(extra.author.name),
+        ...(extra.author.url ? { url: extra.author.url } : {}),
+        ...(extra.author.icon_url ? { icon_url: extra.author.icon_url } : {}),
+      };
+    }
+    if (extra.footer?.text) {
+      embed.footer = {
+        text: isiTemplate(extra.footer.text),
+        ...(extra.footer.icon_url ? { icon_url: extra.footer.icon_url } : {}),
+      };
+    }
+    if (extra.fields?.length) {
+      embed.fields = extra.fields.map((field) => ({
+        name: isiTemplate(field.name),
+        value: isiTemplate(field.value),
+        inline: field.inline,
+      }));
+    }
+  }
+
+  if (!embed.title && !embed.description && !embed.image && !(embed.fields?.length ?? 0)) {
+    return null;
+  }
 
   /*
    * Batas total 6000 karakter untuk seluruh embed. Kalau kelebihan, deskripsi
@@ -151,9 +348,20 @@ export function buildClassicEmbed(
    * sering panjang, dan memotong tanpa laporan akan menyembunyikan bagian
    * pesan yang hilang.
    */
-  const total = (embed.title?.length ?? 0) + (embed.description?.length ?? 0);
+  /*
+   * Batas 6000 karakter berlaku untuk SELURUH embed, bukan hanya judul +
+   * deskripsi: penulis, footer, dan bidang ikut dihitung Discord. Kalau
+   * bagian admin yang membuatnya melewati batas, deskripsi lagi yang dipotong
+   * — bagian admin sengaja yang ditulis tangan admin sendiri, sedangkan
+   * deskripsi sering berupa blok panjang yang bisa dipindah ke pesan lain.
+   */
+  const panjangAdmin =
+    (embed.author?.name.length ?? 0) +
+    (embed.footer?.text.length ?? 0) +
+    (embed.fields ?? []).reduce((jumlah, field) => jumlah + field.name.length + field.value.length, 0);
+  const total = (embed.title?.length ?? 0) + (embed.description?.length ?? 0) + panjangAdmin;
   if (total > BATAS.total && embed.description) {
-    const sisa = BATAS.total - (embed.title?.length ?? 0);
+    const sisa = BATAS.total - (embed.title?.length ?? 0) - panjangAdmin;
     embed.description = potong(embed.description, Math.max(0, sisa));
     dropped.push(`isi dipotong agar muat batas ${BATAS.total} karakter embed`);
   }

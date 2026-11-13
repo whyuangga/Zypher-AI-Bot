@@ -440,6 +440,70 @@ export function pesanPage(options: PesanPageOptions): string {
     <input type="text" id="postThreadName" placeholder="mis. Diskusi {server.name}" />
     <p class="hint">Kalau diisi, pesan ini langsung membuka thread dengan nama tersebut — sama seperti <code>thread_name</code> di Discohook. Gagal membuat thread TIDAK membatalkan pesannya; kegagalannya dilaporkan.</p>
   </div>
+  <div style="grid-column:1/-1">
+    <label class="field">Bagian embed klasik (penulis, footer, bidang)</label>
+    <p class="hint" style="margin-top:0">Hanya dipakai saat <b>Bentuk pesan: Embed klasik</b>. Embed klasik punya bagian yang tidak ada di Components V2, jadi isiannya ada di sini — bukan sebagai blok. Tidak ada satu pun yang wajib.</p>
+    <div style="display:grid;gap:8px">
+      <input type="text" id="embedUrl" placeholder="URL saat judul diklik (opsional, http/https)" />
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input type="text" id="embedAuthorName" placeholder="Nama penulis (mis. {server.name})" style="flex:1;min-width:160px" />
+        <input type="text" id="embedAuthorIcon" placeholder="URL ikon penulis" style="flex:1;min-width:160px" />
+        <input type="text" id="embedAuthorUrl" placeholder="URL tautan penulis" style="flex:1;min-width:160px" />
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input type="text" id="embedFooterText" placeholder="Teks footer (mis. Dikirim oleh {member.name})" style="flex:2;min-width:200px" />
+        <input type="text" id="embedFooterIcon" placeholder="URL ikon footer" style="flex:1;min-width:160px" />
+      </div>
+      <input type="text" id="embedTimestamp" placeholder="Stempel waktu ISO 8601 (mis. 2026-11-12T09:00:00Z)" />
+      <div class="subhead" style="margin-top:4px">Bidang embeds (maksimal 25)</div>
+      <div id="embedFieldList" class="block-list"></div>
+      <div class="block-add">
+        <button class="btn btn-ghost btn-sm" type="button" onclick="tambahBidangEmbed()">${icon('plus', 15)} Tambah bidang</button>
+        <span class="hint" id="embedFieldStatus" style="margin:0"></span>
+      </div>
+    </div>
+  </div>
+  <div style="grid-column:1/-1">
+    <details>
+      <summary class="field" style="cursor:pointer">Variabel teks yang bisa dipakai</summary>
+      <p class="hint" style="margin-top:6px">Nama yang sama dengan Discohook. Token yang tidak dikenal <b>dibiarkan apa adanya</b>, jadi salah tulis terlihat — bukan menghilang. Berlaku di teks blok, teks aksi, footer/penulis/bidang embed.</p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:4px 12px;font-size:12px">
+        ${[
+          ['{member.name}', 'nama tampilan'],
+          ['{member.display_name}', 'sama dengan di atas'],
+          ['{member.username}', 'username Discord'],
+          ['{member.tag}', 'username#1234 (atau username saja)'],
+          ['{member.id}', 'ID member'],
+          ['{member.mention}', 'sebutan member'],
+          ['{member.avatar_url}', 'URL avatar member'],
+          ['{member.role_ids}', 'ID role (JSON)'],
+          ['{server.name}', 'nama server'],
+          ['{server.id}', 'ID server'],
+          ['{server.icon_url}', 'URL ikon server'],
+          ['{server.members}', 'jumlah member'],
+          ['{server.boosts}', 'jumlah boost'],
+          ['{server.roles}', 'jumlah role'],
+          ['{server.created}', 'server dibuat (stempel waktu)'],
+          ['{channel.name}', 'nama channel'],
+          ['{channel.mention}', 'sebutan channel'],
+          ['{channel.link}', 'tautan channel'],
+          ['{role}', 'role hasil aksi role'],
+          ['{effect}', 'ditambahkan / dilepas'],
+          ['{selected}', 'pilihan menu (gabungan)'],
+          ['{selected_value}', 'pilihan menu pertama'],
+          ['{selected_values.1}', 'pilihan ke-1, ke-2, dst.'],
+          ['{now}', 'waktu sekarang (stempel)'],
+          ['{now_relative}', 'waktu sekarang (relatif)'],
+          ['{var.nama}', 'variabel flow'],
+        ]
+          .map(
+            ([token, arti]) =>
+              `<div><code>${esc(token)}</code> <span style="color:var(--text-2)">${esc(arti)}</span></div>`,
+          )
+          .join('')}
+      </div>
+    </details>
+  </div>
 </div>`,
   });
 
@@ -1434,6 +1498,11 @@ function exportJson() {
     accent: accentNow(),
     sender: (document.getElementById('postSender') || {}).value || 'bot',
     blocks: isi,
+    /*
+     * Bagian embed ikut diekspor: tanpa ini, ekspor lalu impor ulang
+     * diam-diam menghapus penulis/footer/bidang yang sudah ditulis admin.
+     */
+    embed: payloadEmbed(),
   };
   var teks = JSON.stringify(data, null, 2);
   var kotak = document.getElementById('jsonText');
@@ -1495,6 +1564,10 @@ function importJson() {
     if (pengirim) pengirim.value = data.sender;
   }
   editingId = null; // hasil impor = pesan baru, bukan menimpa yang lama
+  // Bagian embed ikut dokumen: dokumen tanpa bagian ini harus MENGOSONGKAN
+  // isian lama, bukan menyisakan penulis milik pesan sebelumnya.
+  if (data.embed && typeof data.embed === 'object') loadEmbedExtra(data.embed);
+  else resetEmbedExtra();
   renderBlocks();
   renderPreview();
 
@@ -1626,6 +1699,7 @@ async function importDiscohook() {
   // boleh dilakukan tombol "Tarik & impor".
   blocks = (pesan.blocks || []).map(normalBlock);
   editingId = null;
+  resetEmbedExtra();
   if (pesan.name) {
     var nama = document.getElementById('postName');
     if (nama && !nama.value) nama.value = String(pesan.name).slice(0, 120);
@@ -2537,6 +2611,12 @@ async function savePost(andSend) {
         // '' = hanya manual; server membaca nilai asing sebagai null juga.
         trigger: (document.getElementById('postTrigger') || {}).value || null,
         layout: (document.getElementById('postLayout') || {}).value || 'container',
+        /*
+         * Bagian embed (penulis, footer, bidang). Dikirim walau bentuknya
+         * container: admin bisa berpindah bentuk tanpa kehilangan tulisan yang
+         * sudah dibuat, dan server hanya memakainya saat layout = embed.
+         */
+        embed: payloadEmbed(),
       }),
     });
     if (result.dropped && result.dropped.length) {
@@ -2684,6 +2764,8 @@ function loadExisting() {
   // normalBlock memuat SEMUA field yang dikenal, termasuk spoiler dan nama
   // berkas — dulu daftarnya ditulis ulang di sini dan dua field itu tertinggal.
   blocks = found.blocks.map(normalBlock);
+  // Bagian embed: dimuat dari pesan, bukan dibiarkan dari pesan sebelumnya.
+  loadEmbedExtra(found.embed);
   var send = document.getElementById('postSend');
   if (send) send.textContent = 'Simpan & kirim ulang';
   loadRoleButtonsFor(found.id);
@@ -3059,6 +3141,237 @@ function accentNow() {
   return (el && el.value) || ACCENT_DEFAULT;
 }
 
+/* ---------------- Bagian embed klasik (penulis, footer, bidang) ---------------- */
+
+/**
+ * Bagian embed yang sedang disusun.
+ *
+ * Disimpan sebagai data (bukan dibaca dari DOM tiap kali) supaya membuka pesan
+ * lain tidak menumpuk bidang milik pesan sebelumnya. Yang dikirim ke server
+ * hanya bagian yang terisi; sisanya tidak dikirim sama sekali.
+ */
+var EMBED_EXTRA = { url: '', author: {}, footer: {}, fields: [], timestamp: '' };
+/** Batas bidang embed — angka Discord, sama dengan sanitizer di server. */
+var EMBED_FIELDS_MAKS = 25;
+
+/** Kosongkan isian embed (dipakai saat membuka pesan baru). */
+function resetEmbedExtra() {
+  EMBED_EXTRA = { url: '', author: {}, footer: {}, fields: [], timestamp: '' };
+  renderEmbedExtra();
+}
+
+/**
+ * Muat bagian embed dari pesan yang dibuka.
+ *
+ * Field yang tidak ada di data dibiarkan kosong — bukan diisi bawaan. Embed
+ * pesan lama tidak punya penulis/footer, dan mengisinya dengan teks karangan
+ * akan mengubah tampilan pesannya tanpa admin meminta.
+ */
+function loadEmbedExtra(data) {
+  var sumber = data && typeof data === 'object' ? data : {};
+  EMBED_EXTRA = {
+    url: String(sumber.url || ''),
+    author: {
+      name: String((sumber.author || {}).name || ''),
+      url: String((sumber.author || {}).url || ''),
+      icon_url: String((sumber.author || {}).icon_url || ''),
+    },
+    footer: {
+      text: String((sumber.footer || {}).text || ''),
+      icon_url: String((sumber.footer || {}).icon_url || ''),
+    },
+    timestamp: String(sumber.timestamp || ''),
+    fields: Array.isArray(sumber.fields)
+      ? sumber.fields.slice(0, EMBED_FIELDS_MAKS).map(function (f) {
+          return {
+            name: String((f || {}).name || ''),
+            value: String((f || {}).value || ''),
+            inline: Boolean((f || {}).inline),
+          };
+        })
+      : [],
+  };
+  renderEmbedExtra();
+}
+
+/** Isian teks sederhana yang menulis langsung ke EMBED_EXTRA. */
+function isianEmbed(id, jalur, placeholder) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.value = jalur.get();
+  el.placeholder = placeholder;
+  el.oninput = function () {
+    jalur.set(el.value);
+    renderPreview();
+  };
+}
+
+/** Pasang nilai ke EMBED_EXTRA pada jalur bertitik (mis. author.name). */
+function targetEmbed(jalur, nilai) {
+  var bagian = jalur.split('.');
+  var simpul = EMBED_EXTRA;
+  for (var i = 0; i < bagian.length - 1; i += 1) {
+    if (!simpul[bagian[i]]) simpul[bagian[i]] = {};
+    simpul = simpul[bagian[i]];
+  }
+  simpul[bagian[bagian.length - 1]] = nilai;
+}
+
+function bacaEmbed(jalur) {
+  var bagian = jalur.split('.');
+  var simpul = EMBED_EXTRA;
+  for (var i = 0; i < bagian.length; i += 1) {
+    if (!simpul) return '';
+    simpul = simpul[bagian[i]];
+  }
+  return String(simpul || '');
+}
+
+/**
+ * Gambar ulang bidang embed.
+ *
+ * Editor bidang ditulis sebagai baris-baris di dalam kotak, bukan satu JSON
+ * mentah: admin yang menyusun pengumuman tidak perlu tahu bentuk embed Discord,
+ * dan kesalahan seperti bidang tanpa isi bisa ditolak sebelum dikirim.
+ */
+function renderEmbedExtra() {
+  isianEmbed('embedUrl', {
+    get: function () { return bacaEmbed('url'); },
+    set: function (v) { EMBED_EXTRA.url = v.trim(); },
+  }, 'URL saat judul diklik (opsional, http/https)');
+  isianEmbed('embedAuthorName', {
+    get: function () { return bacaEmbed('author.name'); },
+    set: function (v) { targetEmbed('author.name', v); },
+  }, 'Nama penulis (mis. {server.name})');
+  isianEmbed('embedAuthorIcon', {
+    get: function () { return bacaEmbed('author.icon_url'); },
+    set: function (v) { targetEmbed('author.icon_url', v.trim()); },
+  }, 'URL ikon penulis');
+  isianEmbed('embedAuthorUrl', {
+    get: function () { return bacaEmbed('author.url'); },
+    set: function (v) { targetEmbed('author.url', v.trim()); },
+  }, 'URL tautan penulis');
+  isianEmbed('embedFooterText', {
+    get: function () { return bacaEmbed('footer.text'); },
+    set: function (v) { targetEmbed('footer.text', v); },
+  }, 'Teks footer (mis. Dikirim oleh {member.name})');
+  isianEmbed('embedFooterIcon', {
+    get: function () { return bacaEmbed('footer.icon_url'); },
+    set: function (v) { targetEmbed('footer.icon_url', v.trim()); },
+  }, 'URL ikon footer');
+  isianEmbed('embedTimestamp', {
+    get: function () { return bacaEmbed('timestamp'); },
+    set: function (v) { EMBED_EXTRA.timestamp = v.trim(); },
+  }, 'Stempel waktu ISO 8601 (mis. 2026-11-12T09:00:00Z)');
+
+  var host = document.getElementById('embedFieldList');
+  if (!host) return;
+  host.innerHTML = '';
+
+  if (EMBED_EXTRA.fields.length === 0) {
+    var kosong = document.createElement('p');
+    kosong.className = 'hint';
+    kosong.style.margin = '0';
+    kosong.textContent = 'Belum ada bidang. Bidang berguna untuk rincian seperti harga, jadwal, atau syarat.';
+    host.appendChild(kosong);
+  }
+
+  EMBED_EXTRA.fields.forEach(function (bidang, nomor) {
+    var baris = document.createElement('div');
+    baris.className = 'aksi-baris';
+
+    var head = document.createElement('div');
+    head.className = 'aksi-baris-head';
+    var label = document.createElement('span');
+    label.className = 'aksi-jenis';
+    label.textContent = (nomor + 1) + '. Bidang';
+    head.appendChild(label);
+
+    var hapus = document.createElement('button');
+    hapus.className = 'btn-danger btn-sm btn-icon';
+    hapus.type = 'button';
+    hapus.title = 'Hapus bidang';
+    hapus.textContent = 'x';
+    hapus.onclick = function () {
+      EMBED_EXTRA.fields.splice(nomor, 1);
+      renderEmbedExtra();
+      renderPreview();
+    };
+    head.appendChild(hapus);
+    baris.appendChild(head);
+
+    var nama = document.createElement('input');
+    nama.type = 'text';
+    nama.value = bidang.name;
+    nama.placeholder = 'Nama bidang (maks 256 karakter)';
+    nama.oninput = function () { EMBED_EXTRA.fields[nomor].name = nama.value.slice(0, 256); renderPreview(); };
+    baris.appendChild(nama);
+
+    var isi = document.createElement('textarea');
+    isi.rows = 2;
+    isi.value = bidang.value;
+    isi.placeholder = 'Isi bidang (maks 1024 karakter)';
+    isi.oninput = function () { EMBED_EXTRA.fields[nomor].value = isi.value.slice(0, 1024); renderPreview(); };
+    baris.appendChild(isi);
+
+    var sebaris = document.createElement('label');
+    sebaris.className = 'menu-flags';
+    var cek = document.createElement('input');
+    cek.type = 'checkbox';
+    cek.checked = bidang.inline === true;
+    cek.onchange = function () { EMBED_EXTRA.fields[nomor].inline = cek.checked; renderPreview(); };
+    sebaris.appendChild(cek);
+    sebaris.appendChild(document.createTextNode(' tampil sebaris dengan bidang lain'));
+    baris.appendChild(sebaris);
+
+    host.appendChild(baris);
+  });
+
+  var status = document.getElementById('embedFieldStatus');
+  if (status) {
+    status.textContent = EMBED_EXTRA.fields.length + '/' + EMBED_FIELDS_MAKS + ' bidang';
+  }
+}
+
+function tambahBidangEmbed() {
+  if (EMBED_EXTRA.fields.length >= EMBED_FIELDS_MAKS) {
+    return toast('Maksimal ' + EMBED_FIELDS_MAKS + ' bidang per embed', true);
+  }
+  EMBED_EXTRA.fields.push({ name: '', value: '', inline: false });
+  renderEmbedExtra();
+}
+
+/**
+ * Muatan embed untuk server.
+ *
+ * Bagian yang kosong TIDAK dikirim, dan null dipakai kalau tidak ada satu pun
+ * yang terisi — server menyimpannya sebagai kolom kosong, bukan objek kosong
+ * yang harus dibaca ulang sebagai "kosong" di setiap tempat.
+ */
+function payloadEmbed() {
+  var hasil = {};
+  if (EMBED_EXTRA.url) hasil.url = EMBED_EXTRA.url;
+  if (EMBED_EXTRA.timestamp) hasil.timestamp = EMBED_EXTRA.timestamp;
+  if (EMBED_EXTRA.author && EMBED_EXTRA.author.name) {
+    hasil.author = { name: EMBED_EXTRA.author.name };
+    if (EMBED_EXTRA.author.url) hasil.author.url = EMBED_EXTRA.author.url;
+    if (EMBED_EXTRA.author.icon_url) hasil.author.icon_url = EMBED_EXTRA.author.icon_url;
+  }
+  if (EMBED_EXTRA.footer && EMBED_EXTRA.footer.text) {
+    hasil.footer = { text: EMBED_EXTRA.footer.text };
+    if (EMBED_EXTRA.footer.icon_url) hasil.footer.icon_url = EMBED_EXTRA.footer.icon_url;
+  }
+  var bidang = (EMBED_EXTRA.fields || []).filter(function (f) {
+    return String(f.name || '').trim() && String(f.value || '').trim();
+  });
+  if (bidang.length) {
+    hasil.fields = bidang.map(function (f) {
+      return { name: f.name.trim(), value: f.value.trim(), inline: f.inline === true };
+    });
+  }
+  return Object.keys(hasil).length ? hasil : null;
+}
+
 function resetAccent() {
   var el = document.getElementById('postAccent');
   if (el) el.value = ACCENT_DEFAULT;
@@ -3181,7 +3494,8 @@ function embedDariBlok() {
 function gambarPratinjauEmbed(host, hostId) {
   var hasil = embedDariBlok();
   var embed = hasil.embed;
-  if (!embed.title && !embed.description && !embed.image) {
+  var adaBidang = Boolean(payloadEmbed() && (payloadEmbed().fields || []).length);
+  if (!embed.title && !embed.description && !embed.image && !adaBidang) {
     var kosong = document.createElement('div');
     kosong.className = 'preview-container';
     kosong.style.borderLeftColor = accentNow();
@@ -3197,6 +3511,18 @@ function gambarPratinjauEmbed(host, hostId) {
   kotak.className = 'preview-embed';
   kotak.style.borderLeftColor = embed.color === null ? accentNow() : '#' + aksenHex(embed.color);
 
+  /*
+   * Penulis, footer, dan bidang digambar dari EMBED_EXTRA yang sama dengan
+   * yang dikirim ke server — bukan dari tebakan. Tanpa ini admin melihat embed
+   * rapi di pratinjau padahal penulis/footer-nya belum tersimpan.
+   */
+  var extra = payloadEmbed() || {};
+  if (extra.author && extra.author.name) {
+    var penulis = document.createElement('div');
+    penulis.className = 'preview-embed-author';
+    penulis.textContent = (extra.author.icon_url ? '🖼 ' : '') + String(extra.author.name);
+    kotak.appendChild(penulis);
+  }
   if (embed.title) {
     var judul = document.createElement('div');
     judul.className = 'preview-embed-title';
@@ -3209,12 +3535,42 @@ function gambarPratinjauEmbed(host, hostId) {
     isi.textContent = embed.description;
     kotak.appendChild(isi);
   }
+  if (extra.fields && extra.fields.length) {
+    /*
+     * Bidang digambar sebagai baris datar: pratinjau ini mini, dan kolom
+     * inline sungguhan akan terbaca sebagai teks yang berdesakan. Yang penting
+     * admin melihat ISI dan jumlahnya, bukan tata letak persisnya.
+     */
+    var daftarBidang = document.createElement('div');
+    daftarBidang.className = 'preview-embed-fields';
+    extra.fields.forEach(function (bidang) {
+      var satu = document.createElement('div');
+      satu.className = 'preview-embed-field';
+      var nama = document.createElement('b');
+      nama.textContent = bidang.name;
+      satu.appendChild(nama);
+      satu.appendChild(document.createTextNode(' ' + bidang.value + (bidang.inline ? ' (sebaris)' : '')));
+      daftarBidang.appendChild(satu);
+    });
+    kotak.appendChild(daftarBidang);
+  }
   if (embed.image) {
     var gambar = document.createElement('div');
     gambar.className = 'preview-embed-image';
     // Alamat gambar dari admin: dipasang lewat style, bukan innerHTML.
     gambar.style.backgroundImage = 'url("' + String(embed.image).replace(/"/g, '%22') + '")';
     kotak.appendChild(gambar);
+  }
+  if (extra.footer && extra.footer.text) {
+    var footer = document.createElement('div');
+    footer.className = 'preview-embed-footer';
+    footer.textContent = String(extra.footer.text) + (extra.timestamp ? ' · ' + String(extra.timestamp) : '');
+    kotak.appendChild(footer);
+  } else if (extra.timestamp) {
+    var waktu = document.createElement('div');
+    waktu.className = 'preview-embed-footer';
+    waktu.textContent = String(extra.timestamp);
+    kotak.appendChild(waktu);
   }
   host.appendChild(kotak);
 
@@ -6057,6 +6413,7 @@ function showPesanTab(key) {
 
 loadExisting();
 renderBlocks();
+renderEmbedExtra();
 renderTarget();
 renderRoleButtons();
 renderGrup();

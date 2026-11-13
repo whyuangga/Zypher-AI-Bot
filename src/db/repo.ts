@@ -6,6 +6,7 @@ import { normalizeTimeZone } from '../lib/timezone.js';
 import { parseBlocks, sanitizeBlocks, type PostBlock } from '../features/custom-post.js';
 import { decryptSecret, encryptSecret } from '../features/webhook-secret.js';
 import { sanitizeSeries, type SeriesMessage } from '../features/post-series.js';
+import { sanitizeEmbedExtra, type EmbedExtra } from '../features/post-embed.js';
 import { cronIntervalMinutes, nextCronTime, parseCron } from '../features/schedule-cron.js';
 import { TIME_ZONES } from '../lib/timezone.js';
 import {
@@ -1480,6 +1481,15 @@ export interface CustomPost {
    * semuanya berarti admin harus memilih salah satu.
    */
   layout: PostLayout;
+  /**
+   * Bagian embed klasik yang diisi admin (penulis, footer, bidang, stempel
+   * waktu, URL judul). Kosong = tidak ada.
+   *
+   * Disimpan walau `layout = 'container'`: admin bisa berpindah bentuk tanpa
+   * kehilangan penulis/footer yang sudah ditulis. Embed hanya DIPAKAI saat
+   * `layout = 'embed'`.
+   */
+  embed: EmbedExtra;
   updatedAt: number;
 }
 
@@ -1490,6 +1500,23 @@ export type PostLayout = (typeof POST_LAYOUTS)[number];
 /** Nilai asing dibaca sebagai `container` — perilaku lama tidak berubah. */
 export function parseLayout(raw: string | null | undefined): PostLayout {
   return raw === 'embed' ? 'embed' : 'container';
+}
+
+/**
+ * Baca bagian embed dari kolom teks.
+ *
+ * Nilai rusak dibaca sebagai "tidak ada bagian admin" — embed tetap bisa
+ * dikirim dari blok, jadi satu kolom rusak tidak boleh membuat pesannya gagal
+ * tampil. Penyaringan ulang lewat `sanitizeEmbedExtra` juga membuat nilai yang
+ * disunting langsung di database tidak bisa menyelipkan yang tidak sah.
+ */
+function parseEmbedExtra(raw: string | null | undefined): EmbedExtra {
+  if (!raw) return {};
+  try {
+    return sanitizeEmbedExtra(JSON.parse(raw)).extra;
+  } catch {
+    return {};
+  }
 }
 
 /** Nilai `trigger` yang dikenal. Selain ini dibaca sebagai `null`. */
@@ -1517,6 +1544,7 @@ interface CustomPostRow {
   thread_name?: string | null;
   trigger?: string | null;
   layout?: string | null;
+  embed?: string | null;
   updated_at: number | string;
 }
 
@@ -1545,6 +1573,17 @@ function parseMentions(raw: string | null | undefined): { parse: Array<'users' |
   }
 }
 
+/**
+ * Saring lalu ubah bagian embed jadi teks JSON untuk database.
+ *
+ * `null` dikembalikan kalau tidak ada isinya: kolom kosong lebih jujur
+ * daripada `{}` yang harus dibaca ulang sebagai "kosong" di setiap tempat.
+ */
+function simpanEmbed(input: unknown): string | null {
+  const { extra } = sanitizeEmbedExtra(input);
+  return Object.keys(extra).length === 0 ? null : JSON.stringify(extra);
+}
+
 function toCustomPost(row: CustomPostRow): CustomPost {
   return {
     id: Number(row.id),
@@ -1560,6 +1599,7 @@ function toCustomPost(row: CustomPostRow): CustomPost {
     threadName: row.thread_name?.trim() ? row.thread_name.trim().slice(0, 100) : null,
     trigger: parseTrigger(row.trigger),
     layout: parseLayout(row.layout),
+    embed: parseEmbedExtra(row.embed),
     updatedAt: Number(row.updated_at),
   };
 }
@@ -1604,12 +1644,14 @@ export async function createCustomPost(
     threadName?: string | null;
     trigger?: PostTrigger | null;
     layout?: PostLayout | null;
+    /** Bagian embed klasik yang diisi admin (hanya dipakai bila layout=embed). */
+    embed?: unknown;
   },
 ): Promise<CustomPost> {
   const blocks = sanitizeBlocks(input.blocks).blocks;
   const id = await insert(
-    `INSERT INTO custom_posts (guild_id, name, channel_id, blocks, message_id, accent, sender, flags, series, mentions, thread_name, trigger, layout, updated_at)
-     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO custom_posts (guild_id, name, channel_id, blocks, message_id, accent, sender, flags, series, mentions, thread_name, trigger, layout, embed, updated_at)
+     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       guildId,
       input.name.slice(0, 120),
@@ -1623,6 +1665,7 @@ export async function createCustomPost(
       input.threadName?.trim() ? input.threadName.trim().slice(0, 100) : null,
       parseTrigger(input.trigger ?? null),
       parseLayout(input.layout ?? null),
+      simpanEmbed(input.embed),
       Date.now(),
     ],
   );
@@ -1645,6 +1688,7 @@ export async function updateCustomPost(
     threadName?: string | null;
     trigger?: PostTrigger | null;
     layout?: PostLayout | null;
+    embed?: unknown;
   },
 ): Promise<CustomPost | null> {
   const current = await getCustomPost(guildId, id);
@@ -1661,7 +1705,7 @@ export async function updateCustomPost(
 
   const blocks = input.blocks === undefined ? current.blocks : sanitizeBlocks(input.blocks).blocks;
   await run(
-    'UPDATE custom_posts SET name = ?, channel_id = ?, blocks = ?, accent = ?, sender = ?, flags = ?, series = ?, mentions = ?, thread_name = ?, trigger = ?, layout = ?, updated_at = ? WHERE guild_id = ? AND id = ?',
+    'UPDATE custom_posts SET name = ?, channel_id = ?, blocks = ?, accent = ?, sender = ?, flags = ?, series = ?, mentions = ?, thread_name = ?, trigger = ?, layout = ?, embed = ?, updated_at = ? WHERE guild_id = ? AND id = ?',
     [
       (input.name ?? current.name).slice(0, 120),
       input.channelId === undefined ? current.channelId : input.channelId,
@@ -1684,6 +1728,7 @@ export async function updateCustomPost(
           : null,
       input.trigger === undefined ? current.trigger : parseTrigger(input.trigger ?? null),
       input.layout === undefined ? current.layout : parseLayout(input.layout ?? null),
+      input.embed === undefined ? simpanEmbed(current.embed) : simpanEmbed(input.embed),
       Date.now(),
       guildId,
       id,

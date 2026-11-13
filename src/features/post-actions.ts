@@ -30,6 +30,7 @@
  * sebagai sesi lalu dilanjutkan timer, termasuk sisa aksi yang berada DI DALAM
  * cabang (lihat `jalankanLangkah` di post-action-runner.ts).
  */
+import { applyTemplate, buildTemplateValues } from './post-template.js';
 import {
   CONDITION_LIMITS,
   FLOW_LIMITS,
@@ -1051,7 +1052,7 @@ export function planActions(actions: PostAction[], options: { selfPostId?: numbe
 
 /** Nilai yang bisa dipakai di dalam teks balasan/template. */
 export interface TemplateContext {
-  /** Nama tampilan member, mis. "Wahyu". */
+  /** Nama tampilan member, mis. "Wahyu" (sama dengan `{member.name}` Discohook). */
   member: string;
   /** `<@id>` member. */
   mention: string;
@@ -1059,6 +1060,14 @@ export interface TemplateContext {
   memberId?: string;
   /** Nama server. */
   server: string;
+  /**
+   * Nilai template TAMBAHAN (`{channel.name}`, `{server.icon_url}`, …).
+   *
+   * Diisi runner dari objek Discord lewat `buildTemplateValues`, sehingga
+   * nama variabelnya persis sama dengan Discohook. Kosong = hanya token lama
+   * yang tersedia — perilaku sebelum Batch 13.
+   */
+  values?: Record<string, string>;
   /** Hasil aksi role, mis. "**Gamer**" — hanya diisi bila ada aksi role. */
   role?: string;
   /** `ditambahkan` / `dilepas` / `diperbarui` — hasil aksi role. */
@@ -1072,6 +1081,8 @@ export interface TemplateContext {
    * menimpa token bawaan seperti `{member.name}`.
    */
   variables?: Record<string, string>;
+  /** Waktu sekarang — bisa diinjeksi supaya tes tidak bergantung jam mesin. */
+  now?: Date;
 }
 
 /**
@@ -1083,32 +1094,52 @@ export interface TemplateContext {
  * jujur daripada menghapusnya diam-diam, dan admin bisa melihat salah tulis.
  */
 export function fillActionText(template: string, context: TemplateContext): string {
-  const tokens: Array<[string, string]> = [
-    ['{member.mention}', context.mention],
-    ['{member.name}', context.member],
-    ['{member.id}', context.memberId ?? ''],
-    ['{server.name}', context.server],
-    ['{role.name}', context.role ?? ''],
-    ['{role}', context.role ?? ''],
-    ['{effect}', context.effect ?? ''],
-    ['{selected}', context.selected ?? ''],
-  ];
-  let result = template;
-  for (const [token, value] of tokens) {
-    result = result.split(token).join(value);
+  /*
+   * Nilai dirakit di post-template.ts (modul murni) supaya nama variabelnya
+   * bisa diuji tanpa Discord dan persis sama dengan Discohook.
+   */
+  const nilai = buildTemplateValues({
+    memberName: context.member,
+    ...(context.memberId ? { memberId: context.memberId } : {}),
+    ...(context.role ? { roleName: context.role } : {}),
+    ...(context.effect ? { effect: context.effect } : {}),
+    ...(context.selected ? { selected: context.selected } : {}),
+    ...(context.server ? { serverName: context.server } : {}),
+    ...(context.now ? { now: context.now } : {}),
+    variables: Object.fromEntries(
+      Object.entries(context.variables ?? {})
+        .filter(([kunci]) => kunci.startsWith('var.'))
+        .map(([kunci, isi]) => [kunci.slice(4), isi]),
+    ),
+  });
+
+  /*
+   * Nilai TAMBAHAN dari runner (`{channel.name}`, `{server.icon_url}`, …).
+   *
+   * Sudah berbentuk teks akhir, jadi digabung sebagai NILAI — bukan sebagai
+   * sumber. Dulu nilai ini digabung ke objek sumber, dan `now` yang berbentuk
+   * teks `<t:…>` menimpa `Date` milik sumber; akibatnya setiap balasan yang
+   * memakai satu saja token tambahan melempar `waktu.getTime is not a function`.
+   */
+  for (const [kunci, isi] of Object.entries(context.values ?? {})) {
+    nilai[kunci] = isi;
   }
 
   /*
-   * Variabel flow diganti BELAKANGAN dan satu per satu, bukan lewat daftar
-   * token tetap: namanya ditentukan admin, jadi hanya variabel yang benar-benar
-   * ada yang punya nilai. Variabel yang tidak ada dibiarkan apa adanya —
-   * supaya salah ketik terlihat, bukan menghilang menjadi teks kosong.
+   * Delapan token lama SELALU diisi (boleh string kosong). Perilaku ini
+   * dipertahankan dari versi sebelumnya: `{role}` di tombol tanpa aksi role
+   * harus hilang dari teks, bukan tercetak mentah.
    */
-  for (const [kunci, nilai] of Object.entries(context.variables ?? {})) {
-    if (!kunci.startsWith('var.')) continue;
-    result = result.split(`{${kunci}}`).join(nilai);
-  }
-  return result;
+  nilai['member.name'] = context.member;
+  nilai['member.mention'] = context.mention;
+  nilai['member.id'] = context.memberId ?? '';
+  nilai['server.name'] = context.server;
+  nilai['role.name'] = context.role ?? '';
+  nilai['role'] = context.role ?? '';
+  nilai['effect'] = context.effect ?? '';
+  nilai['selected'] = context.selected ?? '';
+
+  return applyTemplate(template, nilai);
 }
 
 /**

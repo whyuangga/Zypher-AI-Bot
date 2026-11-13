@@ -6720,12 +6720,22 @@ await testAsync('jadwal: cron kalender per hari/senin/tanggal, batas rapat & zon
   assert.equal(sesudahKirim[0]!.lastSentAt, sebelum, 'waktu kirim terakhir dicatat');
 
   /*
-   * Jam dinding tetap: dikirim jam 09:00 WITA hari ini, jadwal berikutnya juga
-   * 09:00 WITA — bukan "24 jam dari sekarang" yang bisa melenceng kalau
-   * pengiriman molor beberapa menit.
+   * Jam dinding tetap: dikirim jam 09:00 WITA, jadwal berikutnya juga 09:00
+   * WITA — bukan "24 jam dari sekarang" yang bisa melenceng kalau pengiriman
+   * molor beberapa menit.
+   *
+   * Yang diperiksa JARAKNYA, bukan tanggal absolutnya: `dueAt` dihitung dari
+   * jam mesin saat tes berjalan, jadi menulis tanggal tetap (16 Nov, dst.)
+   * membuat tes ini gagal sendiri sehari setelah ditulis — itu yang dulu
+   * terjadi dan sempat menutupi hasil tes lain.
    */
   const berikut = cron.nextCronTime('0 9 * * *', sesudahKirim[0]!.dueAt, 8)!;
-  assert.equal(wib(berikut), '2026-11-15T08:00', 'jadwal berikutnya tetap pukul 09:00 WITA (08:00 WIB)');
+  assert.equal(
+    berikut - sesudahKirim[0]!.dueAt,
+    24 * 3_600_000,
+    'jadwal berikutnya tetap pukul 09:00 WITA (selisih tepat satu hari)',
+  );
+  assert.equal(wib(berikut).slice(11), '08:00', 'jamnya tidak bergeser (08:00 WIB = 09:00 WITA)');
 
   await repo.deleteCustomPost(GUILD, post.id);
 });
@@ -7952,6 +7962,217 @@ await testAsync('pesan: embed klasik dibangun dari blok & aturannya dijaga', asy
   assert.equal(diubah!.layout, 'container', 'layout bisa diubah');
   const lain = await repo.updateCustomPost(GUILD, pesan.id, { name: 'Embed uji 2' });
   assert.equal(lain!.layout, 'container', 'menyimpan field lain tidak mengubah layout');
+  await repo.deleteCustomPost(GUILD, pesan.id);
+});
+
+await testAsync('template: variabel Discohook dirakit & dipakai di aksi dan teks pesan', async () => {
+  const { buildTemplateValues, applyTemplate, tokenTersisa } = await import('../src/features/post-template.js');
+  const { fillActionText } = await import('../src/features/post-actions.js');
+
+  const waktu = new Date('2026-11-12T09:00:00Z');
+  const nilai = buildTemplateValues({
+    memberName: 'Wahyu',
+    username: 'wahyu',
+    discriminator: '0',
+    memberId: '123456789012345678',
+    avatarUrl: 'https://img.test/a.png',
+    roleIds: ['1', '2'],
+    serverId: '987654321098765432',
+    serverName: 'Zypher',
+    serverIconUrl: 'https://img.test/s.png',
+    memberCount: 42,
+    boostCount: 3,
+    roleCount: 7,
+    channelId: '555555555555555555',
+    channelName: 'umum',
+    roleName: 'Gamer',
+    effect: 'ditambahkan',
+    selected: 'gamer, anime',
+    selectedValues: ['gamer', 'anime'],
+    now: waktu,
+    variables: { kode: 'ABC' },
+  });
+
+  /* --- nama member: sama dengan Discohook --- */
+  assert.equal(nilai['member.name'], 'Wahyu');
+  assert.equal(nilai['member.display_name'], 'Wahyu', 'nama tampilan punya nama Discohook');
+  assert.equal(nilai['member.username'], 'wahyu');
+  assert.equal(nilai['member.tag'], 'wahyu', 'diskriminator 0 = username saja, bukan "#0"');
+  assert.equal(nilai['member.mention'], '<@123456789012345678>');
+  assert.equal(nilai['member.avatar_url'], 'https://img.test/a.png');
+  assert.equal(nilai['member.role_ids'], '["1","2"]', 'ID role sebagai JSON, sama seperti Discohook');
+
+  /* --- server & channel --- */
+  assert.equal(nilai['server.name'], 'Zypher');
+  assert.equal(nilai['server.members'], '42');
+  assert.equal(nilai['server.boosts'], '3');
+  assert.equal(nilai['server.roles'], '7');
+  assert.equal(nilai['channel.name'], 'umum');
+  assert.equal(nilai['channel.mention'], '<#555555555555555555>');
+  assert.equal(
+    nilai['channel.link'],
+    'https://discord.com/channels/987654321098765432/555555555555555555',
+    'tautan channel memakai ID server',
+  );
+
+  /* --- stempel waktu gaya Discord --- */
+  assert.match(nilai.now!, /^<t:\d+:d>$/, 'waktu memakai stempel Discord, bukan teks ISO');
+  assert.match(nilai.now_relative!, /^<t:\d+:R>$/);
+
+  /* --- pilihan menu: satu & bernomor (mulai dari 1) --- */
+  assert.equal(nilai.selected_value, 'gamer');
+  assert.equal(nilai['selected_values.1'], 'gamer');
+  assert.equal(nilai['selected_values.2'], 'anime');
+  assert.equal(nilai['selected_values.3'], undefined, 'tidak mengarang pilihan yang tidak ada');
+
+  /* --- variabel flow: awalan var. dirapikan --- */
+  assert.equal(nilai['var.kode'], 'ABC', 'variabel tanpa awalan tetap terbaca');
+  assert.equal(nilai['var.var.kode'], undefined, 'awalan ganda tidak terjadi');
+
+  /* --- penggantian: kunci terpanjang dulu, token asing dibiarkan --- */
+  const teks = applyTemplate('{member.name} / {member.name_x} / {tidak.ada}', {
+    'member.name': 'Wahyu',
+    'member.name_x': 'PANJANG',
+  });
+  assert.equal(teks, 'Wahyu / PANJANG / {tidak.ada}', 'token asing dibiarkan, kunci panjang menang');
+  assert.deepEqual(tokenTersisa(teks), ['tidak.ada'], 'sisa token bisa dilaporkan');
+
+  /*
+   * Nilai kosong: `{role}` pada tombol tanpa aksi role harus HILANG dari teks.
+   * Ini perilaku versi lama yang dipertahankan — kalau berubah, semua balasan
+   * role bawaan akan memuat "{role}" mentah.
+   */
+  assert.equal(
+    fillActionText('Halo {member.name} {role}', { member: 'Wahyu', mention: '<@1>', server: 'Zypher' }),
+    'Halo Wahyu ',
+    'token role kosong hilang, bukan tercetak mentah',
+  );
+
+  /* Nilai tambahan dari runner menggantikan yang dirakit sendiri. */
+  assert.equal(
+    fillActionText('di #{channel.name}', {
+      member: 'Wahyu',
+      mention: '<@1>',
+      server: 'Zypher',
+      values: { 'channel.name': 'umum' },
+    }),
+    'di #umum',
+    'nilai dari runner dipakai',
+  );
+
+  /* Variabel flow tetap jalan, termasuk yang disetel aksi sebelumnya. */
+  assert.equal(
+    fillActionText('kode {var.kode}', {
+      member: 'Wahyu',
+      mention: '<@1>',
+      server: 'Zypher',
+      variables: { 'var.kode': 'ABC' },
+    }),
+    'kode ABC',
+  );
+});
+
+await testAsync('pesan: bagian embed (penulis, footer, bidang) disaring, disimpan, & dipakai', async () => {
+  const { buildClassicEmbed, sanitizeEmbedExtra } = await import('../src/features/post-embed.js');
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  /* --- penyaring: yang tidak sah dibuang dengan alasan --- */
+  const { extra, dropped } = sanitizeEmbedExtra({
+    url: 'https://contoh.test/pengumuman',
+    author: { name: '  Tim Zypher  ', icon_url: 'https://img.test/a.png', url: 'ftp://salah' },
+    footer: { text: 'Dikirim oleh {member.name}', icon_url: 'bukan-url' },
+    timestamp: '2026-11-12T09:00:00Z',
+    fields: [
+      { name: 'Harga', value: 'Rp10.000', inline: true },
+      { name: 'Kosong', value: '   ' },
+      { name: 'Jadwal', value: 'Senin' },
+    ],
+  });
+  assert.equal(extra.url, 'https://contoh.test/pengumuman', 'URL judul http diterima');
+  assert.equal(extra.author!.name, 'Tim Zypher', 'nama penulis dirapikan');
+  assert.equal(extra.author!.url, undefined, 'URL penulis bukan http dibuang');
+  assert.equal(extra.author!.icon_url, 'https://img.test/a.png', 'ikon penulis diterima');
+  assert.equal(extra.footer!.text, 'Dikirim oleh {member.name}', 'footer boleh bertemplat');
+  assert.equal(extra.footer!.icon_url, undefined, 'ikon footer bukan URL dibuang');
+  assert.equal(extra.fields!.length, 2, 'bidang tanpa isi dibuang');
+  assert.equal(extra.fields![0]!.inline, true, 'penanda sebaris dipertahankan');
+  assert.equal(extra.timestamp, '2026-11-12T09:00:00.000Z', 'stempel waktu dibakukan ISO');
+  assert.ok(dropped.some((a) => a.includes('bidang')), 'bidang kosong dilaporkan');
+
+  /* Stempel waktu yang tidak bisa diurai ditolak, bukan diteruskan ke Discord. */
+  const waktuSalah = sanitizeEmbedExtra({ timestamp: 'kemarin sore' });
+  assert.equal(waktuSalah.extra.timestamp, undefined);
+  assert.ok(waktuSalah.dropped.some((a) => a.includes('ISO 8601')));
+
+  /* Batas Discord ditegakkan: 25 bidang, dan sisanya dilaporkan SEKALI. */
+  const banyak = sanitizeEmbedExtra({
+    fields: Array.from({ length: 30 }, (_, i) => ({ name: 'B' + i, value: 'isi' })),
+  });
+  assert.equal(banyak.extra.fields!.length, 25, 'bidang dibatasi 25');
+  assert.equal(banyak.dropped.filter((a) => a.includes('25')).length, 1, 'alasan batas bidang sekali');
+
+  /* --- builder: bagian admin masuk ke embed, dengan template --- */
+  const hasil = buildClassicEmbed([{ kind: 'text', value: 'Isi pesan' }], {
+    title: 'Judul',
+    extra: {
+      url: 'https://contoh.test/x',
+      author: { name: 'Tim {server.name}' },
+      footer: { text: 'oleh {member.name}' },
+      fields: [{ name: 'Poin', value: '{member.name} dapat poin', inline: true }],
+      timestamp: '2026-11-12T09:00:00.000Z',
+    },
+    template: { 'server.name': 'Zypher', 'member.name': 'Wahyu' },
+  })!;
+  assert.ok(hasil, 'embed dengan bagian admin terbentuk');
+  assert.equal(hasil.embed.url, 'https://contoh.test/x');
+  assert.equal(hasil.embed.author!.name, 'Tim Zypher', 'template berlaku di nama penulis');
+  assert.equal(hasil.embed.footer!.text, 'oleh Wahyu', 'template berlaku di footer');
+  assert.equal(hasil.embed.fields![0]!.value, 'Wahyu dapat poin', 'template berlaku di bidang');
+  assert.equal(hasil.embed.timestamp, '2026-11-12T09:00:00.000Z');
+
+  /*
+   * Embed yang isinya HANYA bidang admin tetap sah: Discord menerimanya, dan
+   * admin yang menulis tiga bidang tanpa teks tidak boleh mendapat "embed
+   * kosong".
+   */
+  const hanyaBidang = buildClassicEmbed([], { extra: { fields: [{ name: 'A', value: 'B', inline: false }] } });
+  assert.ok(hanyaBidang, 'embed berisi bidang saja tetap dibuat');
+
+  /* --- penyimpanan: bertahan, dan bisa dibaca ulang --- */
+  const pesan = await repo.createCustomPost(GUILD, {
+    name: 'Embed lengkap',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Halo' }],
+    layout: 'embed',
+    embed: {
+      author: { name: 'Tim', icon_url: 'https://img.test/a.png' },
+      footer: { text: 'kaki' },
+      fields: [{ name: 'Satu', value: 'Dua', inline: true }],
+      timestamp: '2026-11-12T09:00:00Z',
+    },
+  });
+  assert.equal(pesan.embed.author!.name, 'Tim', 'penulis tersimpan');
+  assert.equal(pesan.embed.fields!.length, 1, 'bidang tersimpan');
+  assert.equal(pesan.embed.timestamp, '2026-11-12T09:00:00.000Z', 'stempel waktu dibakukan saat simpan');
+
+  /* Nilai asing di database tidak lolos mentah: dibaca lewat penyaring. */
+  await repo.updateCustomPost(GUILD, pesan.id, {
+    embed: { author: { name: 'Nama', icon_url: 'javascript:alert(1)' }, footer: { text: 'x'.repeat(3000) } },
+  });
+  const dibaca = await repo.getCustomPost(GUILD, pesan.id);
+  assert.equal(dibaca!.embed.author!.icon_url, undefined, 'URL berbahaya tidak tersimpan');
+  assert.equal(dibaca!.embed.footer!.text.length, 2048, 'footer dipotong ke batas Discord');
+
+  /* Tidak mengirim `embed` = bagian lama DIPERTAHANKAN (bukan dihapus). */
+  await repo.updateCustomPost(GUILD, pesan.id, { name: 'Ganti nama saja' });
+  const tetap = await repo.getCustomPost(GUILD, pesan.id);
+  assert.equal(tetap!.embed.author!.name, 'Nama', 'menyimpan field lain tidak menghapus bagian embed');
+
+  /* Mengirim null = dikosongkan, dan kolomnya jadi NULL. */
+  await repo.updateCustomPost(GUILD, pesan.id, { embed: null });
+  const kosong = await repo.getCustomPost(GUILD, pesan.id);
+  assert.deepEqual(kosong!.embed, {}, 'bagian embed bisa dikosongkan');
   await repo.deleteCustomPost(GUILD, pesan.id);
 });
 

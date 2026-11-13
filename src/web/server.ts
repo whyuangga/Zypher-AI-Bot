@@ -2304,6 +2304,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       threadName: sanitizeThreadName(payload.threadName),
       trigger: sanitizeTrigger(payload.trigger),
       layout: sanitizeLayout(payload.layout),
+      embed: payload.embed,
     });
     const { blocks: blokSah, dropped } = sanitizeBlocks(payload.blocks);
     // `usage` = hitungan versi SERVER. Dashboard boleh menghitung sendiri
@@ -2432,6 +2433,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
             postId: id,
             flags: post.flags,
             allowedMentions: post.allowedMentions,
+            embed: post.embed,
             roleButtons: roleButtons.map((b) => ({
               id: b.id,
               label: b.label,
@@ -2461,6 +2463,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
                 postId: id,
                 flags: post.flags,
                 allowedMentions: post.allowedMentions,
+                embed: post.embed,
                 roleButtons: roleButtons.map((b) => ({
                   id: b.id,
                   label: b.label,
@@ -2678,6 +2681,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         threadName: payload.threadName === undefined ? undefined : sanitizeThreadName(payload.threadName),
         trigger: payload.trigger === undefined ? undefined : sanitizeTrigger(payload.trigger),
         layout: payload.layout === undefined ? undefined : sanitizeLayout(payload.layout),
+        embed: payload.embed,
         channelId:
           payload.channelId === undefined
             ? undefined
