@@ -75,6 +75,15 @@ export interface EmbedExtra {
   fields?: EmbedField[];
   /** ISO 8601. Kosong = tanpa stempel waktu. */
   timestamp?: string;
+  /**
+   * Gambar kecil di kanan atas embed ini.
+   *
+   * Pada embed pertama, nilai ini MENANG atas thumbnail hasil blok: admin yang
+   * mengisi sendiri berarti memang ingin gambar itu.
+   */
+  thumbnail?: string;
+  /** Gambar besar embed ini (menggantikan gambar dari blok, kalau diisi). */
+  image?: string;
 }
 
 const BATAS_EXTRA = {
@@ -179,6 +188,14 @@ export function sanitizeEmbedExtra(input: unknown): { extra: EmbedExtra; dropped
     if (fields.length) extra.fields = fields;
   }
 
+  /* --- gambar: thumbnail & gambar besar --- */
+  const thumbnail = urlSah(source.thumbnail);
+  if (thumbnail) extra.thumbnail = thumbnail;
+  else if (teksAtauKosong(source.thumbnail, 2048)) dropped.push('thumbnail embed harus alamat http/https');
+  const gambar = urlSah(source.image);
+  if (gambar) extra.image = gambar;
+  else if (teksAtauKosong(source.image, 2048)) dropped.push('gambar embed harus alamat http/https');
+
   /* --- stempel waktu (ISO 8601) --- */
   const timestamp = teksAtauKosong(source.timestamp, 64);
   if (timestamp) {
@@ -201,7 +218,9 @@ export function embedExtraKosong(extra: EmbedExtra | null | undefined): boolean 
     !extra.footer?.text &&
     !(extra.fields?.length ?? 0) &&
     !extra.timestamp &&
-    !extra.color
+    !extra.color &&
+    !extra.thumbnail &&
+    !extra.image
   );
 }
 
@@ -490,6 +509,12 @@ function terapkanExtra(
       ...(extra.footer.icon_url ? { icon_url: extra.footer.icon_url } : {}),
     };
   }
+  /*
+   * Gambar dari admin menang atas gambar hasil blok pada embed pertama:
+   * mengisinya berarti admin memang ingin gambar itu, bukan gambar dari blok.
+   */
+  if (extra.thumbnail) embed.thumbnail = { url: extra.thumbnail };
+  if (extra.image) embed.image = { url: extra.image };
   if (extra.fields?.length) {
     embed.fields = extra.fields.map((field) => ({
       name: isiTemplate(field.name),

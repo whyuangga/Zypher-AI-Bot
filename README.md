@@ -389,8 +389,9 @@ menerima **variabel ala Discohook** (`{member.name}`, `{member.username}`,
 `{role}`, `{effect}`, `{selected_value}`, `{now}`, `{var.nama}`, …; daftar
 lengkapnya ada di kartu pengaturan), dan token yang salah tulis dibiarkan apa
 adanya supaya terlihat. Bentuk **Embed klasik** juga sudah bisa diisi penuh:
-**penulis**, **footer**, sampai **25 bidang** sebaris, **URL pada judul**, dan
-**stempel waktu** — bukan hanya lewat impor lagi. Satu pesan boleh memuat
+**penulis**, **footer**, sampai **25 bidang** sebaris, **URL pada judul**,
+**thumbnail**, **gambar besar**, **warna sendiri**, dan **stempel waktu** — bukan
+hanya lewat impor lagi. Satu pesan boleh memuat
 **sampai 10 embed** (tombol Add Embed ala Discohook), dan impor dari Discohook
 yang berisi embed kini mendarat sebagai **embed asli**, bukan kartu teks. Pesan
 yang **sudah terkirim di Discord** bisa ditarik balik ke editor lewat *Message
@@ -527,7 +528,7 @@ npm run models         # daftar model yang benar-benar tersedia di provider kamu
 npm run smoke # 432 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
 npm run smoke:pg       # 21 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # 15 pemeriksaan rantai fallback provider (server tiruan)
-npm run test:ui        # 131 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
+npm run test:ui        # 132 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
 npm run test:browser   # uji klik sungguhan di Chromium (butuh dashboard hidup)
 npm run verify         # semuanya sekaligus: typecheck ketat + smoke + fallback + UI
 npm run dashboard      # nyalakan dashboard web saja (node dist/web/standalone.js)

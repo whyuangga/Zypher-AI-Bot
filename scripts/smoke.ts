@@ -8075,6 +8075,31 @@ await testAsync('pesan: sampai 10 embed per pesan, masing-masing dengan bagian s
   );
   assert.equal(panjangEmbed({ title: 'ab', description: 'cde' }), 5, 'panjang dihitung seperti Discord');
 
+  /* --- thumbnail & gambar besar per embed --- */
+  const gambar = sanitizeEmbedList({
+    thumbnail: 'https://img.test/kecil.png',
+    image: 'javascript:alert(1)',
+    fields: [{ name: 'A', value: '1', inline: false }],
+  });
+  assert.equal(gambar.list[0]!.thumbnail, 'https://img.test/kecil.png', 'thumbnail diterima');
+  assert.equal(gambar.list[0]!.image, undefined, 'gambar berbahaya dibuang');
+  assert.ok(gambar.dropped.some((a) => a.includes('gambar embed')), 'alasannya dijelaskan');
+
+  const gambarDipakai = buildClassicEmbeds([{ kind: 'image', value: 'https://img.test/dari-blok.png' }], {
+    embedList: [{ thumbnail: 'https://img.test/kecil.png', image: 'https://img.test/besar.png' }],
+  });
+  assert.equal(gambarDipakai[0]!.embed.image!.url, 'https://img.test/besar.png', 'gambar admin menang atas blok');
+  assert.equal(gambarDipakai[0]!.embed.thumbnail!.url, 'https://img.test/kecil.png', 'thumbnail masuk');
+
+  /*
+   * Thumbnail saja TIDAK cukup untuk embed tambahan: Discord menuntut judul,
+   * isi, gambar, atau bidang. Thumbnail hanya pelengkap.
+   */
+  const thumbnailSaja = buildClassicEmbeds([{ kind: 'text', value: 'Isi' }], {
+    embedList: [{ footer: { text: 'satu' } }, { thumbnail: 'https://img.test/kecil.png' }],
+  });
+  assert.equal(thumbnailSaja.length, 1, 'embed tambahan berisi thumbnail saja tetap tidak cukup');
+
   /* --- warna per embed (Discohook memakai warna sendiri tiap embed) --- */
   const warna = sanitizeEmbedList({
     fields: [{ name: 'A', value: '1', inline: false }],

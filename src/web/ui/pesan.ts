@@ -497,6 +497,10 @@ export function pesanPage(options: PesanPageOptions): string {
         <input type="text" id="embedFooterText" placeholder="Teks footer (mis. Dikirim oleh {member.name})" style="flex:2;min-width:200px" />
         <input type="text" id="embedFooterIcon" placeholder="URL ikon footer" style="flex:1;min-width:160px" />
       </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input type="text" id="embedThumbnail" placeholder="URL thumbnail (gambar kecil di kanan atas)" style="flex:1;min-width:200px" />
+        <input type="text" id="embedImage" placeholder="URL gambar besar (menggantikan gambar dari blok)" style="flex:1;min-width:200px" />
+      </div>
       <input type="text" id="embedTimestamp" placeholder="Stempel waktu ISO 8601 (mis. 2026-11-12T09:00:00Z)" />
       <div class="subhead" style="margin-top:4px">Bidang embeds (maksimal 25 per embed)</div>
       <div id="embedFieldList" class="block-list"></div>
@@ -3378,7 +3382,7 @@ var EMBED_FIELDS_MAKS = 25;
 
 /** Satu bagian embed kosong. */
 function embarKosong() {
-  return { url: '', color: '', author: {}, footer: {}, fields: [], timestamp: '' };
+  return { url: '', color: '', author: {}, footer: {}, fields: [], timestamp: '', thumbnail: '', image: '' };
 }
 
 /** Bagian embed yang sedang diedit (selalu ada, walau daftarnya kosong). */
@@ -3404,6 +3408,8 @@ function embedTerisi(extra) {
       extra.color ||
       (extra.author && extra.author.name) ||
       (extra.footer && extra.footer.text) ||
+      extra.thumbnail ||
+      extra.image ||
       (extra.fields && extra.fields.length) ||
       extra.timestamp,
   );
@@ -3493,6 +3499,8 @@ function loadEmbedExtra(data) {
     return {
       url: String(sumber.url || ''),
       color: String(sumber.color || ''),
+      thumbnail: String(sumber.thumbnail || ''),
+      image: String(sumber.image || ''),
       author: {
         name: String((sumber.author || {}).name || ''),
         url: String((sumber.author || {}).url || ''),
@@ -3604,6 +3612,15 @@ function renderEmbedExtra() {
         : 'ikut aksen pesan (' + accentNow() + ')';
     }
   }
+
+  isianEmbed('embedThumbnail', {
+    get: function () { return bacaEmbed('thumbnail'); },
+    set: function (v) { embedAktif().thumbnail = v.trim(); },
+  }, 'URL thumbnail (gambar kecil di kanan atas)');
+  isianEmbed('embedImage', {
+    get: function () { return bacaEmbed('image'); },
+    set: function (v) { embedAktif().image = v.trim(); },
+  }, 'URL gambar besar (menggantikan gambar dari blok)');
 
   isianEmbed('embedTimestamp', {
     get: function () { return bacaEmbed('timestamp'); },
@@ -3775,6 +3792,8 @@ function payloadEmbed() {
     var satu = {};
     if (extra.url) satu.url = extra.url;
     if (extra.color) satu.color = extra.color;
+    if (extra.thumbnail) satu.thumbnail = extra.thumbnail;
+    if (extra.image) satu.image = extra.image;
     if (extra.timestamp) satu.timestamp = extra.timestamp;
     if (extra.author && extra.author.name) {
       satu.author = { name: extra.author.name };
@@ -4050,11 +4069,17 @@ function gambarSatuEmbed(host, dasar, extra, pakaiDasar) {
     });
     kotak.appendChild(daftarBidang);
   }
-  if (pakaiDasar && dasar.image) {
+  /*
+   * Gambar embed: isian admin menang atas gambar dari blok, sama seperti di
+   * server (terapkanExtra). Tanpa urutan yang sama, pratinjau bisa menampilkan
+   * gambar yang tidak akan terkirim.
+   */
+  var gambarUrl = (extra && extra.image) || (pakaiDasar ? dasar.image : null);
+  if (gambarUrl) {
     var gambar = document.createElement('div');
     gambar.className = 'preview-embed-image';
     // Alamat gambar dari admin: dipasang lewat style, bukan innerHTML.
-    gambar.style.backgroundImage = 'url("' + String(dasar.image).replace(/"/g, '%22') + '")';
+    gambar.style.backgroundImage = 'url("' + String(gambarUrl).replace(/"/g, '%22') + '")';
     kotak.appendChild(gambar);
   }
   if (extra && extra.footer && extra.footer.text) {

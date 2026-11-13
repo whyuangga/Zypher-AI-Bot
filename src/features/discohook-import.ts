@@ -578,6 +578,15 @@ export function embedKeExtra(raw: Raw): Record<string, unknown> {
       ...(asString(footer.icon_url).trim() ? { icon_url: asString(footer.icon_url).trim() } : {}),
     };
   }
+  /*
+   * Thumbnail & gambar besar ikut dipertahankan. Pada embed pertama bot tetap
+   * memakai gambar dari blok; nilai di sini menang karena ditulis eksplisit.
+   */
+  const thumbnail = mediaUrl(raw.thumbnail);
+  if (isHttpUrl(thumbnail)) hasil.thumbnail = thumbnail;
+  const gambar = mediaUrl(raw.image);
+  if (isHttpUrl(gambar)) hasil.image = gambar;
+
   const fields = asArray(raw.fields)
     .map(asObject)
     .filter((satu): satu is Raw => satu !== null)

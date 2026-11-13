@@ -2182,6 +2182,33 @@ await check('pesan: nama & avatar pengirim webhook ikut dikirim saat Simpan', as
   assert.equal(page.errors.length, 0, `editor webhook error: ${page.errors.join('|')}`);
 });
 
+await check('pesan: thumbnail & gambar besar per embed ikut tersimpan', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-embed-gambar');
+
+  assert.ok(html.includes('id="embedThumbnail"'), 'isian thumbnail ada');
+  assert.ok(html.includes('id="embedImage"'), 'isian gambar besar ada');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      resetEmbedExtra();
+      embedAktif().thumbnail = 'https://img.test/kecil.png';
+      embedAktif().image = 'https://img.test/besar.png';
+      var muatan = payloadEmbed();
+      loadEmbedExtra(muatan);
+      return { muatan: muatan, ulang: payloadEmbed() };
+    })()
+  `)) as {
+    muatan: Array<{ thumbnail?: string; image?: string }> | null;
+    ulang: Array<{ thumbnail?: string; image?: string }> | null;
+  };
+
+  assert.equal(hasil.muatan?.[0]?.thumbnail, 'https://img.test/kecil.png', 'thumbnail dikirim');
+  assert.equal(hasil.muatan?.[0]?.image, 'https://img.test/besar.png', 'gambar besar dikirim');
+  assert.equal(hasil.ulang?.[0]?.thumbnail, 'https://img.test/kecil.png', 'thumbnail bertahan setelah dimuat ulang');
+  assert.equal(page.errors.length, 0, `editor gambar embed error: ${page.errors.join('|')}`);
+});
+
 await check('pesan: izin ping & nama thread ikut dikirim, bawaan tanpa ping', async () => {
   const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
   const page = mountPage(html, 'uji-mention');

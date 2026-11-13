@@ -625,7 +625,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Discohook | Di sini |
 |---|---|
 | Container / Text Display / Section / Separator / Media Gallery / File / Action Row | ✅ |
-| Embed klasik (judul, penulis, footer, field, thumbnail, gambar) | ✅ judul, warna (**per embed**), isi, satu gambar, thumbnail, **penulis, footer, bidang (maks 25), URL judul, stempel waktu**, dan **sampai 10 embed per pesan** dengan naik/turun/duplikat (lihat **Batch 9**, **13**, **14**, **15**) |
+| Embed klasik (judul, penulis, footer, field, thumbnail, gambar) | ✅ judul, warna (**per embed**), isi, **thumbnail & gambar besar (per embed)**, **penulis, footer, bidang (maks 25), URL judul, stempel waktu**, dan **sampai 10 embed per pesan** dengan naik/turun/duplikat (lihat **Batch 9**, **13**, **14**, **15**, **21**) |
 | Poll | ❌ di Discohook pun masih dinonaktifkan |
 | Tombol link & tombol interaktif ber-flow | ✅ |
 | Select menu: string (flow per opsi), user/role/mentionable/channel | ✅ |
@@ -650,6 +650,28 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, satu gambar besar, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 21: thumbnail & gambar besar per embed
+
+Discohook memberi tiap embed dua isian gambar: **Thumbnail** (kecil, kanan atas)
+dan **Image** (besar, bawah). Bot sebelumnya hanya bisa mengambil keduanya dari
+blok — jadi embed kedua dan seterusnya tidak pernah punya gambar.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Thumbnail | hanya dari section beraksesori | **isian per embed** |
+| Gambar besar | hanya dari blok `image` pertama | **isian per embed** |
+| Urutan menang | — | isian admin **menang** atas gambar dari blok |
+| Impor Discohook | thumbnail & gambar dibuang | keduanya dipertahankan |
+
+Catatan:
+
+- Hanya `http/https` yang diterima; nilai lain dibuang saat disimpan dengan
+  alasan yang bisa dibaca.
+- Thumbnail saja **tidak** membuat embed tambahan bisa dikirim (Discord tetap
+  menuntut judul/isi/gambar/bidang) — gambarnya hanya pelengkap.
+- Pratinjau memakai urutan yang sama dengan server, supaya yang terlihat sama
+  dengan yang terkirim.
 
 ### Batch 20: muat pesan lalu perbarui pesan asalnya (Load yang utuh)
 
