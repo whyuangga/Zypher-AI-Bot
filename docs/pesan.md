@@ -653,6 +653,32 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
 
+### Batch 36: "tanpa kartu embed" tidak ikut bersama pesan embed
+
+Centang **tanpa kartu embed** berarti "jangan buatkan kartu dari tautan di
+teks". Pesan yang isinya memang `embeds` tidak boleh memakai flag itu —
+Discohook sendiri memperingatkannya di kartu Flags ("cannot be used in
+conjunction with rich embeds"). Di sini centang itu tetap diteruskan, jadi
+pengumuman bergambar yang disetel senyap gagal terkirim dengan galat yang tidak
+menyebut flag sebagai penyebab.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Flag 4 pada pesan embed | diteruskan → pesan ditolak | dilepas, alasannya masuk `dropped` |
+| Flag 4096 (tanpa notifikasi) | diteruskan | tetap diteruskan |
+| Panel payload & kode generator | memakai `post.flags` mentah | memakai flag yang benar-benar dikirim |
+| Semua jalur kirim | aturan harus diingat per jalur | satu penyaring (`flagsUntukEmbed`) dipakai pengirim |
+
+Catatan:
+
+- Penyaringan ada di **pengirim** (`sendOrUpdateEmbedPost`), bukan di tiap
+  pemanggil: jalur manual, jadwal, pemicu member, aksi flow, dan channel
+  tambahan otomatis ikut aturan yang sama.
+- Panel "payload JSON & generator kode" menjanjikan *yang benar-benar dikirim*,
+  jadi ia memakai hasil penyaring yang sama — bukan angka mentah dari database.
+- Petunjuk di kartu pengaturan menyebutkan aturan ini sebelum admin mencentang,
+  bukan hanya sesudah pesan gagal.
+
 ### Batch 35: semua pesan Discohook bisa masuk dokumen sekaligus
 
 Satu berkas Discohook boleh berisi beberapa pesan (`messages[]`), tetapi impor

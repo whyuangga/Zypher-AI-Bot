@@ -426,7 +426,7 @@ export function pesanPage(options: PesanPageOptions): string {
     <label class="menu-flags">
       <input type="checkbox" id="postFlagNotif" /> tanpa notifikasi
     </label>
-    <p class="hint">Sama seperti "Message Flags" di Discohook. Flag lain (Components V2) diurus bot dan tidak perlu diatur.</p>
+    <p class="hint">Sama seperti "Message Flags" di Discohook. Flag lain (Components V2) diurus bot dan tidak perlu diatur. Pada <b>Bentuk pesan: Embed klasik</b>, "tanpa kartu embed" diabaikan — pesan yang berisi embed tidak boleh membawa flag itu (Discord menolaknya), dan alasannya dilaporkan saat kirim.</p>
   </div>
   <div style="grid-column:1/-1">
     <label class="field">Kirim juga ke channel lain</label>

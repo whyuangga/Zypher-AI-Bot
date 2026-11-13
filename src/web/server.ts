@@ -108,7 +108,7 @@ import { messageToDraft, parseMessageLink, type LoadedMessage } from '../feature
 import { listGuildRoles } from '../features/role-buttons.js';
 import { sharePage } from './ui/share.js';
 import { payloadUntukPesan } from '../features/custom-post-send.js';
-import { buildClassicEmbeds, validateEmbeds } from '../features/post-embed.js';
+import { buildClassicEmbeds, flagsUntukEmbed, validateEmbeds } from '../features/post-embed.js';
 import { CODEGEN_LIBRARIES, generateCodegen, generateEmbedCodegen } from '../features/post-codegen.js';
 import { ACTION_LIMITS } from '../features/post-actions.js';
 import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
@@ -2340,7 +2340,14 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         embedList: post.embed,
       });
       const embeds = daftar.map((satu) => satu.embed);
-      const droppedEmbed = daftar.flatMap((satu) => satu.dropped);
+      /*
+       * `tanpa kartu embed` tidak ikut dikirim bersama embed. Disaring di sini
+       * juga (bukan hanya di pengirim) supaya payload, kode generator, dan
+       * pesan sungguhan memakai flag yang SAMA — panel ini menjanjikan "yang
+       * benar-benar dikirim", jadi keduanya tidak boleh berbeda.
+       */
+      const aturFlagEmbed = flagsUntukEmbed(post.flags);
+      const droppedEmbed = [...daftar.flatMap((satu) => satu.dropped), ...aturFlagEmbed.dropped];
       /*
        * Tombol & menu role tetap ikut terkirim bersama embed sebagai komponen
        * interaktif. Kode di bawah hanya menggambarkan `embeds`, jadi bagian ini
@@ -2359,14 +2366,14 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         blocks: post.blocks,
         allowedMentions: post.allowedMentions,
         threadName: post.threadName,
-        flags: post.flags,
+        flags: aturFlagEmbed.flags,
         layout: 'embed',
         embeds,
         components: null,
         dropped: [...droppedEmbed, ...validateEmbeds(embeds)],
         codegen: generateEmbedCodegen(embeds, pilihan, {
           threadName: post.threadName,
-          flags: post.flags,
+          flags: aturFlagEmbed.flags,
         }),
         library: pilihan,
       });

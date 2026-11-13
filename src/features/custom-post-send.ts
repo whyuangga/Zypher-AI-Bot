@@ -36,7 +36,9 @@ import {
 } from 'discord.js';
 import { accentToNumber, buildPostPayload, type BuiltPost, type PostBlock } from './custom-post.js';
 import type { SeriesMessage } from './post-series.js';
-import { buildClassicEmbeds, validateEmbeds, type EmbedExtra } from './post-embed.js';
+import { buildClassicEmbeds, validateEmbeds, type EmbedExtra,
+  flagsUntukEmbed,
+} from './post-embed.js';
 import { roleButtonId, roleMenuId } from './role-buttons.js';
 import {
   deleteChannelWebhook,
@@ -508,17 +510,24 @@ export async function sendOrUpdateEmbedPost(options: {
    * dua cara menyusun tombol akan menghasilkan tombol yang berperilaku beda.
    */
   const komponen = await komponenInteraktif(options);
+  /*
+   * `tanpa kartu embed` tidak boleh ikut bersama embed (lihat flagsUntukEmbed).
+   * Disaring di SUMBERNYA — di sini — supaya semua jalur kirim (manual,
+   * jadwal, pemicu member, aksi flow, channel tambahan) mendapat aturan yang
+   * sama tanpa perlu mengingatnya satu per satu.
+   */
+  const aturFlag = flagsUntukEmbed(options.flags);
   const payload = {
     embeds: daftar.map((satu) => satu.embed),
     ...(komponen.length ? { components: komponen } : {}),
-    ...(options.flags ? { flags: options.flags } : {}),
+    ...(aturFlag.flags ? { flags: aturFlag.flags } : {}),
     ...(options.allowedMentions ? { allowedMentions: { ...options.allowedMentions, repliedUser: false } } : {}),
     // Embed tidak membawa lampiran; berkas pada blok `file` dilaporkan admin.
     attachments: [] as [],
   };
 
   const channel = await resolveChannel(options.client, options.channelId);
-  const dropped = daftar.flatMap((satu) => satu.dropped);
+  const dropped = [...daftar.flatMap((satu) => satu.dropped), ...aturFlag.dropped];
 
   if (options.messageId) {
     const lama = await channel.messages.fetch(options.messageId).catch((): null => null);

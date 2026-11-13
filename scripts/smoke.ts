@@ -10958,6 +10958,27 @@ const discoSample = {
   expires: '2026-11-19T03:59:26.448Z',
 };
 
+await testAsync('embed: flag "tanpa kartu embed" tidak ikut bersama embed', async () => {
+  const { flagsUntukEmbed } = await import('../src/features/post-embed.js');
+
+  /*
+   * Discohook memperingatkan hal yang sama di kartu Flags-nya. Meneruskan flag
+   * ini membuat pesan bergambar gagal terkirim dengan galat yang tidak
+   * menyebut flag sebagai penyebab.
+   */
+  const dilepas = flagsUntukEmbed(4 | 4096);
+  assert.equal(dilepas.flags, 4096, 'flag tanpa-notifikasi tetap dipakai');
+  assert.ok(
+    dilepas.dropped[0]!.includes('tanpa kartu embed'),
+    'bagian yang dilepas dilaporkan, bukan hilang diam-diam',
+  );
+
+  assert.equal(flagsUntukEmbed(4).flags, 0, 'hanya flag itu → tidak ada flag tersisa');
+  assert.equal(flagsUntukEmbed(4096).flags, 4096, 'flag lain tidak tersentuh');
+  assert.equal(flagsUntukEmbed(0).dropped.length, 0, 'tanpa flag tidak ada laporan');
+  assert.equal(flagsUntukEmbed(undefined).flags, 0, 'undefined aman');
+});
+
 await testAsync('discohook: tautan ?data= / ?message= dibaca tanpa mengunduh apa pun', async () => {
   const { parseDiscohookDataLink } = await import('../src/features/discohook-import.js');
 

@@ -629,6 +629,28 @@ function jagaTotal(embed: ClassicEmbed, dropped: string[]): void {
 }
 
 /** `#rrggbb` → angka warna Discord. Null = tanpa warna (embed abu-abu). */
+/**
+ * Flag pesan yang BOLEH ikut bersama embed klasik.
+ *
+ * `SUPPRESS_EMBEDS` (4) ada untuk menahan kartu tautan yang dibuat Discord
+ * dari URL di `content`. Pesan yang isinya memang `embeds` tidak boleh
+ * memakainya — Discohook memperingatkan hal yang sama di kartu Flags-nya
+ * ("cannot be used in conjunction with rich embeds"). Kalau diteruskan, admin
+ * menyusun pengumuman bergambar, mencentang "tanpa kartu embed", lalu pesannya
+ * gagal terkirim dengan galat yang tidak menyebut flag sebagai penyebab.
+ *
+ * Yang dikembalikan hanya flag yang benar-benar terpakai, plus alasan bila ada
+ * yang dilepas — supaya pemanggil bisa melaporkannya, bukan membuang diam-diam.
+ */
+export function flagsUntukEmbed(flags: number | null | undefined): { flags: number; dropped: string[] } {
+  const angka = Number.isFinite(Number(flags)) ? Math.trunc(Number(flags)) : 0;
+  const bersih = angka & ~4;
+  return {
+    flags: bersih,
+    dropped: angka & 4 ? ['"tanpa kartu embed" diabaikan: pesan ini berisi embed, dan Discord tidak mengizinkan keduanya'] : [],
+  };
+}
+
 export function warnaDari(accent: string | null | undefined): number | null {
   const teks = (accent ?? '').trim().replace(/^#/, '');
   if (!/^[0-9a-fA-F]{6}$/.test(teks)) return null;
