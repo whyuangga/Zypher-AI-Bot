@@ -34,9 +34,15 @@ import {
   type Message,
   type TextChannel,
 } from 'discord.js';
-import { accentToNumber, buildPostPayload, type BuiltPost, type PostBlock } from './custom-post.js';
+import {
+  accentToNumber,
+  buildPostPayload,
+  type BuiltPost,
+  type PostBlock,
+} from './custom-post.js';
 import type { SeriesMessage } from './post-series.js';
 import { buildClassicEmbeds, validateEmbeds, type EmbedExtra,
+  embedAttachments,
   flagsUntukEmbed,
 } from './post-embed.js';
 import { roleButtonId, roleMenuId } from './role-buttons.js';
@@ -156,6 +162,47 @@ export interface SendRoleMenu {
   options: Array<{ roleId: string; label: string; emoji?: string | null; description?: string | null }>;
 }
 
+/**
+ * Ubah daftar berkas hasil penyusun payload menjadi lampiran Discord.
+ *
+ * Dipakai DUA jalur: Components V2 dan embed klasik. Sebelumnya logika ini
+ * hanya hidup di jalur V2, sehingga pesan bergaya embed membuang setiap blok
+ * `file` dengan alasan "berkas jadi lampiran" — padahal lampirannya tidak
+ * pernah dibuat. Discohook sendiri mengirim lampiran bersama embed.
+ *
+ * Satu berkas gagal tidak menggagalkan pesan: namanya dilaporkan, karena
+ * komponen yang merujuk `attachment://` itu akan hilang bersama lampirannya.
+ */
+export async function buatLampiran(
+  daftar: ReadonlyArray<{ dataUri?: string; remoteUrl?: string; name: string }>,
+): Promise<{ files: AttachmentBuilder[]; droppedFiles: string[] }> {
+  const droppedFiles: string[] = [];
+  const files: AttachmentBuilder[] = [];
+
+  for (const file of daftar) {
+    if (file.remoteUrl) {
+      try {
+        const res = await fetch(file.remoteUrl, { redirect: 'follow' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const isi = Buffer.from(await res.arrayBuffer());
+        // Batas aman: berkas besar bisa memakan memori bot (container kecil).
+        if (isi.length > 8 * 1024 * 1024) {
+          throw new Error('berkas lebih dari 8 MB');
+        }
+        files.push(new AttachmentBuilder(isi, { name: file.name }));
+      } catch (error) {
+        const sebab = error instanceof Error ? error.message : String(error);
+        droppedFiles.push(`${file.name} tidak bisa diunduh (${sebab})`);
+      }
+      continue;
+    }
+    const base64 = (file.dataUri ?? '').slice((file.dataUri ?? '').indexOf(',') + 1);
+    files.push(new AttachmentBuilder(Buffer.from(base64, 'base64'), { name: file.name }));
+  }
+
+  return { files, droppedFiles };
+}
+
 async function buildPayload(
   blocks: PostBlock[],
   roleButtons: SendRoleButton[] = [],
@@ -232,42 +279,12 @@ async function buildPayload(
   });
   if (!built) return null;
 
-  /** Berkas yang gagal diunduh — dikembalikan agar admin tahu, bukan hilang diam-diam. */
-  const droppedFiles: string[] = [];
-
   /*
-   * Lampiran sungguhan.
-   *
-   * Dua sumber:
-   *  - unggahan dashboard (data URI): diubah jadi Buffer di sini, karena
-   *    Discord menolak data URI mentah di komponen V2;
-   *  - berkas dari URL: diunduh lebih dulu. `FileBuilder` hanya menerima
-   *    attachment://, jadi berkas jarak-jauh harus jadi lampiran sungguhan.
+   * Lampiran sungguhan: unggahan dashboard (data URI) diubah jadi Buffer, dan
+   * berkas dari URL diunduh lebih dulu — `FileBuilder` hanya menerima
+   * `attachment://`, jadi berkas jarak-jauh harus jadi lampiran sungguhan.
    */
-  const files: AttachmentBuilder[] = [];
-  for (const file of built.files) {
-    if (file.remoteUrl) {
-      try {
-        const res = await fetch(file.remoteUrl, { redirect: 'follow' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const isi = Buffer.from(await res.arrayBuffer());
-        // Batas aman: berkas besar bisa memakan memori bot (container kecil).
-        if (isi.length > 8 * 1024 * 1024) {
-          throw new Error('berkas lebih dari 8 MB');
-        }
-        files.push(new AttachmentBuilder(isi, { name: file.name }));
-      } catch (error) {
-        // Satu berkas gagal tidak boleh menggagalkan seluruh pesan: komponennya
-        // dirujuk lewat attachment:// yang tidak ada, jadi komponen itu dibuang
-        // dengan alasan yang bisa dibaca admin.
-        const sebab = error instanceof Error ? error.message : String(error);
-        droppedFiles.push(`${file.name} tidak bisa diunduh (${sebab})`);
-      }
-      continue;
-    }
-    const base64 = file.dataUri.slice(file.dataUri.indexOf(',') + 1);
-    files.push(new AttachmentBuilder(Buffer.from(base64, 'base64'), { name: file.name }));
-  }
+  const { files, droppedFiles } = await buatLampiran(built.files);
 
   return {
     components: built.components as ContainerBuilder[],
@@ -517,23 +534,42 @@ export async function sendOrUpdateEmbedPost(options: {
    * sama tanpa perlu mengingatnya satu per satu.
    */
   const aturFlag = flagsUntukEmbed(options.flags);
+  /*
+   * Lampiran: blok `file` di pesan embed IKUT terkirim (Discohook pun begitu).
+   * Dulu jalur ini mengirim `attachments: []` dan hanya melaporkan "berkas jadi
+   * lampiran" — padahal tidak ada lampiran yang dibuat, jadi berkas yang
+   * diunggah admin tidak pernah sampai ke Discord.
+   */
+  const berkas = embedAttachments(options.blocks);
+  const lampiran = await buatLampiran(berkas.attachments);
   const payload = {
     embeds: daftar.map((satu) => satu.embed),
     ...(komponen.length ? { components: komponen } : {}),
     ...(aturFlag.flags ? { flags: aturFlag.flags } : {}),
     ...(options.allowedMentions ? { allowedMentions: { ...options.allowedMentions, repliedUser: false } } : {}),
-    // Embed tidak membawa lampiran; berkas pada blok `file` dilaporkan admin.
-    attachments: [] as [],
+    ...(lampiran.files.length ? { files: lampiran.files } : {}),
   };
 
   const channel = await resolveChannel(options.client, options.channelId);
-  const dropped = [...daftar.flatMap((satu) => satu.dropped), ...aturFlag.dropped];
+  const dropped = [
+    ...daftar.flatMap((satu) => satu.dropped),
+    ...aturFlag.dropped,
+    ...berkas.dropped,
+    ...lampiran.droppedFiles,
+  ];
+  const droppedFiles = lampiran.droppedFiles;
 
   if (options.messageId) {
     const lama = await channel.messages.fetch(options.messageId).catch((): null => null);
     if (lama) {
-      await lama.edit(payload);
-      return { messageId: lama.id, edited: true, dropped, droppedFiles: [] };
+      /*
+       * Saat memperbarui, lampiran lama harus diganti seluruhnya — sama seperti
+       * jalur V2. Tanpa `attachments: []`, Discord MENAMBAH lampiran baru di
+       * samping yang lama, jadi pesan bertambah gambar setiap kali dikirim
+       * ulang.
+       */
+      await lama.edit({ ...payload, attachments: [] });
+      return { messageId: lama.id, edited: true, dropped, droppedFiles };
     }
     logger.info(`Pesan embed ${options.messageId} sudah tidak ada di channel — mengirim baru.`);
   }
@@ -552,7 +588,7 @@ export async function sendOrUpdateEmbedPost(options: {
       .catch((): null => null);
     if (!thread) dropped.push('thread tidak bisa dibuat (izin Create Public Threads?)');
   }
-  return { messageId: sent.id, edited: false, dropped, droppedFiles: [] };
+  return { messageId: sent.id, edited: false, dropped, droppedFiles };
 }
 
 /** Tombol & menu role sebagai komponen di luar embed. */

@@ -10958,6 +10958,54 @@ const discoSample = {
   expires: '2026-11-19T03:59:26.448Z',
 };
 
+await testAsync('embed: blok file dikirim sebagai lampiran, bukan dibuang', async () => {
+  const { embedAttachments, buildClassicEmbeds } = await import('../src/features/post-embed.js');
+
+  /*
+   * Dulu blok `file` hanya dilaporkan "berkas jadi lampiran, bukan bagian
+   * embed" lalu dibuang — padahal tidak ada lampiran yang dibuat, jadi berkas
+   * yang diunggah admin tidak pernah sampai ke Discord.
+   */
+  const hasil = embedAttachments([
+    { kind: 'file', value: 'https://cdn.test/dokumen.pdf', name: 'Dokumen Rilis.pdf' },
+    { kind: 'file', value: '', data: 'data:image/png;base64,AAAA', name: 'logo.png' },
+    { kind: 'file', value: 'bukan-url', name: 'rusak.txt' },
+    { kind: 'text', value: 'bukan berkas' },
+  ]);
+
+  assert.equal(hasil.attachments.length, 2, 'dua berkas sah jadi lampiran');
+  assert.equal(hasil.attachments[0]!.remoteUrl, 'https://cdn.test/dokumen.pdf', 'URL jarak-jauh diunduh saat kirim');
+  assert.equal(hasil.attachments[0]!.name, 'Dokumen-Rilis.pdf', 'nama lampiran dibersihkan dari spasi');
+  assert.equal(hasil.attachments[1]!.dataUri, 'data:image/png;base64,AAAA', 'unggahan dashboard jadi data URI');
+  assert.ok(
+    hasil.dropped.some((alasan) => alasan.includes('rusak.txt')),
+    'berkas tidak sah dilaporkan, bukan hilang diam-diam',
+  );
+
+  /*
+   * Embed TIDAK boleh lagi mengeluh "berkas jadi lampiran" — kalimat itu
+   * menyesatkan selama lampirannya tidak pernah dibuat.
+   */
+  const susun = buildClassicEmbeds(
+    [
+      { kind: 'text', value: 'Pengumuman' },
+      { kind: 'file', value: 'https://cdn.test/a.pdf', name: 'a.pdf' },
+    ],
+    { accent: '#6d8cff', title: 'Rilis' },
+  );
+  assert.ok(
+    !susun.flatMap((satu) => satu.dropped).some((alasan) => alasan.includes('berkas jadi lampiran')),
+    'tidak ada laporan menyesatkan soal berkas',
+  );
+
+  // Batas 10 lampiran per pesan ditegakkan di sini, bukan oleh Discord.
+  const banyak = embedAttachments(
+    Array.from({ length: 12 }, (_, i) => ({ kind: 'file', value: `https://cdn.test/${i}.txt`, name: `${i}.txt` })),
+  );
+  assert.equal(banyak.attachments.length, 10, 'lampiran dibatasi 10');
+  assert.ok(banyak.dropped.some((alasan) => alasan.includes('dibatasi 10')));
+});
+
 await testAsync('embed: flag "tanpa kartu embed" tidak ikut bersama embed', async () => {
   const { flagsUntukEmbed } = await import('../src/features/post-embed.js');
 

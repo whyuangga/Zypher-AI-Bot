@@ -108,7 +108,12 @@ import { messageToDraft, parseMessageLink, type LoadedMessage } from '../feature
 import { listGuildRoles } from '../features/role-buttons.js';
 import { sharePage } from './ui/share.js';
 import { payloadUntukPesan } from '../features/custom-post-send.js';
-import { buildClassicEmbeds, flagsUntukEmbed, validateEmbeds } from '../features/post-embed.js';
+import {
+  buildClassicEmbeds,
+  embedAttachments,
+  flagsUntukEmbed,
+  validateEmbeds,
+} from '../features/post-embed.js';
 import { CODEGEN_LIBRARIES, generateCodegen, generateEmbedCodegen } from '../features/post-codegen.js';
 import { ACTION_LIMITS } from '../features/post-actions.js';
 import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
@@ -2347,7 +2352,17 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
        * benar-benar dikirim", jadi keduanya tidak boleh berbeda.
        */
       const aturFlagEmbed = flagsUntukEmbed(post.flags);
-      const droppedEmbed = [...daftar.flatMap((satu) => satu.dropped), ...aturFlagEmbed.dropped];
+      /*
+       * Lampiran blok `file` ikut terkirim, jadi panel ini harus menyebutnya.
+       * Tanpa baris ini admin melihat daftar kosong padahal berkasnya terkirim
+       * — dan sebaliknya, berkas yang gagal disaring pun harus terlihat.
+       */
+      const berkasEmbed = embedAttachments(post.blocks);
+      const droppedEmbed = [
+        ...daftar.flatMap((satu) => satu.dropped),
+        ...aturFlagEmbed.dropped,
+        ...berkasEmbed.dropped,
+      ];
       /*
        * Tombol & menu role tetap ikut terkirim bersama embed sebagai komponen
        * interaktif. Kode di bawah hanya menggambarkan `embeds`, jadi bagian ini
@@ -2370,6 +2385,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         layout: 'embed',
         embeds,
         components: null,
+        attachments: berkasEmbed.attachments.map((satu) => ({ name: satu.name })),
         dropped: [...droppedEmbed, ...validateEmbeds(embeds)],
         codegen: generateEmbedCodegen(embeds, pilihan, {
           threadName: post.threadName,

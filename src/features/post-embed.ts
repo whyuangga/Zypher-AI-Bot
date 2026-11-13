@@ -293,6 +293,8 @@ const BATAS = {
    * dokumen yang diimpor dari sana tidak terpotong di sini.
    */
   embeds: 10,
+  /** Discord: maksimal 10 lampiran per pesan (batas yang sama di semua jalur). */
+  attachments: 10,
 } as const;
 
 /** Blok teks yang dipakai membangun embed (bentuk dari `PostBlock`). */
@@ -484,7 +486,11 @@ function blocksToEmbed(blocks: EmbedBlock[], opsi: BuildEmbedOptions): EmbedBuil
       continue;
     }
     if (blok.kind === 'file') {
-      dropped.push('berkas jadi lampiran, bukan bagian embed');
+      /*
+       * Berkas DIKIRIM sebagai lampiran (lihat `embedAttachments`), bukan
+       * dibuang. Dulu pesan ini hanya berbunyi "jadi lampiran" padahal tidak
+       * ada lampiran yang dibuat — berkas admin hilang tanpa jejak.
+       */
       continue;
     }
     if (blok.kind === 'button' || blok.kind === 'select') {
@@ -629,6 +635,50 @@ function jagaTotal(embed: ClassicEmbed, dropped: string[]): void {
 }
 
 /** `#rrggbb` → angka warna Discord. Null = tanpa warna (embed abu-abu). */
+/** Satu berkas yang harus ikut terkirim bersama embed. */
+export interface EmbedAttachment {
+  /** Data URI unggahan dashboard (kosong kalau berkasnya dari URL). */
+  dataUri?: string;
+  /** URL berkas jarak-jauh yang harus diunduh saat mengirim. */
+  remoteUrl?: string;
+  /** Nama lampiran; dipakai juga oleh `attachment://` di dalam embed. */
+  name: string;
+}
+
+/**
+ * Kumpulkan blok `file` menjadi daftar lampiran untuk pesan embed.
+ *
+ * Discohook mengirim lampiran bersama embed; di sini blok `file` dulu hanya
+ * dilaporkan "berkas jadi lampiran, bukan bagian embed" lalu DIBUANG — admin
+ * mengunggah berkas dan berkasnya tidak pernah sampai. Nama lampiran dipakai
+ * apa adanya supaya embed yang menunjuk `attachment://<nama>` tetap nyambung.
+ */
+export function embedAttachments(blocks: EmbedBlock[]): {
+  attachments: EmbedAttachment[];
+  dropped: string[];
+} {
+  const attachments: EmbedAttachment[] = [];
+  const dropped: string[] = [];
+  for (const blok of blocks) {
+    if (blok.kind !== 'file') continue;
+    const url = String(blok.value ?? '').trim();
+    const dataUri = String(blok.data ?? '').trim();
+    if (!dataUri && !/^https?:\/\//i.test(url)) {
+      dropped.push(`berkas "${(blok.name || url || '(kosong)').slice(0, 40)}" dilewati (URL harus http/https)`);
+      continue;
+    }
+    if (attachments.length >= BATAS.attachments) {
+      dropped.push(`lampiran dibatasi ${BATAS.attachments} per pesan (batas Discord)`);
+      break;
+    }
+    const nama = String(blok.name ?? '')
+      .replace(/[^A-Za-z0-9._-]/g, '-')
+      .slice(0, 60) || (url.split('/').pop() ?? 'berkas').replace(/[^A-Za-z0-9._-]/g, '-').slice(0, 60) || 'berkas';
+    attachments.push(dataUri ? { dataUri, name: nama } : { remoteUrl: url, name: nama });
+  }
+  return { attachments, dropped };
+}
+
 /**
  * Flag pesan yang BOLEH ikut bersama embed klasik.
  *

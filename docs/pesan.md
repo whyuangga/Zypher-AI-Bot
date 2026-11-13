@@ -653,6 +653,35 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
 
+### Batch 37: blok berkas ikut terkirim di pesan embed
+
+Blok **Berkas** mengirim lampiran di pesan Components V2, tetapi pada **Bentuk
+pesan: Embed klasik** ia hanya dilaporkan "berkas jadi lampiran, bukan bagian
+embed" lalu **dibuang** — padahal tidak ada lampiran yang dibuat. Admin
+mengunggah PDF atau ZIP, melihat catatan itu, dan berkasnya tidak pernah sampai
+ke Discord.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Blok `file` pada pesan embed | dibuang | dikirim sebagai lampiran |
+| Berkas dari URL | — | diunduh saat kirim (batas 8 MB), gagal → dilaporkan |
+| Unggahan dashboard (data URI) | — | jadi lampiran |
+| Nama lampiran | — | mengikuti `name` blok (dibersihkan), sehingga `attachment://` tetap nyambung |
+| Batas lampiran | hanya dijaga Discord | 10 per pesan, alasannya dilaporkan |
+| Pesan diperbarui | lampiran baru menumpuk | lampiran lama diganti (`attachments: []`) |
+| Panel payload | daftar lampiran kosong | nama lampiran ikut ditampilkan |
+
+Catatan:
+
+- Pembuatan lampiran dipindah ke satu fungsi (`buatLampiran`) yang dipakai
+  jalur V2 **dan** embed. Sebelumnya logikanya hanya ada di jalur V2; menyalin
+  ulang ke jalur embed berarti dua aturan batas ukuran yang bisa menyimpang.
+- Saat memperbarui pesan, lampiran lama diganti seluruhnya — sama seperti jalur
+  V2. Tanpa itu Discord **menambah** lampiran baru di samping yang lama, jadi
+  pesan bertambah berkas setiap kali dikirim ulang.
+- Kalimat menyesatkan "berkas jadi lampiran" dihapus dari laporan, karena
+  sekarang kalimat itu bukan lagi alasan untuk tidak mengirim apa pun.
+
 ### Batch 36: "tanpa kartu embed" tidak ikut bersama pesan embed
 
 Centang **tanpa kartu embed** berarti "jangan buatkan kartu dari tautan di
