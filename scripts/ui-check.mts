@@ -3403,6 +3403,41 @@ await check('pesan: impor Discohook memulihkan pengaturan tingkat pesan', async 
   assert.equal(page.errors.length, 0, `impor Discohook error: ${page.errors.join('|')}`);
 });
 
+await check('pesan: thread yang sudah ada muncul sebagai tujuan kirim', async () => {
+  /*
+   * Daftar tujuan memuat channel teks DAN thread (padanan ?thread_id= di
+   * Discohook). Thread ditandai 🧵 supaya admin bisa membedakannya dari
+   * channel biasa saat memilih.
+   */
+  const htmlThread = await (await import('../src/web/ui/pesan.js')).pesanPage({
+    ...base,
+    posts: [],
+    channels: [
+      { id: '111', name: 'pengumuman' },
+      { id: '222', name: 'pengumuman › Rilis v2', thread: true },
+    ],
+    botReady: true,
+    roles: [],
+    hasManageRoles: false,
+    roleButtons: {},
+    roleMenus: {},
+    actions: {},
+    revisions: {},
+    schedules: {},
+    triggers: [],
+    documents: [],
+    documents: [],
+    embedModel: null,
+  } as never);
+
+  assert.ok(htmlThread.includes('🧵 pengumuman › Rilis v2'), 'thread ditandai 🧵 di dropdown');
+  assert.ok(htmlThread.includes('#pengumuman'), 'channel biasa tetap ditandai #');
+  assert.ok(
+    htmlThread.includes('?thread_id='),
+    'petunjuk menyebut padanan ?thread_id= supaya jelas artinya',
+  );
+});
+
 await check('pesan: bidang embed bisa diurutkan & diduplikat', async () => {
   const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
   const page = mountPage(html, 'uji-bidang-urut');

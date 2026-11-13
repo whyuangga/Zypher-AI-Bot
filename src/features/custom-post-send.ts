@@ -310,11 +310,35 @@ function laporan(payload: { dropped: string[]; droppedFiles: string[] }): Pick<S
   };
 }
 
+/**
+ * Channel tujuan kirim: channel teks biasa ATAU thread yang sudah ada.
+ *
+ * Thread ikut diterima karena pengumuman sering ditujukan ke thread rilis /
+ * tiket / forum post (padanan `?thread_id=` pada webhook Discohook). Tipe
+ * kembaliannya tetap `TextChannel`-kompatibel: keduanya punya `send`,
+ * `messages`, dan `startThread` yang dipakai jalur kirim.
+ */
 async function resolveChannel(client: Client, channelId: string): Promise<TextChannel> {
   const channel = await client.channels.fetch(channelId).catch(() => null);
   if (!channel) throw new PostSendError('Channel tidak ditemukan. Pastikan ID-nya benar dan bot ada di server.');
   if (!channel.isTextBased() || channel.isDMBased()) {
     throw new PostSendError('Channel itu bukan channel teks di server.');
+  }
+  /*
+   * Thread yang diarsipkan harus dibuka dulu. Discord menolak kirim ke thread
+   * arsip dengan galat yang tidak menyebut arsip sebagai penyebab, dan admin
+   * sudah terlanjur memilih tujuan itu dari daftar.
+   */
+  /*
+   * Dijaga `typeof` karena kanal bisa berupa tiruan tanpa `isThread` (mis. di
+   * test); dalam praktiknya semua kanal discord.js punya method ini.
+   */
+  const berupaThread = typeof channel.isThread === 'function' && channel.isThread() === true;
+  if (berupaThread && channel.archived) {
+    const dibuka = await channel.setArchived?.(false).catch((): null => null);
+    if (!dibuka) {
+      throw new PostSendError('Thread itu diarsipkan dan tidak bisa dibuka (bot butuh izin Manage Threads).');
+    }
   }
   return channel as TextChannel;
 }
@@ -452,10 +476,19 @@ export async function sendOrUpdatePost(options: {
   const sent: Message = await channel.send(payload);
   const dropped = [...payload.dropped];
   if (payload.threadName) {
-    const thread = await sent
-      .startThread({ name: payload.threadName.slice(0, 100) })
-      .catch((): null => null);
-    if (!thread) dropped.push('thread tidak bisa dibuat (izin Create Public Threads?)');
+    /*
+     * Sama seperti jalur embed: thread tidak bisa dibuat DI DALAM thread.
+     * Permintaan itu dilaporkan sebagai dilewati, bukan dicoba lalu gagal.
+     */
+    const diDalamThread = (channel as unknown as { isThread?: () => boolean }).isThread?.() === true;
+    if (diDalamThread) {
+      dropped.push('nama thread diabaikan: pesan ini sudah dikirim ke dalam thread');
+    } else {
+      const thread = await sent
+        .startThread({ name: payload.threadName.slice(0, 100) })
+        .catch((): null => null);
+      if (!thread) dropped.push('thread tidak bisa dibuat (izin Create Public Threads?)');
+    }
   }
   return {
     messageId: sent.id,
@@ -583,10 +616,20 @@ export async function sendOrUpdateEmbedPost(options: {
    */
   const namaThread = String(options.threadName ?? '').trim();
   if (namaThread) {
-    const thread = await sent
-      .startThread({ name: namaThread.slice(0, 100) })
-      .catch((): null => null);
-    if (!thread) dropped.push('thread tidak bisa dibuat (izin Create Public Threads?)');
+    /*
+     * Thread tidak bisa dibuat DI DALAM thread. Kalau tujuannya sudah thread,
+     * permintaan itu dilaporkan sebagai dilewati — bukan dicoba lalu gagal
+     * dengan galat Discord yang membingungkan.
+     */
+    const diDalamThread = (channel as unknown as { isThread?: () => boolean }).isThread?.() === true;
+    if (diDalamThread) {
+      dropped.push('nama thread diabaikan: pesan ini sudah dikirim ke dalam thread');
+    } else {
+      const thread = await sent
+        .startThread({ name: namaThread.slice(0, 100) })
+        .catch((): null => null);
+      if (!thread) dropped.push('thread tidak bisa dibuat (izin Create Public Threads?)');
+    }
   }
   return { messageId: sent.id, edited: false, dropped, droppedFiles };
 }
@@ -779,16 +822,26 @@ export async function sendPostSeries(options: {
       sent.push({ id: pesan.id, messageId: terkirim.id, name: pesan.name });
 
       if (pesan.threadName) {
-        const thread = await terkirim
-          .startThread({ name: pesan.threadName.slice(0, 100) })
-          .catch((): null => null);
-        if (thread) threads.push({ id: pesan.id, threadId: thread.id });
-        else {
-          failed.push({
-            id: pesan.id,
-            name: pesan.name,
-            error: 'thread gagal dibuat (izin Create Public Threads?)',
-          });
+        /*
+         * Thread tidak bisa dibuat DI DALAM thread. Rangkaian yang dikirim ke
+         * thread yang sudah ada tetap terkirim; permintaan nama thread-nya
+         * dilewati dengan alasan, bukan dicatat sebagai kegagalan pesan.
+         */
+        const diDalamThread = (channel as unknown as { isThread?: () => boolean }).isThread?.() === true;
+        if (diDalamThread) {
+          threads.push({ id: pesan.id, threadId: channel.id as unknown as string });
+        } else {
+          const thread = await terkirim
+            .startThread({ name: pesan.threadName.slice(0, 100) })
+            .catch((): null => null);
+          if (thread) threads.push({ id: pesan.id, threadId: thread.id });
+          else {
+            failed.push({
+              id: pesan.id,
+              name: pesan.name,
+              error: 'thread gagal dibuat (izin Create Public Threads?)',
+            });
+          }
         }
       }
     } catch (error) {

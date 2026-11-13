@@ -66,7 +66,7 @@ export interface PesanPageOptions extends PageContext {
   posts: PostRowView[];
   /** Dokumen multi-pesan yang bisa dibuka lagi lewat `?grup=`. */
   documents?: PostDocumentView[];
-  channels: Array<{ id: string; name: string }>;
+  channels: Array<{ id: string; name: string; thread?: boolean }>;
   /** Bot siap menerima perintah kirim. */
   botReady: boolean;
   /** Role server untuk tombol ambil role (kosong kalau bot offline). */
@@ -319,14 +319,17 @@ export function pesanPage(options: PesanPageOptions): string {
         <select id="postChannel">
           <option value="">Belum dipilih — hanya bisa disimpan, belum bisa dikirim</option>
           ${options.channels
-            .map((c) => `<option value="${esc(c.id)}">#${esc(c.name)}</option>`)
+            .map(
+              (c) =>
+                `<option value="${esc(c.id)}">${c.thread ? '🧵 ' : '#'}${esc(c.name)}</option>`,
+            )
             .join('')}
         </select>
         ${icon('chevron', 15)}
       </span>
       ${
         options.botReady
-          ? ''
+          ? '<p class="hint">Daftar berisi channel teks <b>dan thread yang sudah ada</b> (ditandai 🧵). Memilih thread berarti pesan dikirim <b>ke dalam</b> thread itu — padanan <code>?thread_id=</code> di Discohook.</p>'
           : '<p class="hint">Bot sedang offline di proses ini, jadi daftar channel kosong. Jalankan bot untuk memilih channel.</p>'
       }
     </div>

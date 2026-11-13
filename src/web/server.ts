@@ -78,7 +78,13 @@ import {
   getSharedPost,
 } from '../db/repo.js';
 import { invalidateModerationCache } from '../features/moderation.js';
-import { listPanelChannels, PanelError, publishPanel, removePanel } from '../features/panel.js';
+import {
+  listKirimTargets,
+  listPanelChannels,
+  PanelError,
+  publishPanel,
+  removePanel,
+} from '../features/panel.js';
 import {
   deletePostMessage,
   PostSendError,
@@ -807,11 +813,17 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
   }
 
   if (path === '/pesan' && method === 'GET') {
-    // Daftar channel hanya bisa dibaca saat bot online; di mode dashboard-saja
-    // admin tetap bisa menyimpan pesan, hanya belum bisa mengirim.
-    let channels: Array<{ id: string; name: string }> = [];
+    /*
+     * Daftar TUJUAN kirim: channel teks DAN thread yang sudah ada.
+     *
+     * Hanya channel biasa berarti pengumuman untuk thread rilis/tiket/forum
+     * post tidak bisa dituju dari dashboard — padahal itu padanan `?thread_id=`
+     * di Discohook, dan isian channel di sini berupa pilihan (tidak bisa
+     * menempel ID).
+     */
+    let channels: Array<{ id: string; name: string; thread?: boolean }> = [];
     if (guildId && botClient?.isReady()) {
-      channels = await listPanelChannels(botClient, guildId).catch((error: unknown) => {
+      channels = await listKirimTargets(botClient, guildId).catch((error: unknown) => {
         logger.warn(`Pesan: gagal membaca daftar channel — ${errorMessage(error)}`);
         return [];
       });

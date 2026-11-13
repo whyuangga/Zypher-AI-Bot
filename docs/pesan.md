@@ -635,6 +635,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | `default_values` pada select user/role/channel | ✅ (isian ID di kartu blok Select; select string ditolak Discord & dilaporkan) |
 | `allowed_mentions` (ping role/user tertentu) | ✅ tiga centang di kartu "Tampilan & pengirim"; bawaannya **tanpa ping** |
 | `thread_name` (pesan menjadi awal thread) | ✅ isian "Nama thread" di kartu pengaturan, berlaku untuk **Components V2 maupun embed klasik** (sebelumnya jalur embed mengabaikannya tanpa laporan) |
+| Kirim ke thread yang sudah ada (`?thread_id=` pada webhook) | ✅ daftar **Channel tujuan** memuat thread (ditandai 🧵, berawalan induknya); thread arsip dibuka otomatis. Lihat **Batch 40** |
 | Message flags: suppress embeds, suppress notifications | ✅ |
 | Message flags: voice message, `IS_COMPONENTS_V2` manual | ❌ (v2 diurus pengirim) |
 | Multi-pesan dalam satu backup (beberapa pesan, `reference`, `thread_id`, `flags` per pesan) | ✅ tab **Multi-pesan** (`?tab=grup`): sampai 20 pesan per dokumen, `reference` antar pesan, nama thread & **flag per pesan**, **tiap pesan bisa dibuka lagi di tab Susun, diduplikat, diurutkan, atau dihapus**, disimpan di `post_documents` (lihat **Batch 32**) |
@@ -653,6 +654,33 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, sampai **4 gambar besar** per embed, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 40: kirim ke thread yang sudah ada
+
+Discohook bisa mengirim ke thread yang **sudah berjalan** dengan menambahkan
+`?thread_id=<id>` pada URL webhook (`WebhookModel.getRoute` di repo itu). Di
+sini daftar tujuan hanya berisi channel teks, jadi pengumuman untuk thread
+rilis / tiket / forum post tidak bisa dituju dari dashboard — isian channel
+berupa **pilihan**, bukan kotak ID, sehingga menempel ID pun tidak mungkin.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Daftar tujuan | channel teks saja | channel teks **dan** thread, thread ditandai 🧵 |
+| Nama thread di daftar | — | diberi awalan induk (`pengumuman › Rilis v2`) |
+| Thread diarsipkan | tidak bisa dikirimi | dibuka otomatis (butuh Manage Threads), gagal → alasan jelas |
+| Pesan ke dalam thread + "Nama thread" | dicoba lalu gagal | nama thread dilewati dengan alasan |
+| Rangkaian (Multi-pesan) ke thread | gagal saat membuat thread | terkirim, thread dicatat sebagai tujuan |
+
+Catatan:
+
+- `resolveChannel` sekarang menerima thread dan membuka arsipnya lebih dulu.
+  Discord menolak kirim ke thread arsip dengan galat yang tidak menyebut
+  arsip sebagai penyebab, padahal admin memilih tujuan itu dari daftar.
+- Thread **tidak bisa** dibuat di dalam thread. Permintaan "Nama thread"
+  dilewati dengan laporan, bukan dicoba lalu gagal — supaya pesannya tetap
+  terkirim dan alasannya terbaca.
+- Nama thread di daftar memakai awalan induknya: puluhan channel bernama mirip
+  membuat "Rilis" tanpa induk tidak bisa dibedakan.
 
 ### Batch 39b: tautan `?message=` versi lama diterjemahkan dari bentuk editor
 

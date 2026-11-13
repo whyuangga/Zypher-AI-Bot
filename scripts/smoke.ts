@@ -10958,6 +10958,53 @@ const discoSample = {
   expires: '2026-11-19T03:59:26.448Z',
 };
 
+await testAsync('kirim: thread yang sudah ada diterima sebagai tujuan', async () => {
+  const { sendOrUpdatePost } = await import('../src/features/custom-post-send.js');
+
+  /*
+   * Thread adalah tujuan yang sah (padanan ?thread_id= pada webhook Discohook).
+   * Dua hal yang harus dijamin: thread ARSIP dibuka dulu, dan nama thread
+   * tidak dicoba dibuat DI DALAM thread — keduanya dulu berakhir dengan galat
+   * Discord yang tidak menyebut penyebabnya.
+   */
+  let diarsipkan = true;
+  const terkirim: unknown[] = [];
+  const threadTiruan = {
+    id: '900',
+    isTextBased: () => true,
+    isDMBased: () => false,
+    isThread: () => true,
+    get archived() {
+      return diarsipkan;
+    },
+    setArchived: async (nilai: boolean) => {
+      diarsipkan = nilai;
+      return threadTiruan;
+    },
+    messages: { fetch: async () => null },
+    send: async (payload: unknown) => {
+      terkirim.push(payload);
+      return { id: 'pesan-1', startThread: async () => ({ id: 'thread-baru' }) };
+    },
+  };
+  const client = { channels: { fetch: async () => threadTiruan } } as never;
+
+  const hasil = await sendOrUpdatePost({
+    client,
+    channelId: '900',
+    messageId: null,
+    blocks: [{ kind: 'text', value: 'Halo thread' }],
+    threadName: 'Thread baru',
+  } as never);
+
+  assert.equal(diarsipkan, false, 'thread arsip dibuka sebelum mengirim');
+  assert.equal(terkirim.length, 1, 'pesan terkirim ke dalam thread');
+  assert.ok(
+    (hasil.dropped ?? []).some((alasan) => alasan.includes('sudah dikirim ke dalam thread')),
+    'permintaan membuat thread di dalam thread dilaporkan, bukan gagal senyap',
+  );
+});
+
 await testAsync('embed: blok file dikirim sebagai lampiran, bukan dibuang', async () => {
   const { embedAttachments, buildClassicEmbeds } = await import('../src/features/post-embed.js');
 
