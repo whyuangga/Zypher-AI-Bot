@@ -244,6 +244,7 @@ export function pesanPage(options: PesanPageOptions): string {
         <textarea id="discoText" rows="5" spellcheck="false" placeholder="https://discohook.app/?share=…  — atau tempel JSON Discohook di sini"></textarea>
         <div class="json-aksi">
           <button class="btn btn-ghost btn-sm" type="button" onclick="importDiscohook()">${icon('download', 15)} Tarik &amp; impor</button>
+          <button class="btn btn-ghost btn-sm" type="button" id="discoSemua" hidden onclick="imporSemuaDiscohook()">${icon('download', 15)} Semua pesan → dokumen</button>
           <span class="hint" id="discoStatus" style="margin:0"></span>
         </div>
       </div>
@@ -1922,6 +1923,81 @@ async function muatJsonPesan() {
   showPesanTab('susun');
 }
 
+/** Hasil tarikan Discohook terakhir (semua pesan), untuk tombol "Semua pesan". */
+var DISCO_TERAKHIR = [];
+
+/**
+ * Masukkan SEMUA pesan hasil tarikan Discohook ke dokumen multi-pesan.
+ *
+ * Discohook menyimpan beberapa pesan sekaligus (tiap isi messages[] satu
+ * pesan, boleh saling membalas). Dulu hanya pesan pertama yang bisa masuk, dan
+ * sisanya harus disusun ulang manual — padahal datanya sudah ada di tangan.
+ *
+ * Yang TIDAK dipaksakan: rujukan di Discohook berarti "pesan ini menyunting
+ * pesan Discord yang SUDAH ada" (dipakai tombol Edit), bukan "balasan untuk
+ * pesan lain di berkas". Dua arti itu berbeda, jadi rujukan tidak diterjemahkan
+ * menjadi balasan antar-pesan — jumlahnya dilaporkan supaya admin tahu pesan
+ * itu akan dikirim sebagai pesan baru, bukan menimpa yang lama.
+ */
+function imporSemuaDiscohook() {
+  var status = document.getElementById('discoStatus');
+  if (!DISCO_TERAKHIR.length) return toast('Tarik berkas Discohook dulu', true);
+
+  var batas = 20;
+  var pesanBaru = [];
+  var dibuang = [];
+  var suntingan = 0;
+
+  DISCO_TERAKHIR.slice(0, batas).forEach(function (pesan, urutan) {
+    var baru = {
+      id: 'm' + (urutan + 1),
+      name: String(pesan.name || 'Pesan ' + (urutan + 1)).slice(0, 120),
+      blocks: payloadBlokPesan({ blocks: Array.isArray(pesan.blocks) ? pesan.blocks : [] })
+    };
+    if (typeof pesan.threadName === 'string' && pesan.threadName) baru.threadName = pesan.threadName.slice(0, 100);
+    if (typeof pesan.flags === 'number' && isFinite(pesan.flags)) {
+      var bit = pesan.flags & (4 | 4096);
+      if (bit) baru.flags = bit;
+    }
+    if (pesan.layout === 'embed' && Array.isArray(pesan.embed) && pesan.embed.length) {
+      /*
+       * Bagian embed per pesan. Tanpa ini, pesan yang di Discohook bergaya
+       * embed masuk dokumen sebagai kartu V2 — bentuknya berubah.
+       */
+      baru.embed = pesan.embed;
+      baru.layout = 'embed';
+    }
+    pesanBaru.push(baru);
+  });
+
+  DISCO_TERAKHIR.slice(0, batas).forEach(function (pesan) {
+    if (pesan.reference) suntingan += 1;
+  });
+
+  if (DISCO_TERAKHIR.length > batas) {
+    dibuang.push((DISCO_TERAKHIR.length - batas) + ' pesan melewati batas ' + batas + ' per dokumen');
+  }
+  if (suntingan) {
+    dibuang.push(
+      suntingan + ' pesan di berkas ditandai sebagai suntingan pesan lama; di sini semuanya jadi pesan baru'
+    );
+  }
+
+  grupAktif = {
+    id: null,
+    name: 'Discohook',
+    series: false,
+    messages: pesanBaru
+  };
+  GRUP_EDIT = -1;
+  renderGrup();
+  var ringkas = '✅ ' + pesanBaru.length + ' pesan dari Discohook masuk dokumen — periksa lalu Simpan';
+  if (dibuang.length) ringkas += '. ' + dibuang.length + ' catatan: ' + dibuang[0];
+  if (status) status.textContent = ringkas;
+  toast(ringkas);
+  showPesanTab('grup');
+}
+
 /**
  * Impor pesan Discohook.
  *
@@ -1974,6 +2050,12 @@ async function importDiscohook() {
     if (status) status.textContent = '';
     return toast('Tidak ada pesan yang bisa diimpor', true);
   }
+  /*
+   * Hasil lengkap disimpan supaya tombol "Semua pesan → dokumen" bisa memakai
+   * hasil tarikan yang SAMA. Menarik ulang berarti dua permintaan ke Discohook
+   * dan dua kesempatan hasilnya berbeda (tautan share bisa berubah).
+   */
+  DISCO_TERAKHIR = hasil.messages;
 
   // Selalu jadi pesan BARU: menimpa pesan lama tanpa diminta bukan hal yang
   // boleh dilakukan tombol "Tarik & impor".
@@ -2028,12 +2110,15 @@ async function importDiscohook() {
   renderBlocks();
   renderPreview();
 
+  var semuaDisco = document.getElementById('discoSemua');
+  if (semuaDisco) semuaDisco.hidden = !(hasil.messages || []).length || hasil.messages.length < 2;
+
   var peringatan = (pesan.warnings || []).concat(hasil.warnings || []);
   var ringkas = '✅ ' + blocks.length + ' blok dimuat dari Discohook';
   if (hasil.messages.length > 1) {
     // Discohook menyimpan beberapa pesan sekaligus. Yang diimpor adalah pesan
     // pertama; sisanya tidak dibuang diam-diam, tapi dilaporkan.
-    ringkas += ' — pesan pertama dari ' + hasil.messages.length + ' (impor satu per satu untuk sisanya)';
+    ringkas += ' — pesan pertama dari ' + hasil.messages.length + '. Tombol "Semua pesan → dokumen" memasukkan semuanya ke tab Multi-pesan';
   }
   if (peringatan.length) ringkas += '. ' + peringatan.length + ' catatan: ' + peringatan[0];
   if (status) status.textContent = ringkas;

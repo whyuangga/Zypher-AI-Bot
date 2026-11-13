@@ -260,7 +260,7 @@ Yang perlu diketahui:
 | **Siapa yang mengunduh** | **server bot**, bukan browser — Discohook tidak mengirim header CORS, jadi `fetch` dari halaman akan ditolak browser |
 | **Host yang diterima** | hanya `discohook.app` / `discohook.org`. Host lain ditolak, supaya endpoint ini tidak bisa disuruh membaca alamat internal |
 | **Masa berlaku tautan** | `?share=` maksimal 4 minggu (aturan Discohook). Tautan `?data=` tidak punya masa berlaku. Kalau kedaluwarsa, tempel JSON-nya |
-| **Multi-pesan** | Discohook menyimpan beberapa pesan sekaligus; yang diimpor adalah **pesan pertama**, jumlah sisanya disebutkan |
+| **Multi-pesan** | Discohook menyimpan beberapa pesan sekaligus. Klik Tarik → **pesan pertama** masuk tab Susun, lalu tombol **Semua pesan → dokumen** memasukkan semuanya ke tab Multi-pesan (urutan, nama, nama thread, flag, dan bentuk embed per pesan ikut; lihat **Batch 35**) |
 | **Pengaturan tingkat pesan** | `username`, `avatar_url`, `thread_name`, dan `flags` dari berkas ikut dipulihkan (pengirim webhook, nama thread, dua flag) — lihat **Batch 33** |
 | **Hasil** | selalu **pesan baru** di editor, belum tersimpan — periksa dulu, lalu **Simpan** |
 | **Validasi** | hasil terjemahan dilewatkan `sanitizeBlocks` yang sama, jadi tidak bisa menyelipkan blok tidak sah |
@@ -652,6 +652,33 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, sampai **4 gambar besar** per embed, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 35: semua pesan Discohook bisa masuk dokumen sekaligus
+
+Satu berkas Discohook boleh berisi beberapa pesan (`messages[]`), tetapi impor
+di sini hanya mengambil **pesan pertama**. Sisanya harus disusun ulang manual
+satu per satu — padahal seluruh datanya sudah diterima server.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Pesan ke-2 dan seterusnya | dibuang (hanya jumlahnya disebut) | tombol **Semua pesan → dokumen** |
+| Urutan & nama pesan | — | dipertahankan |
+| Nama thread & flag per pesan | — | ikut |
+| Pesan bergaya embed | jadi kartu V2 | tetap **embed** per pesan |
+| Lebih dari 20 pesan | — | dipotong, alasannya disebut |
+
+Catatan:
+
+- Hasil tarikan **dipakai ulang**, bukan diunduh lagi: tautan share bisa
+  berubah isinya, dan dua permintaan ke Discohook untuk satu klik hanya
+  menambah kesempatan keduanya berbeda.
+- Rujukan di Discohook berarti "pesan ini **menyunting** pesan Discord yang
+  sudah ada" (tombol Edit), bukan "balasan untuk pesan lain di berkas". Karena
+  artinya berbeda, rujukan itu **tidak** diterjemahkan menjadi balasan
+  antar-pesan — jumlahnya dilaporkan supaya admin tahu pesan-pesan itu akan
+  dikirim sebagai pesan **baru**.
+- Dokumen masuk dengan nama "Discohook" dan belum tersimpan; admin masih bisa
+  menamainya, mengatur balasan, lalu menekan Simpan.
 
 ### Batch 34: tautan `?data=` (tombol Share Discohook) bisa diimpor
 

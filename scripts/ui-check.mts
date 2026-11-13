@@ -341,6 +341,13 @@ function mountPage(html: string, label: string): PageContext {
                   flags: 4096,
                   warnings: [],
                 },
+                {
+                  name: 'Pesan Discohook 2',
+                  blocks: [{ kind: 'text', value: 'Pesan kedua' }],
+                  layout: 'container',
+                  embed: [],
+                  warnings: [],
+                },
               ],
               warnings: [],
             }
@@ -3394,6 +3401,44 @@ await check('pesan: impor Discohook memulihkan pengaturan tingkat pesan', async 
   assert.equal(tingkat.flagNotif, true, 'flag tanpa notifikasi dipulihkan');
   assert.equal(tingkat.bentuk, 'container', 'bentuk pesan mengikuti berkas');
   assert.equal(page.errors.length, 0, `impor Discohook error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: semua pesan Discohook bisa masuk dokumen sekaligus', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-disco-semua');
+
+  page.elements.get('discoText')!.value = 'https://discohook.app/?share=CpazsKTm';
+  await page.evaluate('importDiscohook()');
+
+  /*
+   * Tombol "Semua pesan → dokumen" baru berguna kalau berkasnya berisi lebih
+   * dari satu pesan; menyembunyikannya mencegah admin menekan tombol yang
+   * tidak melakukan apa-apa.
+   */
+  const tombolTampil = (await page.evaluate(
+    `(function () { return document.getElementById('discoSemua').hidden === false; })()`,
+  )) as boolean;
+  assert.equal(tombolTampil, true, 'tombol "semua pesan" muncul untuk berkas multi-pesan');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      imporSemuaDiscohook();
+      return {
+        jumlah: grupAktif.messages.length,
+        nama: grupAktif.messages.map(function (p) { return p.name; }).join('|'),
+        idUnik: grupAktif.messages[0].id !== grupAktif.messages[1].id,
+        flag: grupAktif.messages[0].flags,
+        thread: grupAktif.messages[0].threadName
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.jumlah, 2, 'kedua pesan masuk dokumen');
+  assert.equal(hasil.nama, 'Pesan Discohook 1|Pesan Discohook 2', 'urutan & nama pesan dipertahankan');
+  assert.equal(hasil.idUnik, true, 'tiap pesan dokumen punya id sendiri');
+  assert.equal(hasil.flag, 4096, 'flag per pesan ikut');
+  assert.equal(hasil.thread, 'Diskusi', 'nama thread per pesan ikut');
+  assert.equal(page.errors.length, 0, `impor semua error: ${page.errors.join('|')}`);
 });
 
 await check('pesan: impor JSON rusak tidak merusak editor', async () => {
