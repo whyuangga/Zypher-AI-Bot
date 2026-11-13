@@ -1786,6 +1786,30 @@ async function muatPesanDiscord() {
   if (bentuk) bentuk.value = hasil.layout === 'embed' ? 'embed' : 'container';
 
   /*
+   * Pengaturan tingkat pesan ikut dipulihkan. Tanpa ini, menyunting pesan lama
+   * lalu mengirim ulang menghapus identitas webhook, nama thread, dan flag-nya:
+   * pesan yang tampak sama di editor muncul berbeda di Discord.
+   */
+  var pengirimMuat = document.getElementById('postSender');
+  if (pengirimMuat) pengirimMuat.value = hasil.sender === 'webhook' ? 'webhook' : 'bot';
+  var namaWebhookMuat = document.getElementById('postWebhookName');
+  if (namaWebhookMuat) namaWebhookMuat.value = hasil.webhookName || '';
+  var avatarWebhookMuat = document.getElementById('postWebhookAvatar');
+  if (avatarWebhookMuat) avatarWebhookMuat.value = hasil.webhookAvatar || '';
+  var threadMuat = document.getElementById('postThreadName');
+  if (threadMuat) threadMuat.value = hasil.threadName || '';
+  /*
+   * Flag dibaca dari bitmask. Yang tidak dikenal TIDAK dicentang: flag V2
+   * diurus pengirim, dan menyalinnya ke editor akan membuat pesan berikutnya
+   * ditolak Discord.
+   */
+  var bitFlagMuat = typeof hasil.flags === 'number' && isFinite(hasil.flags) ? hasil.flags : 0;
+  var flagTautanMuat = document.getElementById('postFlagEmbeds');
+  if (flagTautanMuat) flagTautanMuat.checked = Boolean(bitFlagMuat & 4);
+  var flagNotifMuat = document.getElementById('postFlagNotif');
+  if (flagNotifMuat) flagNotifMuat.checked = Boolean(bitFlagMuat & 4096);
+
+  /*
    * Nama pesan TIDAK ditimpa kalau sudah diisi: admin mungkin sedang menyusun
    * pesan dan memuat pesan lain sebagai rujukan isinya.
    */

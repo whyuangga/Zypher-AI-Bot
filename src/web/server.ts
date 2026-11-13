@@ -2069,13 +2069,29 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         return;
       }
       const pesan = await channel.messages.fetch(tautan.messageId);
+      /*
+       * Thread yang DIMULAI pesan ini ikut dibaca: pesan asal yang punya thread
+       * harus tetap punya thread setelah disunting, bukan hanya di Discord.
+       */
+      const thread = pesan.thread ? { name: pesan.thread.name } : null;
       mentah = {
         content: pesan.content,
         embeds: pesan.embeds.map((satu) => satu.toJSON()),
         components: pesan.components.map((satu) => satu.toJSON()),
         attachments: pesan.attachments.map((satu) => satu.toJSON()),
-        author: { username: pesan.author?.username, bot: pesan.author?.bot },
+        author: {
+          username: pesan.author?.username,
+          bot: pesan.author?.bot,
+          // Avatar webhook: dipakai ulang supaya pesan yang disunting tetap
+          // tampil dengan wajah yang sama.
+          avatarUrl: (pesan.author as { avatarURL?: (opts?: unknown) => string | null } | undefined)?.avatarURL?.({
+            extension: 'png',
+            size: 256,
+          }),
+        },
         webhookId: pesan.webhookId ?? undefined,
+        flags: pesan.flags?.bitfield ?? 0,
+        thread: thread ?? undefined,
         id: pesan.id,
       };
     } catch (error) {
@@ -2093,6 +2109,17 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       blocks: bersih.blocks,
       embed: hasil.embed,
       layout: hasil.layout,
+      /*
+       * Pengaturan tingkat pesan ikut dimuat: tanpa ini, menyunting lalu
+       * mengirim ulang menghapus identitas webhook, nama thread, dan flag
+       * pesan aslinya — pesan yang tampak sama di editor muncul berbeda di
+       * Discord.
+       */
+      sender: hasil.sender,
+      webhookName: hasil.webhookName,
+      webhookAvatar: hasil.webhookAvatar,
+      threadName: hasil.threadName,
+      flags: hasil.flags,
       /*
        * Alamat pesan asal ikut dikirim: dashboard memakainya untuk menawarkan
        * "perbarui pesan ini" alih-alih mengirim pesan baru yang mirip.

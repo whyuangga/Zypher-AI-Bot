@@ -8609,6 +8609,63 @@ await testAsync('webhook: nama & avatar pengirim per pesan disaring & disimpan',
   await repo.deleteCustomPost(GUILD, pesan.id);
 });
 
+await testAsync('muat pesan: pengaturan tingkat pesan ikut dipulihkan', async () => {
+  const { messageToDraft } = await import('../src/features/message-load.js');
+
+  /*
+   * Load yang hanya membawa blok membuat "sunting lalu kirim ulang" menghapus
+   * identitas webhook, nama thread, dan flag pesan aslinya. Isinya sama di
+   * editor, tetapi pesannya muncul berbeda di Discord.
+   */
+  const webhook = messageToDraft({
+    id: '1',
+    content: 'Pengumuman',
+    webhookId: '999',
+    author: { username: '  Tim Pengumuman  ', avatarUrl: 'https://img.test/tim.png' },
+    thread: { name: '  Diskusi rilis  ' },
+    flags: 4 | 4096 | 32768,
+  } as never);
+
+  assert.equal(webhook.sender, 'webhook', 'pesan webhook dikenali');
+  assert.equal(webhook.webhookName, 'Tim Pengumuman', 'nama pengirim webhook dirapikan');
+  assert.equal(webhook.webhookAvatar, 'https://img.test/tim.png', 'avatar pengirim webhook dibawa');
+  assert.equal(webhook.threadName, 'Diskusi rilis', 'nama thread dirapikan');
+  /*
+   * Hanya dua flag yang boleh diatur admin. Flag 32768 (IS_COMPONENTS_V2)
+   * DIBUANG: membawanya ke pesan berikutnya membuat Discord menolak pesan itu
+   * karena bentuknya bukan Components V2.
+   */
+  assert.equal(webhook.flags, 4 | 4096, 'flag asing (V2) tidak ikut dimuat');
+
+  // Pesan bot biasa: username bot TIDAK dijadikan nama pengirim webhook.
+  const bot = messageToDraft({
+    id: '2',
+    content: 'Halo',
+    author: { username: 'ZypherBot', bot: true },
+    flags: 0,
+  } as never);
+  assert.equal(bot.sender, 'bot', 'pesan bot tetap lewat bot');
+  assert.equal(bot.webhookName, '', 'username bot tidak dijadikan nama webhook');
+  assert.equal(bot.webhookAvatar, '', 'avatar bot tidak dipakai');
+  assert.equal(bot.threadName, '', 'tanpa thread = kosong');
+  assert.equal(bot.flags, 0, 'tanpa flag = 0');
+
+  // Jalur embed juga membawa pengaturan yang sama, bukan hanya jalur blok.
+  const embed = messageToDraft({
+    id: '3',
+    // Bidang membuat embed punya bagian admin; judul/isi saja sudah jadi blok
+    // teks, jadi daftar embed-nya kosong dan bentuknya turun ke container.
+    embeds: [{ title: 'Judul', description: 'Isi', fields: [{ name: 'A', value: '1' }] }],
+    webhookId: '999',
+    author: { username: 'Tim' },
+    flags: 4,
+  } as never);
+  assert.equal(embed.layout, 'embed', 'pesan embed tetap bentuk embed');
+  assert.equal(embed.sender, 'webhook', 'jalur embed juga mengenali webhook');
+  assert.equal(embed.webhookName, 'Tim', 'nama pengirim ikut di jalur embed');
+  assert.equal(embed.flags, 4, 'flag ikut di jalur embed');
+});
+
 await testAsync('muat pesan: pesan dashboard mengikuti pesan Discord asal setelah disimpan', async () => {
   const repo = await import('../src/db/repo.js');
   const GUILD = '123456789012345678';

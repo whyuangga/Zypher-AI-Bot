@@ -641,7 +641,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Riwayat/undo revisi (padanan backup) | ✅ 20 versi terakhir per pesan, dibuat otomatis setiap pesan diubah; kartu "Riwayat & bagikan" (tab **Riwayat**) |
 | Share link (tautan berbagi) | ✅ tautan `/bagi/<token>` bisa dibuka tanpa login, berisi blok **dan** embed pesan (bentuk pesan & seluruh gambar galeri ikut), bisa dicabut |
 | Impor backup | ✅ JSON/URL Discohook di tab **Impor**; ekspor JSON juga ada, memakai nama field Discohook (`username`, `avatar_url`, `thread_name`, `flags`, `allowed_mentions`) supaya berkasnya bisa dibaca bolak-balik oleh alat lain |
-| **Load** pesan Discord yang sudah terkirim | ✅ kartu **Muat pesan Discord** di tab **Impor**: tempel Message Link, pesan dibuka di editor (bot butuh *Read Message History*); galeri gambar yang di Discord tampil sebagai beberapa embed dibaca kembali sebagai **satu galeri** (lihat **Batch 24**) |
+| **Load** pesan Discord yang sudah terkirim | ✅ kartu **Muat pesan Discord** di tab **Impor**: tempel Message Link, pesan dibuka di editor (bot butuh *Read Message History*) **beserta pengaturan tingkat pesannya** — pengirim webhook, nama & avatar, nama thread, flag (lihat **Batch 27**); galeri gambar yang di Discord tampil sebagai beberapa embed dibaca kembali sebagai **satu galeri** (lihat **Batch 24**) |
 | Jadwal kirim (sekali / berulang / cron) | ✅ sekali, tiap N jam (min. 2 jam), dan **cron kalender** lima ruas (tiap hari, tiap Senin, tiap tanggal 1, …) memakai zona waktu server. Pola lebih rapat dari 2 jam ditolak dengan alasan |
 | Trigger event (member masuk/keluar) | ✅ pilihan **Kirim otomatis saat**: `member_add` / `member_remove`; pesan yang sama diperbarui tiap kejadian, bukan dikirim ulang |
 | Generator kode (payload → kode bot) | ✅ tab **Impor** → panel "JSON payload & generator kode": keluaran `discord.js` v14 & `discord.py` v2, diterjemahkan dari payload yang benar-benar dikirim |
@@ -650,6 +650,31 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, sampai **4 gambar besar** per embed, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 27: Load memulihkan pengaturan tingkat pesan
+
+Tombol **Load** membawa blok dan bagian embed, tetapi **bukan** pengirim,
+nama thread, atau flag pesannya. Akibatnya "muat → sunting → kirim ulang"
+menghapus tiga pengaturan itu: isinya sama di editor, tetapi pesannya muncul
+berbeda di Discord.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Pengirim (bot / webhook) | selalu kembali ke bot | mengikuti pesan asli |
+| Nama & avatar pengirim webhook | hilang | dipulihkan |
+| Nama thread | hilang | dipulihkan dari thread pesan itu |
+| Flag tanpa-kartu & tanpa-notifikasi | hilang | dipulihkan |
+
+Catatan:
+
+- Yang menandai pesan webhook hanya `webhook_id`. `author.username` **tidak**
+  dipakai: pesan bot biasa juga punya username, dan menganggapnya webhook akan
+  membuat pesan bot terkirim ulang atas nama webhook.
+- Flag disaring ke dua bit yang boleh diatur dashboard. `IS_COMPONENTS_V2` dan
+  flag lain **dibuang**: membawanya ke pesan berikutnya membuat Discord menolak
+  pesan itu karena bentuknya bukan Components V2.
+- Ketiga jalur keluar (embed, komponen, teks biasa) memakai satu fungsi yang
+  sama, supaya tidak ada cabang yang tertinggal saat aturannya berubah.
 
 ### Batch 26: identitas webhook berlaku di semua jalur kirim
 

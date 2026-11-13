@@ -25,9 +25,13 @@ export interface LoadedMessage {
   embeds?: unknown[];
   components?: unknown[];
   attachments?: unknown[];
-  /** Nama tampilan webhook, kalau pesan dikirim lewat webhook. */
-  author?: { username?: unknown; bot?: unknown };
+  /** Nama tampilan & avatar pengirim, kalau pesan dikirim lewat webhook. */
+  author?: { username?: unknown; bot?: unknown; avatarUrl?: unknown };
   webhookId?: unknown;
+  /** Flag pesan Discord (bitmask). 4 = tanpa kartu tautan, 4096 = tanpa notifikasi. */
+  flags?: unknown;
+  /** Thread yang DIMULAI pesan ini, kalau ada. */
+  thread?: { name?: unknown };
   /** ID pesan, dipakai untuk memberi tahu apa yang dimuat. */
   id?: unknown;
 }
@@ -40,7 +44,25 @@ export interface LoadResult {
   warnings: string[];
   /** Isi teks pesan asli (dipakai sebagai nama pesan kalau ada). */
   content: string;
+  /*
+   * Pengaturan tingkat pesan. Tanpa ini, memuat pesan lalu mengirim ulang
+   * menghapus identitas webhook, nama thread, dan flag-nya: pesan yang tampak
+   * sama di editor muncul berbeda di Discord.
+   */
+  /** `webhook` kalau pesan aslinya dikirim lewat webhook. */
+  sender: 'bot' | 'webhook';
+  /** Nama & avatar pengirim webhook asli (kosong kalau bukan webhook). */
+  webhookName: string;
+  webhookAvatar: string;
+  /** Nama thread yang dimulai pesan asli. */
+  threadName: string;
+  /** Flag yang boleh diatur admin (4 dan 4096 saja). */
+  flags: number;
 }
+
+/** Flag Discord yang boleh diatur dari dashboard. */
+const FLAG_TAUTAN = 4;
+const FLAG_TANPA_NOTIF = 4096;
 
 /** Batas teks satu blok, sama seperti penyusun payload. */
 const MAX_BLOK = 3500;
@@ -130,7 +152,7 @@ export function messageToDraft(pesan: LoadedMessage): LoadResult {
       }
     }
 
-    return { blocks, embed: [], layout: 'container', warnings, content };
+    return { blocks, embed: [], layout: 'container', warnings, content, ...pengaturanPesan(pesan) };
   }
 
   if (embeds.length > 0) {
@@ -175,16 +197,64 @@ export function messageToDraft(pesan: LoadedMessage): LoadResult {
       layout: list.length ? 'embed' : 'container',
       warnings,
       content: judul || content,
+      ...pengaturanPesan(pesan),
     };
   }
 
   if (content) {
     blocks.push(...pecahTeks(content).map((satu) => ({ kind: 'text' as const, value: satu })));
-    return { blocks, embed: [], layout: 'container', warnings, content };
+    return { blocks, embed: [], layout: 'container', warnings, content, ...pengaturanPesan(pesan) };
   }
 
   warnings.push('Pesan itu tidak punya teks, komponen, maupun embed — tidak ada yang bisa dimuat');
-  return { blocks: [], embed: [], layout: 'container', warnings, content: '' };
+  return {
+    blocks: [],
+    embed: [],
+    layout: 'container',
+    warnings,
+    content: '',
+    ...pengaturanPesan(pesan),
+  };
+}
+
+/**
+ * Pengaturan tingkat pesan dari pesan Discord yang dimuat.
+ *
+ * Dipisah supaya tiga jalur keluar (embed, komponen, teks biasa) memakai
+ * aturan yang sama — kalau tiap cabang mengisinya sendiri, salah satu cabang
+ * pasti tertinggal.
+ */
+function pengaturanPesan(pesan: LoadedMessage): {
+  sender: 'bot' | 'webhook';
+  webhookName: string;
+  webhookAvatar: string;
+  threadName: string;
+  flags: number;
+} {
+  /*
+   * Hanya `webhook_id` yang menandai pesan webhook. `author.username` TIDAK
+   * bisa dipakai: pesan bot biasa juga punya username, dan menganggapnya
+   * webhook akan membuat pesan bot disunting jadi terkirim atas nama webhook.
+   */
+  const lewatWebhook = Boolean(pesan.webhookId);
+  /*
+   * Flag disaring ke dua bit yang boleh diatur dashboard. Flag lain (mis.
+   * `IS_COMPONENTS_V2` atau `IS_VOICE_MESSAGE`) diurus pengirim; membawanya
+   * ke editor akan membuat pesan berikutnya ditolak Discord.
+   */
+  const mentah = typeof pesan.flags === 'number' && Number.isFinite(pesan.flags) ? pesan.flags : 0;
+  return {
+    sender: lewatWebhook ? 'webhook' : 'bot',
+    /*
+     * Nama & avatar hanya dibawa kalau pesannya memang dari webhook: pesan bot
+     * biasa punya username bot, dan mengisinya akan membuat pesan berikutnya
+     * dikirim dengan nama bot sebagai "pengirim webhook".
+     */
+    webhookName: lewatWebhook ? asString(pesan.author?.username).trim().slice(0, 80) : '',
+    webhookAvatar: lewatWebhook ? asString(pesan.author?.avatarUrl).trim().slice(0, 2048) : '',
+    threadName: asString(pesan.thread?.name).trim().slice(0, 100),
+    flags: mentah & (FLAG_TAUTAN | FLAG_TANPA_NOTIF),
+  };
 }
 
 /**
