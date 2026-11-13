@@ -640,6 +640,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Riwayat/undo revisi (padanan backup) | ✅ 20 versi terakhir per pesan, dibuat otomatis setiap pesan diubah; kartu "Riwayat & bagikan" (tab **Riwayat**) |
 | Share link (tautan berbagi) | ✅ tautan `/bagi/<token>` bisa dibuka tanpa login, hanya berisi blok pesan, bisa dicabut |
 | Impor backup | ✅ JSON/URL Discohook di tab **Impor**; ekspor JSON juga ada |
+| **Load** pesan Discord yang sudah terkirim | ✅ kartu **Muat pesan Discord** di tab **Impor**: tempel Message Link, pesan dibuka di editor (bot butuh *Read Message History*) |
 | Jadwal kirim (sekali / berulang / cron) | ✅ sekali, tiap N jam (min. 2 jam), dan **cron kalender** lima ruas (tiap hari, tiap Senin, tiap tanggal 1, …) memakai zona waktu server. Pola lebih rapat dari 2 jam ditolak dengan alasan |
 | Trigger event (member masuk/keluar) | ✅ pilihan **Kirim otomatis saat**: `member_add` / `member_remove`; pesan yang sama diperbarui tiap kejadian, bukan dikirim ulang |
 | Generator kode (payload → kode bot) | ✅ tab **Impor** → panel "JSON payload & generator kode": keluaran `discord.js` v14 & `discord.py` v2, diterjemahkan dari payload yang benar-benar dikirim |
@@ -647,6 +648,37 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, satu gambar besar, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 16: memuat pesan Discord yang sudah terkirim (padanan tombol Load)
+
+Discohook punya tombol **Load**: tempel *Message Link*, tekan Load, pesan yang
+sudah ada di Discord terbuka di editor dan bisa dikirim ulang dalam bentuk
+diperbaiki. Bot sekarang punya hal yang sama, di tab **Impor** →
+**Muat pesan Discord yang sudah terkirim**.
+
+| Aspek | Discohook | Di sini |
+|---|---|---|
+| Sumber | tautan pesan Discord | tautan yang sama (`Copy Message Link`) |
+| Batas | pesan mana pun yang bisa dibaca | **hanya server ini** (bot tidak bisa membaca server lain) |
+| Isi teks | `content` | **satu blok teks**, dipecah kalau lebih dari 3500 karakter |
+| Embed | satu atau banyak | embed dipertahankan; bentuk pesan dipilih otomatis |
+| Komponen V2 | diterjemahkan | **diterjemahkan balik ke blok** lewat penerjemah impor yang sama |
+| Lampiran | dibawa kalau bisa | **dilaporkan** — tautan berkas Discord kedaluwarsa |
+| Pesan campuran (V2 + embed) | — | embed jadi kartu teks, dengan alasan yang dijelaskan |
+
+Kenapa begini:
+
+1. **Tautan yang dikirim, bukan isinya.** Browser tidak punya token bot dan
+   tidak boleh punya; server yang mengambil pesannya lewat bot.
+2. **Hanya server sendiri.** Memuat pesan server lain berarti menyalin isi yang
+   bukan milik admin ini ke database-nya.
+3. **Pesan lama tidak berubah.** Hasil muat menjadi pesan **baru** di dashboard;
+   pesan di Discord baru berubah kalau admin menekan Kirim.
+4. **Tidak ada yang hilang diam-diam.** Lampiran, berkas, tombol interaktif, dan
+   isi embed kedua dan seterusnya dilaporkan sebagai catatan setelah memuat.
+
+Butuh izin **Read Message History** di channel asal; kalau tidak ada, dashboard
+menjelaskan sebabnya alih-alih gagal tanpa pesan.
 
 ### Batch 15: warna per embed, pindah & duplikat embed
 
@@ -1350,6 +1382,7 @@ tidak bisa dibuka lagi — bot akan membuat webhook baru otomatis.
 | `GET` | `/bagi/:token` | **halaman publik** pratinjau pesan yang dibagikan (tanpa login) |
 | `GET` | `/api/roles` | daftar role server + alasan tidak bisa dibagi |
 | `POST` | `/api/posts/import/discohook` | terjemahkan tautan/JSON Discohook jadi blok (`{ url }` atau `{ json }`) |
+| `POST` | `/api/posts/load` | muat pesan Discord yang sudah terkirim jadi blok (`{ url }` berisi Message Link) |
 
 Kalau bot sedang offline, tombol kirim dinonaktifkan dan permintaan kirim
 dijawab `400` dengan pesan yang jelas — bukan `500`.

@@ -319,6 +319,16 @@ function mountPage(html: string, label: string): PageContext {
                 dropped: [],
               },
             }
+          : String(path) === '/api/posts/load'
+          ? {
+              ok: true,
+              name: 'Judul dari Discord',
+              blocks: [{ kind: 'text', value: 'Isi pesan dari Discord' }],
+              embed: [],
+              layout: 'container',
+              source: { channelId: '234567890123456789', messageId: '345678901234567890', webhook: false },
+              warnings: [],
+            }
           : String(path) === '/api/documents' && body && typeof body === 'object'
           ? { ok: true, document: { id: 7, name: (body as { name?: string }).name ?? '', series: (body as { series?: boolean }).series === true, messages: (body as { messages?: unknown[] }).messages ?? [] } }
           : { ok: true };
@@ -2064,6 +2074,33 @@ await check('pesan: embed bisa dipindah/diduplikat & punya warna sendiri', async
   assert.equal(hasil.salinan, 'DIUBAH', 'salinan bisa disunting sendiri');
   assert.equal(hasil.jumlah, 3, 'hapus embed mengurangi daftar');
   assert.equal(page.errors.length, 0, `editor urutan embed error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: pesan Discord bisa dimuat lewat tautan & mengisi editor', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-muat-pesan');
+
+  // Panel muat ada, dan tombolnya memanggil fungsi halaman.
+  assert.ok(html.includes('id="muatTautan"'), 'kotak tautan ada');
+  assert.ok(html.includes('muatPesanDiscord()'), 'tombol muat terpasang');
+
+  await page.evaluate(`
+    (async function () {
+      document.getElementById('muatTautan').value = 'https://discord.com/channels/1/2/3';
+      document.getElementById('postName').value = '';
+      await muatPesanDiscord();
+    })()
+  `);
+
+  const muat = page.fetches.find((call) => call.path === '/api/posts/load');
+  assert.ok(muat, 'Muat memanggil /api/posts/load');
+  assert.equal(String((muat!.body as { url?: string }).url), 'https://discord.com/channels/1/2/3', 'tautan dikirim apa adanya');
+
+  const isi = (await page.evaluate('blocks.map(function (b) { return b.kind + ":" + b.value; }).join("|")')) as string;
+  assert.equal(isi, 'text:Isi pesan dari Discord', 'blok hasil muat masuk ke editor');
+  const nama = (await page.evaluate("document.getElementById('postName').value")) as string;
+  assert.equal(nama, 'Judul dari Discord', 'nama pesan terisi dari hasil muat');
+  assert.equal(page.errors.length, 0, `editor muat pesan error: ${page.errors.join('|')}`);
 });
 
 await check('pesan: izin ping & nama thread ikut dikirim, bawaan tanpa ping', async () => {

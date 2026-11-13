@@ -8153,6 +8153,104 @@ await testAsync('pesan: sampai 10 embed per pesan, masing-masing dengan bagian s
   await repo.deleteCustomPost(GUILD, lama.id);
 });
 
+await testAsync('muat pesan: tautan Discord & isi pesan diterjemahkan balik ke blok', async () => {
+  const { parseMessageLink, messageToDraft, pecahTeks } = await import('../src/features/message-load.js');
+
+  /* --- tautan --- */
+  const sah = parseMessageLink('https://discord.com/channels/123456789012345678/234567890123456789/345678901234567890');
+  assert.equal(sah?.guildId, '123456789012345678');
+  assert.equal(sah?.channelId, '234567890123456789');
+  assert.equal(sah?.messageId, '345678901234567890', 'ID dibaca sebagai teks, bukan angka');
+  assert.ok(
+    parseMessageLink('https://ptb.discord.com/channels/123456789012345678/234567890123456789/345678901234567890'),
+    'subdomain ptb/canary diterima',
+  );
+  assert.ok(
+    parseMessageLink('https://discordapp.com/channels/123456789012345678/234567890123456789/345678901234567890'),
+    'domain lama diterima',
+  );
+  assert.equal(parseMessageLink('https://discord.com/channels/1/2/3'), null, 'ID terlalu pendek ditolak');
+  assert.equal(parseMessageLink('https://contoh.test/channels/123456789012345678/234567890123456789/345678901234567890'), null);
+  assert.equal(parseMessageLink(''), null, 'kosong ditolak');
+
+  /* --- pesan teks biasa --- */
+  const teks = messageToDraft({ content: 'Halo semua' });
+  assert.equal(teks.blocks.length, 1);
+  assert.equal(teks.blocks[0]!.kind, 'text');
+  assert.equal(teks.content, 'Halo semua', 'isi dipakai sebagai nama pesan');
+
+  /* Teks panjang dipecah, bukan dipotong di tengah kata. */
+  const panjang = pecahTeks('a'.repeat(40) + '\n' + 'b'.repeat(40), 50);
+  assert.equal(panjang.length, 2, 'teks panjang dipecah');
+  assert.ok(panjang.every((satu) => satu.length <= 50), 'setiap potongan muat');
+
+  /* --- pesan berisi embed saja --- */
+  const embedSaja = messageToDraft({
+    embeds: [
+      {
+        title: 'Judul asli',
+        description: 'Isi embed',
+        color: 0xff0000,
+        author: { name: 'Penulis' },
+        footer: { text: 'kaki' },
+        fields: [{ name: 'A', value: '1', inline: true }],
+      },
+    ],
+  });
+  assert.equal(embedSaja.layout, 'embed', 'pesan embed dimuat sebagai embed');
+  assert.equal(embedSaja.content, 'Judul asli', 'judul embed jadi nama pesan');
+  assert.equal(embedSaja.embed.length, 1);
+  assert.equal(embedSaja.embed[0]!.color, '#ff0000', 'warna embed ikut');
+  assert.equal(embedSaja.embed[0]!.author!.name, 'Penulis');
+  assert.ok(
+    embedSaja.blocks.some((b) => b.kind === 'text' && b.value === 'Isi embed'),
+    'isi embed jadi blok teks',
+  );
+
+  /* --- pesan komponen V2 --- */
+  const v2 = messageToDraft({
+    components: [
+      { type: 17, accent_color: 0x5865f2, components: [{ type: 10, content: 'Di dalam kartu' }] },
+    ],
+  });
+  assert.equal(v2.layout, 'container');
+  assert.equal(v2.blocks[0]!.kind, 'container', 'container V2 jadi blok container');
+  assert.ok(v2.blocks.some((b) => b.kind === 'text' && b.value === 'Di dalam kartu'));
+
+  /* --- pesan yang membawa keduanya --- */
+  const campur = messageToDraft({
+    content: 'Teks biasa',
+    components: [{ type: 10, content: 'Komponen' }],
+    embeds: [{ title: 'Judul', description: 'Isi', color: 0x00ff00 }],
+  });
+  assert.equal(campur.layout, 'container', 'campuran tetap container');
+  assert.equal(campur.embed.length, 0, 'embed tidak dikirim bersama komponen');
+  assert.ok(
+    campur.warnings.some((isi) => isi.includes('menolak keduanya')),
+    'batasan Discord dijelaskan',
+  );
+  assert.ok(campur.blocks.some((b) => b.kind === 'container'), 'embed jadi kartu teks');
+  assert.ok(
+    campur.blocks.some((b) => b.kind === 'text' && b.value.includes('Teks biasa')),
+    'teks biasa tidak hilang',
+  );
+
+  /* --- lampiran dilaporkan --- */
+  const lampiran = messageToDraft({
+    content: 'Dengan berkas',
+    attachments: [{ filename: 'a.pdf', url: 'https://cdn.test/a.pdf' }],
+  });
+  assert.ok(
+    lampiran.warnings.some((isi) => isi.includes('lampiran')),
+    'lampiran tidak dibuang diam-diam',
+  );
+
+  /* --- pesan kosong --- */
+  const kosong = messageToDraft({});
+  assert.equal(kosong.blocks.length, 0);
+  assert.ok(kosong.warnings.length > 0, 'pesan kosong dijelaskan, bukan gagal senyap');
+});
+
 await testAsync('template: variabel Discohook dirakit & dipakai di aksi dan teks pesan', async () => {
   const { buildTemplateValues, applyTemplate, tokenTersisa } = await import('../src/features/post-template.js');
   const { fillActionText } = await import('../src/features/post-actions.js');

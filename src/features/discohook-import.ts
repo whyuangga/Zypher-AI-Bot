@@ -526,6 +526,18 @@ export function discohookComponentsToBlocks(components: unknown[]): { blocks: Po
   return { blocks, warnings };
 }
 
+/**
+ * Terjemahkan komponen API Discord (bentuk yang dikirim Discord, bukan bentuk
+ * Discohook) menjadi blok `/pesan`.
+ *
+ * Dipakai saat memuat pesan yang SUDAH ada di Discord. Bentuknya sama dengan
+ * komponen Discohook karena keduanya JSON API Discord, jadi penerjemahnya
+ * dipakai ulang — bukan ditulis kedua kali dan lama-lama berbeda hasilnya.
+ */
+export function v2ToBlocks(components: unknown[]): { blocks: PostBlock[]; warnings: string[] } {
+  return discohookComponentsToBlocks(components);
+}
+
 /* ------------------------------------------------------------------ */
 /*  embed -> blok                                                      */
 /* ------------------------------------------------------------------ */
@@ -540,7 +552,7 @@ export function discohookComponentsToBlocks(components: unknown[]): { blocks: Po
  * nama pesan dan blok teks, bukan dari bagian admin. Pemanggil yang
  * memindahkannya (lihat `parseDiscohookShare`).
  */
-function embedKeExtra(raw: Raw): Record<string, unknown> {
+export function embedKeExtra(raw: Raw): Record<string, unknown> {
   const hasil: Record<string, unknown> = {};
   if (asString(raw.url).trim()) hasil.url = asString(raw.url).trim();
   /*
@@ -832,3 +844,30 @@ export function discohookShareApiUrl(shareId: string): string {
 
 /** Normalisasi aksen untuk blok, dipakai UI saat membuka hasil impor. */
 export { normalizeAccent };
+
+/* ------------------------------------------------------------------ */
+/*  Tautan pesan Discord -> bagian                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Baca tautan pesan Discord.
+ *
+ * Formatnya `https://discord.com/channels/<guild>/<channel>/<message>` (juga
+ * `ptb.`/`canary.` dan `discordapp.com`). Mengembalikan `null` kalau bukan
+ * tautan pesan — pemanggil yang memutuskan cara menjelaskannya.
+ *
+ * ID dikembalikan sebagai teks, bukan angka: snowflake 19 digit melewati
+ * batas aman angka JavaScript, dan ID yang berubah satu digit terakhir berarti
+ * pesan yang salah dimuat.
+ */
+export function parseMessageLink(
+  raw: unknown,
+): { guildId: string; channelId: string; messageId: string } | null {
+  const teks = asString(raw).trim();
+  if (!teks) return null;
+  const cocok = teks.match(
+    /^(?:https?:\/\/)?(?:[a-z]+\.)?(?:discord(?:app)?\.com)\/channels\/(\d{15,25})\/(\d{15,25})\/(\d{15,25})\/?(?:[?#].*)?$/i,
+  );
+  if (!cocok) return null;
+  return { guildId: cocok[1]!, channelId: cocok[2]!, messageId: cocok[3]! };
+}

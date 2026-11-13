@@ -225,6 +225,19 @@ export function pesanPage(options: PesanPageOptions): string {
    */
   const imporHtml = `
     <details class="json-panel" open>
+      <summary>${icon('download', 15)} Muat pesan Discord yang sudah terkirim</summary>
+      <div class="json-isi">
+        <p class="hint" style="margin:0">Klik kanan pesan di Discord → <b>Copy Message Link</b>, lalu tempel di sini. Pesan itu dimuat ke editor supaya bisa diperbaiki dan dikirim ulang — sama seperti tombol <b>Load</b> di Discohook. Bot harus punya izin <b>Read Message History</b> di channel tersebut.</p>
+        <input type="text" id="muatTautan" placeholder="https://discord.com/channels/…/…/…" spellcheck="false" />
+        <div class="json-aksi">
+          <button class="btn btn-ghost btn-sm" type="button" onclick="muatPesanDiscord()">${icon('download', 15)} Muat pesan</button>
+          <span class="hint" id="muatStatus" style="margin:0"></span>
+        </div>
+        <div id="muatSumber" class="hint" style="margin:0"></div>
+      </div>
+    </details>
+
+    <details class="json-panel">
       <summary>${icon('external', 15)} Impor dari Discohook</summary>
       <div class="json-isi">
         <p class="hint" style="margin:0">Tempel <b>tautan share Discohook</b> (mis. <code>https://discohook.app/?share=abcdefgh</code>) atau <b>ID</b>-nya saja, lalu klik Tarik. Server yang mengunduh, jadi tidak kena masalah CORS. Kalau discohook.app tidak bisa dihubungi, salin JSON-nya dari Discohook (<i>Share → Copy JSON</i>) dan tempel di kotak yang sama — keduanya diterima.</p>
@@ -839,6 +852,13 @@ var roleEditingId = null;
 var blocks = [];
 /** ID pesan yang sedang diubah (null = pesan baru). */
 var editingId = null;
+/**
+ * Pesan Discord asal yang terakhir dimuat ("Muat pesan"), kalau ada.
+ *
+ * Disimpan supaya dashboard bisa memberi tahu bahwa pesan itu bisa diperbarui,
+ * bukan sekadar diduplikasi.
+ */
+var MUAT_SUMBER = null;
 
 /**
  * Batas Discord untuk Components V2. Angka 25 yang sering dikutip di internet
@@ -1650,6 +1670,84 @@ function normalBlock(b) {
      */
     defaultValues: Array.isArray(b.defaultValues) ? b.defaultValues.map(String) : [],
   };
+}
+
+/**
+ * Muat pesan Discord yang sudah terkirim ke editor.
+ *
+ * Padanan tombol "Load" Discohook. Yang dikirim hanya TAUTAN: pesannya diambil
+ * server lewat bot (browser tidak punya token bot, dan tidak boleh punya).
+ *
+ * Hasilnya menjadi pesan BARU di dashboard — pesan lama di Discord tidak
+ * berubah sampai admin menekan Kirim. Kalau alamat pesan asalnya tujuan pesan
+ * yang sama, admin diberi tahu bahwa pesan itu akan DIPERBARUI, bukan
+ * diduplikasi.
+ */
+async function muatPesanDiscord() {
+  var kotak = document.getElementById('muatTautan');
+  var status = document.getElementById('muatStatus');
+  var sumberEl = document.getElementById('muatSumber');
+  var tautan = kotak ? String(kotak.value || '').trim() : '';
+  if (!tautan) return toast('Tempel tautan pesan Discord dulu', true);
+  if (status) status.textContent = 'Memuat pesan…';
+
+  var hasil;
+  try {
+    hasil = await api('/api/posts/load', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url: tautan }),
+    });
+  } catch (error) {
+    if (status) status.textContent = '';
+    return toast('Gagal memuat: ' + error.message, true);
+  }
+
+  blocks = (hasil.blocks || []).map(normalBlock);
+  editingId = null;
+  loadEmbedExtra(hasil.embed);
+  var bentuk = document.getElementById('postLayout');
+  if (bentuk) bentuk.value = hasil.layout === 'embed' ? 'embed' : 'container';
+
+  /*
+   * Nama pesan TIDAK ditimpa kalau sudah diisi: admin mungkin sedang menyusun
+   * pesan dan memuat pesan lain sebagai rujukan isinya.
+   */
+  var nama = document.getElementById('postName');
+  if (nama && hasil.name && !nama.value) nama.value = String(hasil.name).slice(0, 120);
+
+  var warna = blocks.filter(function (b) { return b.kind === 'container' && b.accent; })[0];
+  if (warna) {
+    var el = document.getElementById('postAccent');
+    if (el) el.value = warna.accent;
+    var teksWarna = document.getElementById('accentText');
+    if (teksWarna) teksWarna.textContent = warna.accent;
+  }
+
+  renderBlocks();
+  renderEmbedExtra();
+  renderPreview();
+
+  /*
+   * Alamat asal disimpan di variabel halaman, bukan langsung dipakai: tombol
+   * Kirim tetap harus ditekan admin. Dashboard memakai ini untuk mengingatkan
+   * bahwa pesan asalnya bisa diperbarui.
+   */
+  MUAT_SUMBER = hasil.source || null;
+  if (sumberEl) {
+    sumberEl.textContent = hasil.source
+      ? 'Asal: channel ' + hasil.source.channelId + ', pesan ' + hasil.source.messageId +
+        (hasil.source.webhook ? ' (dikirim webhook)' : '') +
+        ' — tekan Kirim untuk memuatnya sebagai pesan dashboard.'
+      : '';
+  }
+
+  var peringatan = hasil.warnings || [];
+  var ringkas = '✅ ' + blocks.length + ' blok dimuat dari Discord';
+  if (peringatan.length) ringkas += '. ' + peringatan.length + ' catatan: ' + peringatan[0];
+  if (status) status.textContent = ringkas;
+  toast(ringkas);
+  showPesanTab('susun');
 }
 
 /**

@@ -101,6 +101,7 @@ import {
   parseDiscohookShare,
   parseDiscohookShareId,
 } from '../features/discohook-import.js';
+import { messageToDraft, parseMessageLink, type LoadedMessage } from '../features/message-load.js';
 import { listGuildRoles } from '../features/role-buttons.js';
 import { sharePage } from './ui/share.js';
 import { payloadUntukPesan } from '../features/custom-post-send.js';
@@ -2014,6 +2015,82 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         };
       }),
       warnings: hasil.warnings,
+    });
+    return;
+  }
+
+  /*
+   * POST /api/posts/load  { url: "https://discord.com/channels/…" }
+   *
+   * Padanan tombol "Load" di Discohook: pesan yang SUDAH ada di Discord
+   * dimuat kembali ke editor supaya bisa disunting lalu dikirim ulang.
+   *
+   * Hanya channel di server ini yang dilayani: bot tidak bisa membaca pesan
+   * server lain, dan memuat pesan server lain ke dashboard ini berarti
+   * menyalin isi yang bukan milik admin.
+   */
+  if (path === '/api/posts/load' && method === 'POST') {
+    if (!botClient) {
+      sendJson(response, 400, { error: 'Bot sedang offline — memuat pesan butuh koneksi ke Discord.' });
+      return;
+    }
+    const payload = await readJsonBody(request, response, 16 * 1024);
+    if (!payload) return;
+    const tautan = parseMessageLink(payload.url);
+    if (!tautan) {
+      sendJson(response, 400, {
+        error:
+          'Tautan tidak dikenali. Tempel tautan pesan Discord (Klik kanan pesan → Copy Message Link).',
+      });
+      return;
+    }
+    if (tautan.guildId !== guildId) {
+      sendJson(response, 400, { error: 'Tautan itu menunjuk pesan di server lain.' });
+      return;
+    }
+
+    let mentah: LoadedMessage | null = null;
+    try {
+      const channel = await botClient.channels.fetch(tautan.channelId);
+      if (!channel || !channel.isTextBased() || !('messages' in channel)) {
+        sendJson(response, 400, { error: 'Channel itu bukan channel teks yang bisa dibaca bot.' });
+        return;
+      }
+      const pesan = await channel.messages.fetch(tautan.messageId);
+      mentah = {
+        content: pesan.content,
+        embeds: pesan.embeds.map((satu) => satu.toJSON()),
+        components: pesan.components.map((satu) => satu.toJSON()),
+        attachments: pesan.attachments.map((satu) => satu.toJSON()),
+        author: { username: pesan.author?.username, bot: pesan.author?.bot },
+        webhookId: pesan.webhookId ?? undefined,
+        id: pesan.id,
+      };
+    } catch (error) {
+      sendJson(response, 400, {
+        error: `Pesan tidak bisa dimuat: ${errorMessage(error)}. Pastikan bot punya izin Read Message History di channel itu.`,
+      });
+      return;
+    }
+
+    const hasil = messageToDraft(mentah);
+    const bersih = sanitizeBlocks(hasil.blocks);
+    sendJson(response, 200, {
+      ok: true,
+      name: hasil.content ? hasil.content.slice(0, 120) : '',
+      blocks: bersih.blocks,
+      embed: hasil.embed,
+      layout: hasil.layout,
+      /*
+       * Alamat pesan asal ikut dikirim: dashboard memakainya untuk menawarkan
+       * "perbarui pesan ini" alih-alih mengirim pesan baru yang mirip.
+       */
+      source: {
+        channelId: tautan.channelId,
+        messageId: tautan.messageId,
+        webhook: Boolean(mentah?.webhookId),
+      },
+      warnings: [...hasil.warnings, ...bersih.dropped.map((alasan) => `Blok dibuang: ${alasan}`)],
     });
     return;
   }
