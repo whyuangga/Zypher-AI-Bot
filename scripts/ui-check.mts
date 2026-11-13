@@ -2255,6 +2255,87 @@ await check('pesan: thumbnail & gambar besar per embed ikut tersimpan', async ()
   assert.equal(page.errors.length, 0, `editor gambar embed error: ${page.errors.join('|')}`);
 });
 
+await check('pesan: galeri gambar per embed disaring & dipratinjau seperti server', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-embed-galeri');
+
+  assert.ok(html.includes('id="embedImages"'), 'isian galeri gambar ada');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      resetEmbedExtra();
+      document.getElementById('postLayout').value = 'embed';
+      blocks = [{ kind: 'text', value: 'Pengumuman' }];
+      var kotak = document.getElementById('embedImages');
+      /*
+       * Satu URL per baris, dengan baris kosong dan URL ganda. Keduanya harus
+       * dibuang di editor: Discord tidak menerima daftar berisi kekosongan, dan
+       * gambar yang sama dua kali hanya memakan jatah 10 embed per pesan.
+       */
+      kotak.value = ['https://img.test/1.png', '', 'https://img.test/1.png', 'https://img.test/2.png'].join(String.fromCharCode(10));
+      kotak.oninput();
+
+      var muatan = payloadEmbed();
+
+      // Lima gambar: hanya empat yang boleh tersimpan.
+      kotak.value = ['https://img.test/1.png', 'https://img.test/2.png', 'https://img.test/3.png', 'https://img.test/4.png', 'https://img.test/5.png'].join(String.fromCharCode(10));
+      kotak.oninput();
+      var dibatasi = (payloadEmbed() || [])[0].images.length;
+      var pratinjau = document.getElementById('previewHost');
+      renderPreviewKe('previewHost');
+      var kartu = pratinjau.children.filter(function (anak) {
+        return String(anak.className || '').indexOf('preview-embed') !== -1;
+      });
+      var gambarPratinjau = kartu.reduce(function (jumlah, satu) {
+        return jumlah + satu.children.filter(function (anak) {
+          return String(anak.className || '').indexOf('preview-embed-image') !== -1;
+        }).length;
+      }, 0);
+      var simpanGambar = gambarPratinjau;
+
+      // Muat ulang dari payload: galeri harus kembali utuh.
+      loadEmbedExtra(payloadEmbed());
+      var ulang = document.getElementById('embedImages').value.split(String.fromCharCode(10)).length;
+      return {
+        jumlah: (muatan || [])[0].images.length,
+        urutan: (muatan || [])[0].images.join(','),
+        gambarPratinjau: simpanGambar,
+        jumlahKartu: kartu.length,
+        gambarTerakhir: kartu.length
+          ? (function () {
+              var terakhir = kartu[kartu.length - 1];
+              var img = terakhir.children.filter(function (anak) {
+                return String(anak.className || '').indexOf('preview-embed-image') !== -1;
+              })[0];
+              return img ? String(img.style.backgroundImage || '') : '';
+            })()
+          : '',
+        dibatasi: dibatasi,
+        ulang: ulang,
+        kosong: embedTerisi({ images: [] })
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.jumlah, 2, 'baris kosong & URL ganda dibuang');
+  assert.equal(hasil.urutan, 'https://img.test/1.png,https://img.test/2.png', 'urutan gambar dipertahankan');
+  /*
+   * Empat gambar → satu kartu utama + tiga kartu pelengkap, persis seperti
+   * server mengirimnya. Kalau pratinjau menumpuk semuanya di satu kartu, admin
+   * melihat tampilan yang tidak pernah muncul di Discord.
+   */
+  assert.equal(
+    hasil.gambarPratinjau,
+    4,
+    `gambar ke-2 dst. dipratinjau sebagai kartu pelengkap [${String(hasil.gambarPratinjau)}/${String(hasil.jumlahKartu)}] ${String(hasil.gambarTerakhir)}`,
+  );
+  assert.ok(String(hasil.gambarTerakhir).includes('img.test/4.png'), 'kartu terakhir memakai gambar keempat');
+  assert.equal(hasil.dibatasi, 4, 'galeri dibatasi 4 gambar per embed');
+  assert.equal(hasil.ulang, 4, 'galeri bertahan setelah dimuat ulang');
+  assert.equal(hasil.kosong, false, 'galeri saja tidak dianggap embed kosong');
+  assert.equal(page.errors.length, 0, `editor galeri error: ${page.errors.join('|')}`);
+});
+
 await check('pesan: izin ping & nama thread ikut dikirim, bawaan tanpa ping', async () => {
   const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
   const page = mountPage(html, 'uji-mention');

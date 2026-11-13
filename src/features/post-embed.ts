@@ -84,6 +84,15 @@ export interface EmbedExtra {
   thumbnail?: string;
   /** Gambar besar embed ini (menggantikan gambar dari blok, kalau diisi). */
   image?: string;
+  /**
+   * Beberapa gambar besar sekaligus, seperti "Image URLs" di Discohook.
+   *
+   * Embed Discord hanya punya SATU `image`, jadi gambar ke-2 dan seterusnya
+   * dikirim sebagai embed pelengkap berisi gambar itu saja — itu juga yang
+   * dilakukan Discohook, dan hasilnya deretan gambar yang sama di Discord.
+   * `images[0]` menang atas `image`; kalau `images` kosong, `image` dipakai.
+   */
+  images?: string[];
 }
 
 const BATAS_EXTRA = {
@@ -95,6 +104,8 @@ const BATAS_EXTRA = {
   fieldName: 256,
   fieldValue: 1024,
   fields: 25,
+  /** Discohook membatasi 4 gambar per embed (Discord: 10 embed per pesan). */
+  images: 4,
 } as const;
 
 function teksAtauKosong(nilai: unknown, batas: number): string {
@@ -195,6 +206,22 @@ export function sanitizeEmbedExtra(input: unknown): { extra: EmbedExtra; dropped
   const gambar = urlSah(source.image);
   if (gambar) extra.image = gambar;
   else if (teksAtauKosong(source.image, 2048)) dropped.push('gambar embed harus alamat http/https');
+  /* --- beberapa gambar besar (gallery) --- */
+  if (Array.isArray(source.images)) {
+    const images: string[] = [];
+    for (const satu of source.images) {
+      const url = urlSah(satu);
+      if (url) {
+        if (images.indexOf(url) === -1 && images.length < BATAS_EXTRA.images) images.push(url);
+        continue;
+      }
+      if (teksAtauKosong(satu, 2048)) dropped.push('gambar embed harus alamat http/https');
+    }
+    if (images.length) extra.images = images;
+    if (source.images.length > BATAS_EXTRA.images) {
+      dropped.push(`gambar embed dibatasi ${BATAS_EXTRA.images} per embed`);
+    }
+  }
 
   /* --- stempel waktu (ISO 8601) --- */
   const timestamp = teksAtauKosong(source.timestamp, 64);
@@ -220,7 +247,8 @@ export function embedExtraKosong(extra: EmbedExtra | null | undefined): boolean 
     !extra.timestamp &&
     !extra.color &&
     !extra.thumbnail &&
-    !extra.image
+    !extra.image &&
+    !(extra.images?.length ?? 0)
   );
 }
 
@@ -328,6 +356,16 @@ export function buildClassicEmbeds(
   }
 
   /*
+   * Gambar ke-2 dst. dari embed pertama ikut sebagai embed pelengkap: Discord
+   * hanya menerima satu `image` per embed, jadi tanpa ini gambar tambahan
+   * hilang diam-diam padahal admin sudah mengisinya.
+   */
+  const galeriPertama = utama ? embedGambarTambahan(utama) : [];
+  for (const satu of galeriPertama) {
+    hasil.push({ embed: satu, dropped: [] });
+  }
+
+  /*
    * Embed tambahan hanya lahir kalau admin memang mengirim daftar. `extra`
    * tunggal tetap berarti satu embed, supaya pemanggil lama tidak berubah
    * perilakunya.
@@ -335,8 +373,13 @@ export function buildClassicEmbeds(
   if (ekstra) {
     for (let i = 1; i < ekstra.length; i += 1) {
       const satu = bagianAdminSaja(ekstra[i] ?? null, opsi.template ?? null);
-      if (satu) hasil.push(satu);
-      else {
+      if (satu) {
+        hasil.push(satu);
+        /* Galeri embed ini menyusul sebagai embed gambar terpisah. */
+        for (const gambar of embedGambarTambahan(ekstra[i] ?? {})) {
+          hasil.push({ embed: gambar, dropped: [] });
+        }
+      } else {
         /*
          * Embed yang hanya berisi penulis/footer/warna TIDAK cukup bagi
          * Discord: harus ada judul, isi, gambar, atau bidang. Membuangnya
@@ -347,12 +390,17 @@ export function buildClassicEmbeds(
         if (hasil.length) hasil[0]!.dropped.push(catatan);
       }
     }
-    if (ekstra.length > BATAS.embeds) {
-      hasil.length = Math.min(hasil.length, BATAS.embeds);
-      if (hasil.length) {
-        hasil[0]!.dropped.push(`embed dibatasi ${BATAS.embeds} per pesan (batas Discord)`);
-      }
-    }
+  }
+
+  /*
+   * Batas 10 embed berlaku untuk SEMUA embed, termasuk yang lahir dari galeri
+   * gambar. Kalau terpotong, alasannya ditulis di embed pertama: admin yang
+   * mengisi sepuluh embed bergambar akan melihat sebagian gambar hilang dan
+   * harus tahu kenapa.
+   */
+  if (hasil.length > BATAS.embeds) {
+    hasil.length = BATAS.embeds;
+    hasil[0]!.dropped.push(`embed dibatasi ${BATAS.embeds} per pesan (batas Discord)`);
   }
 
   return hasil;
@@ -470,6 +518,39 @@ function blocksToEmbed(blocks: EmbedBlock[], opsi: BuildEmbedOptions): EmbedBuil
 }
 
 /**
+ * Gambar besar yang dipakai satu embed: `images[0]` menang atas `image`.
+ *
+ * Discohook menyimpan daftar gambar dan memakai yang pertama sebagai `image`;
+ * isian tunggal tetap berlaku untuk pemanggil lama dan data tersimpan.
+ */
+function gambarUtama(extra: EmbedExtra): string | undefined {
+  if (extra.images?.length) return extra.images[0];
+  return extra.image;
+}
+
+/**
+ * Embed pelengkap untuk gambar ke-2 dan seterusnya.
+ *
+ * Discord hanya menerima satu `image` per embed, jadi Discohook mengirim gambar
+ * sisanya sebagai embed tambahan berisi gambar itu saja. Kalau tidak dilakukan,
+ * gambar ke-2 dst. hilang tanpa jejak — admin mengisi empat URL dan hanya satu
+ * yang muncul.
+ */
+function embedGambarTambahan(extra: EmbedExtra): ClassicEmbed[] {
+  const hasil: ClassicEmbed[] = [];
+  for (const url of (extra.images ?? []).slice(1)) {
+    const satu: ClassicEmbed = { image: { url } };
+    if (extra.url) satu.url = extra.url;
+    if (extra.color) {
+      const warna = warnaDari(extra.color);
+      if (warna !== null) satu.color = warna;
+    }
+    hasil.push(satu);
+  }
+  return hasil;
+}
+
+/**
  * Salin bagian admin ke embed, dengan template.
  *
  * Dipisah karena dipakai dua jalur: embed pertama (yang juga membawa blok) dan
@@ -514,7 +595,8 @@ function terapkanExtra(
    * mengisinya berarti admin memang ingin gambar itu, bukan gambar dari blok.
    */
   if (extra.thumbnail) embed.thumbnail = { url: extra.thumbnail };
-  if (extra.image) embed.image = { url: extra.image };
+  const gambar = gambarUtama(extra);
+  if (gambar) embed.image = { url: gambar };
   if (extra.fields?.length) {
     embed.fields = extra.fields.map((field) => ({
       name: isiTemplate(field.name),

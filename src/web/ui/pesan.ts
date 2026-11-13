@@ -502,6 +502,11 @@ export function pesanPage(options: PesanPageOptions): string {
         <input type="text" id="embedThumbnail" placeholder="URL thumbnail (gambar kecil di kanan atas)" style="flex:1;min-width:200px" />
         <input type="text" id="embedImage" placeholder="URL gambar besar (menggantikan gambar dari blok)" style="flex:1;min-width:200px" />
       </div>
+      <div>
+        <label class="field" for="embedImages">Gambar tambahan (satu URL per baris, maksimal 4)</label>
+        <textarea id="embedImages" rows="3" spellcheck="false" placeholder="https://…/gambar-2.png&#10;https://…/gambar-3.png"></textarea>
+        <p class="hint" style="margin:0">Padanan <b>Image URLs</b> di Discohook. Discord hanya menerima satu gambar per embed, jadi gambar ke-2 dst. dikirim sebagai embed pelengkap berisi gambar itu saja — hasilnya deretan gambar yang sama.</p>
+      </div>
       <input type="text" id="embedTimestamp" placeholder="Stempel waktu ISO 8601 (mis. 2026-11-12T09:00:00Z)" />
       <div class="subhead" style="margin-top:4px">Bidang embeds (maksimal 25 per embed)</div>
       <div id="embedFieldList" class="block-list"></div>
@@ -3426,10 +3431,22 @@ var EMBED_AKTIF = 0;
 /** Batas embed per pesan & bidang per embed — angka Discord, sama dengan server. */
 var EMBED_MAKS = 10;
 var EMBED_FIELDS_MAKS = 25;
+/** Gambar besar per embed (batas Discohook; Discord tetap 10 embed per pesan). */
+var EMBED_GAMBAR_MAKS = 4;
 
 /** Satu bagian embed kosong. */
 function embarKosong() {
-  return { url: '', color: '', author: {}, footer: {}, fields: [], timestamp: '', thumbnail: '', image: '' };
+  return {
+    url: '',
+    color: '',
+    author: {},
+    footer: {},
+    fields: [],
+    timestamp: '',
+    thumbnail: '',
+    image: '',
+    images: [],
+  };
 }
 
 /** Bagian embed yang sedang diedit (selalu ada, walau daftarnya kosong). */
@@ -3457,6 +3474,7 @@ function embedTerisi(extra) {
       (extra.footer && extra.footer.text) ||
       extra.thumbnail ||
       extra.image ||
+      (extra.images && extra.images.length) ||
       (extra.fields && extra.fields.length) ||
       extra.timestamp,
   );
@@ -3548,6 +3566,14 @@ function loadEmbedExtra(data) {
       color: String(sumber.color || ''),
       thumbnail: String(sumber.thumbnail || ''),
       image: String(sumber.image || ''),
+      images: Array.isArray(sumber.images)
+        ? sumber.images
+            .map(function (satu) {
+              return String(satu || '').trim();
+            })
+            .filter(Boolean)
+            .slice(0, EMBED_GAMBAR_MAKS)
+        : [],
       author: {
         name: String((sumber.author || {}).name || ''),
         url: String((sumber.author || {}).url || ''),
@@ -3668,6 +3694,29 @@ function renderEmbedExtra() {
     get: function () { return bacaEmbed('image'); },
     set: function (v) { embedAktif().image = v.trim(); },
   }, 'URL gambar besar (menggantikan gambar dari blok)');
+
+  /*
+   * Galeri: satu URL per baris, bukan kotak berisi daftar JSON. Admin yang
+   * menempel empat tautan gambar tidak perlu tahu bentuk array Discord, dan
+   * baris kosong/duplikat dibuang di sini — bukan ditolak server nanti.
+   */
+  var galeriEl = document.getElementById('embedImages');
+  if (galeriEl) {
+    var galeriAktif = embedAktif();
+    galeriEl.value = (galeriAktif.images || []).join(String.fromCharCode(10));
+    galeriEl.oninput = function () {
+      var bersih = [];
+      String(galeriEl.value || '')
+        .split(String.fromCharCode(10))
+        .forEach(function (baris) {
+          var url = baris.trim();
+          if (!url || bersih.indexOf(url) !== -1) return;
+          bersih.push(url);
+        });
+      embedAktif().images = bersih.slice(0, EMBED_GAMBAR_MAKS);
+      renderPreview();
+    };
+  }
 
   isianEmbed('embedTimestamp', {
     get: function () { return bacaEmbed('timestamp'); },
@@ -3841,6 +3890,10 @@ function payloadEmbed() {
     if (extra.color) satu.color = extra.color;
     if (extra.thumbnail) satu.thumbnail = extra.thumbnail;
     if (extra.image) satu.image = extra.image;
+    var galeri = (extra.images || []).filter(function (satu) {
+      return String(satu || '').trim();
+    });
+    if (galeri.length) satu.images = galeri.slice(0, EMBED_GAMBAR_MAKS);
     if (extra.timestamp) satu.timestamp = extra.timestamp;
     if (extra.author && extra.author.name) {
       satu.author = { name: extra.author.name };
@@ -4013,9 +4066,24 @@ function gambarPratinjauEmbed(host, hostId) {
     gambarSatuEmbed(host, dasar, daftar[0] || null, adaDasar);
     digambar += 1;
   }
+  /*
+   * Gambar ke-2 dst. tampil sebagai kartu sendiri, persis seperti server
+   * mengirimnya (embed pelengkap berisi satu gambar). Menampilkannya di dalam
+   * kartu yang sama akan menjanjikan tampilan yang tidak pernah muncul.
+   */
+  var galeriPertama = gambarCadangan(daftar[0] || null);
+  for (var g = 0; g < galeriPertama.length; g += 1) {
+    gambarSatuEmbed(host, { color: null, title: '', description: '', image: null }, galeriPertama[g], false);
+    digambar += 1;
+  }
   for (var i = 1; i < daftar.length; i += 1) {
     gambarSatuEmbed(host, { color: null, title: '', description: '', image: null }, daftar[i], false);
     if (embedTerisi(daftar[i])) digambar += 1;
+    var galeriLain = gambarCadangan(daftar[i]);
+    for (var h = 0; h < galeriLain.length; h += 1) {
+      gambarSatuEmbed(host, { color: null, title: '', description: '', image: null }, galeriLain[h], false);
+      digambar += 1;
+    }
   }
 
   if (digambar === 0) {
@@ -4057,6 +4125,22 @@ function gambarPratinjauEmbed(host, hostId) {
     peringatan.textContent = 'Catatan: ' + hasil.dilewati[0];
     host.appendChild(peringatan);
   }
+}
+
+/**
+ * Embed pelengkap untuk gambar ke-2 dst. dari satu galeri.
+ *
+ * Cerminan embedGambarTambahan di server: Discord hanya menerima satu gambar
+ * per embed, jadi gambar sisanya dikirim sebagai embed berisi gambar itu saja.
+ */
+function gambarCadangan(extra) {
+  if (!extra || !extra.images || extra.images.length < 2) return [];
+  return extra.images.slice(1).map(function (url) {
+    var satu = { image: url, images: [] };
+    if (extra.url) satu.url = extra.url;
+    if (extra.color) satu.color = extra.color;
+    return satu;
+  });
 }
 
 /**
@@ -4121,7 +4205,8 @@ function gambarSatuEmbed(host, dasar, extra, pakaiDasar) {
    * server (terapkanExtra). Tanpa urutan yang sama, pratinjau bisa menampilkan
    * gambar yang tidak akan terkirim.
    */
-  var gambarUrl = (extra && extra.image) || (pakaiDasar ? dasar.image : null);
+  var galeri = (extra && extra.images) || [];
+  var gambarUrl = galeri.length ? galeri[0] : (extra && extra.image) || (pakaiDasar ? dasar.image : null);
   if (gambarUrl) {
     var gambar = document.createElement('div');
     gambar.className = 'preview-embed-image';

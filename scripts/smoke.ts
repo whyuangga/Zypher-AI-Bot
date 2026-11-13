@@ -8174,6 +8174,109 @@ await testAsync('pesan: sampai 10 embed per pesan, masing-masing dengan bagian s
   assert.equal(dibacaLama!.embed.length, 1, 'objek tunggal (bentuk lama) terbaca sebagai satu embed');
   assert.equal(dibacaLama!.embed[0]!.footer!.text, 'bentuk lama');
 
+  /*
+   * --- galeri gambar (Discohook "Image URLs") ---
+   *
+   * Discord hanya menerima SATU gambar per embed, jadi gambar ke-2 dst. dikirim
+   * sebagai embed pelengkap. Tanpa itu, admin mengisi empat URL dan hanya satu
+   * yang muncul — hilang tanpa laporan apa pun.
+   */
+  const galeri = sanitizeEmbedList({
+    images: [
+      'https://img.test/1.png',
+      'javascript:alert(1)',
+      'https://img.test/2.png',
+      'https://img.test/1.png',
+      'https://img.test/3.png',
+      'https://img.test/4.png',
+      'https://img.test/5.png',
+    ],
+    fields: [{ name: 'A', value: '1', inline: false }],
+  });
+  assert.equal(galeri.list[0]!.images!.length, 4, 'galeri dibatasi 4 gambar per embed');
+  assert.equal(galeri.list[0]!.images![0], 'https://img.test/1.png', 'urutan gambar dipertahankan');
+  assert.equal(
+    galeri.list[0]!.images!.indexOf('https://img.test/1.png'),
+    galeri.list[0]!.images!.lastIndexOf('https://img.test/1.png'),
+    'gambar ganda dibuang',
+  );
+  assert.ok(!galeri.list[0]!.images!.includes('javascript:alert(1)'), 'gambar berbahaya dibuang');
+  assert.ok(galeri.dropped.some((a) => a.includes('gambar embed')), 'alasannya dijelaskan');
+  assert.ok(galeri.dropped.some((a) => a.includes('dibatasi 4')), 'pemotongan galeri dilaporkan');
+
+  const galeriDikirim = buildClassicEmbeds([{ kind: 'text', value: 'Isi' }], {
+    embedList: [{ images: ['https://img.test/1.png', 'https://img.test/2.png', 'https://img.test/3.png'] }],
+  });
+  assert.equal(galeriDikirim.length, 3, 'gambar ke-2 & ke-3 jadi embed pelengkap');
+  assert.equal(galeriDikirim[0]!.embed.image!.url, 'https://img.test/1.png', 'gambar pertama di embed utama');
+  assert.equal(galeriDikirim[1]!.embed.image!.url, 'https://img.test/2.png', 'gambar kedua di embed pelengkap');
+  assert.equal(galeriDikirim[2]!.embed.image!.url, 'https://img.test/3.png', 'gambar ketiga di embed pelengkap');
+  assert.equal(galeriDikirim[1]!.embed.title, undefined, 'embed pelengkap tidak mengulang judul');
+  assert.deepEqual(validateEmbeds(galeriDikirim.map((satu) => satu.embed)), [], 'embed hasil galeri lolos validasi');
+
+  /* Galeri di embed KEDUA ikut tersusul sebagai embed pelengkap. */
+  const galeriKedua = buildClassicEmbeds([{ kind: 'text', value: 'Isi' }], {
+    embedList: [
+      { fields: [{ name: 'A', value: '1', inline: false }] },
+      { fields: [{ name: 'B', value: '2', inline: false }], images: ['https://img.test/x.png', 'https://img.test/y.png'] },
+    ],
+  });
+  assert.equal(galeriKedua.length, 3, 'galeri embed kedua ikut terkirim');
+  assert.equal(galeriKedua[2]!.embed.image!.url, 'https://img.test/y.png', 'gambar cadangan membawa isinya');
+
+  /*
+   * 10 embed + galeri TIDAK boleh melewati batas Discord: kelebihannya
+   * dipotong dan alasannya dilaporkan, bukan dikirim lalu ditolak seluruhnya.
+   */
+  const melimpah = buildClassicEmbeds([], {
+    embedList: Array.from({ length: 10 }, (_, i) => ({
+      fields: [{ name: 'A', value: String(i), inline: false }],
+      images: ['https://img.test/a.png', 'https://img.test/b.png'],
+    })),
+  });
+  assert.equal(melimpah.length, 10, 'total embed tetap dibatasi 10');
+  assert.ok(
+    melimpah[0]!.dropped.some((a) => a.includes('dibatasi 10')),
+    'embed yang terpotong dilaporkan',
+  );
+
+  /* Impor Discohook: gambar cadangan digabung jadi satu galeri. */
+  const { gabungGaleriEmbeds, parseDiscohookShare } = await import('../src/features/discohook-import.js');
+  const digabung = gabungGaleriEmbeds([
+    { title: 'Galeri', url: 'https://x.test', image: { url: 'https://img.test/1.png' } },
+    { url: 'https://x.test', image: { url: 'https://img.test/2.png' } },
+    { url: 'https://x.test', image: { url: 'https://img.test/3.png' } },
+    /* Embed bergambar yang punya judul BUKAN gambar lanjutan: berdiri sendiri. */
+    { title: 'Sendiri', image: { url: 'https://img.test/lain.png' } },
+  ]);
+  assert.deepEqual(
+    (digabung[0] as { images?: string[] }).images,
+    ['https://img.test/1.png', 'https://img.test/2.png', 'https://img.test/3.png'],
+    'impor menggabungkan gambar cadangan jadi galeri',
+  );
+  assert.equal(digabung.length, 2, 'embed bergambar berjudul tidak ikut tertelan');
+  assert.equal((digabung[1] as { title?: string }).title, 'Sendiri', 'judulnya utuh');
+
+  const bagi = parseDiscohookShare({
+    messages: [
+      {
+        data: {
+          embeds: [
+            { title: 'Galeri', description: 'empat gambar', url: 'https://x.test', image: { url: 'https://img.test/1.png' } },
+            { url: 'https://x.test', image: { url: 'https://img.test/2.png' } },
+            { url: 'https://x.test', image: { url: 'https://img.test/3.png' } },
+          ],
+        },
+      },
+    ],
+  });
+  const pesanBagi = bagi.messages[0] as unknown as { embed: { images?: string[] }[] };
+  assert.deepEqual(
+    pesanBagi.embed[0]!.images,
+    ['https://img.test/1.png', 'https://img.test/2.png', 'https://img.test/3.png'],
+    'impor tautan Discohook menyimpan galeri, bukan tiga embed kosong',
+  );
+
   await repo.deleteCustomPost(GUILD, pesan.id);
   await repo.deleteCustomPost(GUILD, lama.id);
 });

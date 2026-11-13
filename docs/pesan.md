@@ -625,7 +625,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Discohook | Di sini |
 |---|---|
 | Container / Text Display / Section / Separator / Media Gallery / File / Action Row | ✅ |
-| Embed klasik (judul, penulis, footer, field, thumbnail, gambar) | ✅ judul, warna (**per embed**), isi, **thumbnail & gambar besar (per embed)**, **penulis, footer, bidang (maks 25), URL judul, stempel waktu**, dan **sampai 10 embed per pesan** dengan naik/turun/duplikat (lihat **Batch 9**, **13**, **14**, **15**, **21**) |
+| Embed klasik (judul, penulis, footer, field, thumbnail, gambar) | ✅ judul, warna (**per embed**), isi, **thumbnail & sampai 4 gambar besar (per embed)**, **penulis, footer, bidang (maks 25), URL judul, stempel waktu**, dan **sampai 10 embed per pesan** dengan naik/turun/duplikat (lihat **Batch 9**, **13**, **14**, **15**, **21**, **24**) |
 | Poll | ❌ di Discohook pun masih dinonaktifkan |
 | Tombol link & tombol interaktif ber-flow | ✅ |
 | Select menu: string (flow per opsi), user/role/mentionable/channel | ✅ |
@@ -650,6 +650,35 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, satu gambar besar, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 24: beberapa gambar besar per embed (galeri)
+
+Discohook punya isian **Image URLs** berisi sampai empat gambar. Bot hanya punya
+satu isian gambar besar, jadi tiga dari empat gambar yang ditempel tidak bisa
+dikirim sama sekali.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Gambar besar per embed | satu | **sampai 4** (satu URL per baris) |
+| Gambar ke-2 dst. | tidak terkirim | dikirim sebagai **embed pelengkap** berisi gambar itu saja |
+| Impor Discohook `images` | dibuang | dipertahankan sebagai galeri |
+| Impor gambar cadangan (embed `url` + `image` tanpa isi) | jadi embed kosong lalu dibuang | dilebur jadi satu galeri |
+| Batas 10 embed | hanya dari daftar embed | berlaku untuk **semua** embed, termasuk hasil galeri |
+
+Catatan:
+
+- Discord hanya menerima satu `image` per embed. Discohook menyiasatinya dengan
+  mengirim gambar sisanya sebagai embed tambahan — perilaku itu ditiru, jadi
+  deretan gambar di Discord sama bentuknya.
+- Embed pelengkap membawa `url` dan warna embed asalnya, tanpa judul/isi: kalau
+  isinya disalin, teksnya muncul berulang di setiap gambar.
+- Hanya `http/https` yang diterima, URL ganda dibuang, dan pemotongan di atas 4
+  dilaporkan dengan alasan.
+- Saat impor, hanya embed yang **benar-benar kosong selain gambar** dan berbagi
+  `url` yang sama dengan embed sebelumnya yang dilebur. Embed bergambar yang
+  punya judul tetap berdiri sendiri — itu embed tersendiri, bukan gambar lanjutan.
+- Pratinjau menggambar gambar ke-2 dst. sebagai kartu sendiri, supaya yang
+  terlihat sama dengan yang terkirim.
 
 ### Batch 23: ekspor JSON membawa pengaturan tingkat pesan
 

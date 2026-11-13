@@ -134,9 +134,20 @@ function isHttpUrl(url: string): boolean {
 }
 
 /** Ambil URL dari `{ media: { url } }` milik UnfurledMediaItem. */
+/**
+ * URL gambar dari dua bentuk yang dipakai Discord/Discohook.
+ *
+ * Embed klasik memakai `{ url }`, sedangkan media di dalam komponen V2 memakai
+ * `{ media: { url } }`. Hanya mengenali bentuk kedua berarti gambar embed yang
+ * diimpor dibuang diam-diam — gejalanya: thumbnail & gambar hilang padahal
+ * tautannya ada di berkas.
+ */
 function mediaUrl(value: unknown): string {
-  const media = asObject(asObject(value)?.media);
-  return asString(media?.url).trim();
+  /* Daftar gambar Discohook berisi URL biasa, bukan objek media. */
+  if (typeof value === 'string') return value.trim();
+  const langsung = asObject(value);
+  const media = asObject(langsung?.media);
+  return asString(media?.url).trim() || asString(langsung?.url).trim();
 }
 
 /* ------------------------------------------------------------------ */
@@ -586,6 +597,16 @@ export function embedKeExtra(raw: Raw): Record<string, unknown> {
   if (isHttpUrl(thumbnail)) hasil.thumbnail = thumbnail;
   const gambar = mediaUrl(raw.image);
   if (isHttpUrl(gambar)) hasil.image = gambar;
+  /*
+   * Galeri gambar (Discohook "Image URLs"): berbagi `image` dengan embed
+   * pertama, jadi embed kedua sampai keempat hanya membawa `image` tanpa teks.
+   * Tanpa dilebur di sini, gambar-gambar itu masuk sebagai embed kosong tanpa
+   * isi lalu dibuang — admin mengimpor empat gambar, yang muncul nol.
+   */
+  const galeri = asArray(raw.images)
+    .map((satu) => mediaUrl(satu))
+    .filter((satu) => isHttpUrl(satu));
+  if (galeri.length) hasil.images = Array.from(new Set(galeri));
 
   const fields = asArray(raw.fields)
     .map(asObject)
@@ -662,6 +683,49 @@ export function looksLikeDiscohook(value: unknown): boolean {
  * Pesan tanpa isi sama sekali dilewati — bukan menghasilkan pesan kosong yang
  * ditolak Discord saat dikirim.
  */
+/**
+ * Gabungkan embed "gambar lanjutan" menjadi satu galeri.
+ *
+ * Discohook menyimpan `Image URLs` lebih dari satu sebagai embed TAMBAHAN yang
+ * hanya berisi `url` + `image` — itu bentuk payload Discord, bukan niat admin.
+ * Tanpa dilebur, impor menghasilkan beberapa embed tanpa isi yang lalu dibuang
+ * builder: admin mengimpor empat gambar dan yang muncul nol.
+ *
+ * Hanya embed yang benar-benar kosong selain gambar yang dilebur, dan hanya ke
+ * embed tepat sebelumnya dengan `url` yang sama — embed gambar berdiri sendiri
+ * yang memang disusun terpisah tidak boleh ikut tertelan.
+ */
+export function gabungGaleriEmbeds(list: Raw[]): Raw[] {
+  const hasil: Raw[] = [];
+  for (const satu of list) {
+    const gambar = mediaUrl(satu.image);
+    const hanyaGambar =
+      isHttpUrl(gambar) &&
+      !asString(satu.title).trim() &&
+      !asString(satu.description).trim() &&
+      !asString(asObject(satu.author)?.name).trim() &&
+      !asString(asObject(satu.footer)?.text).trim() &&
+      asArray(satu.fields).length === 0;
+    const sebelum = hasil[hasil.length - 1];
+    if (
+      hanyaGambar &&
+      sebelum &&
+      asString(sebelum.url).trim() === asString(satu.url).trim()
+    ) {
+      const galeri = asArray(sebelum.images)
+        .map((item) => asString(item).trim())
+        .filter((item) => Boolean(item));
+      const dasar = mediaUrl(sebelum.image);
+      if (isHttpUrl(dasar) && galeri.length === 0) galeri.push(dasar);
+      if (galeri.indexOf(gambar) === -1) galeri.push(gambar);
+      hasil[hasil.length - 1] = { ...sebelum, images: galeri };
+      continue;
+    }
+    hasil.push(satu);
+  }
+  return hasil;
+}
+
 export function parseDiscohookShare(input: unknown): DiscohookImport {
   const warnings: string[] = [];
   const root = asObject(input);
@@ -708,7 +772,9 @@ export function parseDiscohookShare(input: unknown): DiscohookImport {
       else blocks.unshift(teksPembuka);
     }
 
-    const embeds = asArray(data.embeds).map(asObject).filter((satu): satu is Raw => satu !== null);
+    const embeds = gabungGaleriEmbeds(
+      asArray(data.embeds).map(asObject).filter((satu): satu is Raw => satu !== null),
+    );
 
     /*
      * Embed dipertahankan sebagai embed ASLI bila pesannya tidak membawa
