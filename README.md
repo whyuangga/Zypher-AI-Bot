@@ -351,18 +351,56 @@ Panduan lengkap: **[docs/sambutan-agent.md](docs/sambutan-agent.md)**.
 Butuh pesan sendiri (rules, pengumuman, info server, **ambil role**)? Pakai
 halaman [`/pesan`](docs/pesan.md) — susun blok teks/gambar/tombol, kirim sekali,
 lalu perbarui tanpa kirim ulang. Satu pesan bisa berisi **beberapa container**
-(masing-masing dengan warna aksen sendiri), **section** yang menaruh gambar kecil
-atau tombol di samping teks, **blok Tutup kartu** yang mengeluarkan teks & tombol
-dari container (pembuka polos di atas, baris tombol di bawah — seperti pesan
-Discohook), **aksesori di komponen mana pun** (tombol link atau thumbnail pada
-teks & gambar), **blok File** (lampiran PDF/zip dari URL atau unggahan, dengan
-spoiler), **naik/turun/salin/hapus** tiap blok, **import/ekspor JSON** (pindah susunan
-pesan antar server), dan **penghitung batas komponen** yang menunjukkan
-sisa kuota sebelum Discord menolak. Ada **pratinjau hidup**, **warna aksen** bebas,
+(masing-masing dengan warna aksen sendiri dan **spoiler kartu**), **section** yang
+menaruh gambar kecil atau tombol di samping teks, **blok Tutup kartu** yang
+mengeluarkan teks & tombol dari container (pembuka polos di atas, baris tombol di
+bawah — seperti pesan Discohook), **aksesori di komponen mana pun** (tombol link
+atau thumbnail pada teks & gambar, lengkap dengan emoji), **blok File** (lampiran
+PDF/zip dari URL atau unggahan, dengan spoiler), **pemisah tanpa garis**,
+**tombol nonaktif**, **select menu lengkap** (String, User, Role, User & Role,
+Channel — placeholder, min/maks, sampai 25 pilihan, emoji, nonaktif; tampil
+seperti Discohook dan menjawab sopan saat dipakai), **blok Baris baru (Row)** yang
+memotong deretan tombol secara eksplisit seperti Row Discohook,
+**naik/turun/salin/hapus** tiap blok, **impor langsung dari Discohook** (tempel
+tautan `?share=` atau JSON-nya — komponen V2 **dan** semua jenis select menu
+diterjemahkan otomatis, Row tetap terpisah), **import/ekspor JSON** (pindah
+susunan pesan antar server), dan **penghitung batas komponen** yang menunjukkan
+sisa kuota sebelum Discord menolak. Kalau ada bagian yang tidak ikut terkirim
+(select tanpa pilihan, berkas gagal diunduh), dashboard menyebutkannya setelah
+menekan Kirim — bukan diam-diam menghilang.
+Editornya **bertumpuk ala Discohook** (komponen tampil di dalam kotak container-nya,
+lengkap dengan ⧉ duplikat & × hapus), dan halaman dipecah **empat tab**
+(Susun / Pratinjau / Ambil role / Impor) dengan tombol Simpan di bilah bawah yang
+selalu terlihat — tidak perlu menggulir jauh. Ada **pratinjau hidup**, **warna aksen** bebas,
 **unggah gambar**, dan pilihan pengirim: lewat bot, atau **atas nama server**
-(webhook — tokennya dienkripsi, butuh izin *Manage Webhooks*). Tombol **ambil
+(webhook — tokennya dienkripsi, butuh izin *Manage Webhooks*) lengkap dengan
+**nama & avatar pengirim sendiri per pesan** seperti isian Username/Avatar URL
+di Discohook. Tombol **ambil
 role** memberi role hanya dengan klik, lengkap dengan **emoji** dan **warna**
-tombol (biru/abu/hijau/merah); untuk role yang banyak tersedia **menu dropdown**
+tombol (biru/abu/hijau/merah) — dan tiap tombol, tiap pilihan dropdown, serta
+tiap **Select menu** (bahkan tiap **pilihan** di dalamnya) bisa diberi **aksi
+berurutan** ala *flow* Discohook: ubah role, balas pengklik dengan teks sendiri,
+kirim pesan tersimpan lain, **tunggu** (tahan restart), **periksa syarat**
+bertingkat, simpan variabel, buat thread, atau hapus pesan;
+pesan juga bisa **dijadwalkan** kirim sekali atau berulang;
+untuk Setiap teks — isi blok, balasan aksi, sampai nama penulis & footer embed —
+menerima **variabel ala Discohook** (`{member.name}`, `{member.username}`,
+`{member.mention}`, `{server.name}`, `{server.members}`, `{channel.name}`,
+`{role}`, `{effect}`, `{selected_value}`, `{now}`, `{var.nama}`, …; daftar
+lengkapnya ada di kartu pengaturan), dan token yang salah tulis dibiarkan apa
+adanya supaya terlihat. Bentuk **Embed klasik** juga sudah bisa diisi penuh:
+**penulis**, **footer**, sampai **25 bidang** sebaris, **URL pada judul**,
+**thumbnail**, **gambar besar**, **warna sendiri**, dan **stempel waktu** — bukan
+hanya lewat impor lagi. Satu pesan boleh memuat
+**sampai 10 embed** (tombol Add Embed ala Discohook), dan impor dari Discohook
+yang berisi embed kini mendarat sebagai **embed asli**, bukan kartu teks. Pesan
+yang **sudah terkirim di Discord** bisa ditarik balik ke editor lewat *Message
+Link* (padanan tombol **Load** Discohook) — komponen V2, embed, dan teksnya
+diterjemahkan ulang jadi blok, lalu diperbaiki dan dikirim lagi — Kirim
+**memperbarui pesan asalnya**, bukan mengirim salinan kedua. Ada juga
+**JSON Data Editor per pesan**: tempel objek pesan Discord, payload REST, atau
+data Discohook, dan isinya masuk ke editor.
+Untuk role yang banyak tersedia **menu dropdown**
 sampai 25 pilihan, dengan opsi **hanya satu pilihan** yang otomatis mencabut
 role lain di menu yang sama — cocok untuk menu warna nama atau platform. Bot
 butuh izin **Manage Roles** dan posisinya harus di atas role yang dibagikan.
@@ -487,10 +525,10 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke # 385 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
+npm run smoke # 449 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
 npm run smoke:pg       # 21 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # 15 pemeriksaan rantai fallback provider (server tiruan)
-npm run test:ui        # 75 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
+npm run test:ui        # 140 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
 npm run test:browser   # uji klik sungguhan di Chromium (butuh dashboard hidup)
 npm run verify         # semuanya sekaligus: typecheck ketat + smoke + fallback + UI
 npm run dashboard      # nyalakan dashboard web saja (node dist/web/standalone.js)
@@ -642,6 +680,7 @@ docs/rag.md                  # dokumen pengetahuan AI (RAG)
 docs/dashboard.md            # dashboard web: setup, halaman, keamanan
 docs/sambutan-agent.md       # sambutan, perpisahan, AI Agent, banner & pratinjau
 docs/pesan.md               # pesan container: susun sendiri, kirim & perbarui
+docs/uji-nyata.md           # checklist uji di Discord sungguhan sebelum merge
 docs/postgres.md             # Postgres, migrasi data, multi-shard
 docs/moderation.md           # moderasi otomatis + log pelanggaran
 docs/vision-voice.md         # vision gambar, STT/TTS, /ucap

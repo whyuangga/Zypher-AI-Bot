@@ -153,6 +153,14 @@ export async function removePanel(client: Client, guildId: string): Promise<Pane
 export interface PanelChannelOption {
   id: string;
   name: string;
+  /**
+   * true = ini thread/forum post yang SUDAH ada, bukan channel teks biasa.
+   *
+   * Discohook bisa mengirim ke thread yang sudah ada (`?thread_id=` pada URL
+   * webhook). Padanannya di sini adalah channel tujuan yang berupa thread:
+   * pesan dikirim ke dalamnya, bukan membuat thread baru.
+   */
+  thread?: boolean;
 }
 
 /** Channel teks yang bisa dipakai panel — untuk dropdown di dashboard. */
@@ -166,6 +174,58 @@ export async function listPanelChannels(client: Client, guildId: string): Promis
     .sort((a, b) => a.rawPosition - b.rawPosition)
     .slice(0, 200)
     .map((channel) => ({ id: channel.id, name: channel.name }));
+}
+
+/** Jenis channel yang bisa menerima pesan bot (teks + thread/forum post). */
+const JENIS_TEKS = new Set<ChannelType>([
+  ChannelType.GuildText,
+  ChannelType.GuildAnnouncement,
+  ChannelType.PublicThread,
+  ChannelType.PrivateThread,
+  ChannelType.AnnouncementThread,
+]);
+
+/**
+ * Tujuan kirim `/pesan`: channel teks **dan** thread yang sudah ada.
+ *
+ * Kenapa thread ikut: banyak pengumuman sebenarnya ditujukan ke thread yang
+ * sudah berjalan (thread rilis, thread tiket, forum post). Tanpa thread di
+ * daftar, admin harus menempel ID secara manual — dan di dashboard ID itu
+ * memang tidak bisa ditempel (isiannya berupa pilihan).
+ *
+ * Thread yang DIARSIPKAN tetap ditampilkan: Discord membuka arsipnya sendiri
+ * saat bot mengirim, dan menyembunyikannya membuat tujuan yang sah terlihat
+ * hilang. Namanya diberi awalan induk supaya jelas di daftar.
+ */
+export async function listKirimTargets(client: Client, guildId: string): Promise<PanelChannelOption[]> {
+  const ready = requireReadyClient(client);
+  const guild = await fetchGuild(ready, guildId);
+
+  const channels = await guild.channels.fetch();
+  const options: PanelChannelOption[] = [];
+  for (const channel of channels.values() as Iterable<
+    { id: string; name: string; type: ChannelType; isThread(): boolean } | null
+  >) {
+    if (!channel || !JENIS_TEKS.has(channel.type)) continue;
+    if (!channel.isThread() && channel.type !== ChannelType.GuildText && channel.type !== ChannelType.GuildAnnouncement) {
+      continue;
+    }
+    /*
+     * Nama thread diberi awalan induknya: daftar berisi puluhan channel, dan
+     * thread bernama "Rilis" tidak bisa dibedakan dari thread "Rilis" di
+     * channel lain tanpa awalan itu.
+     */
+    const induk = channel.isThread()
+      ? (channel as unknown as { parent?: { name?: string } | null }).parent?.name ?? 'thread'
+      : '';
+    options.push({
+      id: channel.id,
+      name: induk ? `${induk} › ${channel.name}` : channel.name,
+      ...(induk ? { thread: true } : {}),
+    });
+    if (options.length >= 300) break;
+  }
+  return options.sort((a, b) => Number(Boolean(a.thread)) - Number(Boolean(b.thread)) || a.name.localeCompare(b.name));
 }
 
 /** Status panel untuk dashboard (tanpa akses Discord). */

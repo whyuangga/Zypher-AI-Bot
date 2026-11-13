@@ -1,3 +1,4 @@
+import { applyTemplate } from './post-template.js';
 /**
  * Blok pesan container buatan admin — halaman "/pesan".
  *
@@ -29,6 +30,26 @@ export type PostBlockKind =
   | 'button'
   | 'container'
   | 'section'
+  /**
+   * Select menu yang TIDAK mengubah apa pun saat dipakai member.
+   *
+   * Bukan pilihan acak: Discord hanya meneruskan interaksi select ke aplikasi
+   * pemilik komponen, dan akun bot tidak bisa membaca isi pilihan user/role/
+   * channel (@everyone tidak bisa dipilih user biasa). Menu yang memakai
+   * `values` tetap disusun lewat menu role (tabel post_role_menus), sedangkan
+   * blok ini dikirim apa adanya seperti Discohook — tampil rapi, dan bot
+   * menjawab dengan penjelasan sopan saat dipilih.
+   */
+  | 'select'
+  /**
+   * Baris baru untuk tombol — padanan "Row" di Discohook.
+   *
+   * Di Discohook, Action Row adalah wadah eksplisit: tombol di dalam satu Row
+   * tampil sebaris, dan Row berikutnya memotong baris. Tanpa blok ini, baris
+   * tombol hanya terbentuk otomatis setiap 5 tombol, sehingga "2 tombol di
+   * atas, 1 di bawah" tidak bisa disusun.
+   */
+  | 'row'
   /**
    * Menutup kartu: blok sesudahnya tampil DI LUAR container, langsung di
    * pesan — seperti teks pembuka dan baris tombol di pesan Discohook.
@@ -106,6 +127,23 @@ export interface PostBlock {
   spacing?: 'small' | 'large';
 
   /**
+   * Tampilkan garis pemisah. `false` = hanya jarak kosong tanpa garis.
+   *
+   * Discord menyebutnya `divider`; Discohook menampilkannya sebagai centang
+   * "Show Divider" pada komponen Separator. Tanpa field ini, pemisah tanpa
+   * garis tidak bisa disusun padahal sah dikirim.
+   */
+  divider?: boolean;
+
+  /**
+   * Tombol tidak bisa diklik (`disabled`).
+   *
+   * Berguna untuk tombol penutup yang belum berlaku, mis. "Coming soon" —
+   * tombol tetap tampil, tetapi Discord menolak kliknya.
+   */
+  disabled?: boolean;
+
+  /**
    * Teks tombol aksesori untuk blok `section`.
    *
    * Kalau terisi, tombol link menempel di kanan teks section. Discord hanya
@@ -126,7 +164,9 @@ export interface PostBlock {
   /**
    * Tandai komponen sebagai spoiler (tersembunyi sampai diklik).
    *
-   * Berlaku untuk blok `image` (satu gambar) dan `file` (lampiran).
+   * Berlaku untuk blok `image` (satu gambar) dan `file` (lampiran), dan untuk
+   * blok `container` — Discohook punya centang "spoiler" pada container, yang
+   * membuat SELURUH kartu tertutup sampai member mengkliknya.
    */
   spoiler?: boolean;
 
@@ -135,6 +175,51 @@ export interface PostBlock {
    * Untuk unggahan, nama ini juga menentukan ekstensi lampiran.
    */
   name?: string;
+
+  /**
+   * Jenis select menu untuk blok `select`.
+   *
+   * `string` = daftar pilihan bebas (tidak mengubah apa pun), sedangkan
+   * `user`/`role`/`mentionable`/`channel` memakai daftar yang disediakan
+   * Discord sendiri (anggota, role server, atau channel).
+   */
+  selectKind?: SelectMenuKind;
+
+  /** Teks ajakan di dalam select (maksimal 150 karakter di Discord). */
+  placeholder?: string;
+
+  /** Berapa pilihan yang boleh diambil sekaligus. */
+  minValues?: number;
+  maxValues?: number;
+
+  /**
+   * Pilihan untuk `select` jenis `string`.
+   *
+   * `value` tidak dikirim ke bot mana pun (select ini tidak menulis apa pun),
+   * jadi dibiarkan seperti di Discohook: teks bebas.
+   */
+  options?: Array<{ label: string; value?: string; description?: string; emoji?: string }>;
+
+  /** Menu ini tidak bisa dipakai (`disabled`). */
+  selectDisabled?: boolean;
+
+  /**
+   * Nilai yang sudah terpilih saat menu tampil (`default_values` di Discord).
+   *
+   * Hanya berlaku untuk select user/role/mentionable/channel — Discord menolak
+   * `default_values` pada select string. Isinya ID (user/role/channel), dan
+   * yang tidak sah DILEWATI dengan alasan, bukan membuat seluruh menu hilang.
+   */
+  defaultValues?: string[];
+
+  /**
+   * Teks alternatif gambar (alt text) untuk blok `image`.
+   *
+   * Discord menampilkannya sebagai deskripsi saat gambar gagal dimuat dan
+   * membacakannya untuk pembaca layar. Discohook menyebutnya "description"
+   * pada item Media Gallery.
+   */
+  alt?: string;
 
   /**
    * Id blok — dipakai sebagai customId untuk select menu role.
@@ -151,6 +236,69 @@ export interface PostBlock {
  * Discord punya 5 gaya, tapi 'link' tidak masuk di sini: tombol role selalu
  * interaktif (membawa customId), dan tombol link diurus blok 'button'.
  */
+/**
+ * Jenis select menu yang bisa disusun.
+ *
+ * Urutannya sama dengan menu "Add Component" di Discohook supaya admin yang
+ * terbiasa di sana menemukan nama yang sama:
+ *   Select Menu (string) · User · Role · User & Role (mentionable) · Channel
+ */
+export const SELECT_KINDS = ['string', 'user', 'role', 'mentionable', 'channel'] as const;
+export type SelectMenuKind = (typeof SELECT_KINDS)[number];
+
+/** Nama manusiawi — dipakai dashboard dan pesan peringatan. */
+export const SELECT_KIND_LABEL: Record<SelectMenuKind, string> = {
+  string: 'Select Menu',
+  user: 'User Select Menu',
+  role: 'Role Select Menu',
+  mentionable: 'User & Role Select Menu',
+  channel: 'Channel Select Menu',
+};
+
+export function normalizeSelectKind(value: unknown): SelectMenuKind {
+  return SELECT_KINDS.includes(value as SelectMenuKind) ? (value as SelectMenuKind) : 'string';
+}
+
+/**
+ * Flag pesan yang boleh dipakai admin.
+ *
+ * Discohook menyebutnya "Message Flags": Suppress Embeds, Suppress
+ * Notifications, dan Voice Message. Nilainya bitmask Discord, dan hanya tiga
+ * ini yang masuk akal untuk pesan container:
+ *   - 4   = SUPPRESS_EMBEDS (tautan tidak dibuatkan kartu embed)
+ *   - 4096= SUPPRESS_NOTIFICATIONS (pesan tidak memicu notifikasi)
+ *   - 8192= IS_VOICE_MESSAGE (tidak dipakai: butuh lampiran audio khusus)
+ * Flag lain (IS_COMPONENTS_V2) diurus pengirim, bukan admin.
+ */
+export const MESSAGE_FLAGS = {
+  suppressEmbeds: 1 << 2,
+  suppressNotifications: 1 << 12,
+} as const;
+
+/**
+ * Rapikan bitmask flag dari input admin.
+ *
+ * Nilai asing DIBUANG, bukan diteruskan: flag Discord yang tidak dikenal bisa
+ * membuat pesan ditolak, dan admin tidak akan tahu kenapa.
+ */
+export function sanitizeMessageFlags(input: unknown): number {
+  const angka = Number(input);
+  if (!Number.isFinite(angka)) return 0;
+  let hasil = 0;
+  for (const nilai of Object.values(MESSAGE_FLAGS)) {
+    if ((angka & nilai) === nilai) hasil |= nilai;
+  }
+  return hasil;
+}
+
+/** Flag yang dipahami, untuk ditampilkan di dasbor. */
+export function describeMessageFlags(flags: number): string[] {
+  const bagian: string[] = [];
+  if (flags & MESSAGE_FLAGS.suppressEmbeds) bagian.push('tanpa kartu embed');
+  if (flags & MESSAGE_FLAGS.suppressNotifications) bagian.push('tanpa notifikasi');
+  return bagian;
+}
+
 export const BUTTON_STYLES = ['primary', 'secondary', 'success', 'danger'] as const;
 export type ButtonStyleName = (typeof BUTTON_STYLES)[number];
 
@@ -227,6 +375,8 @@ export const LIMITS = {
   blocks: 120,
   /** Maksimum gambar dalam satu Media Gallery. */
   imagesInGallery: 10,
+  /** Maksimum pilihan dalam satu select menu (batas Discord). */
+  selectOptions: 25,
   /**
    * Batas ASLI Discord untuk Components V2: 40 komponen total (termasuk yang
    * bersarang) dan 10 komponen top-level.
@@ -307,6 +457,9 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
         value: '',
         // Kosong = ikut warna pesan, jadi tidak perlu disimpan sebagai nilai.
         ...(accentRaw && /^#?[0-9a-f]{6}$/i.test(accentRaw) ? { accent: normalizeAccent(accentRaw) } : {}),
+        // Spoiler container: seluruh kartu tertutup sampai diklik, sama
+        // seperti centang "spoiler" pada container di Discohook.
+        ...(item.spoiler === true ? { spoiler: true } : {}),
       });
       continue;
     }
@@ -334,11 +487,18 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
       // kalau admin mengisi keduanya, karena tombol lebih terlihat.
       const url = typeof item.url === 'string' ? item.url.trim() : '';
       const pakaiTombol = Boolean(label) && isHttpUrl(url);
+      // Emoji & status nonaktif hanya berarti kalau aksesorinya tombol.
+      const emojiAksesori = pakaiTombol ? normalizeEmoji(item.emoji) : '';
       out.push({
         kind: 'section',
         value: isi,
         ...(pakaiTombol
-          ? { accessoryLabel: label, url }
+          ? {
+              accessoryLabel: label,
+              url,
+              ...(emojiAksesori ? { emoji: emojiAksesori } : {}),
+              ...(item.disabled === true ? { disabled: true } : {}),
+            }
           : isHttpUrl(thumbnailRaw)
             ? { thumbnail: thumbnailRaw }
             : {}),
@@ -356,6 +516,8 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
           // Block id hanya dipakai kalau bentuknya aman untuk customId.
           ...(/^[a-z0-9]{1,16}$/.test(blockId) ? { blockId } : {}),
           ...(item.spacing === 'large' ? { spacing: 'large' as const } : {}),
+          // `divider: false` = jarak kosong tanpa garis (Discord mendukungnya).
+          ...(item.divider === false ? { divider: false } : {}),
         });
       }
       continue;
@@ -400,6 +562,9 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
       // URI di komponen V2, jadi pengirim mengubahnya jadi lampiran lebih
       // dulu — di sini hanya bentuknya yang diperiksa.
       const data = typeof item.data === 'string' ? item.data.trim() : '';
+      // Alt text: dibaca pembaca layar dan tampil saat gambar gagal dimuat.
+      const altRaw = typeof item.alt === 'string' ? item.alt.trim().slice(0, 1024) : '';
+      const alt = altRaw ? { alt: altRaw } : {};
       if (data) {
         if (!/^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/i.test(data)) {
           dropped.push('gambar unggahan (format harus PNG, JPG, atau WebP)');
@@ -410,7 +575,14 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
           continue;
         }
         images += 1;
-        out.push({ kind: 'image', value: '', data, ...(item.spoiler === true ? { spoiler: true } : {}), ...aksesori() });
+        out.push({
+          kind: 'image',
+          value: '',
+          data,
+          ...alt,
+          ...(item.spoiler === true ? { spoiler: true } : {}),
+          ...aksesori(),
+        });
         continue;
       }
 
@@ -424,7 +596,13 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
         continue;
       }
       images += 1;
-      out.push({ kind: 'image', value: url, ...(item.spoiler === true ? { spoiler: true } : {}), ...aksesori() });
+      out.push({
+        kind: 'image',
+        value: url,
+        ...alt,
+        ...(item.spoiler === true ? { spoiler: true } : {}),
+        ...aksesori(),
+      });
       continue;
     }
 
@@ -484,14 +662,131 @@ export function sanitizeBlocks(input: unknown): SanitizeResult {
         url,
         ...(emoji ? { emoji } : {}),
         style: normalizeButtonStyle(item.style),
+        ...(item.disabled === true ? { disabled: true } : {}),
+      });
+      continue;
+    }
+
+    if (kind === 'row') {
+      /*
+       * Baris baru untuk tombol. Dua `row` berurutan sama saja dengan satu —
+       * baris kosong tidak menghasilkan komponen apa pun, tetapi tetap
+       * disimpan sebagai penanda supaya susunan admin tidak bergeser saat
+       * disimpan ulang.
+       */
+      if (out.length === 0 || out[out.length - 1]!.kind !== 'row') {
+        out.push({ kind: 'row', value: '' });
+      }
+      continue;
+    }
+
+    if (kind === 'select') {
+      const selectKind = normalizeSelectKind(item.selectKind);
+      const placeholder = typeof item.placeholder === 'string'
+        ? item.placeholder.trim().slice(0, 150)
+        : '';
+      const isi = typeof item.value === 'string' ? item.value.trim().slice(0, 150) : '';
+
+      /*
+       * Pilihan untuk select jenis string.
+       *
+       * `value` WAJIB ada: Discord menolak select tanpa opsi. Kalau admin
+       * tidak mengisinya, label dipakai sebagai nilainya — lebih berguna
+       * daripada membuang seluruh komponen.
+       */
+      const options: Array<{ label: string; value: string; description?: string; emoji?: string }> = [];
+      if (selectKind === 'string') {
+        for (const raw of Array.isArray(item.options) ? item.options : []) {
+          if (!raw || typeof raw !== 'object') continue;
+          const opsi = raw as Record<string, unknown>;
+          const label = typeof opsi.label === 'string' ? opsi.label.trim().slice(0, 100) : '';
+          if (!label) continue;
+          const value = typeof opsi.value === 'string' && opsi.value.trim()
+            ? opsi.value.trim().slice(0, 100)
+            : label;
+          const description = typeof opsi.description === 'string'
+            ? opsi.description.trim().slice(0, 100)
+            : '';
+          const emoji = normalizeEmoji(opsi.emoji);
+          options.push({
+            label,
+            value,
+            ...(description ? { description } : {}),
+            ...(emoji ? { emoji } : {}),
+          });
+          if (options.length >= LIMITS.selectOptions) break;
+        }
+        if (options.length === 0) {
+          dropped.push('select menu tanpa pilihan (Discord menolak menu kosong)');
+          continue;
+        }
+      }
+
+      // Discord: min 0..25, max 1..25, dan min tidak boleh melebihi max.
+      const maks = Math.min(Math.max(1, Number(item.maxValues) || 1), LIMITS.selectOptions);
+      const minRaw = Number(item.minValues);
+      const min = Number.isFinite(minRaw) ? Math.min(Math.max(0, Math.trunc(minRaw)), maks) : 1;
+
+      /*
+       * `default_values`: hanya untuk select yang MENUNJUK entitas Discord.
+       * Select string ditolak Discord, jadi nilainya dibuang dari daftar
+       * (bukan seluruh blok) dan alasannya dilaporkan.
+       */
+      const defaultValues: string[] = [];
+      if (item.defaultValues !== undefined && item.defaultValues !== null) {
+        if (selectKind === 'string') {
+          dropped.push('default_values tidak berlaku untuk select string');
+        } else {
+          const mentah = Array.isArray(item.defaultValues) ? item.defaultValues : [];
+          for (const satu of mentah) {
+            const id = typeof satu === 'string' ? satu.trim() : '';
+            if (!/^\d{5,25}$/.test(id)) continue;
+            if (defaultValues.includes(id)) continue;
+            defaultValues.push(id);
+            if (defaultValues.length >= 25) break;
+          }
+          if (mentah.length > 0 && defaultValues.length === 0) {
+            dropped.push('default_values harus berupa ID (angka)');
+          }
+          /*
+           * Discord hanya mengizinkan SATU nilai bawaan pada menu
+           * single-select. Lebih dari itu ditolak seluruh pesan, jadi yang
+           * dipakai hanya yang pertama — dan itu dilaporkan.
+           */
+          if (defaultValues.length > 1 && maks === 1) {
+            dropped.push('menu single-select hanya boleh punya satu default_values');
+            defaultValues.length = 1;
+          }
+        }
+      }
+
+      out.push({
+        kind: 'select',
+        value: isi,
+        selectKind,
+        ...(placeholder ? { placeholder } : {}),
+        minValues: min,
+        maxValues: maks,
+        ...(options.length > 0 ? { options } : {}),
+        ...(item.selectDisabled === true ? { selectDisabled: true } : {}),
+        ...(defaultValues.length > 0 ? { defaultValues } : {}),
       });
       continue;
     }
 
     if (kind === 'close') {
-      // Penanda struktur murni: tidak menghasilkan komponen, dan dua penutup
-      // berurutan sama saja dengan satu.
-      if (out.length > 0 && out[out.length - 1]!.kind !== 'close') {
+      /*
+       * Penanda struktur murni: tidak menghasilkan komponen, dan dua penutup
+       * berurutan sama saja dengan satu.
+       *
+       * Penutup PERTAMA harus tetap dipertahankan walaupun belum ada blok
+       * sebelumnya. Artinya: "mulai menulis di luar kartu". Itu satu-satunya
+       * cara menyusun pesan yang SELURUH isinya di luar kartu — mis. teks
+       * polos + baris tombol seperti pesan Discohook tanpa container. Dulu
+       * syarat `out.length > 0` membuang penanda ini, sehingga pesan seperti
+       * itu tetap terbungkus satu kartu dan tampilannya berubah.
+       */
+      if (out.length === 0 || out[out.length - 1]!.kind !== 'close') {
         out.push({ kind: 'close', value: '' });
       }
       continue;
@@ -618,6 +913,25 @@ export function measureBlocks(blocks: PostBlock[]): ComponentUsage {
       adaTombol += 1;
       continue;
     }
+    if (block.kind === 'row') {
+      // Baris baru: deretan tombol yang menumpuk dihitung sebagai baris utuh,
+      // sama seperti `flushButtons(true)` di penyusun payload.
+      tutupTombol();
+      continue;
+    }
+    if (block.kind === 'select') {
+      // Select selalu satu baris penuh (5 slot), jadi tombol yang menumpuk
+      // harus ditutup lebih dulu — kalau tidak, angkanya kurang satu baris.
+      tutupTombol();
+      if (luar) {
+        total += 1;
+        luarCount += 1;
+      } else {
+        anak += 1;
+        adaIsi = true;
+      }
+      continue;
+    }
     if (block.kind === 'divider') {
       // Pemisah pertama di container kosong tidak ditampilkan sendirian.
       if (adaIsi || luar) {
@@ -741,6 +1055,36 @@ export interface BuiltPost {
    * itu. Pengunduhan dilakukan di lapisan pengirim (butuh jaringan).
    */
   remoteFiles: Array<{ url: string; name: string; spoiler?: boolean; indeks: number }>;
+  /**
+   * Blok yang dilewati saat menyusun payload, dalam bahasa manusia.
+   *
+   * Contoh: select yang tidak didukung versi discord.js, atau aksesori teks
+   * yang butuh Section. Dikembalikan (bukan hanya dicatat di dalam) supaya
+   * dashboard bisa memberi tahu admin apa yang tidak jadi terkirim.
+   */
+  dropped: string[];
+  /**
+   * Izin ping untuk pesan ini (`allowed_mentions`).
+   *
+   * Disimpan di sini, bukan di pengirim, karena nilainya ditentukan oleh isi
+   * pesan: pesan tanpa `@everyone` tidak perlu izin apa pun, sedangkan pesan
+   * yang memang menyebut orang perlu izin yang lebih sempit daripada
+   * "semua boleh". Pemanggil yang mengirim tanpa melihat ini akan mengirim
+   * pesan yang tidak pernah bisa nge-ping siapa pun.
+   */
+  allowedMentions: {
+    parse?: Array<'users' | 'roles' | 'everyone'>;
+    users?: string[];
+    roles?: string[];
+    repliedUser?: boolean;
+  };
+  /**
+   * Nama thread bila pesan ini harus membuka thread (`thread_name`).
+   *
+   * Discord membuat thread dari pesan SETELAH pesan terkirim, jadi nilainya
+   * hanya bisa dipakai pengirim — bukan bagian dari payload komponen.
+   */
+  threadName?: string;
 }
 
 /** Bentuk minimal lampiran — pemanggil yang membuat AttachmentBuilder asli. */
@@ -777,6 +1121,17 @@ export function buildPostPayload(
     /** Untuk select menu role. */
     StringSelectMenuBuilder?: new () => any;
     StringSelectMenuOptionBuilder?: new () => any;
+    /**
+     * Select menu yang disediakan Discord sendiri (blok `select`).
+     *
+     * Tidak semua versi discord.js punya keempatnya, jadi semuanya opsional:
+     * blok yang tidak bisa dibangun dilewati dengan alasan, bukan menggagalkan
+     * seluruh pesan.
+     */
+    UserSelectMenuBuilder?: new () => any;
+    RoleSelectMenuBuilder?: new () => any;
+    MentionableSelectMenuBuilder?: new () => any;
+    ChannelSelectMenuBuilder?: new () => any;
     accent?: number;
     /**
      * Tombol ambil role milik pesan ini (dari tabel post_role_buttons).
@@ -799,6 +1154,28 @@ export function buildPostPayload(
     accentToNumber?: (hex: string) => number;
     /** Warna aksen pilihan admin; kalau kosong, `deps.accent`. */
     accentHex?: string;
+    /**
+     * ID pesan (/pesan) pemilik komponen.
+     *
+     * Disisipkan ke customId blok Select (`post-ctx:<postId>:<jenis>`) supaya
+     * aksi komponen bisa dicari secara pasti. Tanpa ini, dua pesan yang
+     * sama-sama punya select berjenis `role` tidak bisa dibedakan — dan aksi
+     * milik pesan lain bisa ikut dijalankan.
+     */
+    contextPostId?: number | null;
+    /**
+     * Nilai untuk template teks pesan (`{member.name}`, `{server.name}`, …).
+     *
+     * Kosong = teks dikirim apa adanya. Itu penting: pesan biasa yang dikirim
+     * admin dari dashboard TIDAK boleh tiba-tiba mengubah `{member.name}`
+     * menjadi kosong hanya karena fitur ini ada. Hanya pemanggil yang memang
+     * punya konteks member (flow, sambutan) yang mengisinya.
+     */
+    template?: Record<string, string> | null;
+    /** Izin ping (`allowed_mentions`). Kosong = tanpa ping apa pun. */
+    allowedMentions?: BuiltPost['allowedMentions'];
+    /** Nama thread bila pesan ini membuka thread. */
+    threadName?: string;
   },
 ): BuiltPost | null {
   /*
@@ -806,8 +1183,33 @@ export function buildPostPayload(
    * yang hanya berisi ActionRow di dalam container tanpa teks), tapi section
    * yang hanya berisi gambar tetap sah — jadi ia ikut dihitung sebagai isi.
    */
+  /**
+   * Teks satu blok, sudah diisi template bila konteksnya ada.
+   *
+   * Token yang tidak dikenal DIBIARKAN apa adanya (bukan dihapus), sama seperti
+   * di aksi komponen: salah tulis harus terlihat, bukan menghilang diam-diam.
+   */
+  const isiTeks = (nilai: string): string => {
+    const nilaiTemplate = deps.template;
+    if (!nilaiTemplate) return nilai;
+    /*
+     * Memakai penggantian yang SAMA dengan teks aksi (`applyTemplate`):
+     * kunci terpanjang dulu, token tak dikenal dibiarkan. Dulu di sini
+     * `{member.name}` dan `{member.name_x}` bisa saling merusak karena
+     * penggantian mengikuti urutan objek, bukan panjang kunci.
+     */
+    return applyTemplate(nilai, nilaiTemplate);
+  };
+
   const adaIsi = blocks.some(
-    (b) => b.kind === 'text' || b.kind === 'image' || b.kind === 'section' || b.kind === 'file',
+    (b) =>
+      b.kind === 'text' ||
+      b.kind === 'image' ||
+      b.kind === 'section' ||
+      b.kind === 'file' ||
+      // Select menu adalah isi, bukan hiasan: pesan berisi satu dropdown saja
+      // tetap sah di Discord, sama seperti di Discohook.
+      b.kind === 'select',
   );
   if (!adaIsi) return null;
 
@@ -830,10 +1232,13 @@ export function buildPostPayload(
   }
 
   const wadah: Wadah[] = [];
-  const buatWadah = (accent?: number): Wadah => {
+  const buatWadah = (accent?: number, spoiler?: boolean): Wadah => {
     const builder = new deps.ContainerBuilder();
     const warna = accent ?? accentDefault;
     if (warna !== undefined) builder.setAccentColor(warna);
+    // Spoiler container: seluruh kartu tertutup sampai member mengkliknya.
+    // `setSpoiler` ada di discord.js 14.19+; versi lawas cukup dilewati.
+    if (spoiler && typeof builder.setSpoiler === 'function') builder.setSpoiler(true);
     const baru: Wadah = { builder, anak: 0, adaIsi: false };
     wadah.push(baru);
     return baru;
@@ -914,7 +1319,7 @@ export function buildPostPayload(
   /** Pindah ke container berikutnya; dipanggil saat blok `container` dibaca. */
   const bukaContainer = (block: PostBlock): void => {
     const accent = block.accent && deps.accentToNumber ? deps.accentToNumber(block.accent) : undefined;
-    aktif = buatWadah(accent);
+    aktif = buatWadah(accent, block.spoiler);
     // Wadah BARU harus didaftarkan — tanpa ini ia tidak pernah masuk daftar
     // urutan dan seluruh isinya hilang dari pesan.
     daftarkanWadah(aktif);
@@ -936,12 +1341,15 @@ export function buildPostPayload(
    */
   const tambahAksesori = (section: any, block: PostBlock): void => {
     if (block.accessoryLabel && block.accessoryUrl) {
-      section.setButtonAccessory(
-        new deps.ButtonBuilder()
-          .setStyle(deps.ButtonStyle.Link)
-          .setLabel(block.accessoryLabel)
-          .setURL(block.accessoryUrl),
-      );
+      const tombol = new deps.ButtonBuilder()
+        .setStyle(deps.ButtonStyle.Link)
+        .setLabel(block.accessoryLabel)
+        .setURL(block.accessoryUrl);
+      // Emoji tombol aksesori — Discohook mengizinkannya pada tombol Section.
+      const emoji = parseEmoji(block.emoji);
+      if (emoji) tombol.setEmoji(emoji);
+      if (block.disabled && typeof tombol.setDisabled === 'function') tombol.setDisabled(true);
+      section.setButtonAccessory(tombol);
     } else if (block.thumbnail && deps.ThumbnailBuilder) {
       const thumb = new deps.ThumbnailBuilder();
       thumb.setURL(block.thumbnail);
@@ -951,7 +1359,108 @@ export function buildPostPayload(
 
   let tombolTertunda: PostBlock[] = [];
 
-  /** Buang tombol yang menumpuk: Discord hanya menerima 5 per baris. */
+  /**
+   * Bangun ActionRow untuk blok `select`.
+   *
+   * Select selalu memakai SATU baris penuh: di Discord lebarnya 5 slot
+   * (lihat `getComponentWidth` di Discohook), dan baris hanya punya 5 slot.
+   * Karena itu tombol yang menumpuk harus dikeluarkan lebih dulu dari baris
+   * ini — bukan digabung.
+   *
+   * `null` = jenis select tidak didukung versi discord.js yang dipakai.
+   */
+  const buatSelect = (block: PostBlock): { row: any } | { drop: string } => {
+    const jenis = block.selectKind ?? 'string';
+    const placeholder = (block.placeholder || block.value || '').slice(0, 150);
+    const min = Math.max(0, Math.min(block.minValues ?? 1, 25));
+    const max = Math.max(1, Math.min(block.maxValues ?? 1, 25));
+
+    const pasang = (builder: any): any => {
+      if (placeholder) builder.setPlaceholder(placeholder);
+      if (typeof builder.setMinValues === 'function') builder.setMinValues(Math.min(min, max));
+      if (typeof builder.setMaxValues === 'function') builder.setMaxValues(max);
+      if (block.selectDisabled && typeof builder.setDisabled === 'function') builder.setDisabled(true);
+      /*
+       * `default_values` dipasang lewat data mentah, bukan setter: builder
+       * discord.js belum menyediakan setter bertipe untuknya, sedangkan
+       * payload API-nya sudah mendukung. Tanpa ini, pilihan bawaan menu
+       * hilang diam-diam dan admin mengira fiturnya rusak.
+       */
+      if (block.defaultValues?.length && (block.selectKind ?? 'string') !== 'string') {
+        const jenis = block.selectKind === 'role' ? 'role' : block.selectKind === 'channel' ? 'channel' : 'user';
+        const data = builder.toJSON();
+        data.default_values = block.defaultValues.slice(0, 25).map((id) => ({
+          id,
+          type: jenis === 'role' ? 'role' : jenis === 'channel' ? 'channel' : 'user',
+        }));
+        builder.setDefaultValues?.(
+          block.defaultValues.slice(0, 25).map((id) => ({ id, type: jenis })),
+        );
+        // Builder tanpa `setDefaultValues` tetap terkirim benar karena data
+        // mentahnya sudah diisi di atas.
+        if (!builder.setDefaultValues && typeof builder.toJSON === 'function') {
+          // tidak ada yang perlu dilakukan: `toJSON` membaca `data` yang sama
+        }
+      }
+      return new deps.ActionRowBuilder().addComponents(builder);
+    };
+
+    if (jenis === 'string') {
+      if (!deps.StringSelectMenuBuilder || !deps.StringSelectMenuOptionBuilder) {
+        return { drop: 'select menu dilewati (versi discord.js tidak mendukungnya)' };
+      }
+      const select = new deps.StringSelectMenuBuilder().setCustomId(selectId(block));
+      for (const opsi of (block.options ?? []).slice(0, LIMITS.selectOptions)) {
+        const option = new deps.StringSelectMenuOptionBuilder()
+          .setLabel(opsi.label.slice(0, 100))
+          .setValue((opsi.value || opsi.label).slice(0, 100));
+        const emoji = parseEmoji(opsi.emoji);
+        if (emoji) option.setEmoji(emoji);
+        if (opsi.description) option.setDescription(opsi.description.slice(0, 100));
+        select.addOptions(option);
+      }
+      return { row: pasang(select) };
+    }
+
+    const map: Record<string, [string, (new () => any) | undefined]> = {
+      user: ['user', deps.UserSelectMenuBuilder],
+      role: ['role', deps.RoleSelectMenuBuilder],
+      mentionable: ['user & role', deps.MentionableSelectMenuBuilder],
+      channel: ['channel', deps.ChannelSelectMenuBuilder],
+    };
+    const [nama, Builder] = map[jenis] ?? [jenis, undefined];
+    if (!Builder) return { drop: `select ${nama} dilewati (versi discord.js tidak mendukungnya)` };
+    return { row: pasang(new Builder().setCustomId(selectId(block))) };
+  };
+
+  /**
+   * customId select.
+   *
+   * Memakai prefix `post-ctx:` supaya router interaksi bisa mengenalinya dan
+   * menjawab dengan penjelasan — menu ini memang tidak mengubah apa pun.
+   * Isinya cuma jenis menu, jadi jauh di bawah batas 100 karakter Discord.
+   */
+  const selectId = (block: PostBlock): string => {
+    const jenis = block.selectKind ?? 'string';
+    /*
+     * ID pesan ikut dikirim bila diketahui. Pesan lama (yang dikirim sebelum
+     * ini ada) tetap memakai bentuk pendek `post-ctx:<jenis>`; bot mengenali
+     * kedua bentuk, jadi tidak ada komponen yang berhenti bekerja.
+     */
+    return deps.contextPostId ? `post-ctx:${deps.contextPostId}:${jenis}` : `post-ctx:${jenis}`;
+  };
+
+  /**
+   * Buang SEMUA tombol yang menumpuk menjadi ActionRow, 5 per baris.
+   *
+   * Dipanggil saat deretan tombol selesai: sebelum blok bukan-tombol, sebelum
+   * container/penutup, dan pada blok `row`. Karena seluruh tumpukan
+   * dikeluarkan, tombol sesudah `row` otomatis mulai dari baris baru —
+   * itulah padanan "Row" di Discohook. (Versi pertama fungsi ini punya
+   * parameter `paksa` yang tidak pernah mengubah perilaku, karena
+   * `splice(0, 5)` sudah mengosongkan tumpukan; parameternya dibuang supaya
+   * tidak menyesatkan.)
+   */
   const flushButtons = (): void => {
     while (tombolTertunda.length > 0) {
       const baris = tombolTertunda.splice(0, 5);
@@ -966,6 +1475,8 @@ export function buildPostPayload(
         // berlaku untuk tombol role.
         const emoji = parseEmoji(tombol.emoji);
         if (emoji) button.setEmoji(emoji);
+        // Tombol nonaktif tetap tampil, tetapi Discord menolak kliknya.
+        if (tombol.disabled && typeof button.setDisabled === 'function') button.setDisabled(true);
         row.addComponents(button);
       }
       if (luar) {
@@ -992,6 +1503,12 @@ export function buildPostPayload(
       luar = true;
       continue;
     }
+    if (block.kind === 'row') {
+      // Baris baru: keluarkan tombol yang sudah terkumpul sebagai satu baris
+      // utuh, lalu baris berikutnya dimulai dari tombol sesudah blok ini.
+      if (tombolTertunda.length > 0) flushButtons();
+      continue;
+    }
     if (block.kind === 'button') {
       tombolTertunda.push(block);
       continue;
@@ -999,8 +1516,21 @@ export function buildPostPayload(
     // Blok lain menutup deretan tombol sebelumnya supaya urutan tetap terjaga.
     if (tombolTertunda.length > 0) flushButtons();
 
+    if (block.kind === 'select') {
+      const hasil = buatSelect(block);
+      if ('drop' in hasil) {
+        dropped.push(hasil.drop);
+        continue;
+      }
+      tulis(hasil.row);
+      continue;
+    }
+
     if (block.kind === 'divider') {
-      const sep = new deps.SeparatorBuilder().setDivider(true);
+      // Discord menyebut dua hal terpisah pada Separator: `divider` (ada
+      // garisnya atau tidak) dan `spacing` (rapat/renggang). Discohook
+      // mengekspos keduanya, jadi keduanya diteruskan di sini.
+      const sep = new deps.SeparatorBuilder().setDivider(block.divider !== false);
       // Jarak: 1 = kecil (rapat), 2 = besar (renggang). Discord menamainya
       // `spacing`, bukan ukuran piksel.
       if (block.spacing === 'large' && typeof sep.setSpacing === 'function') sep.setSpacing(2);
@@ -1022,7 +1552,7 @@ export function buildPostPayload(
       );
       if (adaAksesori && deps.SectionBuilder) {
         const section = new deps.SectionBuilder();
-        section.addTextDisplayComponents(new deps.TextDisplayBuilder().setContent(block.value));
+        section.addTextDisplayComponents(new deps.TextDisplayBuilder().setContent(isiTeks(block.value)));
         tambahAksesori(section, block);
         tulis(section);
         continue;
@@ -1030,7 +1560,7 @@ export function buildPostPayload(
       if (adaAksesori && !deps.SectionBuilder) {
         dropped.push('aksesori teks dilewati (versi discord.js tidak mendukung Section)');
       }
-      tulis(new deps.TextDisplayBuilder().setContent(block.value));
+      tulis(new deps.TextDisplayBuilder().setContent(isiTeks(block.value)));
       continue;
     }
     if (block.kind === 'section') {
@@ -1038,7 +1568,7 @@ export function buildPostPayload(
       if (deps.SectionBuilder && deps.ThumbnailBuilder) {
         const section = new deps.SectionBuilder();
         section.addTextDisplayComponents(
-          new deps.TextDisplayBuilder().setContent(block.value || '\u200b'),
+          new deps.TextDisplayBuilder().setContent(isiTeks(block.value) || '\u200b'),
         );
         tambahAksesori(section, {
           ...block,
@@ -1059,6 +1589,8 @@ export function buildPostPayload(
         url = `attachment://${name}`;
       }
       const item = new deps.MediaGalleryItemBuilder().setURL(url);
+      // Alt text: deskripsi gambar untuk pembaca layar (dan saat gagal muat).
+      if (block.alt && typeof item.setDescription === 'function') item.setDescription(block.alt);
       // Spoiler: gambar disamarkan sampai diklik. `setSpoiler` ada di
       // discord.js 14.19+; versi lawas dilewati tanpa menggagalkan pesan.
       if (block.spoiler && typeof item.setSpoiler === 'function') item.setSpoiler(true);
@@ -1219,6 +1751,21 @@ export function buildPostPayload(
     flags: 1 << 15,
     files,
     remoteFiles,
+    /*
+     * Blok yang dilewati saat penyusunan payload.
+     *
+     * Dikembalikan supaya pengirim bisa memberi tahu admin — dulu daftar ini
+     * hanya hidup di dalam fungsi dan hilang tanpa jejak, sehingga select atau
+     * berkas yang dilewati tidak pernah dilaporkan.
+     */
+    dropped,
+    /*
+     * Izin ping bawaan: TIDAK mengizinkan ping apa pun. Itu pilihan yang
+     * disengaja — pesan buatan admin paling sering berisi `@everyone` yang
+     * tidak dimaksudkan, dan ping massal tidak bisa ditarik kembali.
+     */
+    allowedMentions: deps.allowedMentions ?? { parse: [] },
+    ...(deps.threadName ? { threadName: deps.threadName } : {}),
   };
 }
 

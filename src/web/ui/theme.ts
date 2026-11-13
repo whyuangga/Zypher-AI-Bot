@@ -671,6 +671,77 @@ details.user-group[open] > summary { background: rgba(226, 209, 204, .05); }
 .chev { margin-left: auto; color: var(--text-3); transition: transform .18s; }
 details[open] .chev { transform: rotate(180deg); }
 
+/* ---------------- pratinjau embed klasik ---------------- */
+/* Bentuknya mengikuti embed Discord: garis warna di kiri, isi menjorok. */
+.preview-embed {
+  background: rgba(226, 209, 204, .045);
+  border-left: 4px solid var(--brand);
+  border-radius: 4px 10px 10px 4px;
+  padding: 12px 14px;
+  display: grid; gap: 8px;
+  max-width: 520px;
+}
+.preview-embed-title { font-size: 14.5px; font-weight: 600; color: var(--text); }
+/*
+ * Penulis, bidang, dan footer embed klasik.
+ *
+ * Warnanya lebih redup dari isi utama, sama seperti embed Discord sungguhan:
+ * bagian ini adalah keterangan, bukan isi pesan.
+ */
+.preview-embed-author { font-size: 12px; font-weight: 600; color: var(--text); }
+.preview-embed-fields { display: grid; gap: 4px; }
+.preview-embed-field {
+  font-size: 12.5px; line-height: 1.5; color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.preview-embed-field b { color: var(--text); font-weight: 600; }
+.preview-embed-footer { font-size: 11.5px; color: var(--text-3, var(--text-2)); }
+.preview-embed-text {
+  font-size: 13px; line-height: 1.55; color: var(--text-2);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.preview-embed-image {
+  height: 180px; border-radius: 8px; background-size: cover; background-position: center;
+  background-color: rgba(226, 209, 204, .08);
+}
+.preview-outside {
+  margin-top: 8px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* ---------------- diff versi pesan ---------------- */
+/* Panel di bawah baris riwayat: ringkasan dulu, lalu rincian per blok. */
+.diff-panel {
+  padding: 12px 24px 16px 60px; border-bottom: 1px solid var(--line);
+  background: rgba(226, 209, 204, .022);
+}
+.diff-kepala {
+  font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-2); margin-bottom: 8px;
+}
+.diff-daftar { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.diff-baris {
+  font-size: 12.5px; line-height: 1.5; color: var(--text-2);
+  padding-left: 16px; position: relative; font-variant-numeric: tabular-nums;
+}
+.diff-baris::before { position: absolute; left: 0; font-weight: 700; }
+.diff-tambah::before { content: '+'; color: #7fbf9a; }
+.diff-hapus::before { content: '−'; color: #d99a9a; }
+.diff-ubah::before { content: '~'; color: var(--warn); }
+.diff-teks {
+  margin-top: 10px; display: grid; gap: 4px; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface);
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.55;
+}
+.diff-label {
+  font-family: var(--font); font-size: 9px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text-3); font-weight: 500;
+}
+.diff-lama { color: #d99a9a; white-space: pre-wrap; }
+.diff-lama::before { content: '− '; opacity: .6; }
+.diff-baru { color: #7fbf9a; white-space: pre-wrap; }
+.diff-baru::before { content: '+ '; opacity: .6; }
+
 .toast {
   position: fixed; right: 24px; bottom: 24px; z-index: 90; display: flex; align-items: center; gap: 10px;
   background: var(--text); border: 1px solid var(--text); border-left: 3px solid var(--ink);
@@ -1091,6 +1162,164 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   background: var(--line-strong);
   margin: 2px 0;
 }
+
+/*
+ * Editor bertumpuk ala Discohook.
+ *
+ * Discohook menggambar komponen sebagai kartu-kartu BERSARANG: container
+ * berisi komponennya, dan setiap komponen punya ikon jenis + tombol
+ * duplikat/hapus di kanan atas. Sebelumnya /pesan menampilkan daftar datar
+ * berisi kotak-kotak sejajar, sehingga mata admin tidak bisa melihat bagian
+ * mana yang berada DI DALAM kartu.
+ *
+ * .blok-stack = wadah komponen di dalam satu container; garis kiri tipisnya
+ * adalah kartu itu sendiri.
+ */
+.blok-stack {
+  display: grid;
+  gap: 8px;
+  padding-left: 10px;
+  border-left: 2px solid var(--line-strong);
+  border-radius: 2px;
+}
+.blok-stack.blok-stack-luar {
+  padding-left: 0;
+  border-left: 0;
+}
+.blok-stack-kosong {
+  font-size: 12px;
+  color: var(--text-3);
+  padding: 4px 0 2px;
+}
+
+/* Satu komponen di dalam kartu. */
+.blok-item {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+}
+.blok-item > .blok-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  background: rgba(255, 255, 255, 0.025);
+  border-bottom: 1px solid var(--line);
+}
+.blok-item > .blok-item-isi { display: grid; gap: 8px; padding: 10px; }
+.blok-item:not(:has(.blok-item-isi)) > .blok-item-head { border-bottom: 0; }
+
+/* Ikon jenis komponen — penanda cepat sebelum membaca isinya. */
+.blok-ikon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-2);
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+.blok-nama {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+/* Keterangan singkat di kanan label, mis. "spoiler" atau "di luar kartu". */
+.blok-tag {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+.blok-tag-warn { color: #ffcf8a; border-color: rgba(255, 182, 84, 0.35); }
+.blok-aksi { margin-left: auto; display: flex; gap: 2px; }
+
+/*
+ * Kartu container: warna aksennya ikut tampil di garis kiri, sama seperti
+ * pratinjau dan Discord. Jadi admin melihat pewarnaan sebelum mengirim.
+ */
+.blok-kartu {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.blok-kartu > .blok-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px 7px 10px;
+  background: rgba(255, 255, 255, 0.035);
+  border-bottom: 1px solid var(--line);
+}
+.blok-kartu > .blok-kartu-isi { display: grid; gap: 8px; padding: 10px 10px 12px; }
+
+/* Pemisah visual antar kartu di editor. */
+.blok-pemisah-struktur {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-3);
+  padding: 2px 0;
+}
+.blok-pemisah-struktur::before,
+.blok-pemisah-struktur::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--line);
+}
+
+/*
+ * Tab pratinjau yang menempel.
+ *
+ * Sebelumnya pratinjau adalah kartu selebar halaman di bawah editor, jadi
+ * halaman /pesan memanjang ke bawah dan admin harus menggulir jauh setiap
+ * kali mengetik. Sekarang pratinjau masuk ke daftar tab di kanan, dengan
+ * position: sticky supaya tetap terlihat selama menyunting blok panjang.
+ */
+.pesan-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+.pesan-sisi { display: grid; gap: 18px; }
+.pesan-sisi > .pane-sticky {
+  position: sticky;
+  top: 78px;
+}
+@media (max-width: 1080px) {
+  .pesan-layout { grid-template-columns: minmax(0, 1fr); }
+  .pesan-sisi > .pane-sticky { position: static; }
+}
+
+/* Bilah aksi (Simpan/Kirim) menempel di bawah supaya selalu terjangkau. */
+.pesan-aksi {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 12px 0 4px;
+  margin-top: 4px;
+  background: linear-gradient(to top, var(--bg) 70%, transparent);
+  z-index: 2;
+}
 .sep {
   border: 0;
   border-top: 1px solid var(--line);
@@ -1119,6 +1348,44 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   width: 76px;
   flex: 0 0 auto;
   text-align: center;
+}
+
+/* Angka min/maks select menu: sempit, karena isinya hanya 0-25. */
+.role-angka {
+  width: 62px;
+  flex: 0 0 auto;
+}
+
+/*
+ * Daftar pilihan select menu.
+ *
+ * Satu pilihan = satu baris berisi label, nilai, keterangan, emoji, dan tombol
+ * hapus. Grid dipakai supaya keempat kolom sejajar antar baris dan tidak
+ * berubah lebar saat admin mengetik (input teks default selebar isinya).
+ */
+.select-opsi-daftar {
+  display: grid;
+  gap: 6px;
+}
+
+.select-opsi {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr) 76px auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.select-opsi input {
+  min-width: 0;
+  font-size: 12.5px;
+  padding: 6px 8px;
+}
+
+/* Di layar sempit, kolom pilihan ditumpuk supaya tidak jadi satu baris sempit. */
+@media (max-width: 720px) {
+  .select-opsi { grid-template-columns: 1fr 76px auto; }
+  .select-opsi input:nth-child(2),
+  .select-opsi input:nth-child(3) { grid-column: 1 / -1; }
 }
 
 /* Warna tombol role di pratinjau — sama dengan palet Discord. */
@@ -1322,6 +1589,40 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   filter: blur(6px);
 }
 
+/*
+ * Kartu spoiler: Discohook punya centang "spoiler" pada container, dan Discord
+ * menyamarkan SELURUH isi kartu sampai member mengkliknya. Pratinjau meniru
+ * itu — bukan hanya menampilkan kartu biasa, karena admin perlu melihat bahwa
+ * pesannya akan tertutup.
+ */
+.preview-container.pc-spoiler-kartu > * {
+  filter: blur(6px);
+  user-select: none;
+}
+.preview-container.pc-spoiler-kartu::after {
+  content: 'SPOILER';
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  color: #fff;
+  background: #1e1f22;
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+/* Pemisah tanpa garis: hanya jarak kosong, seperti 'divider: false'. */
+.preview-container .pc-sep.pc-sep-none {
+  background: transparent;
+}
+
+/* Tombol nonaktif: tetap terlihat, tetapi Discord menolak kliknya. */
+.preview-container .pc-button.pc-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .pc-section-text { flex: 1 1 auto; min-width: 0; }
 .pc-section-aksesori { flex: 0 0 auto; display: flex; align-items: center; }
 
@@ -1351,6 +1652,23 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
 }
 
 .pc-select svg { flex: 0 0 auto; opacity: .8; }
+
+/* Select nonaktif: diredupkan dan kursor dilarang, seperti di Discord. */
+.pc-select.pc-disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+/*
+ * Bungkus select + daftar pilihannya di pratinjau.
+ *
+ * Memakai grid gap 0 supaya kotak dan pilihan pertama menempel (di Discord
+ * keduanya satu komponen), tetapi baris berikutnya tetap punya jarak.
+ */
+.pc-select-wrap {
+  display: grid;
+  gap: 0;
+}
 
 .pc-select-opt {
   display: flex;
@@ -1408,6 +1726,148 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   flex-wrap: wrap;
   margin-top: 10px;
 }
+
+/*
+ * Kartu aksi komponen (versi ringkas flow Discohook).
+ *
+ * Dibedakan dari isian biasa dengan garis kiri: aksi adalah "perilaku", bukan
+ * tampilan, jadi admin perlu melihat sekilas mana yang mengubah apa saat
+ * tombol diklik.
+ */
+.aksi-kartu {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--brand, #6d8cff);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.02);
+  margin-top: 4px;
+}
+
+.aksi-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.aksi-judul {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  flex: 1;
+}
+
+.aksi-daftar {
+  display: grid;
+  gap: 6px;
+}
+
+.aksi-baris {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--bg-2);
+}
+/*
+ * Baris yang sedang diedit (pemilih embed).
+ *
+ * Hanya penanda tipis: warna aksen penuh akan bersaing dengan warna kartu
+ * embed di pratinjau, padahal keduanya berbeda arti.
+ */
+.aksi-baris-aktif { border-color: var(--accent); background: rgba(109, 140, 255, .06); }
+
+.aksi-baris-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.aksi-jenis {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+}
+
+.aksi-baris textarea {
+  min-height: 46px;
+  font-size: 12.5px;
+}
+
+/*
+ * Kotak cabang bersyarat.
+ *
+ * Garis kiri lebih tipis dari kartu aksi dan menjorok ke dalam: cabang adalah
+ * BAGIAN dari aksi syarat, bukan aksi sejajar. Tanpa perbedaan visual ini,
+ * admin sulit tahu aksi mana yang hanya berjalan di salah satu jalur.
+ */
+.aksi-cabang {
+  display: grid;
+  gap: 6px;
+  margin-left: 10px;
+  padding-left: 10px;
+  border-left: 1px dashed var(--line);
+}
+
+.aksi-cabang-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.aksi-cabang-judul {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-3, var(--text-2));
+  flex: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/*
+ * Baris aksi di dalam cabang memakai editor aksi penuh (bukan satu baris teks
+ * ringkas), karena isinya boleh aksi apa pun. Karena itu barisnya TIDAK
+ * dipaksa flex seperti dulu: isian teks, dropdown, dan kotak cabang anak
+ * harus bisa turun ke baris berikutnya di layar sempit.
+ */
+.aksi-baris.aksi-cabang-baris {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent, var(--line));
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--bg-2);
+}
+
+/*
+ * Bilah "sedang menyunting pesan dokumen": melekat di atas editor supaya
+ * jelas bahwa blok yang terlihat milik dokumen, bukan pesan dashboard.
+ */
+.editor-edit-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--accent, var(--line));
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--bg-2);
+}
+
+.editor-edit-bar[hidden] {
+  display: none;
+}
+
+.aksi-cabang-teks {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
 .role-mode {
   font-size: 12px;
   padding: 4px 8px;
@@ -1431,6 +1891,8 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   max-width: 520px;
   display: grid;
   gap: 8px;
+  /* Diperlukan label "SPOILER" pada kartu tersamar. */
+  position: relative;
 }
 .preview-container .pc-line {
   font-size: 14px;

@@ -34,7 +34,9 @@ export type IconName =
   | 'cpu'
   | 'memory'
   | 'network'
-  | 'disk';
+  | 'disk'
+  | 'clock'
+  | 'history';
 
 const PATHS: Record<IconName, string> = {
   home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.8V21h14V9.8"/>',
@@ -46,6 +48,13 @@ const PATHS: Record<IconName, string> = {
   menu: '<path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/>',
   close: '<path d="M6 6l12 12"/><path d="M18 6 6 18"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/>',
+  /**
+   * Jam dan riwayat: dua-duanya dipakai halaman Pesan (riwayat versi &
+   * tautan berbagi). Ditambahkan di sini, bukan digambar langsung di halaman,
+   * supaya ukuran garis dan gaya ikonnya tetap sama dengan ikon lain.
+   */
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5.2l3.4 2"/>',
+  history: '<path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1"/><path d="M3.5 4.5V9H8"/><path d="M12 8v4.4l3 1.8"/>',
   plus: '<path d="M12 5v14"/><path d="M5 12h14"/>',
   trash: '<path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v6"/><path d="M14 11v6"/>',
   copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',

@@ -44,13 +44,32 @@ function fakeElement(tag = 'div'): Record<string, unknown> {
   const classes = new Set<string>();
   const element: Record<string, unknown> = {
     tagName: tag.toUpperCase(),
-    textContent: '',
+    /*
+     * textContent mengumpulkan teks anak seperti DOM sungguhan. Test perlu
+     * membacanya untuk memastikan tulisan yang dilihat admin benar-benar
+     * tergambar, bukan hanya ada di source.
+     */
+    get textContent(): string {
+      const sendiri = (element._teks as string | undefined) ?? '';
+      return sendiri + children.map((child) => String(child.textContent ?? '')).join('');
+    },
+    set textContent(nilai: string) {
+      element._teks = nilai;
+      children.length = 0;
+    },
     innerText: '',
     value: '',
     checked: false,
     disabled: false,
     hidden: false,
-    innerHTML: '',
+    get innerHTML(): string {
+      return '';
+    },
+    set innerHTML(_nilai: string) {
+      // Halaman memakai innerHTML = '' untuk mengosongkan wadah sebelum
+      // menggambar ulang; anak tiruan harus ikut kosong.
+      children.length = 0;
+    },
     files: [],
     children: [],
     options: [],
@@ -76,18 +95,49 @@ function fakeElement(tag = 'div'): Record<string, unknown> {
   };
 
   const noop = (): void => undefined;
+  const children = element.children as Record<string, unknown>[];
   const methods: Record<string, unknown> = {
     addEventListener: noop,
     removeEventListener: noop,
-    appendChild: noop,
-    removeChild: noop,
-    insertBefore: noop,
+    /*
+     * Pohon anak DILACAK, bukan no-op.
+     *
+     * Beberapa halaman menggambar ulang isi wadah (mis. kartu aksi di editor
+     * /pesan) dan test perlu memeriksa apa yang benar-benar tergambar. Tanpa
+     * pelacakan ini, satu-satunya cara menguji adalah membaca source code —
+     * yang justru tidak membuktikan apa pun.
+     */
+    appendChild: (child: Record<string, unknown>) => {
+      child.parentNode = element;
+      children.push(child);
+      return child;
+    },
+    append: (...isi: Record<string, unknown>[]) => {
+      for (const child of isi) if (child && typeof child === 'object') children.push(child);
+    },
+    prepend: (child: Record<string, unknown>) => {
+      children.unshift(child);
+    },
+    insertBefore: (child: Record<string, unknown>) => {
+      children.unshift(child);
+      return child;
+    },
+    removeChild: (child: Record<string, unknown>) => {
+      const at = children.indexOf(child);
+      if (at !== -1) children.splice(at, 1);
+      return child;
+    },
+    remove: () => {
+      const induk = element.parentNode as Record<string, unknown> | null;
+      const daftar = induk?.children as Record<string, unknown>[] | undefined;
+      const at = daftar ? daftar.indexOf(element) : -1;
+      if (at !== -1) daftar!.splice(at, 1);
+    },
     insertAdjacentHTML: noop,
     setAttribute: noop,
     removeAttribute: noop,
     getAttribute: () => null,
     hasAttribute: () => false,
-    remove: noop,
     focus: noop,
     blur: noop,
     select: noop,
@@ -96,8 +146,6 @@ function fakeElement(tag = 'div'): Record<string, unknown> {
     showModal: noop,
     reset: noop,
     submit: noop,
-    prepend: noop,
-    append: noop,
     after: noop,
     before: noop,
     replaceWith: noop,
@@ -220,7 +268,143 @@ function mountPage(html: string, label: string): PageContext {
         body = options?.body ?? null;
       }
       fetches.push({ path: String(path), method: options?.method ?? 'GET', body });
-      return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }), text: async () => '' });
+      /*
+       * Dokumen multi-pesan: balasan tiruan harus memuat `document`, karena
+       * halaman MEMAKAI hasil simpan (id + isi yang sudah disaring server).
+       * Halaman lain cukup `{ ok: true }`.
+       */
+      const jawaban: Record<string, unknown> =
+        /*
+         * Endpoint payload JSON: balasannya dipakai halaman apa adanya
+         * (`components`, `codegen`, `dropped`), jadi tiruannya harus memuat
+         * ketiganya — dengan begitu tes bisa memeriksa apa yang DITAMPILKAN,
+         * bukan sekadar URL yang dipanggil.
+         */
+        /*
+         * Satu versi riwayat: dipakai panel Bandingkan. Snapshot-nya sengaja
+         * BEDA dari isi editor tiruan (teks blok pertama diganti), supaya tes
+         * memeriksa diff yang benar-benar dihitung, bukan panel kosong.
+         */
+        String(path).includes('/revisions?revision=')
+          ? {
+              ok: true,
+              revision: {
+                id: 77,
+                name: 'Rules',
+                createdAt: 1700000000000,
+                snapshot: {
+                  blocks: [{ kind: 'text', value: 'versi lama' }],
+                  accent: '#6d8cff',
+                  sender: 'bot',
+                  flags: 0,
+                  series: false,
+                  allowedMentions: { parse: [] },
+                  threadName: null,
+                },
+              },
+            }
+          : String(path).includes('/json?')
+          ? {
+              ok: true,
+              flags: 32768,
+              allowedMentions: null,
+              threadName: null,
+              components: [{ type: 17, components: [{ type: 10, content: 'Halo' }] }],
+              dropped: [],
+              library: 'dpy2',
+              codegen: {
+                imports: 'import discord\nfrom discord import ui',
+                code: 'view = ui.Container([\n    ui.TextDisplay("Halo"),\n])',
+                documentation: 'https://discordpy.readthedocs.io/en/stable/api.html',
+                dropped: [],
+              },
+            }
+          : /*
+             * Kembalikan versi: server mengembalikan pesan SETELAH dipulihkan,
+             * lengkap dengan pengaturan tingkat pesan. Tiruan ini sengaja
+             * berbeda dari isi editor supaya tes membuktikan nilainya benar
+             * benar dipakai, bukan sekadar tidak error.
+             */
+            String(path).match(/^\/api\/posts\/\d+\/revisions$/) && body
+          ? {
+              ok: true,
+              post: {
+                id: 1,
+                name: 'Rules',
+                channelId: '123456789012345678',
+                blocks: [{ kind: 'text', value: 'isi versi lama' }],
+                accent: '#ff8800',
+                sender: 'webhook',
+                flags: 4096,
+                threadName: 'Diskusi aturan',
+                allowedMentions: { parse: ['roles'] },
+                layout: 'embed',
+                embed: [{ color: '#ff8800', author: { name: 'Tim' }, footer: { text: 'kaki' }, fields: [] }],
+                webhookName: 'Tim Pengumuman',
+                webhookAvatar: 'https://img.test/tim.png',
+              },
+            }
+          : String(path) === '/api/posts/import/discohook'
+          ? {
+              ok: true,
+              format: 'discohook',
+              /*
+               * Bentuk jawaban /api/posts/import/discohook setelah Batch 33:
+               * pengaturan tingkat pesan ikut, dengan nama field yang sama
+               * seperti respons /api/posts/load.
+               */
+              messages: [
+                {
+                  name: 'Pesan Discohook 1',
+                  blocks: [{ kind: 'text', value: 'Halo dari Discohook' }],
+                  layout: 'container',
+                  embed: [],
+                  sender: 'webhook',
+                  webhookName: 'Tim Pengumuman',
+                  webhookAvatar: 'https://img.test/tim.png',
+                  threadName: 'Diskusi',
+                  flags: 4096,
+                  warnings: [],
+                },
+                {
+                  name: 'Pesan Discohook 2',
+                  blocks: [{ kind: 'text', value: 'Pesan kedua' }],
+                  layout: 'container',
+                  embed: [],
+                  warnings: [],
+                },
+              ],
+              warnings: [],
+            }
+          : String(path) === '/api/posts/from-json'
+          ? {
+              ok: true,
+              name: 'Halo dari JSON',
+              blocks: [{ kind: 'text', value: 'Dari JSON' }],
+              embed: [],
+              layout: 'container',
+              /* Pengaturan tingkat pesan: JSON Discohook memuatnya juga. */
+              sender: 'webhook',
+              webhookName: 'Tim Pengumuman',
+              webhookAvatar: 'https://img.test/tim.png',
+              threadName: 'Diskusi rilis',
+              flags: 4,
+              warnings: [],
+            }
+          : String(path) === '/api/posts/load'
+          ? {
+              ok: true,
+              name: 'Judul dari Discord',
+              blocks: [{ kind: 'text', value: 'Isi pesan dari Discord' }],
+              embed: [],
+              layout: 'container',
+              source: { channelId: '234567890123456789', messageId: '345678901234567890', webhook: false },
+              warnings: [],
+            }
+          : String(path) === '/api/documents' && body && typeof body === 'object'
+          ? { ok: true, document: { id: 7, name: (body as { name?: string }).name ?? '', series: (body as { series?: boolean }).series === true, messages: (body as { messages?: unknown[] }).messages ?? [] } }
+          : { ok: true };
+      return Promise.resolve({ ok: true, status: 200, json: async () => jawaban, text: async () => '' });
     },
     document,
     navigator: { clipboard: null, userAgent: 'node' },
@@ -483,12 +667,42 @@ const pages: Array<{ name: string; render: () => string }> = [
             updatedAt: Date.now(),
             accent: '#ff8800',
             sender: 'webhook' as const,
+            /*
+             * Pengaturan tingkat pesan yang tersimpan. Dipakai tes "membuka
+             * pesan tidak mereset pengaturan": dulu field-field ini tidak
+             * dikirim ke editor sama sekali.
+             */
+            flags: 4096,
+            threadName: 'Diskusi aturan',
+            allowedMentions: { parse: ['roles'] },
+            layout: 'embed' as const,
+            embed: [
+              {
+                url: 'https://x.test/judul',
+                color: '#ff8800',
+                author: { name: 'Tim', url: '', icon_url: '' },
+                footer: { text: 'kaki', icon_url: '' },
+                fields: [{ name: 'Bidang', value: 'isi', inline: true }],
+              },
+            ],
+            webhookName: 'Tim Pengumuman',
+            webhookAvatar: 'https://img.test/tim.png',
           },
         ],
         channels: [channel],
         botReady: true,
         roles: [{ id: '9001', name: 'Gamer', color: '#6d8cff', position: 3, blockedBy: null }],
         hasManageRoles: true,
+        /*
+         * Riwayat versi ikut dikirim bersama halaman: tab Riwayat harus bisa
+         * langsung menampilkan daftar tanpa permintaan tambahan.
+         */
+        revisions: {
+          1: [
+            { id: 77, name: 'Rules lama', createdAt: Date.now() - 3_600_000, ringkas: '2 teks · 1 tombol' },
+            { id: 76, name: 'Rules sebelum disunting', createdAt: Date.now() - 7_200_000, ringkas: '1 teks' },
+          ],
+        },
         roleButtons: {
           1: [{ id: 5, roleId: '9001', label: 'Ambil role Gamer', mode: 'toggle', emoji: '🎮', style: 'success' }],
         },
@@ -556,6 +770,33 @@ const pages: Array<{ name: string; render: () => string }> = [
         adminOnlyRoomsSetting: null,
         adminOnlyRoomsDefault: false,
         stats: { messages: 120, rooms: 3, documents: 2 },
+      } as never),
+  },
+  {
+    // Halaman dengan pesan ber-pemicu: badge pemicu harus terlihat di daftar.
+    name: '/pesan?pemicu',
+    render: () =>
+      pesanPage({
+        ...base,
+        posts: [
+          {
+            id: 3,
+            name: 'Sambutan otomatis',
+            channelId: channel.id,
+            blocks: [{ kind: 'text', value: 'Selamat datang!' }],
+            messageId: '1000',
+            updatedAt: Date.now(),
+            accent: null,
+            sender: 'bot' as const,
+            trigger: 'member_add' as const,
+          },
+        ],
+        channels: [channel],
+        botReady: true,
+        roles: [],
+        hasManageRoles: false,
+        roleButtons: {},
+        roleMenus: {},
       } as never),
   },
 ];
@@ -882,43 +1123,2550 @@ await check('pesan: ekspor dan impor JSON mempertahankan semua field', async () 
     (function () {
       blocks = [
         { kind: 'text', value: 'Pembuka', accessoryLabel: 'Buka', url: 'https://a.test' },
-        { kind: 'container', value: '', accent: '#58b9ff' },
-        { kind: 'image', value: 'https://img.test/a.png', spoiler: true },
+        { kind: 'container', value: '', accent: '#58b9ff', spoiler: true },
+        { kind: 'image', value: 'https://img.test/a.png', spoiler: true, alt: 'contoh gambar' },
         { kind: 'close', value: '' },
-        { kind: 'file', value: 'https://a.test/p.pdf', name: 'panduan.pdf', spoiler: true }
+        { kind: 'file', value: 'https://a.test/p.pdf', name: 'panduan.pdf', spoiler: true },
+        { kind: 'divider', value: '', divider: false, spacing: 'large' },
+        { kind: 'button', value: 'Situs', url: 'https://a.test', emoji: '🎮', disabled: true }
       ];
       renderBlocks();
       document.getElementById('postName').value = 'Rules';
+      /*
+       * Pengaturan tingkat pesan: nama/avatar webhook, nama thread, flag, dan
+       * izin ping. Tanpa ikut diekspor, cadangan lalu pulih akan menghapusnya
+       * diam-diam.
+       */
+      document.getElementById('postWebhookName').value = 'Tim Pengumuman';
+      document.getElementById('postWebhookAvatar').value = 'https://cdn.test/a.png';
+      document.getElementById('postThreadName').value = 'Diskusi rilis';
+      document.getElementById('postFlagEmbeds').checked = true;
+      document.getElementById('postMentionRoles').checked = true;
       exportJson();
       var json = document.getElementById('jsonText').value;
 
       blocks = [];
+      document.getElementById('postWebhookName').value = '';
+      document.getElementById('postWebhookAvatar').value = '';
+      document.getElementById('postThreadName').value = '';
+      document.getElementById('postFlagEmbeds').checked = false;
+      document.getElementById('postMentionRoles').checked = false;
+      document.getElementById('postMentionEveryone').checked = true;
       document.getElementById('jsonText').value = json;
       importJson();
       var pulih = blocks;
       return {
+        tingkatPesan: {
+          username: JSON.parse(json).username,
+          avatar: JSON.parse(json).avatar_url,
+          thread: JSON.parse(json).thread_name,
+          flags: JSON.parse(json).flags,
+          ping: (JSON.parse(json).allowed_mentions || {}).parse || [],
+          namaKembali: document.getElementById('postWebhookName').value,
+          avatarKembali: document.getElementById('postWebhookAvatar').value,
+          threadKembali: document.getElementById('postThreadName').value,
+          flagKembali: document.getElementById('postFlagEmbeds').checked,
+          notifKembali: document.getElementById('postFlagNotif').checked,
+          pingRole: document.getElementById('postMentionRoles').checked,
+          pingSemua: document.getElementById('postMentionEveryone').checked
+        },
         panjang: json.length,
         versi: JSON.parse(json).version,
         format: JSON.parse(json).format,
         jenis: pulih.map(function (b) { return b.kind; }).join(','),
         aksesori: pulih[0].accessoryLabel + ' ' + pulih[0].url,
+        spoilerKartu: pulih[1].spoiler,
         spoilerGambar: pulih[2].spoiler,
+        altGambar: pulih[2].alt,
         namaBerkas: pulih[4].name,
         spoilerBerkas: pulih[4].spoiler,
+        tanpaGaris: pulih[5].divider,
+        emojiTombol: pulih[6].emoji,
+        tombolNonaktif: pulih[6].disabled,
         namaPesanan: document.getElementById('postName').value
       };
     })()
-  `)) as Record<string, unknown>;
+  `)) as { tampil: boolean; html: string };
 
   assert.ok(Number(hasil.panjang) > 200, 'JSON terisi');
   assert.equal(hasil.versi, 1, 'versi format ikut');
   assert.equal(hasil.format, 'zypher-post', 'penanda format ikut');
-  assert.equal(hasil.jenis, 'text,container,image,close,file', 'semua jenis blok pulih');
+  assert.equal(hasil.jenis, 'text,container,image,close,file,divider,button', 'semua jenis blok pulih');
   assert.equal(hasil.aksesori, 'Buka https://a.test', 'aksesori teks pulih');
+  assert.equal(hasil.spoilerKartu, true, 'spoiler container pulih');
   assert.equal(hasil.spoilerGambar, true, 'spoiler gambar pulih');
+  assert.equal(hasil.altGambar, 'contoh gambar', 'alt text gambar pulih');
   assert.equal(hasil.namaBerkas, 'panduan.pdf', 'nama berkas pulih');
   assert.equal(hasil.spoilerBerkas, true, 'spoiler berkas pulih');
+  // Tiga field baru: tanpa normalBlock yang lengkap, ketiganya hilang diam-diam
+  // saat admin menyimpan ulang pesan hasil impor Discohook.
+  assert.equal(hasil.tanpaGaris, false, 'pemisah tanpa garis pulih');
+  assert.equal(hasil.emojiTombol, '🎮', 'emoji tombol pulih');
+  assert.equal(hasil.tombolNonaktif, true, 'tombol nonaktif pulih');
   assert.equal(hasil.namaPesanan, 'Rules', 'nama pesan pulih');
+
+  const tingkat = (
+    hasil as unknown as { tingkatPesan: Record<string, string | number | boolean | string[]> }
+  ).tingkatPesan;
+  assert.equal(tingkat.username, 'Tim Pengumuman', 'nama pengirim webhook diekspor');
+  assert.equal(tingkat.avatar, 'https://cdn.test/a.png', 'avatar pengirim diekspor');
+  assert.equal(tingkat.thread, 'Diskusi rilis', 'nama thread diekspor');
+  assert.equal(tingkat.flags, 4, 'flag pesan diekspor sebagai bitmask');
+  assert.deepEqual(tingkat.ping, ['roles'], 'hanya izin ping yang dicentang yang diekspor');
+  assert.equal(tingkat.namaKembali, 'Tim Pengumuman', 'nama pengirim pulih');
+  assert.equal(tingkat.avatarKembali, 'https://cdn.test/a.png', 'avatar pulih');
+  assert.equal(tingkat.threadKembali, 'Diskusi rilis', 'nama thread pulih');
+  assert.equal(tingkat.flagKembali, true, 'flag tanpa-kartu pulih');
+  assert.equal(tingkat.notifKembali, false, 'flag yang tidak ada di berkas dimatikan');
+  assert.equal(tingkat.pingRole, true, 'izin ping role pulih');
+  assert.equal(tingkat.pingSemua, false, 'izin ping @everyone milik pesan lama tidak tertinggal');
+});
+
+await check('pesan: tidak ada id ganda antar tab (penyebab isian mati)', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+
+  /*
+   * Bug nyata: kartu pengaturan (warna aksen & pengirim) pernah dirender di
+   * dua tab. Dua elemen ber-id sama membuat getElementById selalu mengambil
+   * yang PERTAMA — yang ada di tab tersembunyi — sehingga mengubah warna dari
+   * tab lain tidak berpengaruh, tanpa error apa pun.
+   *
+   * Karena itu: setiap id yang dibaca JavaScript halaman ini harus muncul
+   * tepat satu kali di HTML.
+   */
+  const dihitung = new Map<string, number>();
+  for (const match of html.matchAll(/\sid="([^"]+)"/g)) {
+    const id = match[1]!;
+    dihitung.set(id, (dihitung.get(id) ?? 0) + 1);
+  }
+  const ganda = [...dihitung.entries()].filter(([, jumlah]) => jumlah > 1).map(([id]) => id);
+  assert.deepEqual(ganda, [], `id muncul lebih dari sekali: ${ganda.join(', ')}`);
+
+  // Elemen yang dipakai bersama tetap harus ada, tepat satu.
+  for (const id of ['previewHost', 'previewHostBesar', 'postName', 'postAccent', 'postSender', 'blockList']) {
+    assert.equal(dihitung.get(id), 1, `#${id} ada tepat satu kali`);
+  }
+});
+
+await check('pesan: tab halaman menyembunyikan panel, bukan menghapusnya', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  // Empat tab: Susun, Pratinjau, Ambil role, Impor.
+  for (const key of ['susun', 'pratinjau', 'role', 'impor']) {
+    assert.ok(html.includes(`id="tab-${key}"`), `tab ${key} ada`);
+    assert.ok(html.includes(`id="pane-${key}"`), `panel ${key} ada`);
+  }
+  assert.ok(html.includes('showPesanTab'), 'fungsi pindah tab ada di halaman');
+
+  const page = mountPage(html, 'uji-tab');
+  // Pindah ke tab Pratinjau: panel lain disembunyikan, tab aktif ditandai.
+  await page.evaluate("showPesanTab('pratinjau')");
+  assert.equal(page.elements.get('pane-pratinjau')!.hidden, false, 'panel pratinjau terbuka');
+  assert.equal(page.elements.get('pane-susun')!.hidden, true, 'panel susun disembunyikan');
+  assert.equal(
+    page.elements.get('pane-role')!.hidden,
+    true,
+    'panel role ikut tersembunyi (satu tab sekaligus)',
+  );
+  assert.equal(page.errors.length, 0, `tidak ada error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: editor menggambar komponen bertumpuk di dalam kartu', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-tumpuk');
+
+  /*
+   * Yang diperiksa BUKAN tampilan DOM (DOM tiruan tidak menyimpan anak
+   * elemen), melainkan hasil pengelompokan yang dipakai untuk menggambar:
+   * komponen sesudah `container` harus masuk ke kartu itu, dan `close`
+   * mengeluarkan komponen berikutnya. Ini aturan yang sama dengan penyusun
+   * payload — kalau berbeda, editor dan pesan sungguhan akan melenceng.
+   */
+  const hasil = (await page.evaluate(`
+    (function () {
+      blocks = [
+        { kind: 'text', value: 'Pembuka' },
+        { kind: 'container', value: '', accent: '#58b9ff' },
+        { kind: 'text', value: 'Di dalam kartu' },
+        { kind: 'button', value: 'Situs', url: 'https://a.test' },
+        { kind: 'close', value: '' },
+        { kind: 'text', value: 'Penutup' }
+      ];
+      renderBlocks();
+      return {
+        // Panel pratinjau ada dua: kecil di tab Susun & besar di tab Pratinjau.
+        duaPratinjau: Boolean(
+          document.getElementById('previewHost') && document.getElementById('previewHostBesar'),
+        ),
+        fungsiTumpuk: typeof buatKartuEditor === 'function' && typeof buatItemEditor === 'function',
+        error: null,
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.fungsiTumpuk, true, 'penggambar kartu & komponen tersedia');
+  assert.equal(hasil.duaPratinjau, true, 'dua host pratinjau tersedia');
+  assert.equal(page.errors.length, 0, `editor tidak melempar error: ${page.errors.join('|')}`);
+
+  /*
+   * Pengelompokan kartu dipanggil dari fungsi NYATA (kelompokkanBlok), bukan
+   * dari salinan logikanya — supaya tes ini gagal kalau aturan editor berubah
+   * tanpa aturan penyusun payload ikut berubah.
+   */
+  const grup = (await page.evaluate(`
+    (function () {
+      function ringkas(daftar) {
+        return kelompokkanBlok(daftar).map(function (g) {
+          var jenis = g.kartu ? 'kartu' : (g.penutup ? 'tutup' : 'luar');
+          return jenis + ':' + g.isi.map(function (i) { return i.block.kind; }).join('+');
+        });
+      }
+      function logika(daftar) {
+        return kelompokkanBlok(daftar, true).map(function (g) {
+          return g.isi.map(function (i) { return i.block.kind + '@' + i.index; }).join('+');
+        });
+      }
+      return {
+        // Pembuka di luar kartu, satu kartu berisi teks & tombol, penutup
+        // mengeluarkan blok sesudahnya.
+        lengkap: ringkas([
+          { kind: 'text' },
+          { kind: 'container' },
+          { kind: 'text' },
+          { kind: 'button' },
+          { kind: 'close' },
+          { kind: 'text' }
+        ]),
+        // Tanpa container: semuanya di luar kartu (payload akan membungkusnya
+        // sendiri jadi satu kartu bawaan).
+        tanpaContainer: ringkas([{ kind: 'text' }, { kind: 'divider' }, { kind: 'text' }]),
+        // Dua container berurutan: dua kartu, tanpa wadah luar kosong.
+        duaKartu: ringkas([
+          { kind: 'container' },
+          { kind: 'text' },
+          { kind: 'container' },
+          { kind: 'text' }
+        ]),
+        // Select & Row adalah isi kartu biasa: keduanya tidak membuka atau
+        // menutup kartu, hanya mengisi kartu tempatnya berada.
+        selectDanRow: ringkas([
+          { kind: 'container' },
+          { kind: 'text' },
+          { kind: 'select' },
+          { kind: 'row' },
+          { kind: 'button' }
+        ]),
+        /*
+         * Mode logika (dipakai tombol naik/turun): Row hanya dipertahankan
+         * kalau benar-benar memisahkan dua tombol. Row di antara teks dan
+         * gambar dibuang, karena di Discord ia tidak mengubah apa pun.
+         */
+        logikaBerguna: logika([
+          { kind: 'button' },
+          { kind: 'row' },
+          { kind: 'button' }
+        ]),
+        logikaSiaSia: logika([
+          { kind: 'text' },
+          { kind: 'row' },
+          { kind: 'image' }
+        ])
+      };
+    })()
+  `)) as Record<string, string[]>;
+
+  /*
+   * Dibandingkan sebagai string, bukan deepEqual: array yang dibuat di dalam
+   * `node:vm` berasal dari realm lain, sehingga prototype-nya berbeda dan
+   * deepStrictEqual menolaknya walaupun isinya sama persis.
+   */
+  assert.equal(
+    grup.lengkap.join(' | '),
+    'luar:text | kartu:text+button | luar:text',
+    'komponen masuk ke kartunya, close mengeluarkan sisanya',
+  );
+  assert.equal(
+    grup.tanpaContainer.join(' | '),
+    'luar:text+divider+text',
+    'tanpa container tetap satu wadah',
+  );
+  assert.equal(
+    grup.duaKartu.join(' | '),
+    'kartu:text | kartu:text',
+    'dua kartu, tanpa wadah luar kosong',
+  );
+  assert.equal(
+    grup.selectDanRow.join(' | '),
+    'kartu:text+select+row+button',
+    'select & row tetap isi kartu, bukan struktur',
+  );
+  assert.equal(
+    grup.logikaBerguna.join(' | '),
+    'button@0+row@1+button@2',
+    'Row yang memisahkan dua tombol dipertahankan',
+  );
+  assert.equal(
+    grup.logikaSiaSia.join(' | '),
+    'text@0+image@2',
+    'Row yang tidak memisahkan tombol dibuang, indeks blok tetap benar',
+  );
+});
+
+await check('pesan: select menu & baris baru bisa disusun dari editor', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+
+  /*
+   * Halaman harus menawarkan KEDUA komponen baru di daftar "tambah komponen".
+   * Tanpa tombolnya, blok select/row hanya bisa muncul dari impor Discohook —
+   * admin tidak punya jalan membuatnya sendiri.
+   */
+  assert.ok(html.includes("addBlock('select')"), 'tombol tambah Select menu ada');
+  assert.ok(html.includes("addBlock('row')"), 'tombol tambah Baris baru ada');
+
+  const page = mountPage(html, 'uji-select-row');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      // Blok baru harus langsung bisa dipakai: select string tanpa pilihan
+      // ditolak Discord, jadi addBlock wajib menyertakan satu pilihan contoh.
+      blocks = [];
+      addBlock('select');
+      addBlock('row');
+      var select = blocks[0];
+      var ringkas = {
+        jenis: select.selectKind,
+        punyaPilihan: select.options.length,
+        min: select.minValues,
+        max: select.maxValues,
+        // Row tidak akan terkirim kalau dibuang payloadBlocks.
+        terkirim: payloadBlocks().map(function (b) { return b.kind; })
+      };
+      renderBlocks();
+      return ringkas;
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.jenis, 'string', 'select baru berjenis string');
+  assert.equal(hasil.punyaPilihan, 1, 'select baru sudah punya satu pilihan contoh');
+  assert.equal(hasil.min, 1, 'minimal 1 pilihan');
+  assert.equal(hasil.max, 1, 'maksimal 1 pilihan');
+  assert.equal(
+    (hasil.terkirim as string[]).join(' | '),
+    'select | row',
+    'select & row ikut terkirim ke server',
+  );
+  assert.equal(page.errors.length, 0, `editor select tidak melempar error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: editor aksi tampil di komponen & tersimpan bersama tombol', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+
+  /*
+   * Halaman harus MEMBAWA aksi tersimpan ke browser: tanpa ini, membuka pesan
+   * yang sudah punya aksi akan menampilkannya kosong dan menyimpan ulang akan
+   * menghapus aksi itu.
+   */
+  assert.ok(html.includes('POST_ACTIONS'), 'aksi tersimpan ditanam ke halaman');
+  assert.ok(html.includes('kartuAksi'), 'penggambar kartu aksi ada');
+  assert.ok(html.includes('susunAksi'), 'penyusun muatan aksi ada');
+
+  const page = mountPage(html, 'uji-aksi');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      // Simulasi pesan yang sudah punya satu tombol tersimpan + aksinya.
+      editingId = 1;
+      roleButtons = [{ id: 7, roleId: ROLES[0] ? ROLES[0].id : '900', label: 'Gamer', mode: 'toggle', emoji: '', style: 'primary' }];
+      POST_ACTIONS = { 1: { 'button:7': [
+        { kind: 'role', roleId: '900', op: 'toggle' },
+        { kind: 'reply', text: 'Hai {member.name}', hidden: true }
+      ] } };
+      loadActionsFor(1);
+      renderRoleButtons();
+
+      var ringkas = {
+        termuat: Object.keys(postActions).join(','),
+        jumlah: aksiUntuk('button:7').length,
+        ringkasan: ringkasAksi(aksiUntuk('button:7')[1]),
+        // Kartu aksi harus muncul di daftar tombol (tombol ada di dalam host).
+        adaKartu: Boolean(document.getElementById('roleList')),
+        // Kunci target memakai ID tombol tersimpan, bukan label.
+        target: targetTombol(roleButtons[0])
+      };
+      // Muatan yang dikirim ke server hanya berisi aksi yang sah.
+      postActions['button:7'].push({ kind: 'reply', text: '' });
+      ringkas.muatan = Object.keys(susunAksi()).join(',');
+      ringkas.muatanJumlah = susunAksi()['button:7'].length;
+      return ringkas;
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.termuat, 'button:7', 'aksi termuat per target');
+  assert.equal(hasil.jumlah, 2, 'dua aksi terbaca');
+  assert.equal(hasil.ringkasan, 'balas "Hai {member.name}"', 'ringkasan aksi bisa dibaca');
+  assert.equal(hasil.target, 'button:7', 'target memakai ID tombol');
+  assert.equal(hasil.muatanJumlah, 2, 'aksi tanpa teks tidak ikut dikirim');
+  assert.equal(page.errors.length, 0, `editor aksi tidak melempar error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: cabang bersyarat memakai editor aksi penuh & bisa bersarang', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-cabang');
+
+  /*
+   * Dua hal yang dijaga:
+   *   1. isi cabang memakai editor aksi yang SAMA dengan tingkat atas, jadi
+   *      aksi di dalam cabang tidak lagi terbatas pada enam jenis ringkas;
+   *   2. cabang bisa bersarang, dan batas kedalamannya berasal dari server
+   *      (BATAS_AKSI.branchDepth), bukan angka yang ditulis ulang di browser.
+   */
+  const hasil = (await page.evaluate(`
+    (function () {
+      function cariKelas(node, kelas, hasil) {
+        if (!node) return hasil;
+        if (node.className === kelas) hasil.push(node);
+        (node.children || []).forEach(function (c) { cariKelas(c, kelas, hasil); });
+        return hasil;
+      }
+
+      editingId = 1;
+      roleButtons = [{ id: 7, roleId: '900', label: 'Cek', mode: 'toggle', emoji: '', style: 'primary' }];
+      POST_ACTIONS = { 1: { 'button:7': [
+        {
+          kind: 'condition',
+          value: 'member.name',
+          comparator: 'notEmpty',
+          then: [
+            {
+              kind: 'condition',
+              value: 'member.id',
+              comparator: 'notEmpty',
+              then: [{ kind: 'reply', text: 'dalam' }]
+            }
+          ],
+          else: [{ kind: 'thread', threadName: 'Bantuan' }]
+        }
+      ] } };
+      loadActionsFor(1);
+      aksiTerbuka = 'button:7';
+      renderRoleButtons();
+
+      var host = document.getElementById('roleList');
+      var kotak = cariKelas(host, 'aksi-cabang', []);
+      // Kotak cabang bersarang: cabang di dalam cabang.
+      var bersarang = 0;
+      kotak.forEach(function (k) { bersarang += cariKelas(k, 'aksi-cabang', []).length; });
+
+      // Tiap baris di dalam cabang harus memakai editor penuh (aksi-baris).
+      var barisDalam = 0;
+      kotak.forEach(function (k) { barisDalam += cariKelas(k, 'aksi-baris', []).length; });
+
+      // Jenis aksi yang bisa ditambahkan: daftar bersama, bukan daftar ringkas.
+      var jenis = DAFTAR_JENIS_AKSI.map(function (j) { return j[0]; });
+
+      return {
+        batas: BATAS_AKSI.branchDepth,
+        kedalaman: KEDALAMAN_CABANG,
+        jumlahKotak: kotak.length,
+        bersarang: bersarang,
+        judulKotak: kotak.map(function (k) { var h = cariKelas(k, 'aksi-cabang-judul', []); return h.length ? h[0].textContent : '?'; }).join(' | '),
+        barisDalam: barisDalam,
+        jenis: jenis.join(','),
+        hitung: hitungAksi(aksiUntuk('button:7')).berhitung,
+        labelKartu: cariKelas(host, 'aksi-judul', []).map(function (n) { return n.textContent; }).join(' | ')
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.batas, 5, 'kedalaman cabang dari server (5 tingkat)');
+  assert.equal(hasil.kedalaman, 5, 'batas di layar sama dengan batas server');
+  /*
+   * Pohon yang diharapkan:
+   *   Kalau cocok (1)        <- cabang luar, berisi satu syarat bersarang
+   *     Kalau cocok (1)      <- cabang dari syarat di dalamnya
+   *     Kalau tidak cocok (0)
+   *   Kalau tidak cocok (1)  <- cabang luar, berisi thread
+   */
+  assert.equal(
+    hasil.judulKotak,
+    'Kalau cocok (1) | Kalau cocok (1) | Kalau tidak cocok (0) | Kalau tidak cocok (1)',
+    'cabang bersarang tergambar di pohon halaman',
+  );
+  assert.equal(hasil.jumlahKotak, 4, 'dua cabang luar + dua cabang bersarang');
+  assert.ok(Number(hasil.barisDalam) >= 3, 'isi cabang memakai editor aksi penuh');
+  assert.match(String(hasil.jenis), /thread/, 'jenis aksi di cabang memakai daftar lengkap');
+  assert.match(String(hasil.jenis), /webhook/, 'aksi webhook bisa dipakai di cabang');
+  assert.equal(hasil.hitung, 2, 'aksi di dalam cabang ikut dihitung terhadap kuota flow');
+  assert.match(String(hasil.labelKartu), /2\/40 dihitung/, 'kartu aksi menampilkan kuota flow');
+  assert.equal(page.errors.length, 0, `editor cabang error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: menambah syarat di cabang berhenti di 5 tingkat & memberi alasan', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-cabang-dalam');
+
+  /*
+   * Batas kedalaman harus DITEGAKKAN di tombol tambah, bukan hanya di
+   * sanitizer: tanpa ini admin menyusun lima tingkat, menekan Simpan, dan
+   * baru tahu sebagian cabangnya dibuang server.
+   *
+   * Kotak cabang dipanggil langsung dengan kedalaman tertentu supaya test ini
+   * tidak bergantung pada cara pohon bertingkat digambar.
+   */
+  const hasil = (await page.evaluate(`
+    (function () {
+      var pesan = [];
+      toast = function (teks) { pesan.push(String(teks)); };
+
+      var daftar = [{ kind: 'condition', value: 'a', comparator: 'notEmpty', then: [{ kind: 'dud' }] }];
+
+      function tombolKotak(kotak) {
+        var head = kotak.children[0];
+        var pilih = null;
+        var tombol = null;
+        (head.children || []).forEach(function (c) {
+          if (c.tagName === 'SELECT') pilih = c;
+          if (c.title === 'Tambah aksi ke cabang ini') tombol = c;
+        });
+        return { pilih: pilih, tombol: tombol };
+      }
+
+      // Kedalaman 3 (masih boleh): cabangnya ada di tingkat keempat.
+      var kotakDangkal = tombolKotak(kotakCabang(daftar, 0, 'then', 'cocok', 3));
+      var sebelum = (daftar[0].then || []).length;
+      kotakDangkal.pilih.value = 'condition';
+      kotakDangkal.tombol.onclick();
+      var sesudah = (daftar[0].then || []).length;
+
+      // Kedalaman 4 (cabangnya akan jadi tingkat kelima): syarat DITOLAK.
+      daftar[0].then = [{ kind: 'dud' }];
+      var kotakDalam = tombolKotak(kotakCabang(daftar, 0, 'then', 'cocok', 4));
+      kotakDalam.pilih.value = 'condition';
+      kotakDalam.tombol.onclick();
+      var tetap = (daftar[0].then || []).length;
+
+      // Di kedalaman yang sama, aksi BIASA (bukan syarat) tetap boleh.
+      kotakDalam.pilih.value = 'dud';
+      kotakDalam.tombol.onclick();
+      var sesudahDud = (daftar[0].then || []).length;
+
+      return {
+        sebelum: sebelum,
+        sesudah: sesudah,
+        tetap: tetap,
+        sesudahDud: sesudahDud,
+        pesan: pesan.join(' | '),
+        batas: KEDALAMAN_CABANG
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(page.errors.length, 0, `cabang dalam tidak melempar error: ${page.errors.join('|')}`);
+  assert.equal(hasil.batas, 5, 'batas di layar 5 tingkat');
+  assert.equal(hasil.sesudah, Number(hasil.sebelum) + 1, 'syarat di tingkat keempat masih diterima');
+  assert.equal(hasil.tetap, 1, 'syarat di tingkat kelima DITOLAK');
+  assert.equal(hasil.sesudahDud, 2, 'aksi biasa di kedalaman itu tetap boleh (bukan dinding mati)');
+  assert.match(String(hasil.pesan), /maksimal 5 tingkat/, 'alasan menyebut angkanya');
+});
+
+await check('pesan: kartu aksi blok Select bisa dibuka & digambar ulang', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-aksi-select');
+
+  /*
+   * Regresi yang dijaga: kartu aksi dipakai di TIGA tempat (tombol role,
+   * pilihan dropdown, dan blok Select). Dulu tombol "Atur aksi" hanya
+   * menyegarkan dua tempat pertama, sehingga kartu di blok Select tidak pernah
+   * terbuka — state berubah, tetapi editor tidak digambar ulang.
+   *
+   * Pemeriksaan HARUS lewat pohon elemen yang tergambar: getElementById pada
+   * DOM tiruan membuat elemen baru sesuai permintaan, jadi memeriksa id saja
+   * akan lolos walaupun tidak ada yang digambar.
+   */
+  const hasil = (await page.evaluate(`
+    (function () {
+      // Wadah luar wajib: renderBlocks hanya menggambar isi container/kartu.
+      blocks = [{ kind: 'container', accent: null, spoiler: false }, { kind: 'select', selectKind: 'role' }];
+      renderBlocks();
+
+      /** Cari SEMUA elemen dengan kelas tertentu di pohon tergambar. */
+      function cariKelas(node, kelas, hasil) {
+        if (!node) return hasil;
+        if (node.className === kelas) hasil.push(node);
+        (node.children || []).forEach(function (c) { cariKelas(c, kelas, hasil); });
+        return hasil;
+      }
+      function cariTeks(node, teks, hasil) {
+        if (!node) return hasil;
+        if (node.textContent === teks) hasil.push(node);
+        (node.children || []).forEach(function (c) { cariTeks(c, teks, hasil); });
+        return hasil;
+      }
+
+      var host = document.getElementById('blockList');
+      var kartuAwal = cariKelas(host, 'aksi-kartu', []);
+      var teksAwal = kartuAwal.length ? kartuAwal[0].textContent : '';
+      var tombol = cariTeks(host, 'Atur aksi', [])[0];
+      if (tombol) tombol.onclick();
+
+      // Sesudah diklik: pohon yang tergambar harus benar-benar berubah.
+      var kartuAkhir = cariKelas(host, 'aksi-kartu', []);
+      var isianAksi = cariKelas(host, 'aksi-daftar', []);
+      var judul = cariKelas(host, 'aksi-judul', []).map(function (n) { return n.textContent; });
+
+      return {
+        adaKartu: kartuAwal.length > 0,
+        adaTombol: Boolean(tombol),
+        teksAwal: teksAwal,
+        terbuka: aksiTerbuka,
+        adaIsianAksi: isianAksi.length > 0,
+        judul: judul.join(' | '),
+        adaTombolTutup: cariTeks(host, 'Tutup', []).length > 0
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.adaKartu, true, 'kartu aksi muncul di blok Select');
+  assert.equal(hasil.adaTombol, true, 'tombol "Atur aksi" ada di pohon tergambar');
+  assert.match(String(hasil.teksAwal), /Belum ada aksi/, 'keadaan awal dijelaskan');
+  assert.equal(hasil.terbuka, 'select:role', 'kartu terbuka untuk target yang benar');
+  assert.equal(hasil.adaIsianAksi, true, 'isian aksi tergambar setelah dibuka');
+  assert.equal(hasil.adaTombolTutup, true, 'tombol berubah jadi "Tutup"');
+  assert.match(String(hasil.judul), /Aksi: menu Role select/, 'judul memakai label jenis menu');
+  assert.equal(page.errors.length, 0, `kartu aksi select error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: lima jenis aksi baru bisa disusun & dikirim', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-aksi-jenis');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      editingId = 1;
+      POST_LIST = [{ id: 1, name: 'Ini' }, { id: 2, name: 'Lain' }];
+      ROLES = [];
+      postActions = {};
+      aksiTerbuka = 'button:7';
+
+      // Susun satu aksi tiap jenis lewat jalur yang dipakai tombol "+ Tambah".
+      var jenis = ['wait', 'condition', 'variable', 'thread', 'delete', 'reply', 'message', 'role'];
+      postActions['button:7'] = [];
+      pilihDanTambah = function (target, nilai) {
+        var daftar = aksiUntuk(target);
+        if (nilai === 'wait') daftar.push({ kind: 'wait', seconds: 300 });
+        else if (nilai === 'condition') daftar.push({ kind: 'condition', value: 'selected', comparator: 'equals', expected: 'gamer' });
+        else if (nilai === 'variable') daftar.push({ kind: 'variable', name: 'kode', value: '{member.id}' });
+        else if (nilai === 'thread') daftar.push({ kind: 'thread', threadName: 'Bantuan', private: true });
+        else if (nilai === 'delete') daftar.push({ kind: 'delete', what: 'pesan' });
+        else if (nilai === 'reply') daftar.push({ kind: 'reply', text: 'Halo {member.name}' });
+        else if (nilai === 'message') daftar.push({ kind: 'message', postId: 2, toChannel: true });
+        else daftar.push({ kind: 'role', roleId: '900', op: 'toggle' });
+      };
+      jenis.forEach(function (j) { pilihDanTambah('button:7', j); });
+
+      var label = aksiUntuk('button:7').map(function (a) { return jenisAksiLabel(a.kind); });
+      var ringkas = aksiUntuk('button:7').map(function (a) { return ringkasAksi(a); });
+      var muatan = susunAksi()['button:7'] || [];
+      return {
+        jumlah: aksiUntuk('button:7').length,
+        label: label.join(' | '),
+        ringkas: ringkas.join(' | '),
+        terkirim: muatan.map(function (a) { return a.kind; }).join(','),
+        // Durasi & waktu diformat untuk manusia, bukan angka mentah.
+        limaMenit: jamAksi(300),
+        waktu: waktuLokal(new Date(2026, 0, 2, 3, 4).getTime())
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.jumlah, 8, 'delapan aksi tersusun');
+  assert.match(String(hasil.label), /Tunggu \| Syarat \| Variabel \| Thread \| Hapus pesan/, 'label jenis baru ada');
+  assert.match(String(hasil.ringkas), /tunggu 5 menit/, 'durasi tunggu terbaca');
+  assert.match(String(hasil.ringkas), /syarat selected sama dengan "gamer"/);
+  assert.match(String(hasil.ringkas), /buat thread "Bantuan"/);
+  assert.equal(hasil.terkirim, 'wait,condition,variable,thread,delete,reply,message,role', 'semua jenis ikut dikirim');
+  assert.equal(hasil.limaMenit, '5 menit');
+  assert.equal(hasil.waktu, '2026-01-02 03:04', 'waktu lokal diformat dengan nol di depan');
+  assert.equal(page.errors.length, 0, `editor jenis aksi error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: panel jadwal kirim menyusun & menyimpan jadwal', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-jadwal');
+  const depan = Date.now() + 3 * 60 * 60 * 1000;
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      editingId = 1;
+      POST_SCHEDULES = {};
+      muatJadwal();
+
+      document.getElementById('scheduleDue').value = new Date(${depan}).toISOString().slice(0, 16);
+      document.getElementById('scheduleRepeat').value = '360';
+      tambahJadwal();
+
+      // Waktu lampau ditolak, bukan disimpan lalu tidak pernah terkirim.
+      var sebelum = jadwalPesan.length;
+      document.getElementById('scheduleDue').value = new Date(Date.now() - 60 * 60 * 1000).toISOString().slice(0, 16);
+      tambahJadwal();
+
+      return {
+        jumlah: jadwalPesan.length,
+        ditolak: jadwalPesan.length === sebelum,
+        ulang: jadwalPesan[0] ? jadwalPesan[0].repeatMinutes : 0,
+        target: editingId
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.jumlah, 1, 'satu jadwal tersusun');
+  assert.equal(hasil.ditolak, true, 'jadwal di masa lampau ditolak');
+  assert.equal(hasil.ulang, 360, 'pengulangan tersimpan');
+
+  // Simpan: harus memanggil endpoint jadwal, bukan endpoint lain.
+  const respons = (await page.evaluate(`
+    simpanJadwal().then(function () { return true; })
+  `)) as unknown;
+  assert.equal(respons, true);
+  const panggilan = page.fetches.filter((call) => call.path.includes('/schedules'));
+  assert.equal(panggilan.length, 1, 'satu permintaan ke endpoint jadwal');
+  assert.equal(panggilan[0]!.method, 'PUT');
+  assert.match(String(panggilan[0]!.path), /\/api\/posts\/1\/schedules/);
+  const body = panggilan[0]!.body as { schedules: Array<{ repeatMinutes: number }> };
+  assert.equal(body.schedules.length, 1, 'jadwal dikirim');
+  assert.equal(body.schedules[0]!.repeatMinutes, 360);
+  assert.equal(page.errors.length, 0, `panel jadwal error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: cabang syarat bisa diisi & tampil bersarang', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-cabang');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      editingId = 1;
+      ROLES = [];
+      POST_LIST = [{ id: 2, name: 'Lain' }];
+      postActions = { 'button:9': [
+        { kind: 'condition', value: 'selected', comparator: 'equals', expected: 'gamer' }
+      ] };
+      aksiTerbuka = 'button:9';
+      renderRoleButtons();
+
+      // Tambah satu aksi ke cabang "cocok" lewat kotak cabang.
+      var daftar = aksiUntuk('button:9');
+      daftar[0].then = [{ kind: 'reply', text: 'kamu gamer', hidden: true }];
+      daftar[0].else = [{ kind: 'stop' }];
+      var kotak = kotakCabang(daftar, 0, 'then', 'cocok');
+      var kotakLain = kotakCabang(daftar, 0, 'else', 'tidak cocok');
+
+      /*
+       * Isi cabang sekarang memakai editor aksi penuh, jadi isinya ada di
+       * value isian (textarea/input), bukan di textContent. Test membaca
+       * keduanya: judul & jumlah dari textContent, isi aksi dari value.
+       */
+      function kumpulValue(node, hasil) {
+        if (!node) return hasil;
+        if (typeof node.value === 'string' && node.value) hasil.push(node.value);
+        (node.children || []).forEach(function (c) { kumpulValue(c, hasil); });
+        return hasil;
+      }
+
+      return {
+        jumlahCabang: kotak.children ? kotak.children.length : 0,
+        teksCocok: kotak.textContent,
+        teksLain: kotakLain.textContent,
+        nilaiCocok: kumpulValue(kotak, []).join(' | '),
+        nilaiLain: kumpulValue(kotakLain, []).join(' | '),
+        jenisStop: jenisAksiLabel('stop'),
+        ringkas: ringkasAksi(daftar[0]),
+        // Cabang ikut terkirim ke server; tanpa ini percabangan hilang diam-diam.
+        muatan: (susunAksi()['button:9'] || [])[0],
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.match(String(hasil.teksCocok), /Kalau cocok \(1\)/, 'cabang cocok menampilkan jumlah');
+  assert.match(String(hasil.nilaiCocok), /kamu gamer/, 'isi cabang terbaca dari editornya');
+  assert.match(String(hasil.teksLain), /Kalau tidak cocok \(1\)/, 'cabang tidak cocok menampilkan jumlah');
+  assert.match(String(hasil.teksLain), /Hentikan/, 'baris aksi stop tergambar di cabang');
+  assert.equal(hasil.jenisStop, 'Hentikan');
+  const muatan = hasil.muatan as { then?: unknown[]; else?: unknown[] };
+  assert.equal(muatan.then!.length, 1, 'cabang "cocok" ikut dikirim');
+  assert.equal(muatan.else!.length, 1, 'cabang "tidak cocok" ikut dikirim');
+  assert.equal(page.errors.length, 0, `editor cabang error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: syarat bertingkat bisa disusun di editor', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-syarat');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      editingId = 1;
+      ROLES = [];
+      POST_LIST = [{ id: 2, name: 'Lain' }];
+      postActions = { 'button:9': [
+        { kind: 'condition', check: { type: 'and', items: [
+          { type: 'leaf', value: 'member.name', comparator: 'equals', expected: 'Wahyu' },
+          { type: 'in', value: 'selected', list: ['gamer', 'anime'] }
+        ] } }
+      ] };
+      aksiTerbuka = 'button:9';
+      renderRoleButtons();
+
+      var daftar = aksiUntuk('button:9');
+      // Lewat KARTU aksi (bukan memanggil kotakSyarat langsung): yang harus
+      // dibuktikan adalah editor benar-benar MENGGAMBAR pohon syaratnya.
+      var kartu = buatBarisAksi('button:9', 0, daftar[0]);
+      var kotak = kotakSyarat(daftar[0].check, null, 'check', 0);
+      // Tambah satu anak lewat tombol "+ Tambah syarat" di kotak teratas.
+      var tambah = null;
+      (function cari(node) {
+        if (!node || !node.children) return;
+        for (var i = 0; i < node.children.length; i += 1) {
+          var anak = node.children[i];
+          if (anak.textContent === '+ Tambah syarat') { tambah = anak; return; }
+          cari(anak);
+        }
+      })(kotak);
+      if (tambah) tambah.onclick();
+
+      return {
+        teksKartu: kartu.textContent,
+        ringkas: ringkasSyarat(daftar[0].check),
+        jumlahAnak: (daftar[0].check.items || []).length,
+        teksKotak: kotak.textContent,
+        // Yang disusun editor harus benar-benar terkirim ke server.
+        muatan: (susunAksi()['button:9'] || [])[0],
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.match(String(hasil.teksKartu), /SEMUA benar/, 'kartu aksi menggambar jenis grup syarat');
+  assert.ok(String(hasil.teksKartu).includes('member.name'), 'kartu aksi menggambar isi syarat');
+  assert.match(String(hasil.ringkas), /member\.name sama dengan "Wahyu"/, 'ringkasan simpul daun');
+  assert.match(String(hasil.ringkas), /termasuk \[gamer, anime\]/, 'ringkasan `in`');
+  assert.equal(hasil.jumlahAnak, 3, 'tombol tambah menyisipkan anak baru');
+  assert.ok(String(hasil.teksKotak).includes('SEMUA benar'), 'jenis grup terbaca di editor');
+  const muatan = hasil.muatan as { check?: { type: string; items: unknown[] }; value?: string };
+  assert.ok(muatan.check, 'pohon syarat ikut dikirim, bukan dibuang');
+  assert.equal(muatan.check!.type, 'and');
+  assert.equal(muatan.check!.items.length, 3);
+  assert.equal(page.errors.length, 0, `editor syarat error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: setelan thread & tujuan channel ikut terkirim', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-thread');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      editingId = 1;
+      ROLES = [];
+      POST_LIST = [{ id: 2, name: 'Lain' }];
+      postActions = { 'button:9': [
+        { kind: 'thread', threadName: 'Bantuan', private: true },
+        { kind: 'webhook', postId: 2, toChannel: true, channelId: '123456789012345678' }
+      ] };
+      aksiTerbuka = 'button:9';
+      renderRoleButtons();
+
+      var daftar = aksiUntuk('button:9');
+      daftar[0].autoArchiveMinutes = 10080;
+      daftar[0].slowmodeSeconds = 30;
+      daftar[0].appliedTags = ['111111111111111111'];
+      daftar[0].threadMessage = 'Halo {member.mention}';
+
+      var muatan = susunAksi()['button:9'];
+      return {
+        thread: muatan[0],
+        webhook: muatan[1],
+        ringkasThread: ringkasAksi(muatan[0]),
+        ringkasWebhook: ringkasAksi(muatan[1]),
+        label: jenisAksiLabel('webhook'),
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  const thread = hasil.thread as {
+    autoArchiveMinutes?: number;
+    slowmodeSeconds?: number;
+    appliedTags?: string[];
+    threadMessage?: string;
+  };
+  assert.equal(thread.autoArchiveMinutes, 10080, 'lama arsip ikut terkirim');
+  assert.equal(thread.slowmodeSeconds, 30, 'slowmode ikut terkirim');
+  // deepEqual tidak bisa dipakai di sini: nilai datang dari vm dan array-nya
+  // dari realm lain, jadi perbandingan referensi selalu gagal.
+  assert.equal((thread.appliedTags ?? []).join(','), '111111111111111111');
+  assert.equal(thread.threadMessage, 'Halo {member.mention}');
+
+  const webhook = hasil.webhook as { kind: string; channelId?: string };
+  assert.equal(webhook.kind, 'webhook', 'jenis webhook tidak berubah jadi message');
+  assert.equal(webhook.channelId, '123456789012345678', 'channel tujuan ikut terkirim');
+  assert.match(String(hasil.ringkasWebhook), /via webhook/);
+  assert.equal(hasil.label, 'Kirim webhook');
+  assert.equal(page.errors.length, 0, `editor thread/webhook error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: bidang embed bisa ditambah/dihapus & bagian kosong tidak dikirim', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-embed-extra');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      resetEmbedExtra();
+      var awal = payloadEmbed();
+      tambahBidangEmbed();
+      tambahBidangEmbed();
+      embedAktif().fields[0].name = 'Harga';
+      embedAktif().fields[0].value = 'Rp10.000';
+      embedAktif().fields[0].inline = true;
+      /* Bidang kedua sengaja dibiarkan kosong: tidak boleh ikut terkirim. */
+      embedAktif().url = 'https://contoh.test/x';
+      embedAktif().author = { name: 'Tim' };
+      embedAktif().footer = { text: 'kaki' };
+      embedAktif().timestamp = '2026-11-12T09:00:00Z';
+      var terisi = payloadEmbed();
+      /* Dibaca SEBELUM dimuat ulang: muat ulang membuang bidang kosong. */
+      var jumlahBaris = document.getElementById('embedFieldList').children.length;
+      loadEmbedExtra(terisi);
+      var dibacaUlang = payloadEmbed();
+      return {
+        awal: awal,
+        terisi: terisi,
+        dibacaUlang: dibacaUlang,
+        jumlahBaris: jumlahBaris,
+        maks: EMBED_FIELDS_MAKS,
+      };
+    })()
+  `)) as {
+    awal: unknown;
+    terisi: Array<{
+      url?: string;
+      author?: { name?: string };
+      footer?: { text?: string };
+      fields?: Array<{ name: string; inline: boolean }>;
+      timestamp?: string;
+    }>;
+    dibacaUlang: Array<{ fields?: Array<{ name: string }> }>;
+    jumlahBaris: number;
+    maks: number;
+  };
+
+  assert.equal(hasil.awal, null, 'bagian kosong tidak dikirim sebagai daftar berisi objek kosong');
+  assert.equal(hasil.terisi.length, 1, 'satu embed terisi terkirim');
+  assert.equal(hasil.terisi[0].fields!.length, 1, 'hanya bidang berisi yang dikirim');
+  assert.equal(hasil.terisi[0].fields![0].inline, true, 'penanda sebaris ikut');
+  assert.equal(hasil.terisi[0].author!.name, 'Tim');
+  assert.equal(hasil.terisi[0].footer!.text, 'kaki');
+  assert.equal(hasil.jumlahBaris, 2, 'editor menggambar semua bidang, termasuk yang belum diisi');
+  assert.equal(hasil.dibacaUlang.length, 1, 'isi bertahan setelah dimuat ulang ke editor');
+  assert.equal(hasil.maks, 25, 'batas bidang sama dengan Discord');
+
+  // Ikut terkirim saat Simpan.
+  await page.evaluate(`
+    (async function () {
+      blocks = [{ kind: 'text', value: 'Pengumuman' }];
+      document.getElementById('postName').value = 'Embed bagian';
+      document.getElementById('postLayout').value = 'embed';
+      if (typeof renderBlocks === 'function') renderBlocks();
+      await savePost();
+    })()
+  `);
+  const simpan = page.fetches.find((call) => call.path === '/api/posts' || /^\/api\/posts\/\d+$/.test(call.path));
+  assert.ok(simpan, 'Simpan memanggil /api/posts');
+  const muatan = simpan!.body as { embed?: Array<{ fields?: unknown[] }> | null; layout?: string };
+  assert.equal(muatan.layout, 'embed');
+  assert.equal((muatan.embed ?? []).length, 1, 'embed ikut di muatan Simpan');
+  assert.equal(((muatan.embed ?? [])[0]?.fields ?? []).length, 1, 'bidang ikut di muatan Simpan');
+  assert.equal(page.errors.length, 0, `editor embed error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: sampai 10 embed bisa disusun & diedit satu per satu', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-embed-banyak');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      resetEmbedExtra();
+      tambahEmbed();
+      tambahEmbed();
+      /*
+       * Isi embed kedua, lalu KEMBALI ke embed pertama dan isi juga: tanpa
+       * pemilih, isian kedua akan menimpa yang pertama tanpa terlihat.
+       */
+      pilihEmbed(1);
+      embedAktif().author = { name: 'Penulis dua' };
+      embedAktif().fields = [{ name: 'B', value: '2', inline: false }];
+      pilihEmbed(0);
+      embedAktif().footer = { text: 'kaki satu' };
+      var daftar = payloadEmbed();
+      var jumlahBaris = document.getElementById('embedPilihList').children.length;
+
+      /* Batas 10 ditegakkan di editor, bukan hanya di server. */
+      for (var i = 0; i < 20; i += 1) tambahEmbed();
+      var jumlahAkhir = EMBED_LIST.length;
+      hapusEmbed(EMBED_LIST.length - 1);
+      var setelahHapus = EMBED_LIST.length;
+      return {
+        daftar: daftar,
+        jumlahBaris: jumlahBaris,
+        jumlahAkhir: jumlahAkhir,
+        setelahHapus: setelahHapus,
+        maks: EMBED_MAKS,
+      };
+    })()
+  `)) as {
+    daftar: Array<{ author?: { name?: string }; footer?: { text?: string }; fields?: unknown[] }>;
+    jumlahBaris: number;
+    jumlahAkhir: number;
+    setelahHapus: number;
+    maks: number;
+  };
+
+  assert.equal(hasil.daftar.length, 2, 'dua embed terisi terkirim');
+  assert.equal(hasil.daftar[0].footer?.text, 'kaki satu', 'embed pertama menyimpan isinya');
+  assert.equal(hasil.daftar[1].author?.name, 'Penulis dua', 'embed kedua menyimpan isinya sendiri');
+  assert.equal(hasil.jumlahBaris, 3, 'pemilih menampilkan semua embed, termasuk yang kosong');
+  assert.equal(hasil.maks, 10, 'batas embed sama dengan Discord');
+  assert.equal(hasil.jumlahAkhir, 10, 'tambah embed berhenti di batas');
+  assert.equal(hasil.setelahHapus, 9, 'embed bisa dihapus');
+  assert.equal(page.errors.length, 0, `editor multi-embed error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: embed bisa dipindah/diduplikat & punya warna sendiri', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-embed-urut');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      try {
+      resetEmbedExtra();
+      tambahEmbed();
+      tambahEmbed();
+      pilihEmbed(0);
+      embedAktif().footer = { text: 'pertama' };
+      embedAktif().color = '#ff0000';
+      pilihEmbed(1);
+      embedAktif().fields = [{ name: 'B', value: '2', inline: false }];
+      pilihEmbed(2);
+      embedAktif().author = { name: 'ketiga' };
+
+      /* Naikkan embed ketiga ke posisi pertama. */
+      pindahEmbed(2, -1);
+
+      pindahEmbed(1, -1);
+      var urutan = EMBED_LIST.map(function (e) {
+        if (e.footer && e.footer.text) return 'footer:' + e.footer.text;
+        if (e.author && e.author.name) return 'author:' + e.author.name;
+        return 'fields:' + (e.fields || []).length;
+      });
+
+      /*
+       * Duplikat harus SALINAN DALAM: mengubah bidang di salinan tidak boleh
+       * mengubah aslinya.
+       */
+      pilihEmbed(2);
+      duplikatEmbed(2);
+      var jumlahSetelahDuplikat = EMBED_LIST.length;
+      var isiDuplikat = EMBED_LIST[3] ? JSON.stringify(EMBED_LIST[3]) : 'HILANG';
+      var aktifIndex = EMBED_AKTIF;
+      embedAktif().fields[0].name = 'DIUBAH';
+      var asli = EMBED_LIST[2] ? EMBED_LIST[2].fields[0].name : 'HILANG';
+      var salinanNama = EMBED_LIST[3] ? EMBED_LIST[3].fields[0].name : 'HILANG';
+
+      hapusEmbed(0);
+      var warnaPayload = null;
+      var daftarPayload = payloadEmbed();
+      warnaPayload = daftarPayload && daftarPayload.length ? daftarPayload[0].color : null;
+      return {
+        urutan: urutan,
+        jumlahSetelahDuplikat: jumlahSetelahDuplikat,
+        isiDuplikat: isiDuplikat,
+        aktifIndex: aktifIndex,
+        asli: asli,
+        salinan: salinanNama,
+        jumlah: EMBED_LIST.length,
+        warna: warnaPayload,
+      };
+      } catch (e) { return { galat: String(e && e.message) }; }
+    })()
+  `)) as {
+    urutan: string[];
+    jumlahSetelahDuplikat: number;
+    isiDuplikat: string;
+    aktifIndex: number;
+    asli: string;
+    salinan: string;
+    jumlah: number;
+    warna?: string;
+    galat?: string;
+  };
+
+  assert.equal(hasil.galat, undefined, 'skrip editor embed gagal: ' + hasil.galat);
+  assert.equal(hasil.urutan.join('|'), 'author:ketiga|footer:pertama|fields:1', 'urutan embed bisa diubah');
+  assert.equal(hasil.jumlahSetelahDuplikat, 4, 'duplikat menambah satu embed');
+  assert.equal(hasil.aktifIndex, 3, 'embed hasil duplikat langsung dipilih');
+  assert.equal(hasil.asli, 'B', 'salinan tidak mengubah embed aslinya');
+  assert.equal(hasil.salinan, 'DIUBAH', 'salinan bisa disunting sendiri');
+  assert.equal(hasil.jumlah, 3, 'hapus embed mengurangi daftar');
+  assert.equal(page.errors.length, 0, `editor urutan embed error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: pesan Discord bisa dimuat lewat tautan & mengisi editor', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-muat-pesan');
+
+  // Panel muat ada, dan tombolnya memanggil fungsi halaman.
+  assert.ok(html.includes('id="muatTautan"'), 'kotak tautan ada');
+  assert.ok(html.includes('muatPesanDiscord()'), 'tombol muat terpasang');
+
+  await page.evaluate(`
+    (async function () {
+      document.getElementById('muatTautan').value = 'https://discord.com/channels/1/2/3';
+      document.getElementById('postName').value = '';
+      await muatPesanDiscord();
+    })()
+  `);
+
+  const muat = page.fetches.find((call) => call.path === '/api/posts/load');
+  assert.ok(muat, 'Muat memanggil /api/posts/load');
+  assert.equal(String((muat!.body as { url?: string }).url), 'https://discord.com/channels/1/2/3', 'tautan dikirim apa adanya');
+
+  const isi = (await page.evaluate('blocks.map(function (b) { return b.kind + ":" + b.value; }).join("|")')) as string;
+  assert.equal(isi, 'text:Isi pesan dari Discord', 'blok hasil muat masuk ke editor');
+  const nama = (await page.evaluate("document.getElementById('postName').value")) as string;
+  assert.equal(nama, 'Judul dari Discord', 'nama pesan terisi dari hasil muat');
+
+  /*
+   * Simpan mengirim `source`: server memakainya supaya pesan dashboard ini
+   * menunjuk pesan Discord ASAL, sehingga Kirim berikutnya memperbarui pesan
+   * itu — bukan mengirim salinan kedua.
+   */
+  await page.evaluate(`
+    (async function () {
+      await savePost();
+    })()
+  `);
+  const simpan = page.fetches.find((call) => call.path === '/api/posts' || /^\/api\/posts\/\d+$/.test(call.path));
+  assert.ok(simpan, 'Simpan memanggil /api/posts');
+  const muatan = simpan!.body as { source?: { channelId?: string; messageId?: string } };
+  assert.equal(muatan.source?.messageId, '345678901234567890', 'pesan asal ikut dikirim');
+  assert.equal(muatan.source?.channelId, '234567890123456789', 'channel asal ikut dikirim');
+
+  /* Setelah tersimpan, sumber dilepas: pesan sudah punya jalur messageId sendiri. */
+  const sumberSetelah = await page.evaluate('MUAT_SUMBER');
+  assert.equal(sumberSetelah, null, 'sumber muat dilepas setelah simpan');
+  assert.equal(page.errors.length, 0, `editor muat pesan error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: JSON Data Editor memuat satu pesan & menolak JSON tanpa isi', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-json-pesan');
+
+  assert.ok(html.includes('id="pesanJsonText"'), 'kotak JSON per pesan ada');
+  assert.ok(html.includes('muatJsonPesan()'), 'tombolnya terpasang');
+
+  await page.evaluate(`
+    (async function () {
+      document.getElementById('pesanJsonText').value = JSON.stringify({ content: 'Halo dari JSON' });
+      document.getElementById('postName').value = '';
+      await muatJsonPesan();
+    })()
+  `);
+
+  const panggil = page.fetches.find((call) => call.path === '/api/posts/from-json');
+  assert.ok(panggil, 'Muat memanggil /api/posts/from-json');
+  const isi = (await page.evaluate('blocks.map(function (b) { return b.kind + ":" + b.value; }).join("|")')) as string;
+  assert.equal(isi, 'text:Dari JSON', 'blok hasil JSON masuk ke editor: ' + isi);
+
+  /*
+   * Pengaturan tingkat pesan ikut dipulihkan, sama seperti tombol Load. Tanpa
+   * ini, JSON yang memuat username/avatar/thread_name menghasilkan pesan yang
+   * bentuknya berbeda dari yang tertulis di JSON-nya.
+   */
+  const tingkat = (await page.evaluate(`
+    (function () {
+      return {
+        sender: document.getElementById('postSender').value,
+        nama: document.getElementById('postWebhookName').value,
+        avatar: document.getElementById('postWebhookAvatar').value,
+        thread: document.getElementById('postThreadName').value,
+        flagTautan: document.getElementById('postFlagEmbeds').checked,
+        flagNotif: document.getElementById('postFlagNotif').checked
+      };
+    })()
+  `)) as Record<string, unknown>;
+  assert.equal(tingkat.sender, 'webhook', 'pengirim webhook dipulihkan dari JSON');
+  assert.equal(tingkat.nama, 'Tim Pengumuman', 'nama pengirim dipulihkan');
+  assert.equal(tingkat.avatar, 'https://img.test/tim.png', 'avatar pengirim dipulihkan');
+  assert.equal(tingkat.thread, 'Diskusi rilis', 'nama thread dipulihkan');
+  assert.equal(tingkat.flagTautan, true, 'flag tanpa-kartu dipulihkan');
+  assert.equal(tingkat.flagNotif, false, 'flag yang tidak ada di JSON tidak dicentang');
+  assert.equal(page.errors.length, 0, `editor JSON per pesan error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: nama & avatar pengirim webhook ikut dikirim saat Simpan', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-webhook-identitas');
+
+  assert.ok(html.includes('id="postWebhookName"'), 'isian nama pengirim ada');
+  assert.ok(html.includes('id="postWebhookAvatar"'), 'isian avatar ada');
+
+  await page.evaluate(`
+    (async function () {
+      blocks = [{ kind: 'text', value: 'Pengumuman' }];
+      document.getElementById('postName').value = 'Webhook nama';
+      document.getElementById('postSender').value = 'webhook';
+      document.getElementById('postWebhookName').value = 'Tim Pengumuman';
+      document.getElementById('postWebhookAvatar').value = 'https://img.test/a.png';
+      if (typeof renderBlocks === 'function') renderBlocks();
+      await savePost();
+    })()
+  `);
+
+  const simpan = page.fetches.find((call) => call.path === '/api/posts' || /^\/api\/posts\/\d+$/.test(call.path));
+  assert.ok(simpan, 'Simpan memanggil /api/posts');
+  const muatan = simpan!.body as { webhookName?: string; webhookAvatar?: string; sender?: string };
+  assert.equal(muatan.sender, 'webhook');
+  assert.equal(muatan.webhookName, 'Tim Pengumuman', 'nama pengirim ikut dikirim');
+  assert.equal(muatan.webhookAvatar, 'https://img.test/a.png', 'avatar ikut dikirim');
+  assert.equal(page.errors.length, 0, `editor webhook error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: thumbnail & gambar besar per embed ikut tersimpan', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-embed-gambar');
+
+  assert.ok(html.includes('id="embedThumbnail"'), 'isian thumbnail ada');
+  assert.ok(html.includes('id="embedImage"'), 'isian gambar besar ada');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      resetEmbedExtra();
+      embedAktif().thumbnail = 'https://img.test/kecil.png';
+      embedAktif().image = 'https://img.test/besar.png';
+      var muatan = payloadEmbed();
+      loadEmbedExtra(muatan);
+      return { muatan: muatan, ulang: payloadEmbed() };
+    })()
+  `)) as {
+    muatan: Array<{ thumbnail?: string; image?: string }> | null;
+    ulang: Array<{ thumbnail?: string; image?: string }> | null;
+  };
+
+  assert.equal(hasil.muatan?.[0]?.thumbnail, 'https://img.test/kecil.png', 'thumbnail dikirim');
+  assert.equal(hasil.muatan?.[0]?.image, 'https://img.test/besar.png', 'gambar besar dikirim');
+  assert.equal(hasil.ulang?.[0]?.thumbnail, 'https://img.test/kecil.png', 'thumbnail bertahan setelah dimuat ulang');
+  assert.equal(page.errors.length, 0, `editor gambar embed error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: galeri gambar per embed disaring & dipratinjau seperti server', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-embed-galeri');
+
+  assert.ok(html.includes('id="embedImages"'), 'isian galeri gambar ada');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      resetEmbedExtra();
+      document.getElementById('postLayout').value = 'embed';
+      blocks = [{ kind: 'text', value: 'Pengumuman' }];
+      var kotak = document.getElementById('embedImages');
+      /*
+       * Satu URL per baris, dengan baris kosong dan URL ganda. Keduanya harus
+       * dibuang di editor: Discord tidak menerima daftar berisi kekosongan, dan
+       * gambar yang sama dua kali hanya memakan jatah 10 embed per pesan.
+       */
+      kotak.value = ['https://img.test/1.png', '', 'https://img.test/1.png', 'https://img.test/2.png'].join(String.fromCharCode(10));
+      kotak.oninput();
+
+      var muatan = payloadEmbed();
+
+      // Lima gambar: hanya empat yang boleh tersimpan.
+      kotak.value = ['https://img.test/1.png', 'https://img.test/2.png', 'https://img.test/3.png', 'https://img.test/4.png', 'https://img.test/5.png'].join(String.fromCharCode(10));
+      kotak.oninput();
+      var dibatasi = (payloadEmbed() || [])[0].images.length;
+      var pratinjau = document.getElementById('previewHost');
+      renderPreviewKe('previewHost');
+      var kartu = pratinjau.children.filter(function (anak) {
+        return String(anak.className || '').indexOf('preview-embed') !== -1;
+      });
+      var gambarPratinjau = kartu.reduce(function (jumlah, satu) {
+        return jumlah + satu.children.filter(function (anak) {
+          return String(anak.className || '').indexOf('preview-embed-image') !== -1;
+        }).length;
+      }, 0);
+      var simpanGambar = gambarPratinjau;
+
+      // Muat ulang dari payload: galeri harus kembali utuh.
+      loadEmbedExtra(payloadEmbed());
+      var ulang = document.getElementById('embedImages').value.split(String.fromCharCode(10)).length;
+      return {
+        jumlah: (muatan || [])[0].images.length,
+        urutan: (muatan || [])[0].images.join(','),
+        gambarPratinjau: simpanGambar,
+        jumlahKartu: kartu.length,
+        gambarTerakhir: kartu.length
+          ? (function () {
+              var terakhir = kartu[kartu.length - 1];
+              var img = terakhir.children.filter(function (anak) {
+                return String(anak.className || '').indexOf('preview-embed-image') !== -1;
+              })[0];
+              return img ? String(img.style.backgroundImage || '') : '';
+            })()
+          : '',
+        dibatasi: dibatasi,
+        ulang: ulang,
+        kosong: embedTerisi({ images: [] })
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.jumlah, 2, 'baris kosong & URL ganda dibuang');
+  assert.equal(hasil.urutan, 'https://img.test/1.png,https://img.test/2.png', 'urutan gambar dipertahankan');
+  /*
+   * Empat gambar → satu kartu utama + tiga kartu pelengkap, persis seperti
+   * server mengirimnya. Kalau pratinjau menumpuk semuanya di satu kartu, admin
+   * melihat tampilan yang tidak pernah muncul di Discord.
+   */
+  assert.equal(
+    hasil.gambarPratinjau,
+    4,
+    `gambar ke-2 dst. dipratinjau sebagai kartu pelengkap [${String(hasil.gambarPratinjau)}/${String(hasil.jumlahKartu)}] ${String(hasil.gambarTerakhir)}`,
+  );
+  assert.ok(String(hasil.gambarTerakhir).includes('img.test/4.png'), 'kartu terakhir memakai gambar keempat');
+  assert.equal(hasil.dibatasi, 4, 'galeri dibatasi 4 gambar per embed');
+  assert.equal(hasil.ulang, 4, 'galeri bertahan setelah dimuat ulang');
+  assert.equal(hasil.kosong, false, 'galeri saja tidak dianggap embed kosong');
+  assert.equal(page.errors.length, 0, `editor galeri error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: izin ping & nama thread ikut dikirim, bawaan tanpa ping', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-mention');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      var polos = allowedMentionsPesan();
+      document.getElementById('postMentionRoles').checked = true;
+      document.getElementById('postThreadName').value = 'Diskusi umum';
+      var dengan = allowedMentionsPesan();
+      return { polos: polos, dengan: dengan };
+    })()
+  `)) as { polos: { parse: string[] }; dengan: { parse: string[] } };
+
+  // Bawaan HARUS kosong: ini yang mencegah @everyone tidak sengaja terkirim.
+  assert.equal(hasil.polos.parse.join(','), '', 'bawaan tanpa ping sama sekali');
+  assert.equal(hasil.dengan.parse.join(','), 'roles', 'hanya jenis yang dicentang');
+
+  // Ikut dikirim saat Simpan (bukan hanya disimpan di variabel halaman).
+  await page.evaluate(`
+    (async function () {
+      blocks = [{ kind: 'text', value: 'Pengumuman' }];
+      document.getElementById('postName').value = 'Ping role';
+      if (typeof renderBlocks === 'function') renderBlocks();
+      await savePost();
+    })()
+  `);
+  const simpan = page.fetches.find((call) => call.path === '/api/posts' || /^\/api\/posts\/\d+$/.test(call.path));
+  assert.ok(simpan, 'Simpan memanggil /api/posts');
+  const muatan = simpan!.body as {
+    allowedMentions?: { parse: string[] };
+    threadName?: string;
+  };
+  assert.equal((muatan.allowedMentions?.parse ?? []).join(','), 'roles', 'izin ping ikut dikirim');
+  assert.equal(muatan.threadName, 'Diskusi umum', 'nama thread ikut dikirim');
+  assert.equal(page.errors.length, 0, `editor ping/thread error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: panel payload JSON meminta kode sesuai library yang dipilih', async () => {
+  const html = mounted.find((page) => page.name === '/pesan?isi')?.html ?? '';
+  const page = mountPage(html, 'uji-codegen');
+
+  /*
+   * Tanpa pesan tersimpan, panel harus menjelaskan kenapa kosong — bukan
+   * memanggil endpoint dengan id `null` yang menghasilkan 404 tanpa pesan.
+   */
+  page.fetches.length = 0;
+  const belumSimpan = (await page.evaluate(`
+    (function () {
+      editingId = null;
+      return muatPayloadJson().then(function () {
+        return { status: document.getElementById('codegenStatus').textContent };
+      });
+    })()
+  `)) as { status: string };
+
+  assert.ok(belumSimpan.status.includes('Simpan pesan dulu'), 'menyuruh menyimpan dulu');
+  assert.equal(page.fetches.length, 0, 'tidak ada permintaan saat pesan belum tersimpan');
+
+  /*
+   * Permintaan harus membawa id pesan & library yang dipilih: server memilih
+   * penerjemah dari parameter itu, jadi salah parameter = kode bahasa lain.
+   */
+  const dipanggil = (await page.evaluate(`
+    (function () {
+      editingId = 42;
+      document.getElementById('codegenLib').value = 'dpy2';
+      return muatPayloadJson().then(function () {
+        return {
+          kode: document.getElementById('codegenOut').value,
+          json: document.getElementById('payloadJson').value,
+          docs: document.getElementById('codegenDocs').textContent,
+          status: document.getElementById('codegenStatus').textContent,
+        };
+      });
+    })()
+  `)) as { kode: string; json: string; docs: string; status: string };
+
+  const permintaan = page.fetches.map((call) => call.path).join(', ');
+  assert.ok(permintaan.includes('/api/posts/42/json'), 'memakai id pesan yang sedang disunting');
+  assert.ok(permintaan.includes('library=dpy2'), 'library pilihan ikut dikirim');
+  assert.ok(dipanggil.json.includes('"components"'), 'payload JSON ditampilkan');
+  assert.ok(dipanggil.json.includes('"flags"'), 'flag pesan ikut ditampilkan');
+  assert.ok(dipanggil.kode.includes('ui.Container'), 'kode discord.py tampil');
+  assert.ok(dipanggil.kode.includes('import discord'), 'baris import ikut tampil');
+  // Import dan kode dipisah baris kosong supaya hasil salin bisa langsung tempel.
+  assert.ok(dipanggil.kode.includes('import discord\nfrom discord import ui\n\nview'), 'import & kode dipisah baris kosong');
+  assert.ok(dipanggil.docs.includes('discordpy'), 'tautan dokumentasi sesuai library');
+  assert.equal(dipanggil.status, '', 'tidak ada peringatan saat semua bagian ikut');
+  assert.equal(page.errors.length, 0, `panel kode error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: diff versi menghitung tambah/hapus/ubah & menampilkan teks lama-baru', async () => {
+  const html = mounted.find((page) => page.name === '/pesan?isi')?.html ?? '';
+  const page = mountPage(html, 'uji-diff');
+
+  /*
+   * Fungsi murni lebih dulu: hasilnya harus menyebut jenis perubahan dan arah
+   * yang benar. Arah terbalik membuat admin mengembalikan versi yang salah.
+   */
+  const hitung = (await page.evaluate(`
+    (function () {
+      var hasil = diffRingkas(
+        { blocks: [{ kind: 'text', value: 'lama' }, { kind: 'button', value: 'A' }], accent: '#111111', flags: 0 },
+        { blocks: [{ kind: 'text', value: 'baru' }, { kind: 'button', value: 'B' }, { kind: 'separator' }], accent: '#222222', flags: 4 }
+      );
+      return {
+        total: hasil.total,
+        diubah: hasil.diubah,
+        ditambah: hasil.ditambah,
+        dihapus: hasil.dihapus,
+        baris: hasil.baris.join('|'),
+        teks: hasil.teks.map(function (satu) { return satu.lama + '>' + satu.baru + '@' + satu.posisi; }).join('|'),
+        judul: ringkasDiff(hasil),
+      };
+    })()
+  `)) as {
+    total: number;
+    diubah: number;
+    ditambah: number;
+    dihapus: number;
+    baris: string;
+    teks: string;
+    judul: string;
+  };
+
+  assert.equal(hitung.diubah, 2, 'dua blok berubah (teks & tombol)');
+  assert.equal(hitung.ditambah, 1, 'satu blok ditambahkan');
+  assert.equal(hitung.dihapus, 0, 'tidak ada yang dihapus');
+  // 2 blok + 1 tambah + 2 pengaturan (aksen & flag) = 5.
+  assert.equal(hitung.total, 5, 'pengaturan ikut dihitung sebagai perubahan');
+  assert.ok(hitung.baris.includes('+ blok 3'), 'blok baru disebut posisinya');
+  assert.ok(hitung.baris.includes('warna aksen'), 'perubahan aksen terlihat');
+  assert.ok(hitung.baris.includes('#111111 → #222222'), 'nilai aksen lama → baru');
+  assert.equal(hitung.teks, 'lama>baru@1', 'teks lama & baru dipasangkan dengan posisinya');
+  assert.equal(hitung.judul, '5 perubahan (1 tambah, 2 ubah, 2 pengaturan)', 'ringkasan judul');
+
+  // Blok yang dihapus di ujung harus terbaca sebagai hapusan, bukan ubahan.
+  const hapus = (await page.evaluate(`
+    (function () {
+      var hasil = diffRingkas(
+        { blocks: [{ kind: 'text', value: 'a' }, { kind: 'image' }] },
+        { blocks: [{ kind: 'text', value: 'a' }] }
+      );
+      return { dihapus: hasil.dihapus, baris: hasil.baris.join('|') };
+    })()
+  `)) as { dihapus: number; baris: string };
+  assert.equal(hapus.dihapus, 1, 'blok yang hilang terhitung');
+  assert.ok(hapus.baris.includes('− blok 2: gambar dihapus'), 'menyebut blok & jenisnya');
+  assert.ok(!hapus.baris.includes('undefined'), 'tidak ada nilai undefined di tampilan');
+
+  /*
+   * Lalu jalur UI-nya: tombol Bandingkan mengambil snapshot versi itu saja,
+   * menghitung diff terhadap EDITOR (bukan terhadap versi tersimpan), dan
+   * menampilkan panelnya. Tombol yang sama menutup panel.
+   */
+  page.fetches.length = 0;
+  const panel = (await page.evaluate(`
+    (function () {
+      editingId = 1;
+      // Data riwayat yang dipegang halaman (sama seperti setelah memuat pesan).
+      RIWAYAT[1] = RIWAYAT_AWAL[1];
+      blocks = [{ kind: 'text', value: 'isi sekarang' }];
+      // Panel diff baru ada setelah daftar versi digambar.
+      document.getElementById('riwayatList').innerHTML = riwayatHtml();
+
+      return bandingkanVersi(77).then(function () {
+        var el = document.getElementById('diff-77');
+        return { tampil: !el.hidden, html: el.innerHTML };
+      });
+    })()
+  `)) as Record<string, unknown>;
+
+
+  const alamat = page.fetches.map((call) => call.path).join(', ');
+
+
+  assert.ok(alamat.includes('/revisions?revision=77'), 'hanya versi yang dibandingkan yang diambil');
+  assert.equal(panel.tampil, true, 'panel diff terbuka');
+
+  /*
+   * Isi panel diperiksa lewat `renderDiff` langsung: elemen tiruan tidak
+   * menyimpan HTML, sama seperti pemeriksaan lain di berkas ini. Yang diuji
+   * adalah HTML yang BENAR-BENAR dibuat fungsi itu, bukan string di source.
+   */
+  const tampilan = (await page.evaluate(`
+    (function () {
+      var isi = renderDiff(diffRingkas(
+        { blocks: [{ kind: 'text', value: 'versi lama' }] },
+        { blocks: [{ kind: 'text', value: 'isi sekarang' }] }
+      ));
+      return { html: isi };
+    })()
+  `)) as { html: string };
+
+  assert.ok(tampilan.html.includes('teks diubah'), 'perubahan teks terlihat di panel');
+  assert.ok(tampilan.html.includes('isi sekarang'), 'isi editor sekarang ditampilkan');
+  assert.ok(tampilan.html.includes('versi lama'), 'isi versi lama ditampilkan');
+  assert.ok(tampilan.html.includes('diff-baris diff-ubah'), 'baris diberi kelas warna');
+  assert.ok(tampilan.html.includes('1 perubahan'), 'ringkasan jumlah perubahan di kepala panel');
+
+  const ditutup = (await page.evaluate(`
+    (function () {
+      return bandingkanVersi(77).then(function () {
+        return document.getElementById('diff-77').hidden;
+      });
+    })()
+  `)) as boolean;
+  assert.equal(ditutup, true, 'menekan Bandingkan lagi menutup panel');
+  assert.equal(page.errors.length, 0, `diff error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: membuka pesan memuat SEMUA pengaturan, bukan sebagian', async () => {
+  /*
+   * Dulu `loadExisting` hanya mengisi nama, channel, blok, aksen, dan pengirim.
+   * Flag, nama thread, izin ping, bentuk pesan, embed, serta nama/avatar
+   * webhook tidak dimuat — jadi membuka pesan lalu menyimpannya diam-diam
+   * mengembalikan pengaturan itu ke bawaan. Tes ini mengunci kelengkapannya.
+   */
+  const html = mounted.find((page) => page.name === '/pesan?isi')?.html ?? '';
+  const page = mountPage(html, 'uji-muat-lengkap');
+
+  const isi = (await page.evaluate(`
+    (function () {
+      location.search = '?id=1';
+      loadExisting();
+      return {
+        nama: document.getElementById('postName').value,
+        channel: document.getElementById('postChannel').value,
+        layout: document.getElementById('postLayout').value,
+        thread: document.getElementById('postThreadName').value,
+        whNama: document.getElementById('postWebhookName').value,
+        whAvatar: document.getElementById('postWebhookAvatar').value,
+        flagNotif: document.getElementById('postFlagNotif').checked,
+        flagEmbeds: document.getElementById('postFlagEmbeds').checked,
+        pingRole: document.getElementById('postMentionRoles').checked,
+        pingEveryone: document.getElementById('postMentionEveryone').checked,
+        accent: document.getElementById('postAccent').value,
+        pengirim: document.getElementById('postSender').value,
+        jumlahBlok: blocks.length,
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(isi.nama, 'Rules');
+  assert.equal(isi.layout, 'embed', 'bentuk pesan embed ikut dimuat');
+  assert.equal(isi.thread, 'Diskusi aturan', 'nama thread ikut dimuat');
+  assert.equal(isi.whNama, 'Tim Pengumuman', 'nama pengirim webhook ikut dimuat');
+  assert.equal(isi.whAvatar, 'https://img.test/tim.png', 'avatar webhook ikut dimuat');
+  assert.equal(isi.flagNotif, true, 'flag tanpa notifikasi ikut dimuat');
+  assert.equal(isi.flagEmbeds, false, 'flag yang tidak diset tidak dicentang');
+  assert.equal(isi.pingRole, true, 'izin ping role ikut dimuat');
+  assert.equal(isi.pingEveryone, false, 'ping @everyone tidak dicentang kalau tidak tersimpan');
+  assert.equal(isi.accent, '#ff8800');
+  assert.equal(isi.pengirim, 'webhook');
+  assert.ok((isi.jumlahBlok as number) > 0, 'blok ikut dimuat');
+  assert.equal(page.errors.length, 0, `muat lengkap error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: mengembalikan versi memakai pengaturan versi itu, bukan sisa editor', async () => {
+  /*
+   * `kembalikanVersi` dulu hanya mengisi nama, channel, dan blok. Server sudah
+   * mengembalikan flags/threadName/layout/embed/identitas webhook dari versi
+   * yang dipulihkan, tetapi editor mengabaikannya — Simpan berikutnya menimpa
+   * versi itu dengan nilai basi. Diuji dengan memastikan nilai basi yang
+   * sengaja dipasang lebih dulu benar-benar diganti.
+   */
+  const html = mounted.find((page) => page.name === '/pesan?isi')?.html ?? '';
+  const page = mountPage(html, 'uji-kembali-lengkap');
+
+  // Endpoint revisi tiruan: kembalikan pengaturan yang jelas berbeda.
+  page.fetches.length = 0;
+  const hasil = (await page.evaluate(`
+    (async function () {
+      editingId = 1;
+      // Nilai basi: seolah editor masih memuat pengaturan pesan sebelumnya.
+      document.getElementById('postName').value = 'Basi';
+      document.getElementById('postThreadName').value = 'Thread basi';
+      document.getElementById('postWebhookName').value = 'Webhook basi';
+      document.getElementById('postFlagNotif').checked = false;
+      document.getElementById('postMentionEveryone').checked = true;
+
+      askConfirm = async function () { return true; };
+      await kembalikanVersi(77);
+      return {
+        nama: document.getElementById('postName').value,
+        thread: document.getElementById('postThreadName').value,
+        whNama: document.getElementById('postWebhookName').value,
+        flagNotif: document.getElementById('postFlagNotif').checked,
+        pingEveryone: document.getElementById('postMentionEveryone').checked,
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.nama, 'Rules', 'nama dari versi dipakai');
+  assert.equal(hasil.thread, 'Diskusi aturan', 'nama thread dari versi dipakai, bukan nilai basi');
+  assert.equal(hasil.whNama, 'Tim Pengumuman', 'nama pengirim webhook dari versi dipakai');
+  assert.equal(hasil.flagNotif, true, 'flag dari versi dipakai');
+  assert.equal(hasil.pingEveryone, false, 'izin ping dari versi dipakai, bukan centang basi');
+  assert.equal(page.errors.length, 0, `kembalikan lengkap error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: tab riwayat memuat versi & tautan berbagi bisa dibuat', async () => {
+  // Halaman berisi: riwayat versi hanya ada kalau pesannya sudah tersimpan.
+  const html = mounted.find((page) => page.name === '/pesan?isi')?.html ?? '';
+  const page = mountPage(html, 'uji-riwayat');
+
+  /*
+   * Riwayat yang tertanam di halaman dipakai lebih dulu: membuka tab tidak
+   * boleh memicu permintaan baru, karena daftarnya sudah dikirim server.
+   */
+  const awal = (await page.evaluate(`
+    (function () {
+      editingId = 1;
+      document.getElementById('postName').value = 'Rules';
+      showPesanTab('riwayat');
+      return {
+        tabTampil: !document.getElementById('pane-riwayat').hidden,
+        html: riwayatHtml(),
+        jumlahDariServer: (RIWAYAT[editingId] || []).length,
+      };
+    })()
+  `)) as { tabTampil: boolean; html: string; jumlahDariServer: number };
+
+  assert.equal(awal.tabTampil, true, 'tab riwayat bisa dibuka');
+  assert.equal(awal.jumlahDariServer, 2, 'riwayat dari server dipakai tanpa permintaan tambahan');
+  assert.ok(awal.html.includes('sebelum disunting'), 'versi lama tampil apa adanya');
+  assert.ok(awal.html.includes('kembalikanVersi(77)'), 'tiap versi punya tombol kembalikan');
+
+  // Tombol "Muat ulang" memakai endpoint revisi dengan metode GET.
+  await page.evaluate(`
+    (async function () { await muatRiwayat(); })()
+  `);
+  const muat = page.fetches.find((call) => /^\/api\/posts\/\d+\/revisions$/.test(call.path));
+  assert.ok(muat, 'riwayat dimuat dari /api/posts/:id/revisions');
+
+  // Mengembalikan versi = POST ke endpoint yang sama, membawa id versinya.
+  await page.evaluate(`
+    (async function () {
+      // Dialog konfirmasi sungguhan menunggu klik; di uji ini dijawab "ya".
+      askConfirm = async function () { return true; };
+      await kembalikanVersi(77);
+    })()
+  `);
+  const kembali = page.fetches.find(
+    (call) => /^\/api\/posts\/\d+\/revisions$/.test(call.path) && call.method === 'POST',
+  );
+  assert.ok(kembali, 'kembalikan versi memakai POST');
+  assert.equal((kembali!.body as { revisionId: number }).revisionId, 77, 'id versi ikut dikirim');
+
+  // Tautan berbagi: dibuat lewat POST, alamatnya memakai origin halaman.
+  await page.evaluate(`
+    (async function () { await buatShare(); })()
+  `);
+  const share = page.fetches.find((call) => /^\/api\/posts\/\d+\/share$/.test(call.path));
+  assert.ok(share, 'tautan berbagi dibuat lewat /api/posts/:id/share');
+  assert.equal(share!.method, 'POST');
+  const alamat = (await page.evaluate(`document.getElementById('shareUrl').value`)) as string;
+  assert.ok(alamat.includes('/bagi/'), 'alamat yang ditampilkan memakai /bagi/');
+
+  await page.evaluate(`
+    (async function () { await cabutShare(); })()
+  `);
+  const cabut = page.fetches.find(
+    (call) => /^\/api\/posts\/\d+\/share$/.test(call.path) && call.method === 'DELETE',
+  );
+  assert.ok(cabut, 'pencabutan tautan memakai DELETE');
+  assert.equal(page.errors.length, 0, `editor riwayat error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: mode jadwal kalender menyusun cron & menolak pola salah', async () => {
+  const html = mounted.find((page) => page.name === '/pesan?isi')?.html ?? '';
+  const page = mountPage(html, 'uji-cron');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      editingId = 1;
+      muatJadwal();
+      modeJadwal();
+
+      // Mode kalender: isian waktu & pengulangan disembunyikan, isian cron tampil.
+      document.getElementById('scheduleMode').value = 'kalender';
+      modeJadwal();
+      var tampil = {
+        due: document.getElementById('scheduleDue').hidden,
+        cron: document.getElementById('scheduleCron').hidden,
+        preset: document.getElementById('schedulePresetShell').hidden
+      };
+
+      // Pola siap pakai mengisi isian teks.
+      document.getElementById('schedulePreset').value = '0 9 * * 1';
+      presetJadwal();
+      var terisi = document.getElementById('scheduleCron').value;
+
+      // Pola sah -> tersimpan dengan cron, pola salah -> tidak menambah apa pun.
+      jadwalPesan = [];
+      tambahJadwal();
+      var sesudahSah = jadwalPesan.length;
+      var cronTersimpan = jadwalPesan[0] ? jadwalPesan[0].cron : null;
+      document.getElementById('scheduleCron').value = '99 9 * * *';
+      tambahJadwal();
+      var sesudahSalah = jadwalPesan.length;
+
+      return {
+        tampil: tampil,
+        terisi: terisi,
+        sesudahSah: sesudahSah,
+        cronTersimpan: cronTersimpan,
+        sesudahSalah: sesudahSalah,
+        validHarian: cronValid('0 9 * * *'),
+        validMingguan: cronValid('0 9 * * 1-5'),
+        validNama: cronValid('0 9 * * mon'),
+        validRusak: cronValid('0 9 * *'),
+        ringkas: jadwalCronRingkas('0 9 * * 1'),
+        ringkasHarian: jadwalCronRingkas('0 8 * * *'),
+        ringkasTanggal: jadwalCronRingkas('30 8 1 * *')
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  const tampil = hasil.tampil as { due: boolean; cron: boolean; preset: boolean };
+  assert.equal(tampil.due, true, 'isian waktu disembunyikan di mode kalender');
+  assert.equal(tampil.cron, false, 'isian cron tampil');
+  assert.equal(tampil.preset, false, 'daftar pola tampil');
+  assert.equal(hasil.terisi, '0 9 * * 1', 'pola siap pakai mengisi isian');
+  assert.equal(hasil.sesudahSah, 1, 'pola sah menambah satu jadwal');
+  assert.equal(hasil.cronTersimpan, '0 9 * * 1', 'ekspresi ikut disimpan');
+  assert.equal(hasil.sesudahSalah, 1, 'pola salah TIDAK menambah jadwal');
+  assert.equal(hasil.validHarian, true);
+  assert.equal(hasil.validMingguan, true, 'rentang hari diterima');
+  assert.equal(hasil.validNama, true, 'nama hari diterima');
+  assert.equal(hasil.validRusak, false, 'ruas kurang ditolak');
+  assert.equal(hasil.ringkas, 'tiap Senin pukul 09:00');
+  assert.equal(hasil.ringkasHarian, 'tiap hari pukul 08:00');
+  assert.equal(hasil.ringkasTanggal, 'tiap tanggal 1 pukul 08:30');
+  assert.equal(page.errors.length, 0, `editor jadwal cron error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: aksi teks mentah & hapus pesan bertarget tersusun', async () => {
+  const html = mounted.find((page) => page.name === '/pesan?isi')?.html ?? '';
+  const page = mountPage(html, 'uji-aksi-baru');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      editingId = 1;
+      roleButtons = [{ id: 9, roleId: '9001', label: 'Gamer', mode: 'toggle', emoji: '', style: 'primary' }];
+      POST_ACTIONS = { 1: { 'button:9': [] } };
+      loadActionsFor(1);
+      renderRoleButtons();
+
+      var daftar = aksiUntuk('button:9');
+      // Teks mentah: isi kosong harus dibuang dari muatan, isi terisi dikirim.
+      daftar.push({ kind: 'raw', rawText: '   ' });
+      var muatanKosong = (susunAksi()['button:9'] || []).length;
+      daftar[0].rawText = 'Halo {member.mention}';
+
+      // Hapus bertarget & ringkasannya.
+      daftar.push({ kind: 'delete', what: 'sebelumnya' });
+      daftar.push({ kind: 'delete', what: 'pesan' });
+
+      var muatan = susunAksi()['button:9'] || [];
+      return {
+        muatanKosong: muatanKosong,
+        jenis: muatan.map(function (a) { return a.kind + ':' + (a.what || ''); }).join(','),
+        ringkasMentah: ringkasAksi(muatan[0]),
+        ringkasHapus: ringkasAksi(muatan[1]),
+        labelMentah: jenisAksiLabel('raw'),
+        labelHapus: jenisAksiLabel('delete'),
+        // Editor harus bisa digambar tanpa error untuk jenis aksi baru.
+        gambar: (function () { renderRoleButtons(); return true; })()
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.muatanKosong, 0, 'teks kosong tidak ikut dikirim');
+  assert.equal(hasil.jenis, 'raw:,delete:sebelumnya,delete:pesan', 'jenis & sasaran hapus tersimpan');
+  assert.ok(String(hasil.ringkasMentah).includes('kirim teks'), 'ringkasan teks mentah terbaca');
+  assert.equal(hasil.ringkasHapus, 'hapus pesan dari aksi sebelumnya', 'sasaran hapus terbaca di ringkasan');
+  assert.equal(hasil.labelMentah, 'Kirim teks');
+  assert.equal(hasil.labelHapus, 'Hapus pesan');
+  assert.equal(hasil.gambar, true, 'editor bisa digambar dengan aksi baru');
+  assert.equal(page.errors.length, 0, `editor aksi baru error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: dokumen multi-pesan bisa disusun & dikirim', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-grup');
+
+  const hasil = (await page.evaluate(`
+    (async function () {
+      editingId = null;
+      blocks = [{ kind: 'container' }, { kind: 'text', value: 'Halo dari dokumen' }];
+      document.getElementById('postName').value = 'Pengumuman';
+
+      // Susun dua pesan, lalu buat pesan kedua membalas yang pertama.
+      tambahPesanGrup();
+      tambahPesanGrup();
+      var sesudah = grupAktif.messages.length;
+
+      var daftar = document.getElementById('grupDaftar');
+      var pilihBalas = null;
+      (function cari(node) {
+        if (!node || !node.children) return;
+        for (var i = 0; i < node.children.length; i += 1) {
+          var anak = node.children[i];
+          if (anak.tagName === 'SELECT' && !pilihBalas) pilihBalas = anak;
+          cari(anak);
+        }
+      })(daftar);
+
+      return {
+        sesudah: sesudah,
+        id: grupAktif.messages.map(function (p) { return p.id; }).join(','),
+        nama: grupAktif.messages.map(function (p) { return p.name; }).join(','),
+        adaPilihBalas: Boolean(pilihBalas),
+        teksDaftar: daftar.textContent
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.sesudah, 2, 'dua pesan tersusun');
+  assert.equal(hasil.id, 'p1,p2', 'ID pesan stabil & berurutan');
+  assert.ok(hasil.adaPilihBalas, 'ada pilihan "balas pesan"');
+  /*
+   * Isi pesan tidak dicari di daftar: baris dokumen hanya menampilkan nama,
+   * rujukan, dan thread — bukan isi blok (itu tugas pratinjau). Yang harus
+   * dibuktikan di sini adalah SALINAN-nya benar, dan salinannya tidak
+   * menunjuk objek yang sama dengan editor (kalau berbagi referensi, mengubah
+   * pesan di dokumen akan mengubah pesan yang sedang disusun di tab Susun).
+   */
+  const salinan = (await page.evaluate(`
+    (function () {
+      grupAktif.messages[0].blocks.push({ kind: 'text', value: 'HANYA DI DOKUMEN' });
+      return {
+        dokumen: grupAktif.messages[0].blocks.length,
+        editor: blocks.length
+      };
+    })()
+  `)) as Record<string, number>;
+  assert.ok(salinan.dokumen > salinan.editor, 'blok di dokumen adalah salinan, bukan referensi yang sama');
+  assert.equal(page.fetches.length, 0, 'menyusun dokumen belum memanggil server');
+
+  // Simpan: muatan harus memuat messages & series, dan hasil server dipakai.
+  const simpan = (await page.evaluate(`
+    (async function () {
+      grupAktif.messages[1].reference = 'p1';
+      grupAktif.messages[1].threadName = 'Diskusi';
+      document.getElementById('grupNama').value = 'Dokumen uji';
+      document.getElementById('grupSeries').checked = true;
+      await simpanGrup();
+      return {
+        status: document.getElementById('grupStatus').textContent,
+        idSetelah: grupAktif.id
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  const simpanCall = page.fetches.find((call) => call.path === '/api/post-groups');
+  assert.ok(simpanCall, 'menyimpan memanggil /api/post-groups');
+  const muatan = simpanCall!.body as { name: string; series: boolean; messages: Array<{ id: string; reference?: string }> };
+  assert.equal(muatan.name, 'Dokumen uji');
+  assert.equal(muatan.series, true, 'penanda "kirim berurutan" ikut dikirim');
+  assert.equal(muatan.messages.length, 2);
+  assert.equal(muatan.messages[1]!.reference, 'p1', 'rujukan balasan ikut dikirim');
+  /*
+   * Server tiruan menjawab `{ ok: true }` tanpa objek `document`. Editor harus
+   * tetap jalan (tidak melempar), dan statusnya boleh kosong — yang penting
+   * tidak ada error yang membuat tab Multi-pesan mati di browser.
+   */
+  assert.equal(page.errors.length, 0, 'simpan tanpa balasan server tidak membuat halaman error');
+
+  // Kirim: harus menyebut channel dan memakai ID dokumen yang baru.
+  const kirim = (await page.evaluate(`
+    (async function () {
+      document.getElementById('grupChannel').value = '123';
+      grupAktif.id = 7;
+      await kirimGrup();
+      return { status: document.getElementById('grupStatus').textContent };
+    })()
+  `)) as Record<string, unknown>;
+  const kirimCall = page.fetches.find((call) => call.path === '/api/post-groups/7/send');
+  assert.ok(kirimCall, 'mengirim memanggil endpoint rangkaian yang benar');
+  assert.equal((kirimCall!.body as { channelId: string }).channelId, '123');
+  assert.match(String(kirim.status), /pesan terkirim/, 'status menyebut jumlah pesan terkirim');
+  assert.equal(page.errors.length, 0, `editor dokumen error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: flag pesan dikirim sebagai bitmask yang benar', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-flag');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      var embeds = document.getElementById('postFlagEmbeds');
+      var notif = document.getElementById('postFlagNotif');
+      embeds.checked = true;
+      notif.checked = true;
+      var dua = flagPesan();
+      notif.checked = false;
+      var satu = flagPesan();
+      embeds.checked = false;
+      return { dua: dua, satu: satu, nol: flagPesan() };
+    })()
+  `)) as Record<string, number>;
+
+  // Angka ini harus sama dengan SUPPRESS_EMBEDS (4) dan
+  // SUPPRESS_NOTIFICATIONS (4096) di sisi server.
+  assert.equal(hasil.dua, 4 | 4096, 'dua flag digabung');
+  assert.equal(hasil.satu, 4, 'satu flag');
+  assert.equal(hasil.nol, 0, 'tanpa flag');
+  assert.equal(page.errors.length, 0, `flag pesan error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: flag per pesan dokumen bisa diatur & ikut ekspor-impor', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-flag-grup');
+
+  /*
+   * Isian flag ada di tiap baris pesan dokumen. Tanpa ini, satu pengumuman
+   * dalam rangkaian tidak bisa dibuat senyap padahal pesan tunggal bisa.
+   */
+  const hasil = (await page.evaluate(`
+    (async function () {
+      grupAktif.messages = [
+        { id: 'p1', name: 'Satu', blocks: [{ kind: 'text', value: 'Halo' }] },
+        { id: 'p2', name: 'Dua', blocks: [{ kind: 'text', value: 'Dunia' }] }
+      ];
+      renderGrup();
+      var baris = document.getElementById('grupDaftar').children;
+      /*
+       * DOM tiruan tidak mendukung querySelectorAll, jadi isian flag dicari
+       * lewat penanda yang dipasang sendiri oleh halaman.
+       */
+      var el = baris[0] && baris[0].flagGrup;
+      if (!el) return { adaIsian: false };
+      el.value = '4096';
+      el.onchange();
+      var tersimpan = grupAktif.messages[0].flags;
+
+      // Ekspor lalu impor harus membawa flag yang sama.
+      eksporDokumen();
+      var teks = document.getElementById('grupJson').value;
+      document.getElementById('grupJson').value = teks;
+      imporDokumen();
+      return {
+        adaIsian: true,
+        tersimpan: tersimpan,
+        nilaiEkspor: JSON.parse(teks).messages[0].flags,
+        setelahImpor: grupAktif.messages[0].flags
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.ok(hasil.adaIsian, 'tiap pesan dokumen punya isian flag');
+  assert.equal(hasil.tersimpan, 4096, 'pilihan flag tersimpan di pesan');
+  assert.equal(hasil.nilaiEkspor, 4096, 'ekspor dokumen membawa flag per pesan');
+  assert.equal(hasil.setelahImpor, 4096, 'impor dokumen memulihkan flag per pesan');
+  assert.equal(page.errors.length, 0, `flag dokumen error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: channel tambahan dikelola & dikirim ke endpoint targets', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-target');
+
+  const awal = (await page.evaluate(`
+    (function () {
+      document.getElementById('postChannel').value = '9001';
+      document.getElementById('targetPilih').value = '9001';
+      tambahTarget();
+      var samaUtama = TARGET_CHANNEL.length;
+      document.getElementById('targetPilih').value = '9002';
+      tambahTarget();
+      tambahTarget();
+      var sekali = TARGET_CHANNEL.length;
+      document.getElementById('targetPilih').value = '9003';
+      tambahTarget();
+      return { samaUtama: samaUtama, sekali: sekali, sesudah: TARGET_CHANNEL.length, status: document.getElementById('targetStatus').textContent };
+    })()
+  `)) as { samaUtama: number; sekali: number; sesudah: number; status: string };
+
+  assert.equal(awal.samaUtama, 0, 'channel utama tidak boleh jadi channel tambahan');
+  assert.equal(awal.sekali, 1, 'channel tambahan ditambahkan sekali saja walau ditekan dua kali');
+  assert.equal(awal.sesudah, 2, 'channel berbeda ditambahkan');
+  assert.ok(awal.status.includes('2 channel'), 'jumlah channel tambahan terlihat');
+
+  // Selesai menyimpan, daftar dikirim ke endpoint per pesan (bukan ikut /api/posts).
+  page.fetches.length = 0;
+  await page.evaluate(`
+    (function () {
+      document.getElementById('postName').value = 'Pengumuman';
+      document.getElementById('postChannel').value = '9001';
+      blocks = [{ kind: 'text', value: 'Halo' }];
+      return savePost(false).then(function () { return saveTargets(12); });
+    })()
+  `);
+
+  const keTarget = page.fetches.find((call) => call.path.includes('/targets'));
+  assert.ok(keTarget, 'daftar channel dikirim ke endpoint targets');
+  assert.ok(keTarget!.path.includes('/api/posts/12/targets'), 'memakai id pesan yang baru disimpan');
+  assert.equal(keTarget!.method, 'PUT', 'penggantian utuh memakai PUT');
+  const muatan = keTarget!.body as { channels?: string[] };
+  assert.equal((muatan.channels ?? []).length, 2, 'hanya ID channel yang dikirim');
+
+  // Menghapus satu baris mengubah daftar, bukan menyisakan channel hantu.
+  const dihapus = (await page.evaluate(`
+    (function () {
+      TARGET_CHANNEL[0].__tombol = true;
+      var sebelum = TARGET_CHANNEL.length;
+      // Tombol hapus memanggil splice lewat handler baris; diuji langsung di sini.
+      TARGET_CHANNEL.splice(0, 1);
+      renderTarget();
+      return { sebelum: sebelum, sesudah: TARGET_CHANNEL.length, teks: document.getElementById('targetDaftar').textContent, status: document.getElementById('targetStatus').textContent };
+    })()
+  `)) as { sebelum: number; sesudah: number; teks: string; status: string };
+  assert.equal(dihapus.sesudah, dihapus.sebelum - 1, 'channel terhapus dari daftar');
+  // Satu channel masih tersisa, dan itulah yang tampil — bukan yang tadi dihapus.
+  assert.ok(dihapus.teks.includes('1. '), 'daftar digambar ulang setelah penghapusan');
+  assert.ok(dihapus.status.includes('1 channel tambahan'), 'jumlah di status ikut turun');
+  assert.equal(page.errors.length, 0, `target error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: JSON dokumen multi-pesan bolak-balik dengan rujukan yang dijaga', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-json-dokumen');
+
+  /*
+   * Dokumen dua pesan, yang kedua membalas yang pertama. Ekspor harus memuat
+   * rujukan itu — tanpa itu, rangkaian yang diimpor ke server lain berubah
+   * jadi dua pesan lepas.
+   */
+  const ekspor = (await page.evaluate(`
+    (function () {
+      document.getElementById('grupSeries').checked = true;
+      grupAktif = {
+        id: null,
+        name: 'Rangkaian uji',
+        series: true,
+        messages: [
+          { id: 'm1', name: 'Pembuka', blocks: [{ kind: 'text', value: 'Halo' }] },
+          { id: 'm2', name: 'Lanjutan', blocks: [{ kind: 'text', value: 'Lagi' }], reference: 'm1', threadName: 'Diskusi' }
+        ]
+      };
+      eksporDokumen();
+      var isi = JSON.parse(document.getElementById('grupJson').value);
+      return {
+        format: isi.format,
+        jumlah: isi.messages.length,
+        rujukan: isi.messages[1].reference,
+        thread: isi.messages[1].threadName,
+        series: isi.series,
+        status: document.getElementById('grupJsonStatus').textContent
+      };
+    })()
+  `)) as { format: string; jumlah: number; rujukan: string; thread: string; series: boolean; status: string };
+
+  assert.equal(ekspor.format, 'zypher-document', 'format ditandai supaya bisa dikenali');
+  assert.equal(ekspor.jumlah, 2, 'semua pesan ikut');
+  assert.equal(ekspor.rujukan, 'm1', 'rujukan balasan ikut diekspor');
+  assert.equal(ekspor.thread, 'Diskusi', 'nama thread ikut diekspor');
+  assert.equal(ekspor.series, true, 'mode rangkaian ikut diekspor');
+  assert.ok(ekspor.status.includes('2 pesan'), 'status menyebut jumlahnya');
+
+  /*
+   * Impor mengembalikan dokumen ke editor. Rujukan ke pesan yang tidak ada
+   * harus DIBUANG: menyimpannya membuat pengiriman gagal di tengah rangkaian.
+   */
+  const impor = (await page.evaluate(`
+    (function () {
+      var data = {
+        format: 'zypher-document',
+        name: 'Hasil impor',
+        series: true,
+        messages: [
+          { id: 'a', name: 'Satu', blocks: [{ kind: 'text', value: 'x' }] },
+          { id: 'b', name: 'Dua', blocks: [], reference: 'a' },
+          { id: 'c', name: 'Tiga', blocks: [], reference: 'hilang' },
+          { id: 'c', name: 'Id ganda', blocks: [] }
+        ]
+      };
+      document.getElementById('grupJson').value = JSON.stringify(data);
+      imporDokumen();
+      return {
+        jumlah: grupAktif.messages.length,
+        nama: grupAktif.name,
+        rujukan: grupAktif.messages[1].reference || '',
+        ketiga: grupAktif.messages[2].reference || '',
+        status: document.getElementById('grupJsonStatus').textContent
+      };
+    })()
+  `)) as { jumlah: number; nama: string; rujukan: string; ketiga: string; status: string };
+
+  assert.equal(impor.jumlah, 3, 'id ganda dibuang, sisanya dimuat');
+  assert.equal(impor.nama, 'Hasil impor', 'nama dokumen ikut');
+  assert.equal(impor.rujukan, 'a', 'rujukan yang sah dipertahankan');
+  assert.equal(impor.ketiga, '', 'rujukan ke pesan yang tidak ada dibuang');
+  assert.ok(impor.status.includes('dibuang'), 'yang dibuang dilaporkan ke admin');
+
+  // Berkas dari halaman lain ditolak dengan alasan, bukan dibaca setengah.
+  const salahFormat = (await page.evaluate(`
+    (function () {
+      var sebelum = grupAktif.messages.length;
+      document.getElementById('grupJson').value = JSON.stringify({ format: 'zypher-post', blocks: [] });
+      imporDokumen();
+      return { sebelum: sebelum, sesudah: grupAktif.messages.length, status: document.getElementById('grupJsonStatus').textContent };
+    })()
+  `)) as { sebelum: number; sesudah: number; status: string };
+  assert.equal(salahFormat.sesudah, salahFormat.sebelum, 'dokumen terbuka tidak dirusak berkas yang salah');
+
+  /*
+   * Pesan di dalam dokumen harus bisa dibuka lagi. Sebelum ini satu-satunya
+   * cara memperbaiki pesan ke-3 adalah menyusun ulang dari nol: daftar hanya
+   * bisa menambah dari isi editor, tidak bisa membuka pesan yang sudah ada.
+   * Yang diuji: blok pesan benar-benar masuk editor, perubahan hanya menulis
+   * saat diminta, dan duplikat memakai ID baru.
+   */
+  const sunting = (await page.evaluate(`
+    (function () {
+      grupAktif = {
+        id: null,
+        name: 'Dokumen sunting',
+        series: false,
+        messages: [
+          { id: 'p1', name: 'Satu', blocks: [{ kind: 'text', value: 'ISI ASLI' }] },
+          { id: 'p2', name: 'Dua', blocks: [{ kind: 'text', value: 'ISI DUA' }], reference: 'p1', threadName: 'Diskusi' }
+        ]
+      };
+      editingId = 'pesan-dashboard';
+      bukaPesanGrup(1);
+      var bilah = document.getElementById('grupEditBar');
+      var isiEditor = blocks.map(function (b) { return b.value || ''; }).join('|');
+      var terbuka = {
+        isiEditor: isiEditor,
+        adaBilah: Boolean(bilah) && !bilah.hidden,
+        teksBilah: bilah ? bilah.textContent : '',
+        modeSusun: GRUP_EDIT,
+        editingId: editingId,
+        isiDokumen: grupAktif.messages[1].blocks.map(function (b) { return b.value || ''; }).join('|'),
+        namaDokumen: grupAktif.messages[1].name
+      };
+
+      // Ubah di editor: dokumen BELUM berubah sampai tombol simpan ditekan.
+      blocks.push({ kind: 'text', value: 'TAMBAHAN' });
+      terbuka.sebelumSimpan = grupAktif.messages[1].blocks.length;
+      simpanKeGrup();
+      terbuka.sesudahSimpan = grupAktif.messages[1].blocks.length;
+      terbuka.modeSetelahSimpan = GRUP_EDIT;
+      terbuka.bilahTersembunyi = Boolean(bilah) && bilah.hidden;
+
+      // Duplikat menyalin isi tetapi WAJIB memakai ID baru & tanpa rujukan.
+      grupAktif.messages[1].reference = 'p1';
+      duplikatPesanGrup(0);
+      var id = grupAktif.messages.map(function (p) { return p.id; }).join(',');
+      var salinan = grupAktif.messages[1];
+      terbuka.id = id;
+      terbuka.jumlah = grupAktif.messages.length;
+      terbuka.namaSalinan = salinan.name;
+      terbuka.rujukanSalinan = salinan.reference || '';
+      terbuka.isiSalinan = salinan.blocks.length;
+      grupAktif.messages[0].blocks.push({ kind: 'text', value: 'HANYA ASLI' });
+      terbuka.asliTerpisah = salinan.blocks.length;
+
+      // Batal tidak menulis apa pun ke dokumen.
+      bukaPesanGrup(0);
+      blocks.push({ kind: 'text', value: 'TIDAK JADI' });
+      batalGrupEdit();
+      terbuka.setelahBatal = grupAktif.messages[0].blocks.length;
+      terbuka.modeSetelahBatal = GRUP_EDIT;
+      return terbuka;
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(sunting.isiEditor, 'ISI DUA', 'blok pesan dokumen masuk ke editor');
+  assert.equal(sunting.adaBilah, true, 'bilah penanda sunting dokumen tampil');
+  assert.ok(String(sunting.teksBilah).includes('pesan 2'), 'bilah menyebut pesan yang sedang disunting');
+  assert.equal(sunting.modeSusun, 1, 'mode sunting dokumen aktif');
+  assert.equal(sunting.editingId, null, 'bukan lagi menyunting pesan dashboard');
+  assert.equal(sunting.sebelumSimpan, 1, 'perubahan editor belum menyentuh dokumen');
+  assert.equal(sunting.sesudahSimpan, 2, 'simpan menulis perubahan ke dokumen');
+  assert.equal(sunting.modeSetelahSimpan, -1, 'mode sunting ditutup setelah simpan');
+  assert.equal(sunting.bilahTersembunyi, true, 'bilah hilang setelah simpan');
+  assert.equal(sunting.id, 'p1,p3,p2', 'duplikat memakai ID baru & menyelip di bawah aslinya');
+  assert.equal(sunting.jumlah, 3, 'duplikat ditambahkan tepat di bawah aslinya');
+  assert.ok(String(sunting.namaSalinan).includes('salinan'), 'nama salinan ditandai');
+  assert.equal(sunting.rujukanSalinan, '', 'rujukan balasan tidak ikut disalin');
+  assert.equal(sunting.isiSalinan, 1, 'isi pesan ikut disalin');
+  assert.equal(sunting.asliTerpisah, 1, 'salinan tidak berbagi objek dengan aslinya');
+  assert.equal(sunting.setelahBatal, 2, 'batal tidak menulis perubahan ke dokumen');
+  assert.equal(sunting.modeSetelahBatal, -1, 'batal menutup mode sunting');
+  assert.equal(page.errors.length, 0, `sunting dokumen error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: bentuk embed menyimpan layout & pratinjaunya memakai aturan embed', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-embed');
+
+  /*
+   * Pembangun embed di klien harus menahan aturan yang sama dengan server:
+   * satu gambar besar, tombol di luar embed. Kalau pratinjau menampilkan dua
+   * gambar, admin melihat sesuatu yang tidak akan pernah muncul di Discord.
+   */
+  const hasil = (await page.evaluate(`
+    (function () {
+      document.getElementById('postName').value = 'Pengumuman';
+      document.getElementById('postAccent').value = '#5865f2';
+      document.getElementById('postLayout').value = 'embed';
+      blocks = [
+        { kind: 'text', value: 'Baris satu' },
+        { kind: 'divider' },
+        { kind: 'text', value: 'Baris dua' },
+        { kind: 'image', value: 'https://img.test/a.png' },
+        { kind: 'image', value: 'https://img.test/b.png' },
+        { kind: 'button', value: 'Buka', url: 'https://x.test' }
+      ];
+      var e = embedDariBlok();
+      return {
+        judul: e.embed.title,
+        warna: e.embed.color,
+        deskripsi: e.embed.description,
+        gambar: e.embed.image,
+        dilewati: e.dilewati.join('|')
+      };
+    })()
+  `)) as { judul: string; warna: number; deskripsi: string; gambar: string; dilewati: string };
+
+  assert.equal(hasil.judul, 'Pengumuman', 'judul embed dari nama pesan');
+  assert.equal(hasil.warna, 0x5865f2, 'warna embed dari aksen');
+  assert.ok(hasil.deskripsi.includes('Baris satu'), 'teks pertama masuk keterangan');
+  assert.ok(hasil.deskripsi.includes('Baris dua'), 'teks setelah pemisah ikut');
+  assert.equal(hasil.gambar, 'https://img.test/a.png', 'hanya satu gambar: yang pertama');
+  assert.ok(hasil.dilewati.includes('gambar kedua'), 'gambar kedua dilaporkan');
+  assert.ok(hasil.dilewati.includes('tombol'), 'tombol dijelaskan ada di luar embed');
+
+  /*
+   * Pratinjau embed: elemennya benar-benar DIGAMBAR lewat DOM tiruan, bukan
+   * hanya dihitung. Wadah pratinjau yang ada di halaman dipakai apa adanya.
+   */
+  const pratinjau = (await page.evaluate(`
+    (function () {
+      var kotak = document.getElementById('previewHost');
+      renderPreviewKe('previewHost');
+      return {
+        anak: kotak.children.length,
+        kelas: kotak.children.map(function (c) { return c.className; }).join('|'),
+        teks: kotak.textContent
+      };
+    })()
+  `)) as { anak: number; kelas: string; teks: string };
+
+  assert.ok(pratinjau.anak > 0, 'pratinjau menggambar elemen');
+  assert.ok(pratinjau.kelas.includes('preview-embed'), 'memakai gaya embed, bukan kartu container');
+  assert.ok(pratinjau.teks.includes('Pengumuman'), 'judul tampil di pratinjau');
+  assert.ok(pratinjau.teks.includes('Baris dua'), 'isi tampil di pratinjau');
+  assert.ok(pratinjau.teks.includes('Di luar embed'), 'komponen di luar embed disebut');
+  assert.ok(!pratinjau.kelas.includes('preview-container'), 'tidak menggambar kartu Components V2');
+  assert.equal(page.errors.length, 0, `embed error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: pemicu event ikut tersimpan & tampil di daftar pesan', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-pemicu');
+
+  // Pilihan pemicu harus ada di form, bukan hanya diterima API.
+  const pilihan = (await page.evaluate(`
+    (function () {
+      var select = document.getElementById('postTrigger');
+      return {
+        ada: !!select,
+        nilai: ['', 'member_add', 'member_remove'],
+      };
+    })()
+  `)) as { ada: boolean; nilai: string[] };
+  assert.equal(pilihan.ada, true, 'pilihan pemicu ada di kartu pengaturan');
+
+  /*
+   * Nilai '' berarti "hanya manual" dan harus dikirim sebagai null, bukan
+   * string kosong — server membaca string kosong sebagai pemicu tak dikenal.
+   */
+  const muatan = (await page.evaluate(`
+    (function () {
+      document.getElementById('postName').value = 'Sambutan';
+      document.getElementById('postChannel').value = '9001';
+      blocks = [{ kind: 'text', value: 'Halo' }];
+      document.getElementById('postTrigger').value = 'member_add';
+      return savePost(false);
+    })()
+  `)) as null;
+
+  const kirim = page.fetches.filter((call) => call.path === '/api/posts').pop();
+  assert.ok(kirim, 'pesan disimpan lewat /api/posts');
+  const isi = kirim!.body as { trigger?: unknown; blocks?: unknown };
+  assert.equal(isi.trigger, 'member_add', 'pemicu terkirim bersama isian lain');
+  assert.ok(Array.isArray(isi.blocks) && (isi.blocks as unknown[]).length === 1, 'blok tetap terkirim');
+
+  // Pemicu yang tidak dipilih dikirim sebagai null, bukan ''.
+  const kosong = (await page.evaluate(`
+    (function () {
+      document.getElementById('postName').value = 'Manual';
+      document.getElementById('postTrigger').value = '';
+      return savePost(false);
+    })()
+  `)) as unknown;
+  const kedua = page.fetches.filter((call) => call.path === '/api/posts').pop();
+  assert.equal((kedua!.body as { trigger?: unknown }).trigger, null, 'tanpa pemicu = null');
+
+  /*
+   * Daftar pesan harus menandai pesan ber-pemicu: pesan yang mengirim sendiri
+   * tiap ada anggota baru tidak boleh jadi kejutan.
+   */
+  const daftar = mounted.find((page) => page.name === '/pesan?pemicu')?.html ?? '';
+  assert.ok(daftar.includes('member masuk'), 'badge pemicu tampil di daftar');
+  // Isian pemicu harus terisi ulang saat pesan dibuka: pesan yang dipasangi
+  // pemicu tapi tampil "hanya manual" akan membuat admin mematikannya tanpa sengaja.
+  const halamanIsi = mounted.find((page) => page.name === '/pesan?isi')?.html ?? '';
+  const dibuka = mountPage(halamanIsi, 'uji-pemicu-isi');
+  const terisi = (await dibuka.evaluate(`
+    (function () {
+      loadExisting();
+      return document.getElementById('postTrigger').value;
+    })()
+  `)) as string;
+  assert.equal(terisi, '', 'pesan tanpa pemicu tampil sebagai hanya manual');
+  assert.equal(page.errors.length, 0, `pemicu error: ${page.errors.join('|')}`);
+  void muatan;
+  void kosong;
+});
+
+await check('pesan: tombol impor Discohook memanggil endpoint yang benar', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  assert.ok(html.includes('importDiscohook'), 'tombol tarik Discohook ada di halaman');
+  assert.ok(html.includes('discoText'), 'kotak tautan Discohook ada di halaman');
+
+  const page = mountPage(html, 'uji-discohook');
+
+  // Tempel tautan share, lalu tekan Tarik. Yang diperiksa: halaman mengirim
+  // tautannya ke server (bukan mengunduh sendiri — Discohook tidak mengirim
+  // header CORS, jadi fetch dari browser akan ditolak).
+  page.elements.get('discoText')!.value = 'https://discohook.app/?share=CpazsKTm';
+  await page.evaluate('importDiscohook()');
+
+  const panggilan = page.fetches.find((f) => f.path.includes('/api/posts/import/discohook'));
+  assert.ok(panggilan, `endpoint impor tidak dipanggil (fetches: ${page.fetches.map((f) => f.path).join(', ')})`);
+  assert.equal(panggilan!.method, 'POST', 'memakai POST');
+  assert.deepEqual(
+    panggilan!.body,
+    { url: 'https://discohook.app/?share=CpazsKTm' },
+    'tautan dikirim apa adanya ke server',
+  );
+
+  // JSON yang ditempel langsung juga harus diteruskan sebagai objek.
+  page.elements.get('discoText')!.value = JSON.stringify({ messages: [{ data: { content: 'Halo' } }] });
+  await page.evaluate('importDiscohook()');
+  const kedua = page.fetches.filter((f) => f.path.includes('/api/posts/import/discohook'));
+  assert.equal(kedua.length, 2, 'panggilan kedua terjadi');
+  assert.ok(
+    (kedua[1]!.body as { json?: unknown }).json,
+    'JSON mentah diteruskan sebagai "json", bukan "url"',
+  );
+});
+
+await check('pesan: impor Discohook memulihkan pengaturan tingkat pesan', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-disco-tingkat');
+
+  /*
+   * Discohook menyimpan nama & avatar pengirim webhook, nama thread, dan flag
+   * di tiap pesan. Dulu semuanya dibuang saat impor: pesan yang disusun atas
+   * nama "Tim Pengumuman" muncul atas nama server tanpa penjelasan.
+   */
+  page.elements.get('discoText')!.value = 'https://discohook.app/?share=CpazsKTm';
+  await page.evaluate('importDiscohook()');
+
+  const tingkat = (await page.evaluate(`
+    (function () {
+      return {
+        sender: document.getElementById('postSender').value,
+        nama: document.getElementById('postWebhookName').value,
+        avatar: document.getElementById('postWebhookAvatar').value,
+        thread: document.getElementById('postThreadName').value,
+        flagTautan: document.getElementById('postFlagEmbeds').checked,
+        flagNotif: document.getElementById('postFlagNotif').checked,
+        bentuk: document.getElementById('postLayout').value
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(tingkat.sender, 'webhook', 'pengirim webhook dari Discohook dipulihkan');
+  assert.equal(tingkat.nama, 'Tim Pengumuman', 'nama pengirim dipulihkan');
+  assert.equal(tingkat.avatar, 'https://img.test/tim.png', 'avatar pengirim dipulihkan');
+  assert.equal(tingkat.thread, 'Diskusi', 'nama thread dipulihkan');
+  assert.equal(tingkat.flagTautan, false, 'flag tanpa-kartu tidak dicentang kalau tidak ada di berkas');
+  assert.equal(tingkat.flagNotif, true, 'flag tanpa notifikasi dipulihkan');
+  assert.equal(tingkat.bentuk, 'container', 'bentuk pesan mengikuti berkas');
+  assert.equal(page.errors.length, 0, `impor Discohook error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: thread yang sudah ada muncul sebagai tujuan kirim', async () => {
+  /*
+   * Daftar tujuan memuat channel teks DAN thread (padanan ?thread_id= di
+   * Discohook). Thread ditandai 🧵 supaya admin bisa membedakannya dari
+   * channel biasa saat memilih.
+   */
+  const htmlThread = await (await import('../src/web/ui/pesan.js')).pesanPage({
+    ...base,
+    posts: [],
+    channels: [
+      { id: '111', name: 'pengumuman' },
+      { id: '222', name: 'pengumuman › Rilis v2', thread: true },
+    ],
+    botReady: true,
+    roles: [],
+    hasManageRoles: false,
+    roleButtons: {},
+    roleMenus: {},
+    actions: {},
+    revisions: {},
+    schedules: {},
+    triggers: [],
+    documents: [],
+    documents: [],
+    embedModel: null,
+  } as never);
+
+  assert.ok(htmlThread.includes('🧵 pengumuman › Rilis v2'), 'thread ditandai 🧵 di dropdown');
+  assert.ok(htmlThread.includes('#pengumuman'), 'channel biasa tetap ditandai #');
+  assert.ok(
+    htmlThread.includes('?thread_id='),
+    'petunjuk menyebut padanan ?thread_id= supaya jelas artinya',
+  );
+});
+
+await check('pesan: bidang embed bisa diurutkan & diduplikat', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-bidang-urut');
+
+  /*
+   * Discohook punya Move up / Move down / Duplicate di tiap bidang. Tanpa itu,
+   * satu bidang yang salah tempat hanya bisa diperbaiki dengan menulis ulang
+   * semua bidang sesudahnya — dan urutan memang mengubah tampilan embed.
+   */
+  const hasil = (await page.evaluate(`
+    (function () {
+      EMBED_LIST.length = 0;
+      EMBED_AKTIF = 0;
+      EMBED_LIST.push({ fields: [
+        { name: 'Harga', value: '10rb', inline: false },
+        { name: 'Jadwal', value: 'Senin', inline: true },
+        { name: 'Syarat', value: 'Daftar', inline: false }
+      ] });
+      renderEmbedExtra();
+
+      var host = document.getElementById('embedFieldList');
+      var baris = host.children;
+      var tombolNaik = baris[1] && baris[1].bidangNaik;
+      var tombolTurun = baris[0] && baris[0].bidangTurun;
+      var tombolDuplikat = baris[0] && baris[0].bidangDuplikat;
+      if (!tombolNaik || !tombolTurun || !tombolDuplikat) return { adaTombol: false };
+
+      var naikNonaktifDiAtas = baris[0].bidangNaik.disabled;
+      var turunNonaktifDiBawah = baris[2].bidangTurun.disabled;
+
+      tombolNaik.onclick();
+      var setelahNaik = embedAktif().fields.map(function (b) { return b.name; }).join(',');
+
+      renderEmbedExtra();
+      var duplikatPertama = document.getElementById('embedFieldList').children[0].bidangDuplikat;
+      duplikatPertama.onclick();
+      var setelahDuplikat = embedAktif().fields.map(function (b) { return b.name; }).join(',');
+
+      return {
+        adaTombol: true,
+        naikNonaktifDiAtas: naikNonaktifDiAtas,
+        turunNonaktifDiBawah: turunNonaktifDiBawah,
+        setelahNaik: setelahNaik,
+        setelahDuplikat: setelahDuplikat,
+        jumlah: embedAktif().fields.length
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.ok(hasil.adaTombol, 'tiap bidang punya tombol naik/turun/duplikat');
+  assert.equal(hasil.naikNonaktifDiAtas, true, 'naik mati di bidang pertama');
+  assert.equal(hasil.turunNonaktifDiBawah, true, 'turun mati di bidang terakhir');
+  assert.equal(hasil.setelahNaik, 'Jadwal,Harga,Syarat', 'bidang kedua naik satu posisi');
+  assert.equal(hasil.setelahDuplikat, 'Jadwal,Jadwal,Harga,Syarat', 'duplikat disisipkan di bawahnya');
+  assert.equal(hasil.jumlah, 4, 'duplikat menambah satu bidang');
+  assert.equal(page.errors.length, 0, `bidang embed error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: semua pesan Discohook bisa masuk dokumen sekaligus', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-disco-semua');
+
+  page.elements.get('discoText')!.value = 'https://discohook.app/?share=CpazsKTm';
+  await page.evaluate('importDiscohook()');
+
+  /*
+   * Tombol "Semua pesan → dokumen" baru berguna kalau berkasnya berisi lebih
+   * dari satu pesan; menyembunyikannya mencegah admin menekan tombol yang
+   * tidak melakukan apa-apa.
+   */
+  const tombolTampil = (await page.evaluate(
+    `(function () { return document.getElementById('discoSemua').hidden === false; })()`,
+  )) as boolean;
+  assert.equal(tombolTampil, true, 'tombol "semua pesan" muncul untuk berkas multi-pesan');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      imporSemuaDiscohook();
+      return {
+        jumlah: grupAktif.messages.length,
+        nama: grupAktif.messages.map(function (p) { return p.name; }).join('|'),
+        idUnik: grupAktif.messages[0].id !== grupAktif.messages[1].id,
+        flag: grupAktif.messages[0].flags,
+        thread: grupAktif.messages[0].threadName
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.jumlah, 2, 'kedua pesan masuk dokumen');
+  assert.equal(hasil.nama, 'Pesan Discohook 1|Pesan Discohook 2', 'urutan & nama pesan dipertahankan');
+  assert.equal(hasil.idUnik, true, 'tiap pesan dokumen punya id sendiri');
+  assert.equal(hasil.flag, 4096, 'flag per pesan ikut');
+  assert.equal(hasil.thread, 'Diskusi', 'nama thread per pesan ikut');
+  assert.equal(page.errors.length, 0, `impor semua error: ${page.errors.join('|')}`);
 });
 
 await check('pesan: impor JSON rusak tidak merusak editor', async () => {

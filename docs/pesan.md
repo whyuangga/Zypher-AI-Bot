@@ -11,13 +11,41 @@ sudah diatur bot. Di sini **kamu yang menentukan isinya**.
 ## 1. Cara pakai
 
 1. Buka **Pesan** di sidebar dashboard.
-2. Isi **Nama pesan** (mis. `Rules`). Nama ini hanya untuk dashboard — tidak ikut
-   terkirim ke Discord.
+2. Di tab **Susun**: isi **Nama pesan** (mis. `Rules`). Nama ini hanya untuk
+   dashboard — tidak ikut terkirim ke Discord.
 3. Pilih **Channel tujuan**.
-4. Tambahkan blok: **Teks**, **Gambar**, **Tombol**, **Pemisah**.
+4. Tambahkan komponen: **Teks**, **Gambar**, **Tombol**, **Pemisah**,
+   **Container**, **Section**, **File**, **Select menu**, **Baris baru**, dan
+   **Tutup kartu**.
 5. **Simpan** dulu. Setelah tersimpan, **Kirim ke Discord**.
 
-Urutan blok bisa diubah dengan panah ↑ ↓, dan setiap blok bisa dihapus dengan ×.
+Urutan komponen diubah dengan panah ↑ ↓; setiap komponen punya tombol **⧉**
+duplikat dan **×** hapus di kanan atas, sama seperti editor Discohook.
+
+### Tab: halaman tidak lagi memanjang ke bawah
+
+Halaman dibagi empat tab, jadi yang tampil hanya bagian yang sedang dikerjakan:
+
+| Tab | Isi |
+|---|---|
+| **Susun pesan** | editor komponen + pratinjau kecil yang **menempel** di kanan |
+| **Pratinjau** | pratinjau besar selebar halaman |
+| **Ambil role** | tombol & menu dropdown role |
+| **Impor** | tarik dari Discohook, ekspor/impor JSON, payload JSON & generator kode |
+
+Tombol **Simpan** dan **Kirim ke Discord** ada di bilah bawah yang selalu
+terlihat, dari tab mana pun. Berpindah tab **tidak menghilangkan isian** yang
+belum disimpan: panel yang tidak aktif hanya disembunyikan, bukan dilepas.
+Tab terakhir yang dibuka diingat, dan setelah menyimpan halaman tidak dimuat
+ulang — jadi kamu tetap di tab yang sama.
+
+### Editor bertumpuk ala Discohook
+
+Komponen digambar **di dalam** kotak container-nya, bukan sebagai daftar datar.
+Kotak container memakai warna aksen yang dipilih, jadi pewarnaan terlihat
+sebelum pesan dikirim. Komponen yang berada di luar kartu diberi baris penanda
+**"di luar kartu"**, sehingga batas antara isi kartu dan teks polos selalu
+terlihat di editor.
 
 ### Mengirim ulang vs memperbarui
 
@@ -38,14 +66,71 @@ mengirim pesan baru dan menyimpan ID yang baru.
 | Blok | Isi | Catatan |
 |---|---|---|
 | **Teks** | teks biasa | mendukung format Discord (`**tebal**`, `_miring_`, `> kutipan`, `### judul`) |
-| **Gambar** | URL `http(s)://…` **atau unggah dari komputer** | PNG/JPG/WebP, maksimal 4 MB |
-| **Tombol** | label + URL tujuan + emoji | hanya **tombol link**; membuka tautan, tidak memberi role |
-| **Pemisah** | garis, jarak rapat atau renggang | pemisah antar bagian |
+| **Gambar** | URL `http(s)://…` **atau unggah dari komputer** | PNG/JPG/WebP, maksimal 4 MB. Ada isian **alt text** (deskripsi untuk pembaca layar) |
+| **Tombol** | label + URL tujuan + emoji | hanya **tombol link**; membuka tautan, tidak memberi role. Bisa ditandai **nonaktif** |
+| **Pemisah** | garis (bisa dimatikan) + jarak rapat/renggang | `tanpa garis` = hanya jarak kosong, seperti `divider: false` di Discohook |
 | **Container** | warna aksen sendiri | memulai **kartu baru**; blok sesudahnya masuk ke kartu itu |
 | **Section** | teks + gambar kecil **atau** tombol di kanan | Discord hanya mengizinkan satu aksesori |
+| **Select menu** | dropdown: jenis, placeholder, min/maks, daftar pilihan | lima jenis seperti Discohook: String, User, Role, User & Role, Channel. **Tampilan saja** — pilihan tidak mengubah role |
+| **Baris baru** | tidak punya isian | memotong deretan tombol: tombol sesudahnya dikirim di baris baru, seperti **Row** di Discohook |
+| **Tutup kartu** | tidak punya isian | semua blok sesudahnya tampil **di luar** kartu |
 
 Teks kecil: baris yang diawali `-#` (mis. `-# dibuat oleh admin`) tampil kecil dan
 redup di Discord. Ini cara membuat catatan kaki.
+
+### Select menu: semua jenis, seperti Discohook
+
+Editor menyediakan **lima jenis** select menu yang sama dengan menu *Add
+Component* di Discohook:
+
+| Jenis | Isi pilihannya | Menyimpan pilihan? |
+|---|---|---|
+| **String** | daftar yang kamu tulis sendiri (label, nilai, keterangan, emoji) | tidak |
+| **User** | anggota server | tidak |
+| **Role** | role server | tidak |
+| **User & Role** | anggota dan role | tidak |
+| **Channel** | channel server | tidak |
+
+Alasannya jujur: Discord hanya mengirim nilai pilihan ke **aplikasi pemilik
+komponen**, dan bot tidak bisa membaca daftar anggota dari sebuah nilai. Menu di
+sini karena itu berperilaku seperti di Discohook — tampil rapi dan bisa dibuka,
+lalu saat member memilih, bot menjawab singkat bahwa menu itu tidak mengubah
+apa pun. Untuk benar-benar memberi atau melepas role, pakai tombol/dropdown di
+tab **Ambil role**.
+
+Yang bisa diatur per menu: jenis, placeholder (maksimal 150 karakter), jumlah
+**pilihan minimal** dan **maksimal** (0–25), serta sakelar **nonaktif**. Menu
+jenis **String** juga punya daftar pilihan (maksimal 25) — menu String **tanpa
+pilihan ditolak Discord**, jadi blok baru selalu membawa satu pilihan contoh.
+
+Satu select menu selalu memakai **satu baris penuh** di Discord (lebarnya 5 dari
+5 slot baris), jadi ia tidak pernah berbagi baris dengan tombol. Itu juga aturan
+yang dipakai Discohook.
+
+### Baris baru (Row): memotong deretan tombol
+
+Discord menampilkan maksimal **5 tombol per baris**, dan tanpa penanda apa pun
+tombol ke-6 otomatis turun. Blok **Baris baru** membuat pemotongan itu menjadi
+pilihanmu: tombol sesudahnya dikirim di baris berikutnya, walaupun baris
+sebelumnya belum penuh.
+
+```
+Tombol   "Umum"       ┐
+Tombol   "Gaming"     ├ baris 1 (3 tombol)
+Tombol   "Musik"      ┘
+Baris baru                                 ← memotong di sini
+Tombol   "Support"    ┐ baris 2 (2 tombol)
+Tombol   "Situs"      ┘
+```
+
+Catatan:
+
+- Row hanya berpengaruh **di antara tombol**. Kalau blok sesudahnya bukan
+  tombol, Row tidak mengubah apa pun — editor memberi tahu hal ini di kartu Row.
+- Dua Row berurutan diringkas menjadi satu saat disimpan.
+- Saat tombol dipindah dengan panah ↑ ↓, Row yang tidak lagi memisahkan dua
+  tombol otomatis diabaikan oleh editor, sehingga susunan tidak dipaksa
+  melewati baris yang tidak perlu.
 
 ### Container: beberapa kartu dalam satu pesan
 
@@ -74,6 +159,8 @@ Aturan yang dipegang:
   berubah pikiran tidak mendapat kartu kosong.
 - Container **tidak bisa bersarang** di dalam container lain (aturan Discord).
 - Maksimal **10** komponen teratas per pesan.
+- Container punya centang **spoiler**: seluruh isi kartu tertutup sampai member
+  mengkliknya (sama seperti Discohook).
 
 ### Tutup kartu: teks & tombol di luar container
 
@@ -143,6 +230,63 @@ Yang perlu diketahui:
 - **Spoiler** menyamarkan nama berkas dan gambarnya sampai diklik.
 - Kalau unduhan gagal (URL mati, berkas terlalu besar), pesan **tetap terkirim**
   tanpa berkas itu, dan dashboard memberi tahu berkas mana yang gagal.
+
+### Kalau ada bagian yang tidak ikut terkirim
+
+Pesan tetap dikirim, tetapi sebagian komponen bisa dilewati — misalnya select
+menu tanpa pilihan, atau versi `discord.js` yang tidak mendukung salah satu
+jenis menu. Daftar bagian yang dilewati **dikembalikan ke dashboard** dan
+muncul sebagai peringatan tepat setelah menekan **Kirim**; pesannya tidak
+pernah "hilang sebagian" tanpa penjelasan.
+
+### Impor dari Discohook
+
+Panel **Impor dari Discohook** (dilipat, tepat di atas panel JSON) mengambil
+pesan yang sudah kamu susun di [Discohook](https://discohook.app) lalu
+menerjemahkannya menjadi blok `/pesan`.
+
+Dua cara, kotak yang sama:
+
+| Cara | Yang ditempel | Kapan dipakai |
+|---|---|---|
+| **Tautan share** | `https://discohook.app/?share=abcdefgh` atau ID-nya saja | Discohook bisa diakses dari server bot |
+| **Tautan berisi data** | `https://discohook.app/?data=…` (tombol **Share** di Discohook) atau `?message=…` versi lama | selalu bisa — isinya ada di URL, tidak perlu unduh apa pun. `?message=` berisi bentuk editor (camelCase) dan diterjemahkan dulu — lihat **Batch 39b** |
+| **Berkas ekspor backup** | isi berkas `.json` dari modal **Backups** Discohook (`{ "version": 7, "backups": [ … ] }`) | dipakai **backup pertama**; nama backup-nya disebut supaya jelas mana yang diimpor (lihat **Batch 39**) |
+| **JSON** | salin dari Discohook (tombol berbagi → *Copy JSON*) | Server bot tidak punya akses internet, atau tautan sudah kedaluwarsa |
+
+Yang perlu diketahui:
+
+| Hal | Perilaku |
+|---|---|
+| **Siapa yang mengunduh** | **server bot**, bukan browser — Discohook tidak mengirim header CORS, jadi `fetch` dari halaman akan ditolak browser |
+| **Host yang diterima** | hanya `discohook.app` / `discohook.org`. Host lain ditolak, supaya endpoint ini tidak bisa disuruh membaca alamat internal |
+| **Masa berlaku tautan** | `?share=` maksimal 4 minggu (aturan Discohook). Tautan `?data=` tidak punya masa berlaku. Kalau kedaluwarsa, tempel JSON-nya |
+| **Multi-pesan** | Discohook menyimpan beberapa pesan sekaligus. Klik Tarik → **pesan pertama** masuk tab Susun, lalu tombol **Semua pesan → dokumen** memasukkan semuanya ke tab Multi-pesan (urutan, nama, nama thread, flag, dan bentuk embed per pesan ikut; lihat **Batch 35**) |
+| **Pengaturan tingkat pesan** | `username`, `avatar_url`, `thread_name`, dan `flags` dari berkas ikut dipulihkan (pengirim webhook, nama thread, dua flag) — lihat **Batch 33** |
+| **Hasil** | selalu **pesan baru** di editor, belum tersimpan — periksa dulu, lalu **Simpan** |
+| **Validasi** | hasil terjemahan dilewatkan `sanitizeBlocks` yang sama, jadi tidak bisa menyelipkan blok tidak sah |
+
+Komponen Discohook yang diterjemahkan:
+
+| Di Discohook | Jadi apa di `/pesan` |
+|---|---|
+| Text Display | blok **Teks** |
+| Container (`accent_color`, `spoiler`) | blok **Container** dengan warna **dan spoiler**-nya |
+| Separator (`divider`, `spacing`) | blok **Pemisah** — termasuk pemisah **tanpa garis** |
+| Section + aksesori tombol/thumbnail | blok **Section** (emoji & tombol nonaktif ikut) |
+| Media Gallery | blok **Gambar** (alt text & spoiler ikut) |
+| File (`attachment://`) | dilaporkan — lampiran Discohook tidak bisa dibawa lewat tautan |
+| Action Row + tombol **link** | blok **Tombol**, 5 per baris |
+| Dua Action Row tombol berdampingan | blok **Baris baru** disisipkan di antaranya, jadi barisnya tetap terpisah |
+| String Select Menu | blok **Select menu** jenis *String* (placeholder, min/maks, pilihan, emoji) |
+| User / Role / User & Role / Channel Select | blok **Select menu** dengan jenis yang sama |
+| Dua Action Row pilihan berdampingan | tetap tidak digabung: tiap select memakai baris penuh |
+| Tombol/menu **interaktif** (customId) | dilaporkan — pakai tombol/menu **ambil role** dari dashboard |
+| Embed | **kartu teks** (Components V2 tidak bisa membawa embed) + peringatan |
+
+Batas kartu ditangani otomatis: kalau di Discohook ada teks/tombol **di luar**
+container, blok `close` disisipkan di posisi yang tepat. Jadi susunan
+"pembuka polos → kartu → tombol penutup" tetap sama seperti aslinya.
 
 ### Import / ekspor JSON
 
@@ -332,14 +476,1513 @@ ID baris tombol, jadi:
 - tombol yang dihapus admin langsung berhenti berlaku — customId lama tidak
   ditemukan di database.
 
-Konsekuensinya: **menyimpan ulang tombol role membatalkan customId lama.**
-Kalau isi tombol berubah, kirim ulang pesannya supaya member melihat tombol baru.
+Catatan: ID tombol **dipakai ulang** bila dashboard mengirimkannya kembali (itu
+yang dilakukan editor). Aksi komponen menempel pada ID itu, jadi menyimpan ulang
+tombol tidak membuang aksinya. Tombol yang benar-benar dihapus tetap berhenti
+berlaku — customId lamanya tidak ditemukan di database.
+
+### Aksi komponen: flow bergaya Discohook Actions
+
+Setiap tombol role, setiap **pilihan** dropdown role, dan setiap blok **Select
+menu** punya kartu **Aksi**. Isinya deretan tindakan yang dijalankan bot saat
+komponen itu dipakai — padanan sederhana dari *flow* Discohook.
+
+| Aksi | Yang dilakukan |
+|---|---|
+| **Role — beri / lepas** | ubah role pengklik: pasang/lepas bergantian, hanya beri, atau hanya lepas |
+| **Balas pengklik** | kirim teks sendiri, bisa hanya terlihat oleh yang menekan (ephemeral) |
+| **Kirim pesan tersimpan** | kirim salah satu pesan di daftar (mis. pesan aturan), lalu opsional satu kalimat susulan |
+| **Tunggu** | hentikan sisa aksi sekarang, lanjutkan otomatis setelah durasi tertentu (1 detik – 7 hari) |
+| **Periksa syarat** | bandingkan sebuah nilai; kalau tidak cocok, sisa aksi dihentikan |
+| **Simpan variabel** | simpan teks (boleh template) ke variabel `{var.nama}` untuk aksi berikutnya |
+| **Buat thread** | buat thread publik atau privat dari pesan ini |
+| **Hapus pesan ini** | hapus pesan yang memuat komponen itu (butuh *Manage Messages*) |
+| **Tidak melakukan apa pun** | penanda "sengaja dikosongkan" saat menyusun flow bertahap |
+| **Hentikan flow** | berhenti sekarang, opsional dengan pesan sendiri |
+
+Yang perlu diketahui:
+
+- **Urutan dijalankan apa adanya.** Tombol naik/turun mengatur urutannya.
+- **Kalau aksi role gagal, sisa aksi dihentikan** dan member melihat alasannya
+  (izin *Manage Roles* belum ada, posisi role bot di bawah role target, role
+  sudah dihapus, dsb). Ini padanan aksi **Stop** di Discohook, dijalankan
+  otomatis — lebih jujur daripada mengirim balasan "berhasil" untuk perubahan
+  yang tidak terjadi.
+- **Satu balasan per interaksi.** Discord hanya menerima satu jawaban, jadi
+  balasan pertama yang dipakai; balasan kedua dilewati dan dicatat di log.
+  Karena itu aksi **kirim pesan** mengirim ke channel, bukan sebagai balasan.
+- **Kuota flow mengikuti Discohook** (`refineZodDraftFlowMax`): **40 aksi dihitung**
+  per flow — `periksa syarat` dan `hentikan flow` tidak ikut dihitung, karena keduanya
+  hanya mengatur alur — dan **15 aksi kirim pesan** per flow (kirim pesan + webhook).
+  Isi cabang ikut dihitung. Di atas itu ada **jaring pengaman 120 aksi total** supaya
+  satu cabang tidak bisa berisi ratusan aksi yang semuanya tak terhitung.
+  Tingkat teratas (satu tombol/opsi/menu) tetap dibatasi **6 aksi**, dan satu pesan
+  tetap dibatasi **40 aksi**. Semua kelebihan dilaporkan dengan alasannya, bukan
+  dipotong diam-diam, dan kartu aksi menampilkan `12/40 dihitung` sambil menyusun.
+- **Aksi "Tunggu" tahan restart.** Sisa aksinya disimpan ke tabel `post_flow_sessions` dan
+  dilanjutkan timer 15 detik. Artinya: waktunya bisa mundur beberapa detik, dan kalau bot
+  sedang mati saat waktunya tiba, aksinya berjalan begitu bot hidup lagi (bukan hilang).
+- **Aksi "Periksa syarat" punya dua bentuk.** Kalau salah satu cabang diisi, flow bercabang
+  seperti `Check` di Discohook: cabang "cocok" ATAU "tidak cocok" dijalankan, lalu flow
+  **lanjut** ke aksi sesudahnya. Kalau kedua cabang kosong, perilakunya seperti versi lama —
+  syarat yang tidak cocok menghentikan flow. Bentuk lama dipertahankan supaya aksi yang sudah
+  tersimpan tidak berubah artinya diam-diam. Kedalaman cabang **5 tingkat**
+  (`ACTION_LIMITS.branchDepth`), dan cabang boleh berisi aksi apa pun — termasuk `tunggu`,
+  `thread`, `webhook`, atau `periksa syarat` lagi (lihat **Batch 12**).
+- **Tanpa aksi, perilaku lama tetap jalan.** Tombol role yang belum diberi aksi
+  masih memberi/melepas role dengan balasan baku, jadi pesan yang sudah
+  terkirim tidak mendadak mati.
+
+#### Template di dalam teks
+
+Balasan dan kalimat susulan bisa memakai nilai dari saat tombol ditekan:
+
+| Token | Isi |
+|---|---|
+| `{member.name}` | nama tampilan pengklik |
+| `{member.mention}` | sebutan, mis. `@Wahyu` |
+| `{member.id}` | ID pengklik |
+| `{server.name}` | nama server |
+| `{role}` / `{role.name}` | nama role yang baru saja diubah |
+| `{effect}` | `ditambahkan` atau `dilepas` |
+| `{selected}` | pilihan yang dipilih di menu (satu pilihan; kosong untuk tombol) |
+| `{var.nama}` | variabel yang disimpan aksi **Simpan variabel** |
+
+Variabel bisa diisi tiga cara, sama seperti Discohook: **teks/template**, **hasil aksi
+sebelumnya** (`messageId`, `channelId`, `threadId` — hanya nilai yang benar-benar ada), atau
+**salinan variabel lain** (`var.nama`).
+
+Nama-nama ini sengaja sama dengan Discohook. Token yang tidak dikenal dibiarkan apa adanya.
+
+Nilai yang sama juga bisa dipakai di **teks pesan** yang dikirim sebagai aksi lanjutan
+(nesting) — jadi tombol "Buka aturan" bisa mengirim pesan yang menyapa `{member.name}`.
+Pesan biasa yang dikirim admin dari dashboard **tidak** diubah: tanpa konteks member, token
+dibiarkan apa adanya.
+
+Token yang tidak dikenal **dibiarkan apa adanya** (bukan dihapus), supaya salah
+tulis terlihat — bukan menghilang diam-diam seperti di template yang "pintar".
+
+Contoh balasan paling sering dipakai:
+
+```
+✅ Role {role} sudah {effect}, {member.mention}!
+```
+
+#### Batas yang perlu diketahui
+
+- Aksi menempel pada **ID komponen** yang baru ada setelah pesan disimpan
+  pertama kali. Tombol yang baru ditambahkan menampilkan "Simpan pesan dulu".
+- Aksi untuk blok **Select menu** memakai kunci `select:<jenis>` dan berlaku
+  untuk semua select berjenis sama **di pesan itu**. Setiap pilihan di dalamnya
+  belum bisa diberi aksi berbeda seperti di Discohook (di sana tiap opsi punya
+  flow sendiri); untuk aksi per pilihan, pakai **dropdown role**. Aksi per opsi
+  pada select string butuh ID opsi tersimpan — itu pekerjaan lanjutan.
+- **Aksi per pilihan menu** bisa disusun untuk menu string: setiap pilihan punya kartu
+  aksi sendiri (kunci `sel:<nilai>`). Pilihan yang tidak punya aksi sendiri memakai aksi
+  `select:<jenis>` milik seluruh menu. Untuk menu user/role/channel tidak tersedia — nilainya
+  ID Discord yang berubah-ubah, jadi tidak bisa dijadikan kunci yang stabil.
+- **Aksi pada menu multi-pilih** hanya memakai aksi seluruh menu: satu klik bisa membawa
+  beberapa nilai, dan menjalankan beberapa aksi sekaligus tidak bisa dijelaskan urutannya.
+- Aksi **tidak bisa dipakai di pesan webhook**: Discord mengirim interaksi ke
+  aplikasi pemilik komponen, dan pemilik pesan webhook adalah webhook itu
+  sendiri. Bot menolaknya lebih awal dengan penjelasan.
+- Yang **belum** ada dan alasannya:
+  - **`Wait` sub-detik** dan penjadwalan presisi: timer berjalan tiap 15 detik
+    (Discohook sendiri membatasi `Wait` di 60 detik; di sini sampai 7 hari).
+  - **Backup/shortlink Deluxe Discohook** — itu layanan berbayar milik mereka, bukan
+    bentuk payload; padanannya di sini riwayat versi 20 terakhir + tautan `/bagi/<token>`.
+  - **`SendModal`** — di kode sumber Discohook sendiri aksi ini dikomentari (tidak aktif).
+  - **Thread forum** dalam arti "memilih forum dari daftar": tag forum sudah didukung
+    dan channel forum dibuatkan postingan baru, tetapi pemilihan channel forum tujuan
+    belum ada (thread selalu dibuat di channel pesan pemicu).
 
 ### Kenapa tombol role di baris paling bawah
 
 Tombol ini yang paling sering diklik member, jadi posisinya tetap dan mudah
 ditemukan walaupun admin mengubah isi teks di atasnya. Tombol link dari blok
 **Tombol** tetap di tempatnya sesuai urutan blok.
+
+### Kesetaraan dengan Discohook: apa yang sama, apa yang belum
+
+Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` dan
+`packages/site/app/types/QueryData-raw.ts`), bukan dari ingatan.
+
+**Aksi flow**
+
+| Discohook | Di sini | Catatan |
+|---|---|---|
+| Do nothing | ✅ Tanpa aksi | |
+| Wait | ✅ Tunggu | Discohook maks 60 detik; di sini sampai 7 hari karena penantian disimpan di database |
+| Check (pohon `then`/`else`, `and`/`or`/`not`/`in`/`equals`) | ✅ | cabang `then`/`else` **bertingkat sampai 5 tingkat**, isi cabang boleh aksi apa pun (termasuk `wait` yang tetap dilanjutkan timer sesudah bot restart), pohon `and`/`or`/`not`/`in` (maks 4 tingkat, 40 simpul), plus pembanding datar lama (`contains`, `empty`, …). `not` = NOR, sama dengan Discohook. Bentuk datar tetap didukung supaya aksi lama tidak berubah arti |
+| Set variable (static / adaptive / get) | ✅ | ketiga jenisnya ada; nilai `adaptive` terbatas pada `messageId`, `channelId`, `threadId` |
+| Stop (+ pesan) | ✅ Hentikan flow | |
+| Add / Remove / Toggle role | ✅ | |
+| Send message (dari backup) | ✅ Kirim pesan tersimpan | bisa ke channel lain lewat `channelId` per aksi, seperti channel per aksi di Discohook |
+| Send webhook message | ✅ Kirim pesan lewat webhook | webhook dibuat/dipakai ulang per channel tujuan (tidak perlu daftar webhook per akun). Komponen role TIDAK ikut — dilaporkan ke pengklik, bukan hilang diam-diam |
+| Send raw message | ✅ Kirim teks biasa | teks bebas + templat (`{member.name}`, `{var.*}`), boleh ke channel lain lewat `channelId`. Teks kosong setelah templat diisi dilewati & dilaporkan, bukan dikirim sebagai pesan kosong |
+| Create thread (publik/privat, auto-archive, slowmode, tag forum) | ✅ | publik & privat, `autoArchiveMinutes` (1 jam/1 hari/3 hari/1 minggu), slowmode, `invitable`, tag forum (maks 5, channel diperlakukan sebagai forum), pesan pembuka |
+| Delete message | ✅ Hapus pesan | dua sasaran: pesan pemilik komponen, atau pesan hasil aksi kirim sebelumnya (padanan penghapusan lewat `messageId` di Discohook). Kalau tidak ada yang bisa dihapus, pengklik diberi tahu dan flow berhenti |
+
+**Pesan & komponen**
+
+| Discohook | Di sini |
+|---|---|
+| Container / Text Display / Section / Separator / Media Gallery / File / Action Row | ✅ |
+| Embed klasik (judul, penulis, footer, field, thumbnail, gambar) | ✅ judul, warna (**per embed**), isi, **thumbnail & sampai 4 gambar besar (per embed)**, **penulis, footer, bidang (maks 25), URL judul, stempel waktu**, dan **sampai 10 embed per pesan** dengan naik/turun/duplikat (lihat **Batch 9**, **13**, **14**, **15**, **21**, **24**) |
+| Poll | ❌ di Discohook pun masih dinonaktifkan |
+| Tombol link & tombol interaktif ber-flow | ✅ |
+| Select menu: string (flow per opsi), user/role/mentionable/channel | ✅ |
+| `default_values` pada select user/role/channel | ✅ (isian ID di kartu blok Select; select string ditolak Discord & dilaporkan) |
+| `allowed_mentions` (ping role/user tertentu) | ✅ tiga centang di kartu "Tampilan & pengirim"; bawaannya **tanpa ping** |
+| `thread_name` (pesan menjadi awal thread) | ✅ isian "Nama thread" di kartu pengaturan, berlaku untuk **Components V2 maupun embed klasik** (sebelumnya jalur embed mengabaikannya tanpa laporan) |
+| Kirim ke thread yang sudah ada (`?thread_id=` pada webhook) | ✅ daftar **Channel tujuan** memuat thread (ditandai 🧵, berawalan induknya); thread arsip dibuka otomatis. Lihat **Batch 40** |
+| Message flags: suppress embeds, suppress notifications | ✅ |
+| Message flags: voice message, `IS_COMPONENTS_V2` manual | ❌ (v2 diurus pengirim) |
+| Multi-pesan dalam satu backup (beberapa pesan, `reference`, `thread_id`, `flags` per pesan) | ✅ tab **Multi-pesan** (`?tab=grup`): sampai 20 pesan per dokumen, `reference` antar pesan, nama thread & **flag per pesan**, **tiap pesan bisa dibuka lagi di tab Susun, diduplikat, diurutkan, atau dihapus**, disimpan di `post_documents` (lihat **Batch 32**) |
+| JSON editor dokumen | ✅ kartu **JSON dokumen** di tab Multi-pesan: ekspor/impor satu dokumen (semua pesan, rujukan balasan, nama thread, **flag per pesan**, mode rangkaian) — bolak-balik tidak lagi menghilangkan flag (lihat **Batch 32**) |
+| JSON Data Editor **per pesan** | ✅ kartu **JSON Data Editor (satu pesan)** di tab Impor: tempel objek pesan Discord, payload REST, atau data Discohook — pengaturan tingkat pesan (`username`, `avatar`, `thread_name`, `flags`) ikut dipulihkan, sama seperti **Load** |
+| `targets[]` (satu pesan, beberapa channel) | ✅ **Kirim juga ke channel lain** di kartu pengaturan: sampai 5 channel tambahan, tiap channel punya ID pesan sendiri |
+| Riwayat/undo revisi (padanan backup) | ✅ 20 versi terakhir per pesan, dibuat otomatis setiap pesan diubah; kartu "Riwayat & bagikan" (tab **Riwayat**). Versi menyimpan blok, bentuk pesan, bagian embed, **dan identitas pengirim webhook** |
+| Share link (tautan berbagi) | ✅ tautan `/bagi/<token>` bisa dibuka tanpa login, berisi blok **dan** embed pesan (bentuk pesan & seluruh gambar galeri ikut), bisa dicabut |
+| Impor backup | ✅ JSON/URL Discohook di tab **Impor** — **pengaturan tingkat pesannya ikut** (pengirim webhook, nama & avatar, nama thread, flag; lihat **Batch 33**); ekspor JSON juga ada, memakai nama field Discohook (`username`, `avatar_url`, `thread_name`, `flags`, `allowed_mentions`) supaya berkasnya bisa dibaca bolak-balik oleh alat lain |
+| **Load** pesan Discord yang sudah terkirim | ✅ kartu **Muat pesan Discord** di tab **Impor**: tempel Message Link, pesan dibuka di editor (bot butuh *Read Message History*) **beserta pengaturan tingkat pesannya** — pengirim webhook, nama & avatar, nama thread, flag (lihat **Batch 27**); galeri gambar yang di Discord tampil sebagai beberapa embed dibaca kembali sebagai **satu galeri** (lihat **Batch 24**) |
+| Jadwal kirim (sekali / berulang / cron) | ✅ sekali, tiap N jam (min. 2 jam), dan **cron kalender** lima ruas (tiap hari, tiap Senin, tiap tanggal 1, …) memakai zona waktu server. Pola lebih rapat dari 2 jam ditolak dengan alasan |
+| Trigger event (member masuk/keluar) | ✅ pilihan **Kirim otomatis saat**: `member_add` / `member_remove`; pesan yang sama diperbarui tiap kejadian, bukan dikirim ulang |
+| Generator kode (payload → kode bot) | ✅ tab **Impor** → panel "JSON payload & generator kode": keluaran `discord.js` v14 & `discord.py` v2, diterjemahkan dari payload yang benar-benar dikirim — termasuk pesan **bergaya embed** (`embeds`, nama thread, flag) yang tidak punya komponen sama sekali |
+| Melihat payload JSON mentah | ✅ panel yang sama menampilkan `components` persis seperti yang diterima Discord, siap ditempel ke REST API |
+| Nama & avatar pengirim webhook | ✅ isian **Nama & avatar pengirim** di kartu pengaturan (bawaan: identitas server); berlaku di **semua jalur kirim** — manual, jadwal, pemicu member, dan aksi flow |
+| Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, sampai **4 gambar besar** per embed, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
+| Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
+| Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+| Webhook URL manual (`Add Webhook`, sampai beberapa target) | ❌ **sengaja tidak dibuat** — lihat catatan di bawah |
+| Kirim ke thread yang sudah ada (`?thread_id=`) | ✅ lihat **Batch 40** |
+| Cek tujuan sebelum kirim (`Webhook does not exist`) | ✅ padanannya pemeriksaan channel & izin bot — lihat **Batch 41** |
+
+#### Kenapa webhook URL manual tidak dibuat
+
+Discohook adalah alat untuk **siapa saja**: orang menempelkan URL webhook
+miliknya sendiri, dan alat itu tidak punya bot. Bot ini dirancang **1 bot,
+1 server**: admin memilih channel, dan bot membuat webhook-nya sendiri
+(token tersimpan terenkripsi) untuk tampil atas nama server.
+
+Bedanya bukan kemalasan, tapi konsekuensi:
+
+- URL webhook manual berarti **token pihak ketiga** masuk database bot ini —
+  rahasia milik orang lain yang harus dijaga, tanpa manfaat apa pun kalau
+  servernya memang server bot itu sendiri.
+- Pesan bisa dikirim ke **server lain** lewat webhook asing, melewati seluruh
+  pemeriksaan tujuan yang baru dipasang di **Batch 41**.
+- Webhook buatan bot bisa dipakai ulang, diperiksa keberadaannya, dan
+  diperbaiki sendiri saat channel dibuat ulang — hal yang tidak mungkin
+  dilakukan pada URL asing.
+
+### Batch 42: membuka pesan & mengembalikan versi memuat SEMUA pengaturan
+
+Ini bug senyap yang paling mahal dari seluruh audit: **membuka pesan lalu
+menyimpannya mengembalikan sebagian pengaturan ke bawaan.**
+
+Daftar field editor ditulis ulang di beberapa tempat, dan setiap salinan
+kehilangan field yang berbeda:
+
+| Jalur | Dulu dimuat | Akibatnya |
+|---|---|---|
+| Buka pesan (`?id=`) | nama, channel, blok, aksen, pengirim | flag "tanpa notifikasi", **nama thread**, **izin ping**, bentuk embed, isi embed, nama & avatar webhook hilang saat Simpan |
+| Kembalikan versi | nama, channel, blok | field lain dari versi tidak dipakai; Simpan berikutnya menimpa versi yang baru dipulihkan dengan nilai basi |
+
+Sekarang keduanya memakai **satu** fungsi `terapkanPengaturan()`, dan server
+mengirim pengaturan lengkap ke editor. Field yang tidak ada di sumber (versi
+lama) dibiarkan seperti di editor — bukan dikosongkan.
+
+Kenapa berbahaya: tidak ada galat, tidak ada peringatan. Admin mengubah satu
+kata di pesan lama, menekan Simpan, dan pesan yang tadinya mem-ping role
+berhenti mem-ping; pengumuman yang tadinya masuk ke thread rilis berhenti
+membuat thread. Semua terlihat "berhasil".
+
+### Batch 41: tujuan diperiksa sebelum mengirim
+
+Discohook memeriksa webhook tujuannya lebih dulu (`WebhookModel.fetch`) dan
+memunculkan **"Webhook does not exist"** sebelum admin menunggu pengiriman. Di
+sini pemeriksaan seperti itu tidak ada: admin menekan Kirim, menunggu, lalu
+menerima galat mentah Discord ("Missing Permissions") yang tidak menyebut
+**channel mana** atau **izin apa**.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Channel sudah dihapus | galat mentah | "Channel tidak ditemukan…" sebelum kirim |
+| Bot kurang izin | "Missing Permissions" | `Bot kurang izin di #pengumuman: Send Messages.` |
+| Tujuan berupa thread | nama channel tidak disebut | `thread "Rilis v2"` |
+| Channel tambahan (`targets[]`) | satu gagal = galat tanpa nama channel | diperiksa satu per satu, galatnya per channel |
+| Bot belum bisa membaca izinnya sendiri | — | **tidak** diblokir (mencoba lebih baik daripada menolak) |
+
+Catatan:
+
+- Pemeriksaan berjalan **sebelum** payload disusun, jadi tidak ada kerja yang
+  terbuang dan tidak ada pesan yang setengah terkirim karena satu tujuan salah.
+- Pemeriksaan hanya menolak kalau hasilnya pasti. Kalau `me`/`permissionsFor`
+  belum siap, pengiriman tetap dicoba: bot tidak boleh menolak hanya karena ia
+  belum tahu.
+
+### Batch 40: kirim ke thread yang sudah ada
+
+Discohook bisa mengirim ke thread yang **sudah berjalan** dengan menambahkan
+`?thread_id=<id>` pada URL webhook (`WebhookModel.getRoute` di repo itu). Di
+sini daftar tujuan hanya berisi channel teks, jadi pengumuman untuk thread
+rilis / tiket / forum post tidak bisa dituju dari dashboard — isian channel
+berupa **pilihan**, bukan kotak ID, sehingga menempel ID pun tidak mungkin.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Daftar tujuan | channel teks saja | channel teks **dan** thread, thread ditandai 🧵 |
+| Nama thread di daftar | — | diberi awalan induk (`pengumuman › Rilis v2`) |
+| Thread diarsipkan | tidak bisa dikirimi | dibuka otomatis (butuh Manage Threads), gagal → alasan jelas |
+| Pesan ke dalam thread + "Nama thread" | dicoba lalu gagal | nama thread dilewati dengan alasan |
+| Rangkaian (Multi-pesan) ke thread | gagal saat membuat thread | terkirim, thread dicatat sebagai tujuan |
+
+Catatan:
+
+- `resolveChannel` sekarang menerima thread dan membuka arsipnya lebih dulu.
+  Discord menolak kirim ke thread arsip dengan galat yang tidak menyebut
+  arsip sebagai penyebab, padahal admin memilih tujuan itu dari daftar.
+- Thread **tidak bisa** dibuat di dalam thread. Permintaan "Nama thread"
+  dilewati dengan laporan, bukan dicoba lalu gagal — supaya pesannya tetap
+  terkirim dan alasannya terbaca.
+- Nama thread di daftar memakai awalan induknya: puluhan channel bernama mirip
+  membuat "Rilis" tanpa induk tidak bisa dibedakan.
+
+### Batch 39b: tautan `?message=` versi lama diterjemahkan dari bentuk editor
+
+`?message=` tidak berisi `MessageData` (snake_case), melainkan **snapshot model
+editor** Discohook (camelCase) — bentuk yang dipakai `getEditorManagerFromQuery`
+di repo itu. Meneruskannya apa adanya berarti nama pengirim, avatar, thread,
+flag, dan galeri gambar hilang tanpa jejak, karena namanya memang tidak cocok.
+
+| Bagian | Bentuk editor | Diterjemahkan ke |
+|---|---|---|
+| Identitas | `avatar`, `threadName` | `avatar_url`, `thread_name` |
+| Flag | `flags_suppress_embeds` / `flags_suppress_notifications` (boolean) | bitmask `4` / `4096` |
+| Penulis | `author` (teks) + `authorUrl` + `authorIcon` | `author: { name, url, icon_url }` |
+| Footer | `footer` (teks) + `footerIcon` | `footer: { text, icon_url }` |
+| Gambar | `gallery: [url, …]` | `image` (pertama) + `images` (semua) |
+
+Catatan:
+
+- Bentuk `MessageData` yang sudah benar **tidak** diubah: penerjemah hanya
+  dipakai kalau objeknya memang terlihat seperti bentuk editor (`avatar`,
+  `threadName`, `flags_suppress_*`, atau embed dengan `authorUrl`/`gallery`).
+- Warna `null` tidak dikirim sebagai `null`, karena penyaring embed membacanya
+  sebagai "tidak diatur" dan warna aksen pesan yang dipakai.
+
+### Batch 39: berkas ekspor backup Discohook bisa diimpor
+
+Modal **Backups** di Discohook bisa mengekspor berkas `{ "version": 7,
+"backups": [ { "name", "messages", "targets" } ] }` (`ExportData` di repo itu).
+Impor di sini hanya mengenali QueryData (`{ messages: [...] }` atau pembungkus
+`{ data: { messages } }`), jadi berkas backup ditolak **seluruhnya** dengan
+"tidak punya messages" — padahal isinya sama, hanya dibungkus satu tingkat lagi.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| `{ version, backups: [...] }` | ditolak | diimpor dari **backup pertama** |
+| Nama backup | — | disebut di catatan impor |
+| Pengaturan tingkat pesan per pesan | — | tetap ikut (Batch 33) |
+| `targets[].url` (webhook Discohook) | — | **tidak** dipakai |
+
+Catatan:
+
+- `targets` sengaja diabaikan: itu webhook milik akun Discohook admin. Di sini
+  webhook dibuat sendiri per channel, jadi meneruskan URL asing hanya
+  menambah rahasia yang tersimpan tanpa manfaat.
+- Hanya backup **pertama** yang diimpor, dan jumlah sisanya disebutkan — sama
+  seperti perlakuan terhadap berkas multi-pesan sebelum Batch 35.
+- Berkas dengan `backups` kosong tetap tidak dikenali sebagai Discohook, supaya
+  galatnya tetap jujur ("bukan berkas Discohook") alih-alih "tidak ada pesan".
+
+### Batch 38: urutkan & duplikat bidang embed
+
+Discohook punya **Move up**, **Move down**, dan **Duplicate** di tiap baris
+bidang embed. Di sini bidang hanya bisa ditambah dan dihapus, jadi satu bidang
+yang salah tempat harus diperbaiki dengan menulis ulang semua bidang
+sesudahnya — dan urutan bidang memang mengubah tampilan embed di Discord.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Naikkan / turunkan bidang | tidak ada | tombol ↑ / ↓ per bidang, mati di ujung daftar |
+| Duplikat bidang | tidak ada | tombol ⧉ (salinan dalam, bukan objek bersama) |
+| Batas 25 bidang | dijaga saat menambah | juga dijaga saat menduplikat |
+
+Catatan:
+
+- Duplikat memakai **salinan dalam**: dua bidang yang berbagi objek akan
+  berubah bersama saat salah satunya disunting.
+- Tombol naik/turun **dimatikan** di ujung daftar, bukan disembunyikan: posisi
+  tombol yang berpindah-pindah membuat salah klik.
+
+### Batch 37: blok berkas ikut terkirim di pesan embed
+
+Blok **Berkas** mengirim lampiran di pesan Components V2, tetapi pada **Bentuk
+pesan: Embed klasik** ia hanya dilaporkan "berkas jadi lampiran, bukan bagian
+embed" lalu **dibuang** — padahal tidak ada lampiran yang dibuat. Admin
+mengunggah PDF atau ZIP, melihat catatan itu, dan berkasnya tidak pernah sampai
+ke Discord.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Blok `file` pada pesan embed | dibuang | dikirim sebagai lampiran |
+| Berkas dari URL | — | diunduh saat kirim (batas 8 MB), gagal → dilaporkan |
+| Unggahan dashboard (data URI) | — | jadi lampiran |
+| Nama lampiran | — | mengikuti `name` blok (dibersihkan), sehingga `attachment://` tetap nyambung |
+| Batas lampiran | hanya dijaga Discord | 10 per pesan, alasannya dilaporkan |
+| Pesan diperbarui | lampiran baru menumpuk | lampiran lama diganti (`attachments: []`) |
+| Panel payload | daftar lampiran kosong | nama lampiran ikut ditampilkan |
+
+Catatan:
+
+- Pembuatan lampiran dipindah ke satu fungsi (`buatLampiran`) yang dipakai
+  jalur V2 **dan** embed. Sebelumnya logikanya hanya ada di jalur V2; menyalin
+  ulang ke jalur embed berarti dua aturan batas ukuran yang bisa menyimpang.
+- Saat memperbarui pesan, lampiran lama diganti seluruhnya — sama seperti jalur
+  V2. Tanpa itu Discord **menambah** lampiran baru di samping yang lama, jadi
+  pesan bertambah berkas setiap kali dikirim ulang.
+- Kalimat menyesatkan "berkas jadi lampiran" dihapus dari laporan, karena
+  sekarang kalimat itu bukan lagi alasan untuk tidak mengirim apa pun.
+
+### Batch 36: "tanpa kartu embed" tidak ikut bersama pesan embed
+
+Centang **tanpa kartu embed** berarti "jangan buatkan kartu dari tautan di
+teks". Pesan yang isinya memang `embeds` tidak boleh memakai flag itu —
+Discohook sendiri memperingatkannya di kartu Flags ("cannot be used in
+conjunction with rich embeds"). Di sini centang itu tetap diteruskan, jadi
+pengumuman bergambar yang disetel senyap gagal terkirim dengan galat yang tidak
+menyebut flag sebagai penyebab.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Flag 4 pada pesan embed | diteruskan → pesan ditolak | dilepas, alasannya masuk `dropped` |
+| Flag 4096 (tanpa notifikasi) | diteruskan | tetap diteruskan |
+| Panel payload & kode generator | memakai `post.flags` mentah | memakai flag yang benar-benar dikirim |
+| Semua jalur kirim | aturan harus diingat per jalur | satu penyaring (`flagsUntukEmbed`) dipakai pengirim |
+
+Catatan:
+
+- Penyaringan ada di **pengirim** (`sendOrUpdateEmbedPost`), bukan di tiap
+  pemanggil: jalur manual, jadwal, pemicu member, aksi flow, dan channel
+  tambahan otomatis ikut aturan yang sama.
+- Panel "payload JSON & generator kode" menjanjikan *yang benar-benar dikirim*,
+  jadi ia memakai hasil penyaring yang sama — bukan angka mentah dari database.
+- Petunjuk di kartu pengaturan menyebutkan aturan ini sebelum admin mencentang,
+  bukan hanya sesudah pesan gagal.
+
+### Batch 35: semua pesan Discohook bisa masuk dokumen sekaligus
+
+Satu berkas Discohook boleh berisi beberapa pesan (`messages[]`), tetapi impor
+di sini hanya mengambil **pesan pertama**. Sisanya harus disusun ulang manual
+satu per satu — padahal seluruh datanya sudah diterima server.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Pesan ke-2 dan seterusnya | dibuang (hanya jumlahnya disebut) | tombol **Semua pesan → dokumen** |
+| Urutan & nama pesan | — | dipertahankan |
+| Nama thread & flag per pesan | — | ikut |
+| Pesan bergaya embed | jadi kartu V2 | tetap **embed** per pesan |
+| Lebih dari 20 pesan | — | dipotong, alasannya disebut |
+
+Catatan:
+
+- Hasil tarikan **dipakai ulang**, bukan diunduh lagi: tautan share bisa
+  berubah isinya, dan dua permintaan ke Discohook untuk satu klik hanya
+  menambah kesempatan keduanya berbeda.
+- Rujukan di Discohook berarti "pesan ini **menyunting** pesan Discord yang
+  sudah ada" (tombol Edit), bukan "balasan untuk pesan lain di berkas". Karena
+  artinya berbeda, rujukan itu **tidak** diterjemahkan menjadi balasan
+  antar-pesan — jumlahnya dilaporkan supaya admin tahu pesan-pesan itu akan
+  dikirim sebagai pesan **baru**.
+- Dokumen masuk dengan nama "Discohook" dan belum tersimpan; admin masih bisa
+  menamainya, mengatur balasan, lalu menekan Simpan.
+
+### Batch 34: tautan `?data=` (tombol Share Discohook) bisa diimpor
+
+Tombol **Share** di Discohook tidak menghasilkan `?share=<id>`, melainkan
+`?data=<base64url>` — isi pesannya ada di URL itu sendiri, dan halaman
+Discohook memakai bentuk itu sebagai URL utamanya. Impor di sini hanya
+mengenali `?share=`, jadi tautan yang jelas berasal dari Discohook ditolak
+dengan "tautan tidak dikenali".
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| `…/?data=<base64url>` | ditolak | diuraikan di server, tanpa unduhan |
+| `…/?message=<base64url>` (panduan lama) | ditolak | dibungkus jadi satu pesan, alasannya disebut |
+| Base64 biasa (`+`, `/`, `=`) | — | diterima, tidak hanya base64url |
+| Butuh internet ke discohook.app | ya | **tidak** |
+
+Catatan:
+
+- Diperiksa **sebelum** pemeriksaan ID share: isi base64url panjang juga lolos
+  pola ID, lalu dianggap ID share yang tidak ada — galatnya menyesatkan.
+- Host tetap dibatasi host Discohook, dan isinya dibaca sebagai data (bukan
+  diunduh), jadi tidak ada jalur SSRF baru.
+- Pesan galat sekarang menyebut bentuk tautan yang benar-benar ada
+  (`?share=`, `?data=`, ID, atau JSON).
+
+### Batch 33: impor Discohook memulihkan pengaturan tingkat pesan
+
+Discohook menyimpan `username`, `avatar_url`, `thread_name`, dan `flags` di
+**tiap** pesan (`MessageData` di repo itu). Impor di sini hanya membaca
+`content`, `embeds`, dan `components`: pesan yang disusun atas nama "Tim
+Pengumuman" muncul atas nama server, thread tidak dibuat, dan flag senyap
+hilang — tanpa satu pun catatan, karena memang tidak ada yang dilaporkan.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Pengirim webhook | selalu balik ke bot | mengikuti `username`/`avatar_url` berkas |
+| Nama & avatar pengirim | hilang | dipulihkan (disaring: tolak "discord"/"clyde"/"system message", avatar http/https 2048) |
+| Nama thread | hilang | dipulihkan, dipotong ke 100 karakter |
+| Flag pesan | hilang | dipulihkan, disaring ke `4` dan `4096` |
+| Alasan bagian yang dibuang | tidak ada | dilaporkan di `warnings` |
+
+Catatan:
+
+- Penyaringan memakai batas yang sama dengan penyimpanan dashboard, jadi
+  berkas impor tidak bisa menyelipkan nilai yang nanti ditolak Discord.
+- `tanpa kartu tautan` (4) **dilepas** kalau pesan itu berisi embed: Discord
+  tidak mengizinkan keduanya, dan pesan akan gagal terkirim seluruhnya.
+- Nama yang ditolak Discord (mengandung `discord`, `clyde`, `system message`,
+  atau bernama `everyone`/`here`) tidak diteruskan — aturan yang sama dipakai
+  validator Discohook sendiri.
+- Nama field yang dikirim server sengaja sama dengan respons `/api/posts/load`
+  (`sender`, `webhookName`, `webhookAvatar`, `threadName`, `flags`), supaya
+  editor punya **satu** penerjemah untuk kedua sumber.
+
+### Batch 32: flag per pesan di dokumen multi-pesan
+
+Discohook menyimpan `flags` di **setiap** pesan sebuah backup, dan ekspor
+dokumen di sini pun sudah menulisnya. Yang hilang justru bagian lain: editor
+tidak punya isian flag per pesan, impor membuang nilainya, dan pemeriksa
+dokumen di server menerima angka apa adanya.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Mengatur flag satu pesan dalam rangkaian | hanya pesan tunggal (tab Susun) | pilihan **flag** di tiap baris pesan dokumen |
+| Ekspor dokumen | `flags` ditulis | tetap ditulis |
+| Impor dokumen | `flags` dibuang diam-diam | dipulihkan, disaring ke bit yang sah |
+| Server | angka diteruskan apa adanya | disaring ke `4 | 4096` |
+
+Catatan:
+
+- Pilihan flag: `flag bawaan`, `tanpa kartu tautan` (4), `tanpa notifikasi`
+  (4096), dan gabungan keduanya — sama dengan dua centang di tab Susun.
+- Penyaringan **dua bit** penting: dokumen yang pernah diekspor alat lain bisa
+  membawa `IS_COMPONENTS_V2` (32768) atau flag lain. Meneruskannya akan membuat
+  pesan ditolak Discord di tengah rangkaian — pesan sebelumnya sudah terkirim,
+  sisanya tidak.
+- Rujukan balasan ke pesan yang **dihapus** sudah dilepas otomatis oleh tombol
+  hapus (sejak Batch 22), jadi tidak ada perubahan di sana.
+
+### Batch 31: riwayat versi menyimpan identitas pengirim webhook
+
+Snapshot riwayat berhenti di blok, bentuk pesan, dan bagian embed. Nama &
+avatar pengirim webhook tidak ikut, jadi **mengembalikan versi lama menghapus
+identitas itu** — padahal versi tersebut dibuat saat identitas itu terpasang.
+Panel **Bandingkan** pun tidak menampilkannya, sehingga perubahan itu tidak
+terlihat sebagai perubahan.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Snapshot versi | tanpa identitas webhook | `webhookName` + `webhookAvatar` |
+| Mengembalikan versi | identitas hilang | identitas versi itu dipulihkan |
+| Versi lama tanpa field ini | — | identitas sekarang **dipertahankan** |
+| Panel Bandingkan | perubahan identitas tak terlihat | satu baris per field |
+
+Catatan:
+
+- Versi yang tidak menyimpan field ini dibaca sebagai "tidak diubah", bukan
+  "kosongkan". Mengirim `null` di sana akan menghapus nama pengirim yang tidak
+  pernah berubah di versi itu.
+- Dua field dibandingkan terpisah: mengganti nama tanpa mengganti avatar tetap
+  terlihat sebagai satu perubahan.
+
+### Batch 30: JSON Data Editor memulihkan pengaturan tingkat pesan
+
+JSON Data Editor sudah membawa blok & bagian embed, tetapi mengabaikan
+`username`, `avatar`, `thread_name`, dan `flags`. Pesan hasil tempel karena itu
+terkirim dengan bentuk berbeda dari yang tertulis di JSON-nya — persis celah
+yang ditutup **Load** pada Batch 27, hanya lewat pintu lain.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Pengirim (bot / webhook) | selalu bot | mengikuti JSON |
+| Nama & avatar pengirim webhook | diabaikan | dipulihkan |
+| Nama thread | diabaikan | dipulihkan |
+| Flag tanpa-kartu & tanpa-notifikasi | diabaikan | dipulihkan |
+
+Catatan:
+
+- Kedua pintu masuk (`/api/posts/load` dan `/api/posts/from-json`) memakai
+  penerjemah yang **sama**, jadi aturan "hanya `webhook_id` yang menandai
+  webhook" dan "flag disaring ke dua bit" berlaku di keduanya. Kalau aturannya
+  ditulis dua kali, cepat atau lambat salah satunya tertinggal.
+
+### Batch 29: generator kode untuk pesan bergaya embed
+
+Panel payload hanya tahu tentang komponen. Untuk pesan **Bentuk pesan: Embed
+klasik** ia menampilkan "Pesan ini belum punya komponen" — padahal pesannya
+jelas berisi, hanya saja isinya `embeds`. Admin yang membuka panel itu
+menyimpulkan generatornya rusak.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Payload pesan embed | "belum punya komponen" | objek **`embeds`** yang benar-benar dikirim |
+| Kode `discord.js` | tidak ada | `await channel.send({ embeds })`, plus flag & nama thread |
+| Kode `discord.py` | tidak ada | `discord.Embed.from_dict(...)` + catatan `import json` |
+| Bagian embed yang dibuang | tidak terlihat | masuk `dropped`, sama seperti jalur komponen |
+
+Catatan:
+
+- Embed ditulis sebagai **payload apa adanya**, bukan diterjemahkan ke builder
+  satu per satu. Bentuknya sudah payload Discord, jadi yang paling jujur adalah
+  yang benar-benar dikirim — terjemahan kedua hanya menambah peluang menyimpang.
+- Kebutuhan `import json` disebut di `dropped`, bukan dibiarkan menghasilkan
+  kode yang gagal dijalankan.
+- Tombol & menu role **tidak** masuk embed (Discord menaruhnya sebagai
+  komponen interaktif), jadi kode embed memang tidak memuatnya. Jumlahnya
+  dilaporkan di `dropped` supaya developer yang menyalin kode tahu pesannya
+  masih punya komponen yang tidak ikut digenerate. (Batch 31b)
+
+### Batch 28: jadwal & aksi flow menghormati bentuk embed
+
+Jalur **jadwal** dan **aksi "kirim pesan tersimpan"** selalu memakai penyusun
+Components V2. Pesan yang disetel **Bentuk pesan: Embed klasik** karena itu
+muncul sebagai kartu biasa saat dikirim otomatis — padahal tombol Kirim
+mengirimnya sebagai embed.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Pesan embed dikirim lewat jadwal | jadi kartu V2 | **embed**, sama seperti Kirim |
+| Pesan embed dikirim lewat aksi flow | jadi kartu V2 | **embed** |
+| Bagian admin (penulis, footer, bidang, galeri) | hilang di jalur otomatis | ikut terkirim |
+| Nama thread pada pesan embed terjadwal | tidak dibuat | dibuat |
+
+Catatan:
+
+- Urutan cabang penting: `layout === 'embed'` diperiksa **sebelum** webhook/V2.
+  Aturan Discord berlawanan (embed tidak boleh membawa flag V2, V2 tidak boleh
+  membawa embeds), jadi dua jalur itu tidak boleh saling menimpa.
+- Aksi flow pada pesan embed mengirim **pesan baru** dan memberi tahu pengklik
+  kalau balasan tidak bisa dipakai — Discord tidak mengizinkan balasan berisi
+  embed, dan pesan yang hilang diam-diam lebih buruk daripada pesan yang
+  muncul di tempat lain dengan penjelasan.
+- Bagian yang dilewati (mis. galeri lebih dari batas) masuk log jadwal, bukan
+  hilang tanpa jejak.
+
+### Batch 27: Load memulihkan pengaturan tingkat pesan
+
+Tombol **Load** membawa blok dan bagian embed, tetapi **bukan** pengirim,
+nama thread, atau flag pesannya. Akibatnya "muat → sunting → kirim ulang"
+menghapus tiga pengaturan itu: isinya sama di editor, tetapi pesannya muncul
+berbeda di Discord.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Pengirim (bot / webhook) | selalu kembali ke bot | mengikuti pesan asli |
+| Nama & avatar pengirim webhook | hilang | dipulihkan |
+| Nama thread | hilang | dipulihkan dari thread pesan itu |
+| Flag tanpa-kartu & tanpa-notifikasi | hilang | dipulihkan |
+
+Catatan:
+
+- Yang menandai pesan webhook hanya `webhook_id`. `author.username` **tidak**
+  dipakai: pesan bot biasa juga punya username, dan menganggapnya webhook akan
+  membuat pesan bot terkirim ulang atas nama webhook.
+- Flag disaring ke dua bit yang boleh diatur dashboard. `IS_COMPONENTS_V2` dan
+  flag lain **dibuang**: membawanya ke pesan berikutnya membuat Discord menolak
+  pesan itu karena bentuknya bukan Components V2.
+- Ketiga jalur keluar (embed, komponen, teks biasa) memakai satu fungsi yang
+  sama, supaya tidak ada cabang yang tertinggal saat aturannya berubah.
+
+### Batch 26: identitas webhook berlaku di semua jalur kirim
+
+Isian nama & avatar pengirim webhook hanya dipakai tombol **Kirim ke Discord**.
+Pesan yang sama, kalau dikirim lewat **jadwal**, **pemicu member masuk/keluar**,
+atau **aksi flow**, tampil atas nama server — pengaturan yang terlihat di
+dashboard tidak berlaku, dan bedanya baru terlihat saat pesannya muncul.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Kirim manual | identitas per pesan | identitas per pesan |
+| Kirim terjadwal | selalu identitas server | identitas per pesan |
+| Pemicu member masuk/keluar | selalu identitas server | identitas per pesan |
+| Aksi flow "kirim lewat webhook" | selalu identitas server | identitas per pesan |
+| Penyaringan | di `server.ts` | satu fungsi `identitasPost`, dipakai semua jalur |
+
+Catatan:
+
+- Logika "isian kosong = identitas server" hidup di **satu** fungsi sekarang.
+  Sebelumnya tiap jalur menuliskan sendiri, dan yang lupa menuliskan ulang
+  adalah jalur otomatis.
+- Yang kosong diisi identitas server **per field**: mengisi nama saja tidak
+  menghapus avatar server.
+
+### Batch 24: beberapa gambar besar per embed (galeri)
+
+Discohook punya isian **Image URLs** berisi sampai empat gambar. Bot hanya punya
+satu isian gambar besar, jadi tiga dari empat gambar yang ditempel tidak bisa
+dikirim sama sekali.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Gambar besar per embed | satu | **sampai 4** (satu URL per baris) |
+| Gambar ke-2 dst. | tidak terkirim | dikirim sebagai **embed pelengkap** berisi gambar itu saja |
+| Impor Discohook `images` | dibuang | dipertahankan sebagai galeri |
+| Impor gambar cadangan (embed `url` + `image` tanpa isi) | jadi embed kosong lalu dibuang | dilebur jadi satu galeri |
+| Batas 10 embed | hanya dari daftar embed | berlaku untuk **semua** embed, termasuk hasil galeri |
+
+Catatan:
+
+- Discord hanya menerima satu `image` per embed. Discohook menyiasatinya dengan
+  mengirim gambar sisanya sebagai embed tambahan — perilaku itu ditiru, jadi
+  deretan gambar di Discord sama bentuknya.
+- Embed pelengkap membawa `url` dan warna embed asalnya, tanpa judul/isi: kalau
+  isinya disalin, teksnya muncul berulang di setiap gambar.
+- Hanya `http/https` yang diterima, URL ganda dibuang, dan pemotongan di atas 4
+  dilaporkan dengan alasan.
+- Saat impor, hanya embed yang **benar-benar kosong selain gambar** dan berbagi
+  `url` yang sama dengan embed sebelumnya yang dilebur. Embed bergambar yang
+  punya judul tetap berdiri sendiri — itu embed tersendiri, bukan gambar lanjutan.
+- Pratinjau menggambar gambar ke-2 dst. sebagai kartu sendiri, supaya yang
+  terlihat sama dengan yang terkirim.
+- **Load** membalik arah yang sama: beberapa embed bergambar tanpa isi dibaca
+  sebagai satu galeri, jadi pesan yang dimuat lalu disunting lagi tidak memaksa
+  admin menempel ulang semua URL.
+- Halaman **`/bagi/<token>`** memakai urutan gambar yang sama (galeri menang atas
+  gambar blok) dan menampilkan gambar ke-2 dst. sebagai kartu sendiri — pratinjau
+  publik tidak boleh menghilangkan gambar yang akan terkirim.
+
+### Batch 23: ekspor JSON membawa pengaturan tingkat pesan
+
+Ekspor JSON dulu hanya membawa blok dan bagian embed. Nama pengirim webhook,
+nama thread, flag pesan, dan izin ping **hilang** saat berkas itu diimpor
+kembali — cadangan yang tampak lengkap tetapi diam-diam menghapus pengaturan.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Nama & avatar pengirim webhook | tidak diekspor | `username`, `avatar_url` |
+| Nama thread | tidak diekspor | `thread_name` |
+| Flag pesan | tidak diekspor | `flags` (bitmask Discord) |
+| Izin ping | tidak diekspor | `allowed_mentions.parse` |
+| Isian yang tidak ada di berkas | dibiarkan dari pesan sebelumnya | **dikosongkan** |
+
+Catatan:
+
+- Nama field mengikuti Discord/Discohook, bukan nama isian di halaman ini,
+  supaya berkas ekspor bisa dipahami alat lain (dan sebaliknya).
+- Channel, jadwal, dan tombol role tetap **tidak** ikut: semuanya menunjuk ID
+  milik server ini dan akan salah di server lain.
+- Saat impor, isian yang tidak ada di berkas dikosongkan, bukan dipertahankan:
+  menyisakan nama webhook milik pesan sebelumnya membuat pesan hasil impor
+  tampil atas nama orang lain tanpa admin menyadarinya. `avatar` juga diterima
+  sebagai alias `avatar_url` (nama di Discohook).
+
+### Batch 22: membuka kembali satu pesan di dalam dokumen
+
+Sebelum ini, pesan yang sudah masuk dokumen multi-pesan hanya bisa **dilihat**
+(diubah rujukan/thread-nya) atau **dihapus**. Untuk membetulkan satu salah tulis
+di pesan ke-3, admin harus menyusun ulang semuanya. Di Discohook, tiap pesan
+dalam daftar bisa dibuka kembali.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Menyunting pesan dokumen | hanya bisa menambah dari editor | tombol **✎** membuka ulang pesan itu di tab Susun |
+| Menulis balik | — | tombol **Simpan ke dokumen** (bukan otomatis) |
+| Duplikat pesan | — | tombol **⧉** menyalin pesan tepat di bawah aslinya |
+| Penanda mode | — | bilah "Menyunting pesan N dari dokumen …" di atas editor |
+
+Catatan:
+
+- Perubahan **tidak** ditulis otomatis. Editor yang sama dipakai tombol Kirim, dan
+  menulis balik otomatis berarti membuka pesan lain sudah cukup untuk mengubah
+  dokumen tanpa pernah menekan Simpan.
+- Rujukan balasan **tidak** ikut disalin saat menduplikat: dua pesan ber-ID sama
+  akan ditolak server, dan salinan yang membalas pesan aslinya hampir selalu
+  bukan yang dimaksud.
+- Tiap pesan disalin dalam (salinan mendalam), jadi menyunting dokumen tidak
+  mengubah isi editor dan sebaliknya.
+- Bila dokumen diganti (dibuka dokumen lain, diimpor, atau dihapus) sementara
+  mode sunting masih menyala, mode itu dilepas — kalau tidak, tombol simpan akan
+  menulis ke urutan pesan yang sudah bukan miliknya.
+
+### Batch 21: thumbnail & gambar besar per embed
+
+Discohook memberi tiap embed dua isian gambar: **Thumbnail** (kecil, kanan atas)
+dan **Image** (besar, bawah). Bot sebelumnya hanya bisa mengambil keduanya dari
+blok — jadi embed kedua dan seterusnya tidak pernah punya gambar.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Thumbnail | hanya dari section beraksesori | **isian per embed** |
+| Gambar besar | hanya dari blok `image` pertama | **isian per embed** |
+| Urutan menang | — | isian admin **menang** atas gambar dari blok |
+| Impor Discohook | thumbnail & gambar dibuang | keduanya dipertahankan |
+
+Catatan:
+
+- Hanya `http/https` yang diterima; nilai lain dibuang saat disimpan dengan
+  alasan yang bisa dibaca.
+- Thumbnail saja **tidak** membuat embed tambahan bisa dikirim (Discord tetap
+  menuntut judul/isi/gambar/bidang) — gambarnya hanya pelengkap.
+- Pratinjau memakai urutan yang sama dengan server, supaya yang terlihat sama
+  dengan yang terkirim.
+
+### Batch 20: muat pesan lalu perbarui pesan asalnya (Load yang utuh)
+
+Batch 16 bisa memuat pesan Discord, tetapi hasilnya menjadi pesan dashboard
+**baru**: menekan Kirim mengirim salinan kedua, padahal tujuan tombol Load
+adalah memperbaiki pesan yang sudah ada.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Setelah memuat & menyimpan | Kirim = pesan baru | Kirim **memperbarui pesan asal** |
+| Channel tujuan | harus dipilih manual | ikut channel pesan asal |
+| Tautan ke pesan asal | — | hanya dikirim saat pesan belum punya ID sendiri |
+
+Catatan:
+
+- `source` (channel + pesan asal) divalidasi ketat sebagai snowflake; bentuk
+  yang tidak jelas dibaca sebagai `null` = kirim pesan baru. Salah ID berarti
+  menimpa pesan orang lain, jadi tidak boleh ditebak.
+- Setelah tersimpan, sumber dilepas di editor: pesan sudah punya `message_id`
+  sendiri, dan mengirim `source` terus akan membuat tiap penyimpanan menimpa
+  pesan Discord yang sama — padahal admin mungkin ingin memisahkannya.
+
+### Batch 19: nama & avatar pengirim webhook per pesan
+
+Di Discohook, pesan webhook punya isian **Username** dan **Avatar URL**: satu
+pesan bisa tampil sebagai "Tim Pengumuman" walau webhook-nya milik server.
+Sebelumnya bot selalu memakai nama & ikon server.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Nama pengirim | selalu nama server | isian per pesan (bawaan: nama server) |
+| Avatar pengirim | selalu ikon server | URL per pesan (bawaan: ikon server) |
+| Batas | — | nama 80 karakter, URL hanya `http/https` |
+| Pesan lewat bot | tidak terpengaruh | tetap ditentukan Discord (isian tidak dipakai) |
+
+Catatan:
+
+- Kosong = **identitas server**, jadi pesan lama tidak berubah tampilannya.
+- Nama & avatar hanya dipakai saat `sender = 'webhook'`. Lewat bot, nama
+  pengirim ditentukan Discord dan isian ini tidak berpengaruh.
+- URL avatar yang bukan `http/https` dibuang saat disimpan (bukan saat dikirim),
+  supaya kesalahannya terlihat lebih awal.
+- Field tidak dikirim saat menyimpan = **dipertahankan**; `null` = dikosongkan.
+
+### Batch 18: halaman berbagi menampilkan embed & bentuk pesan
+
+Tautan berbagi (`/bagi/<token>`) dulu hanya menggambar blok. Pesan berbentuk
+**embed klasik** karena itu terbuka sebagai halaman **kosong**: isinya memang
+tidak ada di blok, melainkan di pengaturan pesan.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Pesan berbentuk embed | halaman kosong | **kartu embed** dengan penulis, judul, isi, bidang, gambar, footer |
+| Embed kedua dan seterusnya | tidak tampil | tampil sebagai kartu tambahan (penulis & bidang) |
+| Warna embed | tidak terbawa | garis kiri mengikuti warna tiap embed |
+| Bentuk pesan | tidak ikut dibagikan | `getSharedPost` mengembalikan `layout` + `embed` |
+
+Yang tetap dijaga: halaman ini **terbuka tanpa login**, jadi semua teks
+di-escape sebelum masuk HTML dan hanya URL `http/https` yang pernah dipasang
+sebagai gambar. Tidak ada tombol yang bisa mengubah role, dan tidak ada data
+server yang ditampilkan.
+
+### Batch 17: JSON Data Editor per pesan
+
+Discohook punya **JSON Data Editor** per pesan: tempel JSON mentah Discord,
+lalu pesannya terbuka di editor. Bot sebelumnya hanya punya JSON dokumen
+(ekspor/impor seluruh susunan), bukan JSON **satu pesan** yang ditempel dari
+luar.
+
+Kartu baru di tab **Impor** → *JSON Data Editor (satu pesan)*, dengan endpoint
+`POST /api/posts/from-json { json }`.
+
+Tiga bentuk yang diterima, semuanya diterjemahkan ke blok yang sama:
+
+| Bentuk tempelan | Asal |
+|---|---|
+| `{ content, embeds, components }` | objek pesan Discord / dokumentasi API |
+| `{ body: { … } }` atau `{ data: { … } }` | payload REST yang disalin utuh |
+| `{ messages: [{ data: { … } }] }` | data Discohook |
+
+Catatan:
+
+- Endpoint ini **tidak butuh bot online**: tidak ada yang diambil dari Discord,
+  jadi tidak ikut gagal hanya karena bot mati.
+- Bentuk yang tidak punya `content`/`embeds`/`components` **ditolak** dengan
+  pesan, bukan diterjemahkan jadi pesan kosong — pesan kosong akan membuat
+  admin mengira JSON-nya berhasil.
+- Penerjemahannya memakai `messageToDraft` yang sama dengan fitur **Muat pesan
+  Discord**, jadi dua jalur itu tidak bisa berbeda hasil.
+
+### Batch 16: memuat pesan Discord yang sudah terkirim (padanan tombol Load)
+
+Discohook punya tombol **Load**: tempel *Message Link*, tekan Load, pesan yang
+sudah ada di Discord terbuka di editor dan bisa dikirim ulang dalam bentuk
+diperbaiki. Bot sekarang punya hal yang sama, di tab **Impor** →
+**Muat pesan Discord yang sudah terkirim**.
+
+| Aspek | Discohook | Di sini |
+|---|---|---|
+| Sumber | tautan pesan Discord | tautan yang sama (`Copy Message Link`) |
+| Batas | pesan mana pun yang bisa dibaca | **hanya server ini** (bot tidak bisa membaca server lain) |
+| Isi teks | `content` | **satu blok teks**, dipecah kalau lebih dari 3500 karakter |
+| Embed | satu atau banyak | embed dipertahankan; bentuk pesan dipilih otomatis |
+| Komponen V2 | diterjemahkan | **diterjemahkan balik ke blok** lewat penerjemah impor yang sama |
+| Lampiran | dibawa kalau bisa | **dilaporkan** — tautan berkas Discord kedaluwarsa |
+| Pesan campuran (V2 + embed) | — | embed jadi kartu teks, dengan alasan yang dijelaskan |
+
+Kenapa begini:
+
+1. **Tautan yang dikirim, bukan isinya.** Browser tidak punya token bot dan
+   tidak boleh punya; server yang mengambil pesannya lewat bot.
+2. **Hanya server sendiri.** Memuat pesan server lain berarti menyalin isi yang
+   bukan milik admin ini ke database-nya.
+3. **Pesan lama tidak berubah.** Hasil muat menjadi pesan **baru** di dashboard;
+   pesan di Discord baru berubah kalau admin menekan Kirim.
+4. **Tidak ada yang hilang diam-diam.** Lampiran, berkas, tombol interaktif, dan
+   isi embed kedua dan seterusnya dilaporkan sebagai catatan setelah memuat.
+
+Butuh izin **Read Message History** di channel asal; kalau tidak ada, dashboard
+menjelaskan sebabnya alih-alih gagal tanpa pesan.
+
+### Batch 15: warna per embed, pindah & duplikat embed
+
+Dua hal kecil dari editor embed Discohook yang menentukan kenyamanan menyusun
+pesan berisi banyak embed.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Warna embed | semua ikut aksen pesan | **warna sendiri per embed** (`#rrggbb`), bawaan tetap ikut aksen |
+| Urutan embed | hanya bisa menambah & menghapus | **naik / turun** per embed |
+| Menyalin embed | harus menyusun ulang | **duplikat** (salinan dalam, bukan berbagi objek) |
+| Impor Discohook | warna embed dibuang | warna tiap embed dipertahankan |
+
+Catatan:
+
+- Warna yang bukan `#rrggbb` dibuang dengan alasan yang bisa dibaca; warna
+  ditulis huruf kecil supaya dua nilai yang sama selalu dibandingkan sama.
+- Warna saja **tidak** membuat embed tambahan bisa dikirim: Discord tetap
+  menuntut judul, isi, gambar, atau bidang. Untuk embed pertama, warna tetap
+  berguna karena isinya datang dari blok.
+- Duplikat menyalin isinya secara dalam: menyunting bidang di salinan tidak
+  mengubah embed aslinya.
+
+### Batch 14: sampai 10 embed per pesan & impor embed yang setia
+
+Discohook punya tombol **Add Embed** yang berhenti di 10. Bot sebelumnya hanya
+bisa mengirim **satu** embed: embed kedua yang ditulis di sana hilang saat
+diimpor.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Jumlah embed per pesan | 1 | **10** (batas Discord) |
+| Embed kedua dan seterusnya | tidak ada | **penulis, footer, bidang, URL judul, stempel waktu** |
+| Batas 6000 karakter | per embed | per embed **dan** total semua embed (aturan Discord) |
+| Impor Discohook berisi embed | diterjemahkan jadi kartu teks | **embed asli**, bentuk pesan dipilih otomatis |
+| Riwayat versi | tidak menyimpan bentuk & embed | ikut tersimpan, jadi pengembalian versi benar-benar memulihkan |
+| Panel Bandingkan | tidak melihat embed | melihat bentuk pesan & ringkasan tiap embed |
+
+Cara kerjanya:
+
+1. **Embed pertama** dibangun dari blok seperti biasa (judul dari nama pesan,
+   warna dari aksen, teks → isi, satu gambar), lalu dilengkapi bagian admin
+   pertama.
+2. **Embed kedua dan seterusnya** hanya berisi bagian yang ditulis admin. Blok
+   pesan menggambarkan SATU pesan; menyalin isinya ke semua embed akan
+   mengulang teks yang sama.
+3. Embed tambahan **wajib punya judul, isi, gambar, atau bidang** — Discord
+   menolak embed yang hanya berisi penulis/footer. Embed seperti itu dilewati
+   dan alasannya muncul setelah Kirim, bukan hilang diam-diam.
+4. Editor punya **pemilih embed** (Embed 1, Embed 2, …) dan tombol tambah/hapus.
+   Isian yang sedang dibuka adalah embed yang disorot di daftar itu; pratinjau
+   menggambar **semua** embed, seperti hasil akhirnya di Discord.
+
+### Batch 13: variabel ala Discohook & bagian embed yang belum ada
+
+Dua selisih ditutup di batch ini: penggantian variabel, dan bagian embed klasik
+yang sebelumnya hanya bisa diisi lewat impor.
+
+**Variabel.** Discohook mengganti token `{...}` di **semua** teks (isi blok, teks
+aksi, nama penulis, footer, nama & isi bidang). Dulu bot hanya mengenal delapan
+token di teks aksi, dan teks blok bahkan tidak diganti sama sekali.
+
+| Token | Isi |
+|---|---|
+| `{member.name}`, `{member.display_name}` | nama tampilan member |
+| `{member.username}`, `{member.tag}` | username; diskriminator `0` → username saja |
+| `{member.id}`, `{member.mention}`, `{member.avatar_url}` | ID, sebutan, URL avatar |
+| `{member.role_ids}` | daftar ID role sebagai JSON (sama seperti Discohook) |
+| `{server.id}`, `{server.name}`, `{server.icon_url}` | identitas server |
+| `{server.members}`, `{server.boosts}`, `{server.roles}` | jumlah member, boost, role |
+| `{server.created}`, `{server.created_relative}`, `{server.created_long}` | kapan server dibuat |
+| `{channel.id}`, `{channel.name}`, `{channel.mention}`, `{channel.link}` | channel tempat komponen diklik |
+| `{role}`, `{role.name}`, `{effect}` | hasil aksi role (`ditambahkan`/`dilepas`) |
+| `{selected}`, `{selected_value}`, `{selected_values.N}` | pilihan menu; `N` mulai 1, maks 25 |
+| `{now}`, `{now_relative}`, `{now_long}`, `{now_short_date}` | waktu sekarang |
+| `{var.nama}` | variabel flow yang disetel aksi sebelumnya |
+
+Aturannya:
+
+1. **Token asing dibiarkan.** Salah tulis terlihat di pesan (`{member.nmae}`),
+   bukan hilang diam-diam. Di tab editor, sisa token juga bisa dilaporkan.
+2. **Nilai kosong dibiarkan kosong.** Di teks aksi, delapan token lama tetap
+   diisi string kosong supaya `{role}` pada tombol tanpa aksi role hilang dari
+   balasan — bukan tercetak mentah.
+3. **Kunci terpanjang menang.** `{member.name_x}` tidak lagi dirusak oleh
+   penggantian `{member.name}` lebih dulu; dulu urutan objek menentukan hasil.
+4. **Stempel waktu memakai gaya Discord** (`<t:…:d>`, `<t:…:R>`), jadi waktunya
+   tampil sesuai zona pembaca, bukan zona server.
+
+**Bagian embed.** Kartu pengaturan sekarang punya satu blok isian untuk URL
+judul, penulis (nama/ikon/tautan), footer (teks/ikon), bidang (maks 25, tiap
+bidang boleh `inline`), dan stempel waktu ISO 8601. Semuanya opsional; tidak ada
+yang dikirim kalau kosong.
+
+- Nilai yang bukan URL `http/https` dibuang dan alasannya muncul di `dropped`.
+  Ini termasuk `javascript:` pada ikon — ikon yang sama tampil di pratinjau.
+- Stempel waktu yang tidak bisa diurai ditolak, bukan diteruskan ke Discord
+  (Discord akan menolak seluruh pesannya).
+- Total panjang embed (judul + isi + penulis + footer + bidang) tetap dijaga di
+  bawah 6000 karakter; yang dipotong adalah isi, dan pemotongan itu dilaporkan.
+- Bagian ini **hanya** dipakai saat bentuk pesan = embed klasik. Mengubah bentuk
+  pesan tidak menghapus tulisannya, jadi bisa dicoba bolak-balik.
+
+Kolom baru: `custom_posts.embed` (TEXT, JSON). Disimpan sebagai `NULL` saat
+semua isian kosong, jadi pesan lama tidak berubah perilakunya. `embed` yang tidak
+dikirim saat menyimpan berarti **dipertahankan**; `null` berarti dikosongkan.
+
+### Batch 12: flow bertingkat penuh (padanan Discohook Actions)
+
+Batch ini menutup tiga selisih yang paling terasa saat memindahkan flow Discohook
+ke sini, semuanya diukur dari kode sumber mereka (`packages/site/app/types/flows.ts`).
+
+| Aspek | Discohook | Sebelum batch ini | Sekarang |
+|---|---|---|---|
+| Kedalaman cabang `Check` | pohon, tanpa batas tingkat tegas | 3 tingkat | **5 tingkat** (`ACTION_LIMITS.branchDepth`) |
+| Isi cabang | aksi apa pun, termasuk `Wait` & `Check` lagi | hanya 6 jenis ringkas, tanpa syarat | **editor aksi penuh**, semua 12 jenis, `periksa syarat` boleh bersarang |
+| `Wait` di dalam cabang | ditangani runner mereka | sisa cabang disimpan, **sisa aksi sesudah syarat hilang** | sesi menyimpan **sisa cabang + sisa flow** |
+| Kuota aksi berhitung | 40 (10 non-premium), `Check`/`Stop` tidak dihitung | hanya 6/komponen + 40/pesan, cabang tidak dihitung | **40 dihitung per flow**, cabang ikut dihitung |
+| Kuota aksi kirim pesan | 15 per flow | tidak ada | **15 per flow** |
+| Angka batas di layar | dihitung dari skema | ditulis ulang di JavaScript | dikirim server (`aksiLimits`), satu sumber |
+
+**Kenapa `wait` di dalam cabang dulu kehilangan aksi.** Cabang dijalankan lewat
+panggilan rekursif, dan saat `wait` ditemui, yang dikembalikan hanya
+`steps.slice(i)` — sisa **cabang**. Aksi sesudah aksi syarat berada di daftar
+pemanggil, jadi tidak ikut tersimpan; begitu bot restart, sapaan "sesudah syarat"
+hilang tanpa jejak.
+
+Sekarang cabang yang dipilih **disisipkan ke satu daftar kerja**
+(`kerja.splice(i + 1, 0, ...cabang)`), sehingga:
+
+- `wait` di cabang mana pun menyimpan sisa cabang **dan** sisa flow di luar cabang;
+- `stop` di dalam cabang menghentikan **seluruh** flow, bukan hanya cabangnya;
+- cabang bertingkat lima tingkat tidak menumpuk tumpukan panggilan rekursif;
+- urutan yang dijalankan persis urutan yang dibaca admin di dasbor.
+
+**Kenapa batas 6 tidak berlaku di dalam cabang.** Enam adalah batas untuk **satu
+komponen** (satu tombol/opsi/menu) — jumlah aksi yang bisa dijelaskan ke pengklik
+dalam satu klik. Cabang bukan komponen: isinya hanya berjalan pada satu jalur, dan
+Discohook pun tidak membatasi panjang cabang selain lewat kuota flow. Jadi isi cabang
+dibatasi kuota flow (40 dihitung, 120 total), bukan 6.
+
+**Cabang yang habis karena kuota.** Kalau seluruh isi cabang terbuang oleh kuota,
+aksi syaratnya **ikut dibuang** dengan alasan yang bisa dibaca admin. Syarat tanpa
+cabang berarti "tidak cocok = hentikan flow" — menyimpannya dalam keadaan seperti itu
+akan mengubah arti flow diam-diam, dan itu justru yang dihindari di seluruh halaman ini.
+
+Di editor, tiap baris di dalam cabang memakai **editor aksi yang sama** dengan tingkat
+atas (`barisAksiDalam`), jadi aksi di cabang bisa diatur selengkap aksi di luar: pilih
+role, teks balasan, channel tujuan, arsip thread, jenis variabel — semuanya ada.
+
+### Batch 11: `targets[]` — satu pesan, beberapa channel
+
+Discohook bisa mengirim satu backup ke beberapa channel sekaligus. Di sini
+padanannya **Kirim juga ke channel lain** di kartu pengaturan: sampai
+`POST_TARGET_LIMITS.perPost` (5) channel tambahan per pesan.
+
+| Aspek | Keputusan |
+|---|---|
+| Channel utama | tetap di `custom_posts.channel_id` — **bukan** baris di `post_targets` |
+| Channel tambahan | tabel `post_targets` (satu baris per channel, dengan `message_id` sendiri) |
+| Penggantian daftar | `PUT /api/posts/:id/targets` mengganti seluruh daftar, seperti tombol role |
+| ID pesan | **dipertahankan** untuk channel yang masih ada di daftar |
+| Kirim | tiap channel dikirim lewat penyusun payload yang sama; gagal di satu channel dilaporkan per channel |
+| Hapus pesan | baris `post_targets` ikut dihapus |
+
+Kenapa channel utama tidak ikut di tabel itu: dua sumber untuk hal yang sama
+akan menyimpang — admin mengganti channel utama, salinan lamanya tertinggal, dan
+pengumuman terkirim ke channel yang sudah tidak dipakai.
+
+Penyaringan di repo (bukan hanya di dashboard, karena API bisa dipanggil
+langsung): hanya ID channel Discord 17–20 digit, tanpa duplikat, maksimal lima.
+Nilai lain dilaporkan di `dropped` dengan alasannya.
+
+Pesan webhook juga bisa dikirim ke beberapa channel, tetapi **identitas webhook
+diambil per channel** — nama & avatar servernya sama, webhook-nya berbeda.
+
+### Batch 10: JSON editor dokumen multi-pesan
+
+Discohook menaruh seluruh backup dalam satu kotak JSON yang bisa disunting
+langsung. Di sini bentuk itu ada untuk **dokumen** (multi-pesan), karena di
+sanalah ia paling berguna: menyunting rangkaian 12 pesan lewat kartu satu per
+satu jauh lebih lambat daripada menyunting satu blok teks.
+
+Bentuk berkasnya:
+
+```json
+{
+  "format": "zypher-document",
+  "version": 1,
+  "name": "Pengumuman berurutan",
+  "series": true,
+  "messages": [
+    { "id": "m1", "name": "Pembuka", "blocks": [{ "kind": "text", "value": "Halo" }] },
+    { "id": "m2", "name": "Lanjutan", "blocks": [], "reference": "m1", "threadName": "Diskusi" }
+  ]
+}
+```
+
+Yang dijaga saat impor:
+
+| Kasus | Perlakuan |
+|---|---|
+| `id` dipakai dua kali | pesan kedua dibuang, alasannya ditampilkan |
+| `reference` menunjuk pesan yang tidak ada | rujukan dibuang — menyimpannya membuat kiriman gagal di tengah rangkaian |
+| pesan membalas dirinya sendiri | rujukan dibuang |
+| lebih dari 20 pesan | sisanya dibuang (batas `SERIES_LIMITS.messages`) |
+| `format` bukan `zypher-document` | ditolak, dokumen yang sedang terbuka **tidak** dirusak |
+| field kosong (`""`, `null`) | dibuang supaya berkasnya ringkas dan tidak mengirim nilai kosong |
+
+Ekspor memakai keadaan **editor**, bukan salinan terakhir dari server: admin
+menekan Ekspor justru untuk menyimpan perubahan yang belum disimpan. Blok pesan
+dokumen diekspor apa adanya (tanpa dinormalkan ulang), supaya field hasil impor
+Discohook yang tidak dikenal editor tidak hilang saat bolak-balik.
+
+### Batch 9: embed klasik (bentuk lama, di samping Components V2)
+
+Components V2 bukan satu-satunya bentuk yang dipakai server. Embed klasik masih
+lebih baik untuk pengumuman: ia tampil rapi di notifikasi HP, tidak butuh flag
+khusus, dan sudah dikenali semua bot lain. Discohook mendukung keduanya; di sini
+pun, lewat **Bentuk pesan** di kartu pengaturan.
+
+| Blok | Jadi apa di embed |
+|---|---|
+| teks & section | isi `description`, dipisah baris baru |
+| pemisah | satu baris kosong |
+| gambar (pertama) | `image` — gambar besar di bawah teks |
+| gambar kedua dan seterusnya | **tidak muat**; dilaporkan sebagai `dropped` |
+| section dengan thumbnail | `thumbnail` (gambar kecil di kanan atas) |
+| tombol & menu | komponen **di luar** embed — tetap bisa diklik |
+| berkas | lampiran, bukan bagian embed |
+| nama pesan | `title` |
+| warna aksen | garis warna di kiri embed |
+| container/tutup kartu | penanda struktur V2, diabaikan |
+
+Kenapa jalur kirimnya dipisah (`sendOrUpdateEmbedPost`, bukan cabang dari
+`sendOrUpdatePost`): **embed dan Components V2 saling menolak di Discord.**
+Pesan ber-flag `IsComponentsV2` tidak boleh punya `embeds`, dan pesan embed
+tidak boleh membawa flag itu. Satu jalur kode untuk keduanya membuat aturan ini
+mudah terlewat, dan galat yang muncul di Discord tidak menyebut penyebabnya.
+
+Bentuknya disimpan per pesan (`custom_posts.layout`), bukan per server: satu
+server sering punya pengumuman bergaya embed **dan** panel bergaya container.
+NULL dibaca sebagai `container`, jadi pesan lama tidak berubah tampilan setelah
+upgrade.
+
+Di dashboard, pratinjau embed memakai `embedDariBlok()` — cerminan
+`buildClassicEmbed()` di server — termasuk aturan "satu gambar" di atas. Peringatan
+tentang bagian yang tidak muat muncul di tab **Pratinjau**, bukan hanya di log.
+
+### Batch 8: pemicu event member masuk/keluar
+
+Discohook punya "trigger" di samping jadwal: pesan dikirim saat event terjadi,
+bukan saat jam tertentu. Di sini pilihannya di kartu pengaturan:
+
+| Pilihan | Artinya |
+|---|---|
+| *Hanya saat saya klik Kirim* | bawaan; perilaku pesan biasa |
+| *Ada member baru bergabung* | dikirim/diperbarui tiap `guildMemberAdd` |
+| *Ada member keluar* | dikirim/diperbarui tiap `guildMemberRemove` |
+
+Yang dijaga:
+
+- **Pesan yang sama diperbarui, bukan dikirim ulang.** ID pesan Discord yang
+  tersimpan dipakai lagi, jadi channel tidak dipenuhi salinan tiap ada orang
+  bergabung. Kalau pesannya sudah dihapus seseorang, kirim baru lalu simpan ID
+  yang baru — tanpa itu, tiap kejadian membuat pesan tambahan selamanya.
+- **Pemicu tidak jalan sendiri setelah upgrade.** Kolom `trigger` baru berisi
+  NULL untuk semua pesan lama, dan NULL berarti manual.
+- **Satu pesan gagal tidak menghentikan sisanya.** Tiap pesan punya try/catch
+  sendiri; alasannya dicatat di log **dan** dikembalikan sebagai daftar
+  `gagal` dari `runTriggers()`.
+- **Pesan tanpa channel tujuan dilaporkan**, bukan dilewati diam-diam — itu
+  kesalahan penyusunan yang membuat admin bertanya "kenapa tidak pernah muncul".
+- **Nilai pemicu asing dibaca sebagai manual** (`parseTrigger`), bukan
+  diteruskan: pemicu tak dikenal akan membuat pesan diam selamanya.
+
+Order di event: sambutan AI (`welcome.ts`) lebih dulu, lalu pesan ber-pemicu.
+Keduanya di try/catch terpisah, jadi kegagalan satu tidak menahan yang lain.
+Sambutan & perpisahan ber-AI **tetap** berjalan sendiri — pemicu di sini tidak
+menggantikannya, karena teks pesan /pesan dikirim apa adanya (template
+`{member.name}` tidak diisi otomatis, sama seperti pengiriman manual).
+
+### Batch 7: diff versi (apa yang berubah dari satu versi ke versi lain)
+
+Discohook tidak punya ini — backup hanya bisa dibandingkan dengan mata. Karena
+di sini riwayat versi tersimpan otomatis tiap kali pesan diubah, pertanyaan yang
+sebenarnya muncul adalah **"versi itu bedanya apa dengan yang sekarang?"**, dan
+jawabannya tidak seharusnya menuntut admin menatap dua blok JSON.
+
+Di tab **Riwayat**, tiap versi punya tombol **Bandingkan**. Panelnya menampilkan:
+
+| Bagian | Isi |
+|---|---|
+| Kepala | `5 perubahan (1 tambah, 2 ubah, 2 pengaturan)` |
+| Rincian | `+ blok 7: tombol ditambahkan`, `− blok 3: gambar dihapus`, `~ blok 1: teks diubah`, `~ warna aksen: #111111 → #222222` |
+| Teks | isi blok teks lama & baru berdampingan, berwarna − / + |
+
+Keputusan yang dipegang:
+
+- **Dibandingkan dengan isi editor, bukan versi tersimpan.** Admin bisa
+  membandingkan versi lama dengan perubahan yang **belum ia simpan** — justru
+  itu momen ia butuh membandingkan. Kalau pembanding memakai data server, ia
+  hanya akan melihat "tidak ada perbedaan" sampai menekan Simpan.
+- **Posisi, bukan LCS.** Blok ditata berurutan dan diubah di tempat, jadi
+  "blok ke-3 berubah" lebih mudah dipahami daripada "satu elemen disisipkan,
+  sisanya bergeser semua". Konsekuensinya jelas dan disebut di sini: menyisipkan
+  satu blok di tengah akan tampil sebagai perubahan pada blok itu dan semua blok
+  sesudahnya.
+- **Blok dibandingkan utuh** (`JSON.stringify`), bukan per field. Field yang lupa
+  dibandingkan membuat perubahan tidak terlihat — dan diff yang tidak bisa
+  dipercaya lebih buruk daripada tidak ada diff.
+- **Pengaturan ikut dihitung:** warna aksen, pengirim, izin ping, nama thread,
+  mode rangkaian, flag pesan.
+
+Snapshot satu versi diambil lewat `GET /api/posts/:id/revisions?revision=<id>`,
+bukan ikut daftar: 20 versi × blok penuh membuat halaman berat, padahal yang
+dibandingkan biasanya satu-dua. Pembandingnya sendiri
+(`diffRingkas`/`ringkasDiff`) ada di JS bersama, fungsi murni tanpa DOM — jadi
+bisa diuji langsung, bukan hanya lewat klik.
+
+### Batch 6: generator kode (`discord.js` v14 & `discord.py` v2)
+
+Discohook bisa mengubah pesan yang sedang disusun menjadi kode bot, supaya
+tampilan yang sudah pas bisa dipakai di kode tanpa menyusun ulang. Di sini sama,
+dengan satu perbedaan yang menentukan benar-salahnya hasil:
+
+- **Diterjemahkan dari payload, bukan dari editor.** Alurnya
+  `blok → buildPostPayload() → toJSON() → generateCodegen()`. Generator tidak
+  pernah membaca state editor, jadi kode yang dihasilkan selalu menggambarkan
+  pesan yang benar-benar terkirim — termasuk tombol role yang tersimpan di
+  database dan komponen yang dilewati penyusun payload.
+- **Yang dilewati dilaporkan, bukan dihilangkan.** Komponen yang belum dikenal
+  generator muncul sebagai komentar di dalam kode
+  (`# komponen tipe 99 belum didukung generator kode …`) dan id-nya masuk
+  `dropped`. Tanpa itu, kode terlihat lengkap padahal satu bagian pesannya
+  hilang.
+
+Bentuk keluaran sama seperti Discohook: `imports`, `code`, `documentation`.
+
+```ts
+import {
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, ContainerBuilder,
+  MessageFlags, SectionBuilder, SeparatorBuilder, SeparatorSpacingSize,
+  TextDisplayBuilder,
+} from 'discord.js';
+
+const view = new ContainerBuilder()
+  .setAccentColor(5793266)
+  .addComponents(
+    new TextDisplayBuilder().setContent("Halo \"dunia\""),
+    new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Large).setDivider(true),
+  );
+
+await channel.send({
+  components: [view],
+  // Components V2: pesan komponen wajib membawa flag ini
+  flags: MessageFlags.IsComponentsV2,
+});
+```
+
+Hal-hal kecil yang dijaga generator:
+
+| Masalah | Perlakuan |
+|---|---|
+| Teks memuat `"`, `\`, baris baru, tab | Di-escape (`\"`, `\\`, `\n`, `\t`) — satu karakter saja lolos membuat kode hasil salin tidak bisa dijalankan |
+| Import hanya yang terpakai | Dikumpulkan lewat satu himpunan saat menelusuri komponen; `MessageFlags` selalu ikut karena flag-nya ikut dikirim |
+| Array kosong berakhir `,]` | Koma hanya ditempel di baris terakhir tiap blok, dan komentar tidak pernah diberi koma |
+| Komentar di dalam kode `discord.js` | Ditulis `// …` dan berdiri di barisnya sendiri — `.addComponents(# …)` bukan JavaScript yang sah |
+| `discord.py` memakai `ui.` | `ui.Container([...])`, `ui.TextDisplay(...)`, `discord.ui.Button/Select`, `discord.MediaGalleryItem` |
+| Gaya tombol | `ButtonStyle.Primary/Secondary/Success/Danger/Link` (djs), angka `discord.ButtonStyle.*` (dpy) |
+| Pesan tanpa komponen | Penjelasan singkat, bukan kode setengah jadi |
+
+Di dashboard panel ini ada di tab **Impor** → **JSON payload & generator kode**.
+Tombol **Muat payload** mengambil `/api/posts/:id/json?library=djs14|dpy2`, lalu
+menampilkan dua kotak: payload JSON (untuk diperiksa/ditempel ke REST API) dan
+kode. Pesannya harus **sudah tersimpan** — payload dihitung dari baris database,
+bukan dari isian yang belum disimpan, karena itulah yang dikirim bot.
+
+Endpoint-nya satu dan tidak mengirim apa pun ke Discord:
+
+```http
+GET /api/posts/12/json?library=dpy2
+→ { "flags": 32768, "components": [ … ], "dropped": [],
+    "codegen": { "imports": "…", "code": "…", "documentation": "…" } }
+```
+
+### Batch 4d: jadwal cron (per hari, per hari-pekan, per tanggal)
+
+Discohook menjadwalkan backup dengan ekspresi cron lewat `cron-parser`, dengan
+batas "paling rapat sekali per 2 jam". Yang ada di sini sama, dengan dua
+perbedaan yang disengaja:
+
+- **Parser ditulis sendiri** (`src/features/schedule-cron.ts`, ±250 baris) alih-alih
+  menambah dependensi. Yang dibutuhkan hanya "kapan waktu berikutnya", dan bot
+  ini hanya mengenal tiga zona Indonesia yang offsetnya tetap. Kesalahan pola
+  bisa dijelaskan dalam bahasa manusia — "ruas menit bernilai 60 — harus 0-59",
+  bukan sekadar "invalid cron".
+- **Zona waktu server, bukan zona akun.** Discohook menyimpan `timezone` per
+  backup karena penggunanya bisa di mana saja. Di sini jadwal selalu memakai
+  zona server (WIB/WITA/WIT), karena pesan yang dikirim ke channel server
+  dibaca orang-orang di server itu. Offsetnya **disimpan bersama jadwal**
+  (`cron_offset`), jadi mengubah zona server tidak diam-diam menggeser jadwal
+  yang sudah ada.
+
+Format: lima ruas `menit jam tanggal bulan hari`. Didukung: angka, daftar
+(`1,3,5`), rentang (`1-5`), langkah (`*/10`, `1-30/5`), `*`, serta singkatan
+`mon..sun` dan `jan..dec`. Tidak didukung (dan ditolak dengan alasan): detik,
+`?`, `L`, `W`, `#`.
+
+Aturan hari-vs-tanggal mengikuti cron klasik: kalau KEDUA ruas dibatasi, jadwal
+cocok bila salah satunya cocok; kalau salah satu `*`, yang dibatasi harus cocok.
+Tanpa aturan ini `0 9 * * 1` (tiap Senin) dan `0 9 1 * *` (tiap tanggal 1) tidak
+bisa dibedakan.
+
+Yang dilaporkan, bukan didiamkan:
+
+| Kejadian | Yang terjadi |
+|---|---|
+| Pola salah ketik (`60 9 * * *`) | ditolak, alasan ditampilkan di dashboard |
+| Lebih rapat dari 2 jam (`*/30 * * * *`) | ditolak, jarak sebenarnya disebut |
+| Tanggal mustahil (`0 0 30 2 *`) | ditolak — jadwal itu tidak akan pernah berbunyi |
+| Pola berhenti berbunyi setelah tersimpan (mis. 29 Feb) | baris jadwal dihapus + peringatan di log, bukan diperiksa selamanya |
+
+`dueAt` untuk jadwal cron **dihitung server** dari ekspresinya. Klien yang
+mengirim `dueAt` ngawur (tahun 2000, tahun 2099) tidak bisa memaksa jadwal —
+nilai itu diabaikan.
+
+Di dashboard: pemilih **Mode: kalender** di kartu jadwal, daftar pola siap pakai
+(tiap hari 09:00, tiap Senin, Senin–Jumat, tanggal 1, tanggal 1 & 15, Minggu,
+1 Januari), plus isian teks untuk pola lain. Pemeriksaan bentuk juga dilakukan di
+browser supaya salah ketik ketahuan sebelum Simpan; keputusan akhir tetap di
+server.
+
+### Batch 4c: SendRawMessage & hapus pesan hasil aksi sebelumnya
+
+**Kirim teks biasa (`raw`).** Padanan `SendRawMessage` Discohook. Isinya `content`
+bebas (bukan blok container) dan boleh memakai templat yang sudah ada —
+`{member.name}`, `{member.mention}`, `{server.name}`, `{selected}`, `{var.*}`.
+Template diisi SEBELUM dikirim; kalau hasil akhirnya kosong (mis. variabel yang
+dirujuk tidak ada), aksi dilewati dengan laporan alih-alih mengirim pesan kosong
+yang pasti ditolak Discord. Channel tujuan opsional: kosong = channel pesan
+pemicu, dan ID yang bukan angka dilaporkan sebagai `dropped`.
+
+Kenapa tidak cukup memakai "kirim pesan tersimpan": pesan singkat seperti
+"Sedang diproses…" tidak perlu disusun sebagai dokumen container, dan menyusun
+dokumen baru hanya untuk satu baris teks membuat daftar pesan penuh oleh pesan
+sekali pakai.
+
+**Hapus pesan bertarget.** Aksi hapus kini punya dua sasaran:
+
+| Sasaran | Yang dihapus |
+|---|---|
+| `pesan` (bawaan) | pesan yang memuat komponen pemicu — perilaku lama, tidak berubah |
+| `sebelumnya` | pesan yang DIKIRIM aksi kirim terakhir di flow yang sama |
+
+Discohook menghapus lewat variabel `messageId` yang disusun admin; di sini satu
+pilihan itu cukup karena hasil aksi terakhir selalu yang paling masuk akal untuk
+dihapus, dan tidak perlu menyuruh admin mengingat nama variabel. Sesudah
+dihapus, `messageId` di hasil dikosongkan supaya aksi hapus berikutnya tidak
+mencoba menghapus pesan yang sama (Discord menjawab 404) dan melaporkan "tidak
+ada yang bisa dihapus".
+
+Kalau tidak ada yang bisa dihapus (belum ada aksi kirim, atau pesan sudah hilang),
+flow **berhenti** dengan penjelasan ke pengklik — sama seperti Discohook yang
+menggagalkan flow saat `messageId` kosong, bedanya di sini alasannya
+diberitahukan lebih dulu.
+
+### Batch 4b: riwayat versi & tautan berbagi
+
+Discohook punya tombol undo di editor dan tautan share untuk membuka backup di
+browser lain. Keduanya sudah ada di sini, dengan dua perbedaan yang disengaja.
+
+**Riwayat versi — dibuat otomatis, bukan tombol.** Setiap kali pesan disimpan
+atau dikirim ulang, isi SEBELUM perubahan dicatat lebih dulu (tabel
+`post_revisions`) — sampai 20 versi per pesan, versi terlama dibuang. Tombol
+"simpan versi" tidak ada karena admin tidak akan ingat menekannya, dan riwayat
+yang bolong lebih berbahaya daripada tidak punya riwayat: saat sadar salah ubah,
+versi yang dibutuhkan justru tidak ada.
+
+Mengembalikan versi lama **tidak menghapus versi terbaru** — isi sekarang ikut
+tercatat sebagai versi baru, sehingga "kembalikan" bisa dibalik lagi. Yang
+dikembalikan: blok, warna aksen, pengirim, flag, pengaturan multi-pesan, izin
+ping, dan nama thread. Yang TIDAK dikembalikan: channel tujuan dan tombol/menu
+role (keduanya tabel sendiri dengan alasan yang berbeda — lihat catatan di
+bawah).
+
+Kalau pencatatan versi gagal (mis. database penuh), penyimpanan pesannya tetap
+jalan dan kegagalannya masuk log sebagai peringatan. Membatalkan penyimpanan
+hanya karena riwayat gagal akan membuat admin kehilangan perubahannya.
+
+**Tautan berbagi.** Tombol "Buat tautan" menghasilkan alamat
+`/bagi/<token>` yang bisa dibuka **tanpa login**. Isinya sengaja dibatasi:
+hanya nama dan blok pesan. Channel, ID pesan, daftar role, dan nama server
+tidak ikut — tautan ini bisa diteruskan ke siapa saja. Token acak 22 karakter,
+disimpan di tabel `post_shares`, dan bisa dicabut kapan saja (halaman langsung
+404). Membuka tautan dua kali menghasilkan token yang sama, supaya admin tidak
+menumpuk tautan untuk pesan yang sama.
+
+Halaman `/bagi/…` juga menyusun HTML-nya sendiri, bukan memakai shell dashboard:
+isi pesan di-escape, dan hanya URL `http(s)` yang dijadikan tautan — URL
+`javascript:` tampil sebagai teks. Tanpa dua hal itu, tautan berbagi menjadi
+jalan masuk script ke halaman tanpa login.
+
+Yang belum: membandingkan dua versi berdampingan (diff), dan riwayat untuk
+dokumen multi-pesan (baru untuk pesan tunggal).
+
+### Batch 4a: allowed_mentions, thread_name, default_values
+
+**Izin ping (`allowed_mentions`).** Tiga centang: pengguna, role, `@everyone`/
+`@here`. Bawaannya **tanpa ping apa pun** (`parse: []`), dan itu keputusan yang
+disengaja: pesan buatan admin paling sering berisi `@everyone` yang tidak
+dimaksud, dan ping massal tidak bisa ditarik kembali. Kolom database yang
+rusak/kosong juga dibaca sebagai "tanpa ping", bukan "semua boleh" — arah salah
+yang dipilih sengaja: salah baca ke arah aman hanya membuat ping tidak terjadi.
+
+Memperbarui pesan TANPA mengirim `allowedMentions` mempertahankan izin lama
+(bukan meresetnya), dan mengirim `{parse: []}` mematikannya secara sengaja.
+
+**`thread_name`.** Pesan bisa langsung membuka thread. Discord membuat thread
+SESUDAH pesan terkirim, jadi nilainya dipakai lapisan pengirim, bukan payload
+komponen. Kalau thread gagal dibuat, pesannya TETAP terkirim dan kegagalannya
+dilaporkan — membuang pesan hanya karena thread gagal akan menghilangkan isi
+yang sudah disusun admin.
+
+**`default_values`.** Daftar ID pilihan bawaan untuk select user/role/
+mentionable/channel. Discord menolak `default_values` pada select string, jadi
+di sana isiannya tidak ditampilkan (bukan ditampilkan lalu diabaikan). Menu
+single-select hanya menyimpan satu nilai bawaan — Discord menolak lebih dari
+satu, dan yang dipakai yang pertama dengan alasan yang dilaporkan.
+
+### Batch 3: multi-pesan (padanan `messages[]`)
+
+Discohook menyimpan BEBERAPA pesan dalam satu backup; flow dan aksi bisa
+mengirim salah satunya lewat `backupMessageIndex`, dan tiap pesan boleh
+`reference` ke pesan lain serta membuka thread sendiri. Sebelumnya di sini satu
+dokumen selalu satu pesan, sehingga dokumen hasil impor Discohook yang berisi
+lima pesan hanya bisa dilihat di layar: begitu halaman ditutup, empat pesan
+lainnya hilang.
+
+Yang sekarang ada (tab **Multi-pesan**):
+
+- **Sampai 20 pesan per dokumen**, disimpan di tabel `post_documents`
+  (payload JSON utuh, bukan kolom per field — bentuk blok dipakai bersama
+  editor satu-pesan, dan menyalinnya ke kolom akan menjadi dua sumber
+  kebenaran).
+- **`reference` antar pesan**: pesan bisa membalas pesan lain DI DALAM dokumen
+  yang sama. Rujukan ke pesan lain yang tidak ikut dikirim dilepas dengan
+  alasan, karena rujukan seperti itu membuat pengiriman gagal di tengah
+  rangkaian — pesan pertama terkirim, sisanya tidak.
+- **Urutan kirim dijamin**: pesan yang membalas selalu dikirim sesudah pesan
+  yang dibalas, walau urutannya terbalik di dokumen. Urutan yang sudah benar
+  tidak diubah.
+- **Rujukan melingkar** (A balas B, B balas A) dilepas dan dilaporkan: Discord
+  menetapkan rujukan saat pesan dibuat, jadi salah satu harus lebih dulu ada.
+- **Thread per pesan**: pesan yang menyebut nama thread langsung membuka thread
+  sesudah pesan itu terkirim.
+- **Kegagalan satu pesan tidak menghentikan sisanya**, tetapi dilaporkan per
+  pesan (nama + alasan). Rangkaian yang berhenti di tengah meninggalkan cerita
+  menggantung, dan admin tidak punya cara mengirim ulang satu pesan saja.
+- **Kirim berurutan** (centang di tab): pesan pertama biasa, sisanya balasan —
+  bentuk "postingan berantai" ala Discohook.
+
+Endpoint-nya `/api/post-groups` (bukan `/api/documents`, yang sudah dipakai
+dokumen RAG untuk halaman /dokumen — dua rute dengan nama sama berarti yang
+kedua tidak akan pernah tercapai, dan halaman Multi-pesan akan menampilkan
+daftar kosong tanpa satu pun error).
+
+Yang **masih** belum setara dari model multi-pesan Discohook:
+
+- `thread_id` untuk mengirim pesan KE thread yang sudah ada (di sini thread
+  selalu dibuat baru).
+- Mengirim satu pesan tertentu dari dokumen lewat aksi flow
+  (`backupMessageIndex`): aksi `message` di sini selalu mengirim pesan
+  `custom_posts`, bukan pesan ke-N sebuah dokumen.
+
+### Batch 2 (tutup selisih berikutnya)
+
+Yang ditambahkan sesudah tabel di atas disusun:
+
+**Syarat bertingkat.** Bentuknya bukan JSON pohon-fungsi seperti Discohook,
+melainkan objek dengan `type`: `leaf` (pembanding datar), `and`, `or`, `not`,
+`in`. Alasannya: admin menulis di dashboard, bukan menempel JSON, dan bentuk
+datar lebih mudah dibaca di kotak bersarang. Semantiknya sama:
+
+- `and` — semua anak benar, minimal satu anak;
+- `or` — sedikitnya satu anak benar;
+- `not` — SEMUA anak salah (NOR). `not` berisi satu syarat = "bukan X";
+- `in` — nilai ada di daftar (pencocokan persis, bukan "mengandung").
+
+`and`/`or` tanpa anak DIBUANG dengan alasan; `not` tanpa anak dipertahankan
+(vakum benar) karena begitulah Discohook, dan berguna untuk cabang "selain itu".
+
+**CreateThread lengkap.** Lama arsip divalidasi terhadap daftar Discord (60,
+1440, 4320, 10080) — angka lain dibuang dengan alasan, bukan dibulatkan
+diam-diam. Tag forum membuat bot memperlakukan channel sebagai forum. Setelan
+yang tidak sah tidak membatalkan aksinya: thread tetap dibuat dengan setelan
+bawaan, dan admin diberi tahu.
+
+**SendWebhookMessage.** Aksi `webhook` mengirim pesan tersimpan lewat webhook.
+Bedanya dengan Discohook: webhook TIDAK dipilih per aksi dari daftar akun.
+Webhook dibuat/dipakai ulang per channel tujuan (token terenkripsi di
+`post_webhooks`), jadi tidak ada rahasia baru yang perlu admin salin. Kalau
+pesannya punya tombol/menu role, komponennya tidak ikut dan itu dilaporkan.
+
+**Bug yang ketahuan tes baru (dan sudah diperbaiki).** Balasan yang berada di
+DALAM cabang bersyarat tidak dihitung sebagai balasan, sehingga member menerima
+jawaban cabang lalu "✅ Selesai." sesudahnya. Pemeriksaannya sekarang rekursif.
+
+Yang **sengaja berbeda** dan lebih ketat dari Discohook:
+
+- Aksi role diperiksa lebih dulu (`roleBlocker`) dan kegagalannya menghentikan flow —
+  Discohook menitipkan izin ke *responsible user*; di sini yang menentukan adalah izin bot
+  plus hierarki role, dan alasannya disebutkan ke member.
+- Setiap bagian yang dilewati (komponen, berkas, aksi tidak sah) dilaporkan, bukan hilang diam-diam.
+- Aksi pada pesan webhook ditolak di muka, karena Discord mengirim interaksi ke aplikasi
+  pemilik komponen — bukan ke bot kita.
+
+### Jadwal kirim
+
+Tab **Role** punya panel **Jadwal kirim otomatis** untuk pesan yang sedang dibuka.
+
+| Hal | Bagaimana ditangani |
+|---|---|
+| Sekali / berulang | pilih "Sekali kirim" atau ulang tiap 2 jam – 7 hari; pengulangan lebih rapat dari 2 jam dinaikkan ke batas dan dilaporkan |
+| Pesan baru | jadwal **selalu** mengirim pesan baru, bukan memperbarui yang lama |
+| Jam | memakai jam komputermu (`datetime-local` dibaca sebagai waktu lokal, bukan UTC) |
+| Bot mati saat waktunya tiba | dikirim begitu bot hidup lagi |
+| Bot mati berhari-hari | jadwal berulang digeser dari waktu **kirim sekarang**, jadi tidak memuntahkan puluhan pesan susulan |
+| Pesan/channel hilang | jadwal dihentikan dan alasannya dicatat di log |
+| Batas | 10 jadwal per pesan; jadwal di masa lampau ditolak |
+
+Jadwal ikut terhapus saat pesannya dihapus, jadi tidak ada jadwal yatim yang mencoba
+mengirim pesan yang sudah tidak ada.
 
 ---
 
@@ -358,6 +2001,7 @@ menyamarkan dirinya sebagai server.
 | Webhook baru | dibuat sekali per channel, lalu dipakai ulang |
 | Webhook dihapus orang | bot mendeteksi dan membuat yang baru, tidak gagal terus |
 | Tombol & menu ambil role | **tidak bisa** dipakai di pesan webhook — ditolak dengan penjelasan |
+| Select menu (blok **Select menu**) | **tampil**, tetapi pilihannya tidak dijawab bot — Discord mengirim interaksi ke pemilik komponen, yaitu webhook itu sendiri. Dashboard memberi catatan setelah mengirim |
 
 **Kenapa tombol/menu role tidak bisa:** Discord mengirim interaksi komponen ke
 aplikasi *pengirim* komponen. Kalau pesan dikirim webhook, tidak ada aplikasi
@@ -379,6 +2023,17 @@ tidak bisa dibuka lagi — bot akan membuat webhook baru otomatis.
   tidak bisa menyuntik HTML.
 - Menghapus pesan dari dashboard **tidak** menghapus pesan yang sudah terkirim di
   Discord, kecuali diminta lewat `DELETE /api/posts/:id?withMessage=1`.
+- Select menu dari blok **Select menu** memakai customId
+  `post-ctx:<postId>:<jenis>`. ID pesan disertakan supaya aksi komponen bisa
+  dicari pasti — tanpa itu, dua pesan yang sama-sama punya select berjenis
+  `role` tidak bisa dibedakan. Pesan lama yang masih memakai bentuk pendek
+  `post-ctx:<jenis>` tetap dikenali. Kalau menunya tidak punya aksi, router
+  menjawab ephemeral ("menu ini hanya tampilan"), sehingga memilih tidak pernah
+  memunculkan "interaksi gagal". Prefix ini sengaja dipisah dari `post-menu:`
+  milik dropdown role.
+- Respons `POST /api/posts/:id/send` ikut membawa `dropped` (komponen yang
+  dilewati penyusun payload) dan `droppedFiles` (berkas yang gagal diunduh),
+  kalau ada. Dashboard memakainya untuk memberi peringatan setelah kirim.
 
 ### Endpoint
 
@@ -389,8 +2044,17 @@ tidak bisa dibuka lagi — bot akan membuat webhook baru otomatis.
 | `POST` | `/api/posts/:id/send` | kirim, atau perbarui pesan Discord yang sudah ada |
 | `DELETE` | `/api/posts/:id` | hapus dari dashboard |
 | `DELETE` | `/api/posts/:id?withMessage=1` | hapus dari dashboard **dan** dari Discord |
-| `PUT` | `/api/posts/:id/roles` | ganti seluruh tombol **dan** menu ambil role pesan (`{ buttons, menus }`) |
+| `PUT` | `/api/posts/:id/roles` | ganti seluruh tombol, menu ambil role, **dan** aksi komponen pesan (`{ buttons, menus, actions }`) |
+| `PUT` | `/api/posts/:id/schedules` | ganti seluruh jadwal kirim pesan (`{ schedules: [{ dueAt, repeatMinutes }] }`) |
+| `GET` | `/api/posts/:id/revisions` | daftar versi lama (`{ revisions: [{ id, name, snapshot, createdAt }] }`) |
+| `POST` | `/api/posts/:id/revisions` | kembalikan satu versi (`{ revisionId }`) |
+| `POST` | `/api/posts/:id/share` | buat (atau pakai ulang) tautan berbagi (`{ token }`) |
+| `DELETE` | `/api/posts/:id/share` | cabut semua tautan berbagi pesan itu |
+| `GET` | `/bagi/:token` | **halaman publik** pratinjau pesan yang dibagikan (tanpa login) |
 | `GET` | `/api/roles` | daftar role server + alasan tidak bisa dibagi |
+| `POST` | `/api/posts/import/discohook` | terjemahkan tautan/JSON Discohook jadi blok (`{ url }` atau `{ json }`) |
+| `POST` | `/api/posts/load` | muat pesan Discord yang sudah terkirim jadi blok (`{ url }` berisi Message Link) |
+| `POST` | `/api/posts/from-json` | muat satu pesan dari JSON mentah (`{ json }`) — padanan JSON Data Editor |
 
 Kalau bot sedang offline, tombol kirim dinonaktifkan dan permintaan kirim
 dijawab `400` dengan pesan yang jelas — bukan `500`.
@@ -414,7 +2078,70 @@ Kalau `menus` **tidak dikirim**, menu yang sudah ada dibiarkan apa adanya —
 supaya klien lama yang hanya mengirim `buttons` tidak menghapus dropdown tanpa
 sengaja. Untuk menghapus semua menu, kirim `"menus": []`.
 
+Kunci `actions` memakai bentuk yang sama: tidak dikirim = aksi dibiarkan,
+dikirim sebagai objek = mengganti seluruh aksi pesan itu.
+
+```json
+{
+  "actions": {
+    "button:12": [
+      { "kind": "role", "roleId": "456...", "op": "toggle" },
+      { "kind": "reply", "text": "✅ Role {role} sudah {effect}!", "hidden": true }
+    ],
+    "option:30": [{ "kind": "role", "roleId": "789...", "op": "give" }],
+    "select:role": [{ "kind": "reply", "text": "Menu role dipakai", "hidden": true }],
+    "sel:gamer": [{ "kind": "reply", "text": "Kamu memilih gamer" }],
+    "button:40": [
+      { "kind": "variable", "name": "kode", "value": "{member.id}" },
+      { "kind": "condition", "value": "var.kode", "comparator": "notEmpty" },
+      { "kind": "wait", "seconds": 300 },
+      { "kind": "reply", "text": "Pengingat untuk {member.name}" }
+    ]
+  }
+}
+```
+
+Target yang dikenali:
+
+| Kunci | Arti |
+|---|---|
+| `button:<id>` | satu tombol role |
+| `option:<id>` | satu pilihan dropdown role |
+| `select:<jenis>` | semua blok Select berjenis itu (cadangan) |
+| `sel:<nilai>` | satu pilihan blok Select string, berdasarkan nilainya |
+
+Aksi yang tidak sah dibuang dan alasannya muncul di `dropped`.
+
 ### Tabel database
+
+`custom_posts.trigger` menyimpan pemicu event (`member_add`/`member_remove`,
+NULL = hanya manual). Tidak ada tabel baru: pemicu adalah sifat pesannya.
+
+`custom_posts.webhook_name` dan `webhook_avatar` menyimpan identitas pengirim
+webhook per pesan (NULL = identitas server). Keduanya hanya dibaca saat pesan
+dikirim lewat webhook; lewat bot, nama & avatar ditentukan Discord.
+
+`custom_posts.embed` menyimpan bagian embed klasik (penulis, footer, bidang, URL
+judul, stempel waktu) sebagai JSON **berisi daftar** sampai 10 elemen, NULL =
+tidak ada. Data lama berisi satu objek dan tetap terbaca (penyaring menerima
+keduanya), jadi tidak perlu migrasi isi. Bentuknya sengaja datar —
+bukan tabel bidang terpisah — karena bagian ini selalu dibaca & ditulis sebagai
+satu kesatuan bersama pesannya.
+
+Tabel jadwal menyimpan tiga kolom tambahan: `cron` (ekspresi lima ruas, NULL =
+jadwal lama tiap N menit), `cron_offset` (offset zona saat jadwal dibuat), dan
+`due_at` yang untuk jadwal cron selalu dihitung ulang dari ekspresinya.
+
+Tabel riwayat & tautan berbagi:
+
+| Tabel | Isi |
+|---|---|
+| `post_revisions` | satu baris = satu versi isi pesan SEBELUM diubah (`payload` JSON: blok, aksen, pengirim, flag, series, izin ping, nama thread). Dibatasi 20 baris per pesan (`HISTORY_LIMITS.perPost`), dibuang saat menulis |
+| `post_shares` | satu baris = satu tautan berbagi (`token` acak sebagai kunci utama) |
+
+Keduanya ikut terhapus saat pesannya dihapus, dan keduanya memakai kolom
+`guild_id` + `post_id` (bukan foreign key) supaya tetap berperilaku sama di
+SQLite maupun Postgres.
 
 | Tabel | Isi |
 |---|---|

@@ -48,26 +48,81 @@ import {
   setPersona,
   listCustomPosts,
   getCustomPost,
+  parseTrigger,
+  type PostLayout,
+  type PostTrigger,
   createCustomPost,
   updateCustomPost,
   deleteCustomPost,
   setCustomPostMessage,
+  setCustomPostTarget,
   listRoleButtons,
   listRoleMenus,
   replaceRoleButtons,
   replaceRoleMenus,
+  listPostActions,
+  replacePostActions,
+  listSchedules,
+  replaceSchedules,
+  listPostDocuments,
+  getPostDocument,
+  savePostDocument,
+  deletePostDocument,
+  listPostRevisions,
+  restorePostRevision,
+  listPostTargets,
+  replacePostTargets,
+  setPostTargetMessage,
+  createPostShare,
+  deletePostShare,
+  getSharedPost,
 } from '../db/repo.js';
 import { invalidateModerationCache } from '../features/moderation.js';
-import { listPanelChannels, PanelError, publishPanel, removePanel } from '../features/panel.js';
+import {
+  listKirimTargets,
+  listPanelChannels,
+  PanelError,
+  publishPanel,
+  removePanel,
+} from '../features/panel.js';
 import {
   deletePostMessage,
   PostSendError,
+  sendPostSeries,
   sendOrUpdatePost,
+  sendOrUpdateEmbedPost,
+  sendToTargets,
   sendOrUpdatePostViaWebhook,
+  identitasPost,
   webhookIdentityFor,
+  periksaTujuan,
 } from '../features/custom-post-send.js';
-import { measureBlocks, normalizeAccent, sanitizeBlocks } from '../features/custom-post.js';
+import {
+  measureBlocks,
+  normalizeAccent,
+  sanitizeBlocks,
+  sanitizeMessageFlags,
+  type PostBlock,
+} from '../features/custom-post.js';
+import {
+  discohookShareApiUrl,
+  looksLikeDiscohook,
+  parseDiscohookDataLink,
+  parseDiscohookShare,
+  parseDiscohookShareId,
+} from '../features/discohook-import.js';
+import { messageToDraft, parseMessageLink, type LoadedMessage } from '../features/message-load.js';
 import { listGuildRoles } from '../features/role-buttons.js';
+import { sharePage } from './ui/share.js';
+import { payloadUntukPesan } from '../features/custom-post-send.js';
+import {
+  buildClassicEmbeds,
+  embedAttachments,
+  flagsUntukEmbed,
+  validateEmbeds,
+} from '../features/post-embed.js';
+import { CODEGEN_LIBRARIES, generateCodegen, generateEmbedCodegen } from '../features/post-codegen.js';
+import { ACTION_LIMITS } from '../features/post-actions.js';
 import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
 import {
   previewAgentReply,
@@ -172,6 +227,72 @@ function readRawBody(request: IncomingMessage, limit: number): Promise<Buffer> {
 
 function readBody(request: IncomingMessage, limit: number): Promise<string> {
   return readRawBody(request, limit).then((buffer) => buffer.toString('utf8'));
+}
+
+/**
+ * Kirim pesan yang sama ke channel tambahan, lalu simpan ID pesan per channel.
+ *
+ * Dibungkus di satu tempat supaya jalur embed dan jalur container memakai
+ * aturan yang SAMA: gagal di satu channel dilaporkan per channel, dan ID pesan
+ * yang berhasil disimpan supaya pengiriman berikutnya memperbarui pesan lama
+ * di channel itu alih-alih menumpuk salinan.
+ */
+async function kirimTarget(options: {
+  client: Client;
+  guildId: string;
+  postId: number;
+  kirim: (channelId: string, messageId: string | null) => Promise<{ messageId: string; edited: boolean; dropped?: string[] }>;
+}): Promise<Array<{ channelId: string; messageId?: string; error?: string }>> {
+  const targets = await listPostTargets(options.guildId, options.postId);
+  if (targets.length === 0) return [];
+  /*
+   * Tujuan diperiksa lebih dulu, per channel: pemeriksaan yang sama dengan
+   * channel utama, supaya galatnya menyebut izin & channelnya, bukan
+   * "Missing Permissions".
+   */
+  const diperiksa: Array<{ channelId: string; messageId: string | null }> = [];
+  const gagalCek: Array<{ channelId: string; error: string }> = [];
+  for (const target of targets) {
+    const cek = await periksaTujuan(options.client, target.channelId);
+    if (cek.ok) diperiksa.push(target);
+    else gagalCek.push({ channelId: target.channelId, error: cek.alasan });
+  }
+
+  const hasil = await sendToTargets({
+    client: options.client,
+    targets: diperiksa,
+    kirim: options.kirim,
+  });
+  hasil.hasil.push(...gagalCek);
+  for (const satu of hasil.hasil) {
+    if (satu.messageId) {
+      await setPostTargetMessage(options.guildId, options.postId, satu.channelId, satu.messageId);
+    }
+  }
+  return hasil.hasil;
+}
+
+/**
+ * Ringkasan satu baris isi blok — dipakai daftar riwayat versi.
+ *
+ * Hanya jenis blok yang dihitung, bukan isinya: yang dicari admin di daftar
+ * versi adalah "yang mana tadi yang ada tombolnya", bukan teks lengkapnya.
+ */
+function summarize(blocks: PostBlock[]): string {
+  const hasil: string[] = [];
+  let teks = 0;
+  let tombol = 0;
+  let gambar = 0;
+  for (const blok of blocks) {
+    if (blok.kind === 'text' || blok.kind === 'section') teks += 1;
+    else if (blok.kind === 'button') tombol += 1;
+    else if (blok.kind === 'image' || blok.kind === 'file') gambar += 1;
+  }
+  if (teks) hasil.push(`${teks} teks`);
+  if (tombol) hasil.push(`${tombol} tombol`);
+  if (gambar) hasil.push(`${gambar} media`);
+  if (blocks.some((blok) => blok.kind === 'select')) hasil.push('menu pilihan');
+  return hasil.join(' · ') || '(kosong)';
 }
 
 function sendJson(response: ServerResponse, status: number, payload: unknown): void {
@@ -335,6 +456,46 @@ function hasSession(request: IncomingMessage): boolean {
  * `GUILD_ID` dari `.env`. Kalau kosong, bot memang tidak pernah sampai ke sini
  * karena config menolak start.
  */
+/**
+ * Rapikan izin ping dari dashboard.
+ *
+ * Hanya tiga jenis yang dikenal Discord. Yang tidak dikenal DIBUANG, dan
+ * daftar kosong berarti "tanpa ping" — arah yang aman: salah baca ke arah ini
+ * hanya membuat ping tidak terjadi, sedangkan arah sebaliknya bisa memicu ping
+ * massal yang tidak bisa ditarik kembali.
+ */
+function sanitizeAllowedMentions(value: unknown): { parse: Array<'users' | 'roles' | 'everyone'> } {
+  const isi = value && typeof value === 'object' ? (value as { parse?: unknown }) : {};
+  const daftar = Array.isArray(isi.parse) ? isi.parse : [];
+  const sah: Array<'users' | 'roles' | 'everyone'> = [];
+  for (const satu of daftar) {
+    if (satu === 'users' || satu === 'roles' || satu === 'everyone') {
+      if (!sah.includes(satu)) sah.push(satu);
+    }
+  }
+  return { parse: sah };
+}
+
+/**
+ * Pemicu event dari dashboard.
+ *
+ * Nilai asing dibaca sebagai `null` (hanya manual), bukan diteruskan: pemicu
+ * yang tidak dikenal akan membuat pesan diam selamanya tanpa pesan galat.
+ */
+function sanitizeLayout(value: unknown): PostLayout | null {
+  return value === 'embed' ? 'embed' : value === 'container' ? 'container' : null;
+}
+
+function sanitizeTrigger(value: unknown): PostTrigger | null {
+  return parseTrigger(typeof value === 'string' ? value : null);
+}
+
+/** Nama thread dari dashboard: dipotong ke batas Discord, kosong = null. */
+function sanitizeThreadName(value: unknown): string | null {
+  const teks = typeof value === 'string' ? value.trim().slice(0, 100) : '';
+  return teks ? teks : null;
+}
+
 function resolveGuild(): string {
   return config.discord.homeGuildId;
 }
@@ -434,6 +595,39 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     const sessionId = parseCookies(request.headers.cookie)[SESSION_COOKIE];
     if (sessionId) sessions.delete(sessionId);
     redirect(response, '/login', `${SESSION_COOKIE}=; Path=/; HttpOnly; Max-Age=0`);
+    return;
+  }
+
+  /*
+   * Tautan berbagi: halaman PUBLIK, tanpa login.
+   *
+   * Diletakkan SEBELUM pemeriksaan sesi — itu intinya. Isinya sengaja hanya
+   * blok pesan (tanpa ID channel/pesan, tanpa daftar role, tanpa kaitan ke
+   * server mana pun), karena tautan ini bisa dibuka siapa saja yang punya
+   * alamatnya. Token acak dan bisa dicabut admin kapan saja.
+   */
+  const shareMatch = /^\/bagi\/([A-Za-z0-9_-]{8,64})$/.exec(path);
+  if (shareMatch && method === 'GET') {
+    const dibagikan = await getSharedPost(shareMatch[1]!).catch((): null => null);
+    if (!dibagikan) {
+      sendHtml(
+        response,
+        404,
+        sharePage({ name: '', blocks: [], layout: 'container', embed: [], notFound: true }),
+      );
+      return;
+    }
+    sendHtml(
+      response,
+      200,
+      sharePage({
+        name: dibagikan.name,
+        blocks: dibagikan.blocks,
+        layout: dibagikan.layout,
+        embed: dibagikan.embed,
+        notFound: false,
+      }),
+    );
     return;
   }
 
@@ -634,11 +828,17 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
   }
 
   if (path === '/pesan' && method === 'GET') {
-    // Daftar channel hanya bisa dibaca saat bot online; di mode dashboard-saja
-    // admin tetap bisa menyimpan pesan, hanya belum bisa mengirim.
-    let channels: Array<{ id: string; name: string }> = [];
+    /*
+     * Daftar TUJUAN kirim: channel teks DAN thread yang sudah ada.
+     *
+     * Hanya channel biasa berarti pengumuman untuk thread rilis/tiket/forum
+     * post tidak bisa dituju dari dashboard — padahal itu padanan `?thread_id=`
+     * di Discohook, dan isian channel di sini berupa pilihan (tidak bisa
+     * menempel ID).
+     */
+    let channels: Array<{ id: string; name: string; thread?: boolean }> = [];
     if (guildId && botClient?.isReady()) {
-      channels = await listPanelChannels(botClient, guildId).catch((error: unknown) => {
+      channels = await listKirimTargets(botClient, guildId).catch((error: unknown) => {
         logger.warn(`Pesan: gagal membaca daftar channel — ${errorMessage(error)}`);
         return [];
       });
@@ -660,7 +860,15 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         options: Array<{ roleId: string; label: string; emoji: string | null; description: string | null }>;
       }>
     > = {};
+    /*
+     * Aksi komponen (versi ringkas flow Discohook). Dimuat bersama tombol &
+     * menu supaya halaman tidak menembak satu permintaan per komponen.
+     */
+    const postActions: Record<number, Record<string, unknown[]>> = {};
+
     for (const post of posts) {
+      const aksi = await listPostActions(guildId, post.id);
+      if (Object.keys(aksi).length > 0) postActions[post.id] = aksi;
       const buttons = await listRoleButtons(guildId, post.id);
       if (buttons.length > 0) {
         roleButtons[post.id] = buttons.map((b) => ({
@@ -690,6 +898,51 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       }
     }
 
+    /** Aksi komponen per pesan, dipakai editor untuk menggambar kartu aksi. */
+    const aksiKomponen = postActions;
+
+    /**
+     * Jadwal kirim per pesan.
+     *
+     * Dimuat bersama daftar pesan supaya editor bisa menampilkan "dikirim
+     * otomatis tiap …" tanpa permintaan tambahan per pesan.
+     */
+    const jadwal: Record<number, Array<{ dueAt: number; repeatMinutes: number; lastSentAt: number | null }>> = {};
+    if (guildId) {
+      for (const post of posts) {
+        const daftar = await listSchedules(guildId, post.id).catch(() => []);
+        if (daftar.length > 0) {
+          jadwal[post.id] = daftar.map((satu) => ({
+            dueAt: satu.dueAt,
+            repeatMinutes: satu.repeatMinutes,
+            lastSentAt: satu.lastSentAt,
+          }));
+        }
+      }
+    }
+
+    /*
+     * Riwayat versi per pesan, dengan ringkasan bloknya.
+     *
+     * Ringkasan dihitung di server karena bentuk blok bisa berbeda-beda
+     * (container, gambar, tombol) dan klien tidak perlu tahu semua bentuk itu
+     * hanya untuk menampilkan satu baris "3 blok: teks, tombol".
+     */
+    const riwayat: Record<number, Array<{ id: number; name: string; createdAt: number; ringkas: string }>> = {};
+    if (guildId) {
+      for (const post of posts) {
+        const daftar = await listPostRevisions(guildId, post.id).catch(() => []);
+        if (daftar.length > 0) {
+          riwayat[post.id] = daftar.map((satu) => ({
+            id: satu.id,
+            name: satu.name,
+            createdAt: satu.createdAt,
+            ringkas: summarize(satu.snapshot.blocks),
+          }));
+        }
+      }
+    }
+
     // Daftar role hanya tersedia saat bot online.
     const roleInfo =
       guildId && botClient?.isReady()
@@ -714,6 +967,14 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
           updatedAt: post.updatedAt,
           accent: post.accent,
           sender: post.sender,
+          trigger: post.trigger,
+          layout: post.layout,
+          flags: post.flags,
+          threadName: post.threadName,
+          allowedMentions: post.allowedMentions,
+          embed: post.embed,
+          webhookName: post.webhookName,
+          webhookAvatar: post.webhookAvatar,
         })),
         channels,
         botReady: Boolean(botClient?.isReady()),
@@ -721,6 +982,18 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         hasManageRoles: roleInfo.hasManageRoles,
         roleButtons,
         roleMenus,
+        postActions: aksiKomponen,
+        aksiLimits: {
+          perKomponen: ACTION_LIMITS.perComponent,
+          countedPerFlow: ACTION_LIMITS.countedPerFlow,
+          messagePerFlow: ACTION_LIMITS.messagePerFlow,
+          branchDepth: ACTION_LIMITS.branchDepth,
+        },
+        schedules: jadwal,
+        revisions: riwayat,
+        // Dokumen multi-pesan: dikirim sekalian supaya tab "Multi-pesan"
+        // bisa dibuka tanpa permintaan tambahan (sama seperti daftar pesan).
+        documents: guildId ? await listPostDocuments(guildId) : [],
         status: dashboardStatus(),
         counts: await navCounts(guildId),
       }),
@@ -1698,7 +1971,617 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
 
+  /**
+   * Impor dari Discohook.
+   *
+   * Dua jalur, satu endpoint, karena keduanya menghasilkan bentuk yang sama
+   * (blok `/pesan` + daftar peringatan):
+   *
+   *   POST /api/posts/import/discohook  { url: "https://discohook.app/?share=xxxx" }
+   *   POST /api/posts/import/discohook  { json: { messages: [...] } }
+   *
+   * Kenapa pengunduhan dilakukan SERVER, bukan browser: Discohook tidak
+   * mengirim header CORS untuk `api/v1/share`, jadi `fetch` dari halaman
+   * dashboard akan ditolak. Server juga menjadi satu-satunya tempat yang bisa
+   * membatasi host tujuan (hanya discohook.app) — tanpa itu endpoint ini
+   * menjadi alat SSRF yang bisa disuruh membaca alamat internal.
+   */
+  if (path === '/api/posts/import/discohook' && method === 'POST') {
+    const payload = await readJsonBody(request, response, 1024 * 1024);
+    if (!payload) return;
+
+    let data: unknown = payload.json ?? null;
+    const sumber = payload.url ?? payload.share ?? '';
+
+    if (typeof sumber === 'string' && sumber.trim()) {
+      /*
+       * Tautan `?data=`/`?message=` membawa isinya sendiri; tidak perlu diunduh
+       * dan tidak terpengaruh masa berlaku share. Diperiksa LEBIH DULU karena
+       * `?data=` juga lolos pemeriksaan ID di bawah (isinya bisa berupa
+       * base64url panjang) dan akan dianggap ID share yang tidak ada.
+       */
+      const langsung = parseDiscohookDataLink(sumber);
+      if (langsung) {
+        data = langsung.data;
+      }
+    }
+
+    if (data === null && typeof sumber === 'string' && sumber.trim()) {
+      const shareId = parseDiscohookShareId(sumber);
+      if (!shareId) {
+        /*
+         * Pesan galat menyebut bentuk tautan yang BENAR-BENAR ada di Discohook:
+         * tombol Share menghasilkan `?data=`, dan panduan lama memakai
+         * `?message=`. Tanpa itu admin hanya melihat "tidak dikenali" untuk
+         * tautan yang jelas berasal dari Discohook.
+         */
+        sendJson(response, 400, {
+          error:
+            'Tautan tidak dikenali. Tempel tautan Discohook (…/?share=… atau …/?data=…), ID share-nya, atau JSON-nya langsung.',
+        });
+        return;
+      }
+      const api = discohookShareApiUrl(shareId);
+      try {
+        const res = await fetch(api, {
+          headers: { accept: 'application/json', 'user-agent': 'ZypherBot/1.0 (+dashboard import)' },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (res.status === 404) {
+          sendJson(response, 400, {
+            error: 'Tautan Discohook itu tidak ditemukan — mungkin sudah kedaluwarsa (tautan share berlaku maksimal 4 minggu).',
+          });
+          return;
+        }
+        if (!res.ok) {
+          sendJson(response, 400, { error: `Discohook menjawab ${res.status}. Coba lagi sebentar.` });
+          return;
+        }
+        data = (await res.json()) as unknown;
+      } catch (error) {
+        logger.warn(`Gagal mengunduh share Discohook ${shareId} — ${errorMessage(error)}`);
+        sendJson(response, 400, {
+          error: 'Tidak bisa menghubungi discohook.app dari server ini. Tempel JSON-nya langsung (Ekspor dari Discohook).',
+        });
+        return;
+      }
+    }
+
+    if (data === null || data === undefined) {
+      sendJson(response, 400, { error: 'Kirim "url" tautan Discohook atau "json" isi ekspornya.' });
+      return;
+    }
+
+    const hasil = parseDiscohookShare(data);
+    if (hasil.messages.length === 0) {
+      sendJson(response, 400, {
+        error: hasil.warnings[0] ?? 'Tidak ada pesan yang bisa diimpor dari data itu.',
+        warnings: hasil.warnings,
+      });
+      return;
+    }
+
+    /*
+     * Setiap pesan dilewatkan sanitizer yang SAMA dengan penyimpanan biasa,
+     * jadi hasil impor tidak bisa menyelipkan blok yang tidak sah — sama
+     * seperti JSON yang ditempel manual di editor.
+     */
+    sendJson(response, 200, {
+      ok: true,
+      format: looksLikeDiscohook(data) ? 'discohook' : 'tidak-dikenal',
+      messages: hasil.messages.map((pesan) => {
+        const bersih = sanitizeBlocks(pesan.blocks);
+        return {
+          name: pesan.name,
+          blocks: bersih.blocks,
+          /*
+           * Bentuk & embed ikut dikirim: impor Discohook yang hanya berisi
+           * embed harus mendarat sebagai embed asli, bukan dikonversi jadi
+           * kartu teks oleh editor.
+           */
+          layout: pesan.layout,
+          embed: pesan.embed,
+          /*
+           * Pengaturan tingkat pesan ikut dikirim dengan NAMA FIELD yang sama
+           * seperti respons /api/posts/load (sender, webhookName, ...), supaya
+           * editor memakai satu penerjemah untuk kedua sumber. Discohook
+           * menyimpannya per pesan; membuangnya di sini berarti impor
+           * menghapus nama pengirim, thread, dan flag diam-diam.
+           */
+          ...(pesan.settings.webhookName || pesan.settings.webhookAvatar
+            ? { sender: 'webhook' as const }
+            : {}),
+          ...(pesan.settings.webhookName ? { webhookName: pesan.settings.webhookName } : {}),
+          ...(pesan.settings.webhookAvatar ? { webhookAvatar: pesan.settings.webhookAvatar } : {}),
+          ...(pesan.settings.threadName ? { threadName: pesan.settings.threadName } : {}),
+          ...(pesan.settings.flags ? { flags: pesan.settings.flags } : {}),
+          warnings: [...pesan.warnings, ...bersih.dropped.map((alasan) => `Blok dibuang: ${alasan}`)],
+          usage: measureBlocks(bersih.blocks),
+        };
+      }),
+      warnings: hasil.warnings,
+    });
+    return;
+  }
+
+  /*
+   * POST /api/posts/load  { url: "https://discord.com/channels/…" }
+   *
+   * Padanan tombol "Load" di Discohook: pesan yang SUDAH ada di Discord
+   * dimuat kembali ke editor supaya bisa disunting lalu dikirim ulang.
+   *
+   * Hanya channel di server ini yang dilayani: bot tidak bisa membaca pesan
+   * server lain, dan memuat pesan server lain ke dashboard ini berarti
+   * menyalin isi yang bukan milik admin.
+   */
+  if (path === '/api/posts/load' && method === 'POST') {
+    if (!botClient) {
+      sendJson(response, 400, { error: 'Bot sedang offline — memuat pesan butuh koneksi ke Discord.' });
+      return;
+    }
+    const payload = await readJsonBody(request, response, 16 * 1024);
+    if (!payload) return;
+    const tautan = parseMessageLink(payload.url);
+    if (!tautan) {
+      sendJson(response, 400, {
+        error:
+          'Tautan tidak dikenali. Tempel tautan pesan Discord (Klik kanan pesan → Copy Message Link).',
+      });
+      return;
+    }
+    if (tautan.guildId !== guildId) {
+      sendJson(response, 400, { error: 'Tautan itu menunjuk pesan di server lain.' });
+      return;
+    }
+
+    let mentah: LoadedMessage | null = null;
+    try {
+      const channel = await botClient.channels.fetch(tautan.channelId);
+      if (!channel || !channel.isTextBased() || !('messages' in channel)) {
+        sendJson(response, 400, { error: 'Channel itu bukan channel teks yang bisa dibaca bot.' });
+        return;
+      }
+      const pesan = await channel.messages.fetch(tautan.messageId);
+      /*
+       * Thread yang DIMULAI pesan ini ikut dibaca: pesan asal yang punya thread
+       * harus tetap punya thread setelah disunting, bukan hanya di Discord.
+       */
+      const thread = pesan.thread ? { name: pesan.thread.name } : null;
+      mentah = {
+        content: pesan.content,
+        embeds: pesan.embeds.map((satu) => satu.toJSON()),
+        components: pesan.components.map((satu) => satu.toJSON()),
+        attachments: pesan.attachments.map((satu) => satu.toJSON()),
+        author: {
+          username: pesan.author?.username,
+          bot: pesan.author?.bot,
+          // Avatar webhook: dipakai ulang supaya pesan yang disunting tetap
+          // tampil dengan wajah yang sama.
+          avatarUrl: (pesan.author as { avatarURL?: (opts?: unknown) => string | null } | undefined)?.avatarURL?.({
+            extension: 'png',
+            size: 256,
+          }),
+        },
+        webhookId: pesan.webhookId ?? undefined,
+        flags: pesan.flags?.bitfield ?? 0,
+        thread: thread ?? undefined,
+        id: pesan.id,
+      };
+    } catch (error) {
+      sendJson(response, 400, {
+        error: `Pesan tidak bisa dimuat: ${errorMessage(error)}. Pastikan bot punya izin Read Message History di channel itu.`,
+      });
+      return;
+    }
+
+    const hasil = messageToDraft(mentah);
+    const bersih = sanitizeBlocks(hasil.blocks);
+    sendJson(response, 200, {
+      ok: true,
+      name: hasil.content ? hasil.content.slice(0, 120) : '',
+      blocks: bersih.blocks,
+      embed: hasil.embed,
+      layout: hasil.layout,
+      /*
+       * Pengaturan tingkat pesan ikut dimuat: tanpa ini, menyunting lalu
+       * mengirim ulang menghapus identitas webhook, nama thread, dan flag
+       * pesan aslinya — pesan yang tampak sama di editor muncul berbeda di
+       * Discord.
+       */
+      sender: hasil.sender,
+      webhookName: hasil.webhookName,
+      webhookAvatar: hasil.webhookAvatar,
+      threadName: hasil.threadName,
+      flags: hasil.flags,
+      /*
+       * Alamat pesan asal ikut dikirim: dashboard memakainya untuk menawarkan
+       * "perbarui pesan ini" alih-alih mengirim pesan baru yang mirip.
+       */
+      source: {
+        channelId: tautan.channelId,
+        messageId: tautan.messageId,
+        webhook: Boolean(mentah?.webhookId),
+      },
+      warnings: [...hasil.warnings, ...bersih.dropped.map((alasan) => `Blok dibuang: ${alasan}`)],
+    });
+    return;
+  }
+
   /** `?withMessage=1` saat DELETE = hapus juga pesan di Discord. */
+
+  /*
+   * ---------- dokumen multi-pesan (`?grup=`) ----------
+   *
+   *   GET    /api/post-groups          daftar dokumen
+   *   POST   /api/post-groups          simpan dokumen (baru / perbarui)
+   *   POST   /api/post-groups/:id/send kirim sebagai rangkaian
+   *   DELETE /api/post-groups/:id      hapus dokumen
+   *
+   * Kenapa endpoint terpisah dari /api/posts: dokumen bisa berisi sampai 20
+   * pesan, sedangkan satu baris `custom_posts` selalu satu pesan. Menggabung
+   * keduanya berarti setiap pembaca `custom_posts` harus tahu bentuk kedua —
+   * dan tombol role, jadwal, serta aksi komponen semuanya bekerja pada satu
+   * pesan.
+   *
+   * Nama `post-groups`, BUKAN `documents`: `/api/documents` sudah dipakai
+   * dokumen RAG untuk halaman /dokumen (dan didaftarkan lebih dulu), sehingga
+   * rute baru di sini tidak akan pernah tercapai — halaman Multi-pesan akan
+   * menampilkan daftar kosong tanpa satu pun error.
+   */
+  if (path === '/api/post-groups' && (method === 'GET' || method === 'POST')) {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    if (method === 'GET') {
+      sendJson(response, 200, { documents: await listPostDocuments(guildId) });
+      return;
+    }
+    const payload = await readJsonBody(request, response, 1024 * 1024);
+    if (!payload) return;
+    const nama = String(payload.name ?? '').trim();
+    if (!nama) {
+      sendJson(response, 400, { error: 'Nama dokumen wajib diisi.' });
+      return;
+    }
+    const id = payload.id === undefined ? undefined : Number(payload.id);
+    if (id !== undefined && (!Number.isSafeInteger(id) || id <= 0)) {
+      sendJson(response, 400, { error: 'ID dokumen tidak sah.' });
+      return;
+    }
+    const hasil = await savePostDocument(guildId, {
+      ...(id === undefined ? {} : { id }),
+      name: nama,
+      series: payload.series === true,
+      messages: payload.messages,
+    });
+    if (!hasil) {
+      sendJson(response, 404, { error: 'Dokumen tidak ditemukan.' });
+      return;
+    }
+    /*
+     * `dropped` ikut dikirim: pesan yang dibuang karena kosong, terlalu besar,
+     * atau rujukannya menunjuk pesan yang tidak ada. Tanpa ini admin mengira
+     * seluruh dokumen tersimpan apa adanya.
+     */
+    sendJson(response, 200, {
+      ok: true,
+      document: hasil.document,
+      ...(hasil.dropped.length ? { dropped: hasil.dropped } : {}),
+      ...(hasil.warnings.length ? { warnings: hasil.warnings } : {}),
+    });
+    return;
+  }
+
+  /*
+   * POST /api/posts/from-json  { json }
+   *
+   * Padanan "JSON Data Editor" per pesan di Discohook: tempel JSON mentah
+   * Discord (bentuk yang sama dengan kotak "Payload komponen"), lalu pesan itu
+   * dibuka di editor sebagai blok.
+   *
+   * Endpoint terpisah dari /api/posts/load karena sumbernya BUKAN pesan yang
+   * sudah ada di Discord: tidak ada yang perlu diambil lewat bot, jadi tidak
+   * boleh ikut gagal hanya karena bot sedang offline.
+   */
+  if (path === '/api/posts/from-json' && method === 'POST') {
+    const payload = await readJsonBody(request, response, 512 * 1024);
+    if (!payload) return;
+
+    /*
+     * Menerima tiga bentuk yang wajar ditempel admin:
+     *   1. objek pesan Discord ({ content, embeds, components }),
+     *   2. payload REST yang membungkusnya ({ body: {...} } atau { data: {...} }),
+     *   3. data Discohook ({ messages: [{ data: {...} }] }).
+     */
+    const mentah = ambilPesanMentah(payload.json);
+    if (!mentah) {
+      sendJson(response, 400, {
+        error:
+          'JSON tidak dikenali. Tempel objek pesan Discord (content/embeds/components), payload REST-nya, atau data Discohook.',
+      });
+      return;
+    }
+
+    const hasil = messageToDraft(mentah);
+    const bersih = sanitizeBlocks(hasil.blocks);
+    sendJson(response, 200, {
+      ok: true,
+      name: hasil.content ? hasil.content.slice(0, 120) : '',
+      blocks: bersih.blocks,
+      embed: hasil.embed,
+      layout: hasil.layout,
+      /*
+       * Pengaturan tingkat pesan ikut, sama seperti /api/posts/load: JSON yang
+       * ditempel bisa memuat username/avatar/thread_name/flags, dan editor
+       * yang mengabaikannya membuat pesan hasil tempel terkirim dengan bentuk
+       * berbeda dari yang tertulis di JSON-nya.
+       */
+      sender: hasil.sender,
+      webhookName: hasil.webhookName,
+      webhookAvatar: hasil.webhookAvatar,
+      threadName: hasil.threadName,
+      flags: hasil.flags,
+      warnings: [...hasil.warnings, ...bersih.dropped.map((alasan) => `Blok dibuang: ${alasan}`)],
+    });
+    return;
+  }
+
+  /*
+   * ---------- riwayat revisi & tautan berbagi ----------
+   *
+   *   GET  /api/posts/:id/revisions       daftar versi
+   *   POST /api/posts/:id/revisions       { revisionId } = kembalikan versi itu
+   *   POST /api/posts/:id/share           buat tautan berbagi
+   *   DELETE /api/posts/:id/share         cabut tautannya
+   *
+   * Riwayat dibuat otomatis setiap kali pesan diperbarui (lihat
+   * updateCustomPost), bukan lewat tombol "simpan versi": admin tidak akan
+   * ingat menekannya, dan riwayat yang bolong lebih buruk daripada tidak ada.
+   */
+  /*
+   * ---------- JSON payload & generator kode ----------
+   *
+   *   GET /api/posts/:id/json?library=djs14|dpy2
+   *
+   * Dua hal sekaligus, dari SATU penyusun: `components` adalah payload yang
+   * benar-benar dikirim ke Discord (hasil buildPostPayload), dan `code`
+   * diterjemahkan dari payload itu — bukan dari state editor. Kalau
+   * diterjemahkan dari editor, kode yang dihasilkan bisa berbeda dari yang
+   * sungguh terkirim, dan justru saat itulah generator kode menyesatkan.
+   */
+  const jsonMatch = /^\/api\/posts\/(\d+)\/json$/.exec(path);
+  if (jsonMatch && method === 'GET') {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const post = await getCustomPost(guildId, Number(jsonMatch[1]));
+    if (!post) {
+      sendJson(response, 404, { error: 'Pesan tidak ditemukan.' });
+      return;
+    }
+    const library = new URL(request.url ?? '/', 'http://local').searchParams.get('library');
+    const pilihan = CODEGEN_LIBRARIES.includes(library as (typeof CODEGEN_LIBRARIES)[number])
+      ? (library as (typeof CODEGEN_LIBRARIES)[number])
+      : 'djs14';
+    /*
+     * Pesan BERGAYA EMBED tidak punya komponen sama sekali — isinya `embeds`.
+     * Jalurnya dipisah di sini supaya panel payload menampilkan yang
+     * benar-benar dikirim, bukan "belum punya komponen" untuk pesan yang jelas
+     * berisi.
+     */
+    if (post.layout === 'embed') {
+      const daftar = buildClassicEmbeds(post.blocks, {
+        accent: post.accent,
+        title: post.name,
+        embedList: post.embed,
+      });
+      const embeds = daftar.map((satu) => satu.embed);
+      /*
+       * `tanpa kartu embed` tidak ikut dikirim bersama embed. Disaring di sini
+       * juga (bukan hanya di pengirim) supaya payload, kode generator, dan
+       * pesan sungguhan memakai flag yang SAMA — panel ini menjanjikan "yang
+       * benar-benar dikirim", jadi keduanya tidak boleh berbeda.
+       */
+      const aturFlagEmbed = flagsUntukEmbed(post.flags);
+      /*
+       * Lampiran blok `file` ikut terkirim, jadi panel ini harus menyebutnya.
+       * Tanpa baris ini admin melihat daftar kosong padahal berkasnya terkirim
+       * — dan sebaliknya, berkas yang gagal disaring pun harus terlihat.
+       */
+      const berkasEmbed = embedAttachments(post.blocks);
+      const droppedEmbed = [
+        ...daftar.flatMap((satu) => satu.dropped),
+        ...aturFlagEmbed.dropped,
+        ...berkasEmbed.dropped,
+      ];
+      /*
+       * Tombol & menu role tetap ikut terkirim bersama embed sebagai komponen
+       * interaktif. Kode di bawah hanya menggambarkan `embeds`, jadi bagian ini
+       * DIlaporkan — developer yang menyalin kode berhak tahu pesannya masih
+       * punya komponen yang tidak ikut digenerate.
+       */
+      const tombolEmbed = await listRoleButtons(guildId, post.id).catch(() => []);
+      const menuEmbed = await listRoleMenus(guildId, post.id).catch(() => []);
+      if (tombolEmbed.length || menuEmbed.length) {
+        droppedEmbed.push(
+          `${tombolEmbed.length + menuEmbed.length} tombol/menu role ikut terkirim sebagai komponen interaktif dan tidak digenerate di sini`,
+        );
+      }
+      sendJson(response, 200, {
+        post: { id: post.id, name: post.name, channelId: post.channelId },
+        blocks: post.blocks,
+        allowedMentions: post.allowedMentions,
+        threadName: post.threadName,
+        flags: aturFlagEmbed.flags,
+        layout: 'embed',
+        embeds,
+        components: null,
+        attachments: berkasEmbed.attachments.map((satu) => ({ name: satu.name })),
+        dropped: [...droppedEmbed, ...validateEmbeds(embeds)],
+        codegen: generateEmbedCodegen(embeds, pilihan, {
+          threadName: post.threadName,
+          flags: aturFlagEmbed.flags,
+        }),
+        library: pilihan,
+      });
+      return;
+    }
+
+    const built = await payloadUntukPesan(guildId, post);
+    sendJson(response, 200, {
+      post: { id: post.id, name: post.name, channelId: post.channelId },
+      blocks: post.blocks,
+      allowedMentions: post.allowedMentions,
+      threadName: post.threadName,
+      flags: post.flags,
+      layout: post.layout,
+      // `null` = pesan kosong; dashboard menampilkan penjelasannya.
+      components: built?.components ?? null,
+      dropped: built?.dropped ?? [],
+      codegen: built?.components
+        ? generateCodegen(built.components, pilihan)
+        : { imports: [], code: ['// Pesan ini belum punya komponen — susun blok dulu di tab Susun.'], documentation: '', dropped: [] },
+      library: pilihan,
+    });
+    return;
+  }
+
+  const revMatch = /^\/api\/posts\/(\d+)(\/revisions|\/share)$/.exec(path);
+  if (revMatch) {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const postId = Number(revMatch[1]);
+    const jenis = revMatch[2];
+    const post = await getCustomPost(guildId, postId);
+    if (!post) {
+      sendJson(response, 404, { error: 'Pesan tidak ditemukan.' });
+      return;
+    }
+
+    if (jenis === '/revisions' && method === 'GET') {
+      const daftar = await listPostRevisions(guildId, postId);
+      /*
+       * `?revision=<id>` = minta isi blok satu versi saja.
+       *
+       * Daftar versi sengaja tidak membawa snapshot penuh (20 versi × blok
+       * pesan besar = halaman berat). Diff di dashboard memintanya hanya saat
+       * tombol Bandingkan ditekan, untuk versi yang benar-benar dibandingkan.
+       */
+      const ingin = new URL(request.url ?? '/', 'http://local').searchParams.get('revision');
+      if (ingin) {
+        const id = Number(ingin);
+        const satu = daftar.find((revisi) => revisi.id === id);
+        if (!satu) {
+          sendJson(response, 404, { error: 'Versi itu tidak ada di riwayat pesan ini.' });
+          return;
+        }
+        sendJson(response, 200, {
+          revision: { id: satu.id, name: satu.name, createdAt: satu.createdAt, snapshot: satu.snapshot },
+        });
+        return;
+      }
+      sendJson(response, 200, { revisions: daftar });
+      return;
+    }
+
+    if (jenis === '/revisions' && method === 'POST') {
+      const payload = await readJsonBody(request, response, 64 * 1024);
+      const revisionId = Number(payload?.revisionId);
+      if (!Number.isSafeInteger(revisionId) || revisionId <= 0) {
+        sendJson(response, 400, { error: 'Versi yang mau dikembalikan tidak disebut.' });
+        return;
+      }
+      const hasil = await restorePostRevision(guildId, postId, revisionId);
+      if (!hasil.post) {
+        sendJson(response, 400, { error: hasil.error ?? 'Versi itu tidak bisa dikembalikan.' });
+        return;
+      }
+      sendJson(response, 200, { ok: true, post: hasil.post });
+      return;
+    }
+
+    if (jenis === '/share' && (method === 'POST' || method === 'DELETE')) {
+      if (method === 'DELETE') {
+        await deletePostShare(guildId, postId);
+        sendJson(response, 200, { ok: true });
+        return;
+      }
+      const token = await createPostShare(guildId, postId);
+      sendJson(response, 200, { ok: true, token });
+      return;
+    }
+    sendJson(response, 405, { error: 'Metode tidak didukung.' });
+    return;
+  }
+
+  const docMatch = /^\/api\/post-groups\/(\d+)(\/send)?$/.exec(path);
+  if (docMatch) {
+    if (!guildId) {
+      sendJson(response, 400, { error: 'Server belum dipilih.' });
+      return;
+    }
+    const docId = Number(docMatch[1]);
+    const dokumen = await getPostDocument(guildId, docId);
+    if (!dokumen) {
+      sendJson(response, 404, { error: 'Dokumen tidak ditemukan.' });
+      return;
+    }
+
+    if (method === 'DELETE' && !docMatch[2]) {
+      await deletePostDocument(guildId, docId);
+      sendJson(response, 200, { ok: true });
+      return;
+    }
+
+    if (method === 'POST' && docMatch[2] === '/send') {
+      const payload = await readJsonBody(request, response, 64 * 1024);
+      const channelId =
+        typeof payload?.channelId === 'string' && payload.channelId.trim()
+          ? payload.channelId.trim()
+          : null;
+      if (!channelId) {
+        sendJson(response, 400, { error: 'Pilih channel tujuan lebih dulu.' });
+        return;
+      }
+      if (!botClient?.isReady()) {
+        sendJson(response, 400, { error: 'Bot sedang offline di proses ini, jadi pesan tidak bisa dikirim.' });
+        return;
+      }
+      if (dokumen.messages.length === 0) {
+        sendJson(response, 400, { error: 'Dokumen ini belum punya pesan yang bisa dikirim.' });
+        return;
+      }
+      try {
+        const hasil = await sendPostSeries({
+          client: botClient,
+          channelId,
+          messages: dokumen.messages,
+          postId: docId,
+        });
+        sendJson(response, 200, {
+          ok: hasil.failed.length === 0,
+          sent: hasil.sent,
+          ...(hasil.failed.length ? { failed: hasil.failed } : {}),
+          ...(hasil.threads.length ? { threads: hasil.threads } : {}),
+        });
+      } catch (error) {
+        if (error instanceof PostSendError) {
+          sendJson(response, 400, { error: error.message });
+        } else {
+          logger.error('Gagal mengirim dokumen multi-pesan', errorMessage(error));
+          sendJson(response, 500, { error: 'Gagal mengirim ke Discord.' });
+        }
+      }
+      return;
+    }
+
+    sendJson(response, 405, { error: 'Metode tidak didukung untuk dokumen ini.' });
+    return;
+  }
 
   if (path === '/api/posts' && method === 'POST') {
     if (!guildId) {
@@ -1716,6 +2599,12 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     const channelId = typeof payload.channelId === 'string' && payload.channelId.trim() ? payload.channelId.trim() : null;
     const accent = payload.accent === undefined ? null : normalizeAccent(payload.accent);
     const sender = payload.sender === 'webhook' ? 'webhook' : 'bot';
+    /*
+     * Flag pesan: nilai asing dibuang sanitizer, bukan diteruskan. Flag yang
+     * tidak dikenal membuat Discord menolak pesan, dan admin tidak akan tahu
+     * penyebabnya.
+     */
+    const flags = payload.flags === undefined ? undefined : sanitizeMessageFlags(payload.flags);
 
     // Blok dirapikan di repo (sanitizeBlocks). Hasil buangannya dikembalikan
     // supaya admin tahu apa yang tidak jadi dikirim, bukan disembunyikan.
@@ -1725,7 +2614,32 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       blocks: payload.blocks,
       accent,
       sender,
+      flags,
+      allowedMentions: sanitizeAllowedMentions(payload.allowedMentions),
+      threadName: sanitizeThreadName(payload.threadName),
+      trigger: sanitizeTrigger(payload.trigger),
+      layout: sanitizeLayout(payload.layout),
+      embed: payload.embed,
+      webhookName: typeof payload.webhookName === 'string' ? payload.webhookName : null,
+      webhookAvatar: typeof payload.webhookAvatar === 'string' ? payload.webhookAvatar : null,
     });
+
+    /*
+     * Pesan hasil "Muat pesan Discord": pesan dashboard ini mewakili pesan
+     * yang SUDAH ada di Discord, jadi Kirim berikutnya harus memperbaruinya.
+     * Tanpa ini, memuat lalu mengirim menghasilkan salinan kedua — kebalikan
+     * dari tujuan tombol Load.
+     *
+     * Hanya dipakai kalau admin memang mengirim `source` hasil muat, dan admin
+     * masih bisa melepasnya dengan mengosongkan `source`.
+     */
+    const sumber = ambilSumberMuat(payload.source);
+    if (sumber) {
+      await setCustomPostTarget(guildId, post.id, sumber);
+      post.messageId = sumber.messageId;
+      post.channelId = sumber.channelId;
+    }
+
     const { blocks: blokSah, dropped } = sanitizeBlocks(payload.blocks);
     // `usage` = hitungan versi SERVER. Dashboard boleh menghitung sendiri
     // untuk pratinjau, tapi angka inilah yang menentukan boleh-kirim.
@@ -1738,7 +2652,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return;
   }
 
-  const postMatch = /^\/api\/posts\/(\d+)(\/send|\/roles)?$/.exec(path);
+  const postMatch = /^\/api\/posts\/(\d+)(\/send|\/roles|\/schedules|\/targets)?$/.exec(path);
   if (postMatch) {
     if (!guildId) {
       sendJson(response, 400, { error: 'Server belum dipilih.' });
@@ -1747,6 +2661,26 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     const id = Number(postMatch[1]);
     const isSend = postMatch[2] === '/send';
     const isRoles = postMatch[2] === '/roles';
+    const isSchedules = postMatch[2] === '/schedules';
+    const isTargets = postMatch[2] === '/targets';
+
+    /* Channel tambahan (targets[]): diganti seluruhnya tiap simpan. */
+    if (isTargets && (method === 'GET' || method === 'PUT')) {
+      const post = await getCustomPost(guildId, id);
+      if (!post) {
+        sendJson(response, 404, { error: 'Pesan tidak ditemukan.' });
+        return;
+      }
+      if (method === 'GET') {
+        sendJson(response, 200, { targets: await listPostTargets(guildId, id) });
+        return;
+      }
+      const payload = await readJson(request, response);
+      if (!payload) return;
+      const hasil = await replacePostTargets(guildId, id, payload.channels);
+      sendJson(response, 200, { ok: true, ...hasil });
+      return;
+    }
 
     if (isSend && method === 'POST') {
       const post = await getCustomPost(guildId, id);
@@ -1777,10 +2711,28 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         sendJson(response, 400, { error: 'Bot sedang offline di proses ini, jadi pesan tidak bisa dikirim.' });
         return;
       }
+      /*
+       * Setelah pemeriksaan di atas, `botClient` sempit ke Client yang siap.
+       * Disimpan ke variabel lokal supaya callback pengiriman ke channel
+       * tambahan tidak perlu `!` di belasan tempat.
+       */
+      const bot = botClient;
       if (!post.channelId) {
         sendJson(response, 400, { error: 'Channel tujuan belum dipilih.' });
         return;
       }
+      /*
+       * Tujuan diperiksa SEBELUM menyusun payload — padanan `WebhookModel.fetch`
+       * di Discohook yang memunculkan "Webhook does not exist". Tanpa ini admin
+       * menunggu lalu menerima galat mentah Discord ("Missing Permissions")
+       * yang tidak menyebut channel mana atau izin apa.
+       */
+      const tujuan = await periksaTujuan(bot, post.channelId);
+      if (!tujuan.ok) {
+        sendJson(response, 400, { error: tujuan.alasan });
+        return;
+      }
+
       try {
         const roleButtons = await listRoleButtons(guildId, id);
         const roleMenus = await listRoleMenus(guildId, id);
@@ -1801,23 +2753,130 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         // Dua jalur pengiriman, pilihan admin:
         //   bot     -> pengirim bot (bisa tombol role)
         //   webhook -> atas nama server (tidak bisa tombol role)
+        /*
+         * Aksi komponen tidak bisa dipakai di pesan webhook.
+         *
+         * Discord mengirim interaksi komponen ke aplikasi PEMILIK komponen;
+         * untuk pesan webhook, pemiliknya webhook itu sendiri — bukan bot kita.
+         * Jadi tombol/aksinya akan diam. Lebih jujur menolak di sini, sama
+         * seperti tombol & menu role.
+         */
+        /*
+         * Pesan bergaya embed klasik: jalur kirim sendiri.
+         *
+         * Aturannya berlawanan dengan Components V2 (embed tidak boleh membawa
+         * flag V2, V2 tidak boleh membawa embeds), jadi keduanya tidak boleh
+         * lewat penyusun payload yang sama.
+         */
+        if (post.layout === 'embed') {
+          const hasilEmbed = await sendOrUpdateEmbedPost({
+            client: bot,
+            channelId: post.channelId,
+            messageId: post.messageId,
+            blocks: post.blocks,
+            accent: post.accent,
+            title: post.name,
+            postId: id,
+            flags: post.flags,
+            allowedMentions: post.allowedMentions,
+            embed: post.embed,
+            /*
+             * Nama thread ikut di jalur embed: dulu hanya jalur Components V2
+             * yang membukanya, jadi pesan embed dengan nama thread terkirim
+             * tanpa thread dan admin tidak tahu kenapa.
+             */
+            threadName: post.threadName,
+            roleButtons: roleButtons.map((b) => ({
+              id: b.id,
+              label: b.label,
+              emoji: b.emoji ?? null,
+              style: b.style ?? null,
+            })),
+            roleMenus: menuPayload,
+          });
+          await setCustomPostMessage(guildId, id, hasilEmbed.messageId);
+          /*
+           * Channel tambahan (targets[]): pesan yang sama dikirim ke tiap
+           * channel, dengan ID pesannya masing-masing. Gagal di satu channel
+           * tidak membatalkan yang lain.
+           */
+          const targetEmbed = await kirimTarget({
+            client: bot,
+            guildId,
+            postId: id,
+            kirim: (channelId, messageId) =>
+              sendOrUpdateEmbedPost({
+                client: bot,
+                channelId,
+                messageId,
+                blocks: post.blocks,
+                accent: post.accent,
+                title: post.name,
+                postId: id,
+                flags: post.flags,
+                allowedMentions: post.allowedMentions,
+                embed: post.embed,
+                threadName: post.threadName,
+                roleButtons: roleButtons.map((b) => ({
+                  id: b.id,
+                  label: b.label,
+                  emoji: b.emoji ?? null,
+                  style: b.style ?? null,
+                })),
+                roleMenus: menuPayload,
+              }),
+          });
+          sendJson(response, 200, {
+            ok: true,
+            messageId: hasilEmbed.messageId,
+            edited: hasilEmbed.edited,
+            ...(hasilEmbed.dropped?.length ? { dropped: hasilEmbed.dropped } : {}),
+            ...(targetEmbed.length ? { targets: targetEmbed } : {}),
+          });
+          return;
+        }
+
+        if (post.sender === 'webhook') {
+          const aksi = await listPostActions(guildId, id);
+          if (Object.keys(aksi).length > 0) {
+            sendJson(response, 400, {
+              error:
+                'Pesan lewat webhook tidak bisa memakai aksi komponen — Discord hanya mengirim interaksi ke aplikasi pengirim. Matikan mode webhook untuk pesan ini, atau hapus aksinya.',
+            });
+            return;
+          }
+        }
+
         const result =
           post.sender === 'webhook'
             ? await sendOrUpdatePostViaWebhook({
-                client: botClient,
+                client: bot,
                 guildId,
                 channelId: post.channelId,
                 messageId: post.messageId,
                 blocks: post.blocks,
                 accent: post.accent ?? undefined,
-                identity: await webhookIdentityFor(botClient, guildId),
+                /*
+                 * Nama & avatar per pesan (padanan isian Username/Avatar URL
+                 * Discohook). Yang tidak diisi memakai identitas server, jadi
+                 * pesan lama tidak berubah tampilannya.
+                 */
+                identity: identitasWebhook(post, await webhookIdentityFor(bot, guildId)),
+                postId: id,
+                flags: post.flags,
+                template: null,
               })
             : await sendOrUpdatePost({
-                client: botClient,
+                client: bot,
                 channelId: post.channelId,
                 messageId: post.messageId,
                 blocks: post.blocks,
                 accent: post.accent ?? undefined,
+                postId: id,
+                flags: post.flags,
+                /* Izin ping & thread: bagian dari isi pesan, bukan komponen. */
+                allowedMentions: post.allowedMentions,
+                ...(post.threadName ? { threadName: post.threadName } : {}),
                 roleButtons: roleButtons.map((b) => ({
                   id: b.id,
                   label: b.label,
@@ -1827,7 +2886,64 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
                 roleMenus: menuPayload,
               });
         await setCustomPostMessage(guildId, id, result.messageId);
-        sendJson(response, 200, { ok: true, messageId: result.messageId, edited: result.edited });
+        /*
+         * `dropped`/`droppedFiles` ikut dikirim: komponen yang dilewati
+         * penyusun payload (mis. select yang tidak didukung) dan berkas yang
+         * gagal diunduh. Tanpa ini admin mengira pesannya terkirim utuh.
+         */
+        /*
+         * Channel tambahan. Pesan webhook & pesan bot sama-sama bisa dikirim ke
+         * beberapa channel; penyusunnya dipanggil ulang per channel supaya ID
+         * pesan tiap channel tercatat sendiri-sendiri.
+         */
+        const targetUtama = await kirimTarget({
+          client: bot,
+          guildId,
+          postId: id,
+          kirim: async (channelId, messageId) =>
+            post.sender === 'webhook'
+              ? sendOrUpdatePostViaWebhook({
+                  client: bot,
+                  guildId,
+                  channelId,
+                  messageId,
+                  blocks: post.blocks,
+                  accent: post.accent ?? undefined,
+                  // Identitas webhook diambil per channel: nama & avatar server
+                  // sama, tetapi webhook-nya berbeda per channel.
+                  identity: identitasWebhook(post, await webhookIdentityFor(bot, guildId)),
+                  postId: id,
+                  flags: post.flags,
+                  template: null,
+                })
+              : sendOrUpdatePost({
+                  client: bot,
+                  channelId,
+                  messageId,
+                  blocks: post.blocks,
+                  accent: post.accent ?? undefined,
+                  postId: id,
+                  flags: post.flags,
+                  allowedMentions: post.allowedMentions,
+                  ...(post.threadName ? { threadName: post.threadName } : {}),
+                  roleButtons: roleButtons.map((b) => ({
+                    id: b.id,
+                    label: b.label,
+                    emoji: b.emoji ?? null,
+                    style: b.style ?? null,
+                  })),
+                  roleMenus: menuPayload,
+                }),
+        });
+
+        sendJson(response, 200, {
+          ok: true,
+          messageId: result.messageId,
+          edited: result.edited,
+          ...(result.dropped?.length ? { dropped: result.dropped } : {}),
+          ...(result.droppedFiles?.length ? { droppedFiles: result.droppedFiles } : {}),
+          ...(targetUtama.length ? { targets: targetUtama } : {}),
+        });
       } catch (error) {
         // PostSendError = kesalahan yang bisa dimengerti admin (channel hilang,
         // pesan kosong). Selain itu tetap dicatat sebagai kesalahan server.
@@ -1857,12 +2973,54 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         payload.menus === undefined
           ? { menus: await listRoleMenus(guildId, id), dropped: [] as string[] }
           : await replaceRoleMenus(guildId, id, payload.menus);
+      /*
+       * Aksi komponen disimpan di endpoint yang sama.
+       *
+       * `actions` TIDAK dikirim = jangan sentuh aksi yang sudah ada (sama
+       * seperti `menus`), supaya klien lama yang hanya tahu tombol tidak
+       * menghapus aksi tanpa sengaja.
+       */
+      const actionResult =
+        payload.actions === undefined
+          ? { actions: await listPostActions(guildId, id), dropped: [] as string[] }
+          : await replacePostActions(guildId, id, payload.actions);
       sendJson(response, 200, {
         ok: true,
         buttons: result.buttons,
         menus: menuResult.menus,
-        dropped: [...result.dropped, ...menuResult.dropped],
+        actions: actionResult.actions,
+        dropped: [...result.dropped, ...menuResult.dropped, ...actionResult.dropped],
       });
+      return;
+    }
+
+    /* Jadwal kirim: daftar penuh (null = hapus semua). */
+    if (isSchedules && method === 'PUT') {
+      const post = await getCustomPost(guildId, id);
+      if (!post) {
+        sendJson(response, 404, { error: 'Pesan tidak ditemukan.' });
+        return;
+      }
+      if (!post.channelId) {
+        sendJson(response, 400, { error: 'Pilih channel tujuan dulu — jadwal tanpa channel tidak bisa dikirim.' });
+        return;
+      }
+      const payload = await readJson(request, response);
+      if (!payload) return;
+      /*
+       * Zona waktu server ikut dikirim: jadwal cron berbunyi menurut jam
+       * dinding WIB/WITA/WIT, bukan UTC. Offsetnya disimpan bersama jadwal
+       * supaya arti "tiap Senin 09:00" tidak berubah kalau zona server diubah.
+       */
+      const zonaServer = (await getGuildSettings(guildId).catch((): null => null))?.timezone ?? null;
+      const hasil = await replaceSchedules(
+        guildId,
+        id,
+        post.channelId,
+        payload.schedules,
+        zonaServer,
+      );
+      sendJson(response, 200, { ok: true, schedules: hasil.schedules, dropped: hasil.dropped });
       return;
     }
 
@@ -1873,6 +3031,27 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         accent: payload.accent === undefined ? undefined : normalizeAccent(payload.accent),
         sender: payload.sender === undefined ? undefined : payload.sender === 'webhook' ? 'webhook' : 'bot',
         name: payload.name === undefined ? undefined : String(payload.name).trim(),
+        // Tidak dikirim = flag lama dipertahankan, sama seperti field lain.
+        flags: payload.flags === undefined ? undefined : sanitizeMessageFlags(payload.flags),
+        // Sama: tidak dikirim = izin ping & nama thread lama dipertahankan.
+        allowedMentions:
+          payload.allowedMentions === undefined ? undefined : sanitizeAllowedMentions(payload.allowedMentions),
+        threadName: payload.threadName === undefined ? undefined : sanitizeThreadName(payload.threadName),
+        trigger: payload.trigger === undefined ? undefined : sanitizeTrigger(payload.trigger),
+        layout: payload.layout === undefined ? undefined : sanitizeLayout(payload.layout),
+        embed: payload.embed,
+        webhookName:
+          payload.webhookName === undefined
+            ? undefined
+            : typeof payload.webhookName === 'string'
+              ? payload.webhookName
+              : null,
+        webhookAvatar:
+          payload.webhookAvatar === undefined
+            ? undefined
+            : typeof payload.webhookAvatar === 'string'
+              ? payload.webhookAvatar
+              : null,
         channelId:
           payload.channelId === undefined
             ? undefined
@@ -2305,6 +3484,71 @@ async function readJson(
 }
 
 /** Sama seperti `readJson`, tapi batas ukurannya bisa diatur (mis. gambar). */
+/**
+ * Baca `source` hasil muat pesan (channel + pesan Discord asal).
+ *
+ * Divalidasi ketat: nilai ini menentukan pesan MANA yang akan ditimpa saat
+ * Kirim ditekan. ID yang salah berarti menimpa pesan orang lain, jadi bentuk
+ * yang tidak jelas dibaca sebagai null (= kirim pesan baru).
+ */
+function ambilSumberMuat(input: unknown): { channelId: string | null; messageId: string } | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const sumber = input as Record<string, unknown>;
+  const pesan = typeof sumber.messageId === 'string' ? sumber.messageId.trim() : '';
+  if (!/^\d{15,25}$/.test(pesan)) return null;
+  const channel = typeof sumber.channelId === 'string' ? sumber.channelId.trim() : '';
+  return { channelId: /^\d{15,25}$/.test(channel) ? channel : null, messageId: pesan };
+}
+
+/**
+ * Gabungkan identitas server dengan isian per pesan.
+ *
+ * Discohook menyebutnya Username & Avatar URL; di bot disimpan di
+ * `custom_posts.webhook_name` / `webhook_avatar`. Kosong = pakai identitas
+ * server, sehingga pesan lama yang tidak punya isian ini tampil sama seperti
+ * sebelumnya.
+ */
+const identitasWebhook = identitasPost;
+
+/**
+ * Ambil objek pesan dari beberapa bentuk JSON yang lazim ditempel.
+ *
+ * Dipakai `/api/posts/from-json`. Tidak pernah melempar: isi tempelan admin
+ * tidak boleh membuat server membalas 500.
+ */
+function ambilPesanMentah(input: unknown): LoadedMessage | null {
+  const objek = (nilai: unknown): Record<string, unknown> | null =>
+    nilai && typeof nilai === 'object' && !Array.isArray(nilai) ? (nilai as Record<string, unknown>) : null;
+
+  const akarAwal = objek(input);
+  if (!akarAwal) return null;
+  let akar = akarAwal;
+
+  // Data Discohook: messages[0].data
+  const daftarPesan = akar.messages;
+  if (Array.isArray(daftarPesan) && daftarPesan.length > 0) {
+    const pertama = objek(daftarPesan[0]);
+    const data = objek(pertama?.data) ?? pertama;
+    if (data) akar = data;
+  }
+
+  // Payload REST: { body: {...} } atau { data: {...} }
+  const dalam = objek(akar.body) ?? objek(akar.data);
+  if (dalam && (dalam.content !== undefined || dalam.embeds !== undefined || dalam.components !== undefined)) {
+    akar = dalam;
+  }
+
+  const punyaIsi = akar.content !== undefined || akar.embeds !== undefined || akar.components !== undefined;
+  if (!punyaIsi) return null;
+
+  return {
+    content: akar.content,
+    embeds: Array.isArray(akar.embeds) ? akar.embeds : [],
+    components: Array.isArray(akar.components) ? akar.components : [],
+    attachments: Array.isArray(akar.attachments) ? akar.attachments : [],
+  };
+}
+
 async function readJsonBody(
   request: IncomingMessage,
   response: ServerResponse,

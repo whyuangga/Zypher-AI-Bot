@@ -96,8 +96,32 @@ async function migrateExistingDatabase(driver: Driver): Promise<void> {
     // Bentuk pesan: 'container' (bawaan, Components V2) atau 'embed' (klasik).
     // NULL dibaca sebagai container, jadi pesan lama tidak berubah tampilan.
     'ALTER TABLE custom_posts ADD COLUMN layout TEXT',
+    // Bagian embed klasik yang diisi admin (penulis, footer, bidang, stempel
+    // waktu, URL judul). NULL = tidak ada, jadi pesan lama tidak berubah.
+    'ALTER TABLE custom_posts ADD COLUMN embed TEXT',
+    // Flag pesan Discord (suppress embeds/notifikasi). NULL = tidak ada flag,
+    // jadi pesan yang dibuat sebelum kolom ini ada tetap dikirim seperti dulu.
+    'ALTER TABLE custom_posts ADD COLUMN flags INTEGER',
+    // true = dokumen multi-pesan dikirim sebagai satu rangkaian balasan.
+    'ALTER TABLE custom_posts ADD COLUMN series INTEGER',
+    // Izin ping (JSON) & nama thread. NULL = bawaan aman: tanpa ping/thread.
+    'ALTER TABLE custom_posts ADD COLUMN mentions TEXT',
+    'ALTER TABLE custom_posts ADD COLUMN thread_name TEXT',
+    /*
+     * Nama & avatar webhook per pesan. Ditambahkan setelah fitur webhook
+     * dipakai, jadi pesan lama tidak punya nilainya (NULL = identitas server).
+     */
+    'ALTER TABLE custom_posts ADD COLUMN webhook_name TEXT',
+    'ALTER TABLE custom_posts ADD COLUMN webhook_avatar TEXT',
     // Emoji & warna tombol role. NULL = tampilan lama (tanpa emoji, biru),
     // jadi tombol yang dibuat sebelum fitur ini tetap terlihat sama.
+    // Kolom cron jadwal kirim. NULL = jadwal lama (berulang tiap N menit)
+    // tetap berjalan apa adanya setelah upgrade.
+    'ALTER TABLE post_schedules ADD COLUMN cron TEXT',
+    'ALTER TABLE post_schedules ADD COLUMN cron_offset INTEGER',
+    // Pemicu event pesan /pesan. NULL = hanya dikirim manual, jadi pesan lama
+    // tidak tiba-tiba terkirim sendiri setelah upgrade.
+    'ALTER TABLE custom_posts ADD COLUMN trigger TEXT',
     'ALTER TABLE post_role_buttons ADD COLUMN emoji TEXT',
     'ALTER TABLE post_role_buttons ADD COLUMN style TEXT',
   ];

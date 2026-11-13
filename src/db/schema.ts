@@ -209,8 +209,88 @@ CREATE TABLE IF NOT EXISTS custom_posts (
   accent     TEXT,
   sender     TEXT,
   layout     TEXT,
+  -- Bagian embed klasik yang DIISI ADMIN (JSON): url judul, penulis, footer,
+  -- bidang, stempel waktu. NULL = tidak ada, jadi pesan lama tidak berubah.
+  -- Disimpan terpisah dari blocks karena bentuknya bukan blok.
+  embed      TEXT,
+  -- Bitmask flag pesan Discord (suppress embeds/notifikasi/voice). NULL = 0.
+  flags      INTEGER,
+  -- true = kirim SELURUH pesan di dokumen ini berurutan sebagai satu
+  -- postingan: pesan pertama biasa, sisanya BALASAN ke pesan sebelumnya.
+  -- Padanan multi-pesan Discohook: rujukan balasan per pesan.
+  series     INTEGER,
+  -- Izin ping (allowed_mentions) sebagai JSON: {"parse":["users","roles"]}.
+  -- NULL/'' = tanpa ping apa pun, yang memang bawaan yang benar.
+  mentions   TEXT,
+  -- Nama thread yang dibuka pesan ini (thread_name). NULL = tanpa thread.
+  thread_name TEXT,
+  -- Nama & avatar pengirim webhook khusus pesan ini (padanan isian Username /
+  -- Avatar URL Discohook). NULL = pakai identitas server. Hanya berpengaruh
+  -- saat sender = 'webhook'.
+  webhook_name   TEXT,
+  webhook_avatar TEXT,
+  -- Pemicu kirim otomatis: 'member_add' / 'member_remove' (padanan trigger
+  -- event Discohook). NULL = hanya dikirim manual dari dashboard.
+  trigger    TEXT,
   updated_at INTEGER NOT NULL
 );
+
+-- ---------- dokumen pesan berurutan (dibuka dengan ?grup=) ----------
+-- Satu baris = satu jalur URL yang bisa dibuka lagi. Sebelumnya dokumen
+-- hasil impor Discohook yang berisi >1 pesan hanya bisa dilihat di layar
+-- (editor cuma menyimpan satu pesan aktif), sehingga sisa pesannya hilang
+-- saat halaman ditutup. Sekarang isinya bisa disimpan dan dibuka lagi.
+--
+-- Isi pesan disimpan sebagai JSON UTUH, bukan kolom per field: bentuk blok
+-- dipakai bersama editor satu-pesan, dan menyalinnya ke kolom akan membuat
+-- dua sumber kebenaran yang cepat menyimpang.
+CREATE TABLE IF NOT EXISTS post_documents (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id   TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  series     INTEGER NOT NULL DEFAULT 0,
+  payload    TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_documents_guild ON post_documents (guild_id);
+
+-- ---------- riwayat revisi pesan ----------
+-- Satu baris = SATU versi isi pesan sebelum diubah.
+--
+-- Kenapa menyimpan isi penuh, bukan diff: pesan container adalah dokumen
+-- panjang yang disunting utuh oleh admin. Diff akan butuh algoritma khusus
+-- dan tetap tidak bisa menjawab pertanyaan yang sebenarnya ditanyakan admin:
+-- "kembalikan seperti jam 10 tadi".
+--
+-- Kenapa dibatasi: tanpa batas, setiap tekan Simpan menambah satu salinan
+-- dokumen panjang. Batasnya dijaga saat menulis, lihat HISTORY_LIMITS.
+CREATE TABLE IF NOT EXISTS post_revisions (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id   TEXT NOT NULL,
+  post_id    INTEGER NOT NULL,
+  name       TEXT NOT NULL,
+  payload    TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_revisions_post ON post_revisions (post_id, created_at DESC);
+
+-- ---------- tautan berbagi pesan ----------
+-- Satu baris = satu tautan yang bisa dibuka orang lain TANPA login.
+--
+-- Kenapa di database, bukan sekadar menyandikan isi di URL: URL dengan isi
+-- pesan panjang akan melewati batas panjang URL, dan tautan yang sudah
+-- dibagikan harus bisa DICABUT. Token di sini acak dan bisa dihapus kapan
+-- saja oleh admin.
+CREATE TABLE IF NOT EXISTS post_shares (
+  token      TEXT PRIMARY KEY,
+  guild_id   TEXT NOT NULL,
+  post_id    INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_shares_post ON post_shares (post_id);
 
 -- ---------- tombol ambil role (tahap 3) ----------
 -- Satu baris = satu tombol. Role disimpan di sini, BUKAN di dalam customId:
@@ -228,12 +308,107 @@ CREATE TABLE IF NOT EXISTS post_role_buttons (
   position INTEGER NOT NULL DEFAULT 0
 );
 
+-- ---------- tujuan kirim tambahan (padanan targets[] Discohook) ----------
+-- Satu baris = satu channel tambahan untuk satu pesan. Channel utama tetap
+-- disimpan di custom_posts.channel_id (sumber kebenaran lama), dan baris di
+-- sini adalah TAMBAHAN-nya. Dengan begitu pesan yang sudah ada tidak berubah
+-- perilaku, dan "channel tujuan" tetap bisa dibaca dari satu tempat.
+CREATE TABLE IF NOT EXISTS post_targets (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id   TEXT NOT NULL,
+  post_id    INTEGER NOT NULL,
+  channel_id TEXT NOT NULL,
+  message_id TEXT,
+  position   INTEGER NOT NULL DEFAULT 0
+);
+
+-- ---------- aksi komponen (versi ringkas flow Discohook) ----------
+-- Satu baris = satu aksi pada satu komponen. Kolom target berisi tombol role
+-- (button:n) atau opsi menu (option:n), jadi aksi tidak perlu kolom sendiri di
+-- tabel tombol/opsi. Kolom payload berisi JSON aksi.
+CREATE TABLE IF NOT EXISTS post_actions (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id  TEXT NOT NULL,
+  post_id   INTEGER NOT NULL,
+  target    TEXT NOT NULL,
+  position  INTEGER NOT NULL DEFAULT 0,
+  payload   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_actions_post ON post_actions (guild_id, post_id);
+
+-- ---------- sesi flow yang sedang menunggu ----------
+-- Satu baris = satu flow yang berhenti di aksi "Tunggu".
+--
+-- Kenapa disimpan di database, bukan di memori: bot bisa restart kapan saja,
+-- dan penantian bisa sampai 7 hari. Tanpa tabel ini, semua penantian hilang
+-- diam-diam saat deploy — admin sudah menjanjikan pengingat yang tidak pernah
+-- datang.
+--
+-- payload menyimpan SISA langkah (JSON) supaya bentuk rencana aksi bisa
+-- berubah tanpa migrasi kolom.
+CREATE TABLE IF NOT EXISTS post_flow_sessions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id    TEXT NOT NULL,
+  post_id     INTEGER NOT NULL,
+  channel_id  TEXT NOT NULL,
+  message_id  TEXT,
+  user_id     TEXT NOT NULL,
+  user_name   TEXT NOT NULL,
+  server_name TEXT NOT NULL,
+  variables   TEXT NOT NULL DEFAULT '{}',
+  payload     TEXT NOT NULL,
+  due_at      BIGINT NOT NULL,
+  created_at  BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_flow_due ON post_flow_sessions (due_at);
+
+-- ---------- jadwal kirim pesan ----------
+-- Satu baris = satu pesan yang dijadwalkan terkirim.
+--
+-- repeat_minutes = 0 berarti sekali kirim; lebih dari 0 diulang tiap sekian
+-- menit. Batas bawah pengulangan 2 jam (120 menit) mengikuti Discohook: lebih
+-- rapat dari itu, kanal dipenuhi pesan yang sama.
+--
+-- last_sent_at menyimpan waktu kirim terakhir supaya bot yang restart tidak
+-- mengirim ulang pesan yang sudah terkirim, dan supaya jadwal berulang tidak
+-- menumpuk saat bot lama mati.
+CREATE TABLE IF NOT EXISTS post_schedules (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id       TEXT NOT NULL,
+  post_id        INTEGER NOT NULL,
+  channel_id     TEXT NOT NULL,
+  due_at         BIGINT NOT NULL,
+  repeat_minutes INTEGER NOT NULL DEFAULT 0,
+  -- Ekspresi cron lima ruas. NULL = jadwal berulang tiap N menit.
+  -- Diisi = pengulangan mengikuti kalender (tiap Senin, tiap tanggal 1, ...).
+  cron           TEXT,
+  -- Offset zona waktu jadwal (jam dari UTC), dihitung dari zona server.
+  -- Disimpan supaya "tiap Senin 09:00" tetap 09:00 WIB walau zona server diubah.
+  cron_offset    INTEGER,
+  last_sent_at   BIGINT,
+  created_at     BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_schedules_due ON post_schedules (due_at);
+
 -- ---------- webhook per channel (pesan atas nama server) ----------
 -- Token menyimpan bagian RAHASIA dari URL webhook, dalam bentuk terenkripsi
 -- (lihat src/features/webhook-secret.ts). Tidak pernah dikirim ke browser.
 -- ---------- menu role (select menu) ----------
 -- Satu baris = satu menu. Opsinya disimpan di post_role_options supaya
 -- jumlah role per menu tidak terbatas kolom.
+-- Tujuan kirim tambahan (targets[]). Lihat komentar di SCHEMA_SQLITE.
+CREATE TABLE IF NOT EXISTS post_targets (
+  id         SERIAL PRIMARY KEY,
+  guild_id   TEXT NOT NULL,
+  post_id    INTEGER NOT NULL,
+  channel_id TEXT NOT NULL,
+  message_id TEXT,
+  position   INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS post_role_menus (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   guild_id    TEXT NOT NULL,
@@ -459,8 +634,59 @@ CREATE TABLE IF NOT EXISTS custom_posts (
   accent     TEXT,
   sender     TEXT,
   layout     TEXT,
+  -- Bagian embed klasik yang diisi admin (JSON). NULL = tidak ada.
+  embed      TEXT,
+  -- Bitmask flag pesan Discord. NULL = 0.
+  flags      INTEGER,
+  -- true = pesan-pesan dokumen ini dikirim berurutan sebagai balasan.
+  series     INTEGER,
+  mentions    TEXT,
+  thread_name TEXT,
+  -- 'member_add' / 'member_remove'; NULL = hanya manual.
+  trigger     TEXT,
   updated_at BIGINT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS post_documents (
+  id         SERIAL PRIMARY KEY,
+  guild_id   TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  series     INTEGER NOT NULL DEFAULT 0,
+  payload    TEXT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_documents_guild ON post_documents (guild_id);
+
+-- ---------- riwayat revisi pesan ----------
+-- Satu baris = SATU versi isi pesan sebelum diubah.
+--
+-- Kenapa menyimpan isi penuh, bukan diff: pesan container adalah dokumen
+-- panjang yang disunting utuh oleh admin. Diff akan butuh algoritma khusus
+-- dan tetap tidak bisa menjawab pertanyaan yang sebenarnya ditanyakan admin:
+-- "kembalikan seperti jam 10 tadi".
+--
+-- Kenapa dibatasi: tanpa batas, setiap tekan Simpan menambah satu salinan
+-- dokumen panjang. Batasnya dijaga saat menulis, lihat HISTORY_LIMITS.
+CREATE TABLE IF NOT EXISTS post_revisions (
+  id         SERIAL PRIMARY KEY,
+  guild_id   TEXT NOT NULL,
+  post_id    INTEGER NOT NULL,
+  name       TEXT NOT NULL,
+  payload    TEXT NOT NULL,
+  created_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_revisions_post ON post_revisions (post_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS post_shares (
+  token      TEXT PRIMARY KEY,
+  guild_id   TEXT NOT NULL,
+  post_id    INTEGER NOT NULL,
+  created_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_shares_post ON post_shares (post_id);
 
 CREATE TABLE IF NOT EXISTS post_role_buttons (
   id       SERIAL PRIMARY KEY,
@@ -494,6 +720,51 @@ CREATE TABLE IF NOT EXISTS post_role_options (
   description TEXT,
   position    INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS post_actions (
+  id       SERIAL PRIMARY KEY,
+  guild_id TEXT NOT NULL,
+  post_id  INTEGER NOT NULL,
+  target   TEXT NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0,
+  payload  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_actions_post ON post_actions (guild_id, post_id);
+
+-- Sesi flow yang menunggu (lihat versi SQLite untuk penjelasannya).
+CREATE TABLE IF NOT EXISTS post_flow_sessions (
+  id          SERIAL PRIMARY KEY,
+  guild_id    TEXT NOT NULL,
+  post_id     INTEGER NOT NULL,
+  channel_id  TEXT NOT NULL,
+  message_id  TEXT,
+  user_id     TEXT NOT NULL,
+  user_name   TEXT NOT NULL,
+  server_name TEXT NOT NULL,
+  variables   TEXT NOT NULL DEFAULT '{}',
+  payload     TEXT NOT NULL,
+  due_at      BIGINT NOT NULL,
+  created_at  BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_flow_due ON post_flow_sessions (due_at);
+
+-- Jadwal kirim pesan (lihat versi SQLite untuk penjelasannya).
+CREATE TABLE IF NOT EXISTS post_schedules (
+  id             SERIAL PRIMARY KEY,
+  guild_id       TEXT NOT NULL,
+  post_id        INTEGER NOT NULL,
+  channel_id     TEXT NOT NULL,
+  due_at         BIGINT NOT NULL,
+  repeat_minutes INTEGER NOT NULL DEFAULT 0,
+  cron           TEXT,
+  cron_offset    INTEGER,
+  last_sent_at   BIGINT,
+  created_at     BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_schedules_due ON post_schedules (due_at);
 
 CREATE TABLE IF NOT EXISTS post_webhooks (
   channel_id TEXT PRIMARY KEY,

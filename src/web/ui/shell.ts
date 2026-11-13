@@ -52,6 +52,148 @@ function uptime(seconds: number): string {
 }
 
 export const SHARED_JS = `
+/**
+ * Bandingkan dua versi isi pesan (dipakai kartu Riwayat di halaman /pesan).
+ *
+ * Ditaruh di JS bersama, bukan di dalam halaman: seluruh isinya fungsi murni
+ * tanpa DOM, jadi bisa diuji langsung tanpa memasang halaman. Pembanding yang
+ * hanya bisa diuji lewat klik adalah pembanding yang tidak pernah diuji.
+ */
+function diffRingkas(lama, baru) {
+  var blokLama = (lama && lama.blocks) || [];
+  var blokBaru = (baru && baru.blocks) || [];
+  var baris = [];
+  var teks = [];
+  var ditambah = 0;
+  var dihapus = 0;
+  var diubah = 0;
+
+  function nama(kind) {
+    var peta = {
+      text: 'teks', image: 'gambar', button: 'tombol', select: 'menu pilihan',
+      separator: 'pemisah', container: 'container', section: 'section',
+      file: 'berkas', row: 'baris baru', close: 'tutup kartu'
+    };
+    return peta[kind] || kind;
+  }
+
+  function potong(nilai) {
+    if (nilai === null || nilai === undefined || nilai === '') return '(kosong)';
+    if (typeof nilai === 'boolean') return nilai ? 'ya' : 'tidak';
+    if (Object.prototype.toString.call(nilai) === '[object Array]') {
+      return nilai.length ? nilai.join(', ') : '(kosong)';
+    }
+    if (typeof nilai === 'object') return JSON.stringify(nilai).slice(0, 40);
+    return String(nilai).slice(0, 40);
+  }
+
+  // Per posisi, bukan LCS: admin mengubah blok di tempat, dan "blok ke-3
+  // berubah" lebih mudah dipahami daripada "satu elemen disisipkan".
+  var panjang = Math.max(blokLama.length, blokBaru.length);
+  for (var i = 0; i < panjang; i += 1) {
+    var a = blokLama[i];
+    var b = blokBaru[i];
+    if (!a) {
+      ditambah += 1;
+      baris.push('+ blok ' + (i + 1) + ': ' + nama(b.kind) + ' ditambahkan');
+      continue;
+    }
+    if (!b) {
+      dihapus += 1;
+      baris.push('− blok ' + (i + 1) + ': ' + nama(a.kind) + ' dihapus');
+      continue;
+    }
+    /*
+     * Dibandingkan UTUH lewat JSON, bukan per field: field yang lupa
+     * dibandingkan membuat perubahan tidak terlihat sama sekali.
+     */
+    if (JSON.stringify(a) === JSON.stringify(b)) continue;
+    diubah += 1;
+    if (a.kind !== b.kind) {
+      baris.push('~ blok ' + (i + 1) + ': ' + nama(a.kind) + ' diganti ' + nama(b.kind));
+      continue;
+    }
+    if (a.kind === 'text' && typeof a.value === 'string' && typeof b.value === 'string') {
+      teks.push({ posisi: i + 1, lama: a.value, baru: b.value });
+      baris.push('~ blok ' + (i + 1) + ': teks diubah');
+      continue;
+    }
+    baris.push('~ blok ' + (i + 1) + ': ' + nama(a.kind) + ' diubah');
+  }
+
+  // Pengaturan yang tidak tampil sebagai blok tetap bisa berubah.
+  var pengaturan = 0;
+  function beda(label, x, y) {
+    if (JSON.stringify(x === undefined ? null : x) === JSON.stringify(y === undefined ? null : y)) return;
+    pengaturan += 1;
+    baris.push('~ ' + label + ': ' + potong(x) + ' → ' + potong(y));
+  }
+  beda('warna aksen', lama && lama.accent, baru && baru.accent);
+  beda('pengirim', lama && lama.sender, baru && baru.sender);
+  beda(
+    'izin ping',
+    (lama && lama.allowedMentions && lama.allowedMentions.parse) || [],
+    (baru && baru.allowedMentions && baru.allowedMentions.parse) || []
+  );
+  beda('nama thread', lama && lama.threadName, baru && baru.threadName);
+  beda('mode rangkaian', lama && lama.series === true, baru && baru.series === true);
+  beda('flag pesan', (lama && lama.flags) || 0, (baru && baru.flags) || 0);
+  /*
+   * Bagian embed (penulis, footer, bidang) dibandingkan sebagai satu nilai:
+   * perubahan pada footer kedua embed tetap terlihat, tanpa membuat panel
+   * riwayat penuh dengan baris per bidang.
+   */
+  beda('bentuk pesan', lama && lama.layout, baru && baru.layout);
+  beda('embed', ringkasEmbedDiff(lama && lama.embed), ringkasEmbedDiff(baru && baru.embed));
+  /*
+   * Identitas webhook: perubahan nama/avatar pengirim HARUS terlihat di panel
+   * bandingkan. Tanpa baris ini, menghapus nama pengirim tampak seperti tidak
+   * ada perubahan apa pun.
+   */
+  beda('nama pengirim webhook', lama && lama.webhookName, baru && baru.webhookName);
+  beda('avatar pengirim webhook', lama && lama.webhookAvatar, baru && baru.webhookAvatar);
+
+  var total = ditambah + dihapus + diubah + pengaturan;
+  if (total === 0) baris.push('Tidak ada perbedaan — versi ini sama dengan yang sekarang.');
+  return { total: total, ditambah: ditambah, dihapus: dihapus, diubah: diubah, baris: baris, teks: teks };
+}
+
+/**
+ * Ringkasan daftar bagian embed untuk pembanding versi.
+ *
+ * Diringkas jadi satu baris per embed ("Embed 1: penulis Tim, 2 bidang"), bukan
+ * JSON mentah: admin membandingkan versi untuk tahu APA yang berubah, dan JSON
+ * penuh hanya membuat panel diff sulit dibaca. Nilai kosong tetap muncul
+ * sebagai "tanpa bagian admin" supaya menghapus semua embed terlihat.
+ */
+function ringkasEmbedDiff(daftar) {
+  var isi = Object.prototype.toString.call(daftar) === '[object Array]' ? daftar : daftar ? [daftar] : [];
+  var bagian = [];
+  for (var i = 0; i < isi.length; i += 1) {
+    var satu = isi[i] || {};
+    var potongan = [];
+    if (satu.author && satu.author.name) potongan.push('penulis ' + String(satu.author.name).slice(0, 30));
+    if (satu.footer && satu.footer.text) potongan.push('footer ' + String(satu.footer.text).slice(0, 30));
+    if (satu.fields && satu.fields.length) potongan.push(satu.fields.length + ' bidang');
+    if (satu.url) potongan.push('tautan judul');
+    if (satu.timestamp) potongan.push('stempel waktu');
+    bagian.push('embed ' + (i + 1) + ': ' + (potongan.length ? potongan.join(', ') : 'hanya isi blok'));
+  }
+  return bagian.length ? bagian.join('; ') : 'tanpa bagian admin';
+}
+
+/** "3 perubahan (1 tambah, 2 ubah)" — judul panel diff. */
+function ringkasDiff(hasil) {
+  if (!hasil || !hasil.total) return 'Sama dengan versi sekarang';
+  var bagian = [];
+  if (hasil.ditambah) bagian.push(hasil.ditambah + ' tambah');
+  if (hasil.dihapus) bagian.push(hasil.dihapus + ' hapus');
+  if (hasil.diubah) bagian.push(hasil.diubah + ' ubah');
+  var lain = hasil.total - (hasil.ditambah + hasil.dihapus + hasil.diubah);
+  if (lain) bagian.push(lain + ' pengaturan');
+  return hasil.total + ' perubahan (' + bagian.join(', ') + ')';
+}
+
 function toast(message, bad) {
   var el = document.getElementById('toast');
   el.textContent = message;

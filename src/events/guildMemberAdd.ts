@@ -8,13 +8,19 @@
  * Sambutan & perpisahan sama-sama mati secara default; admin menyalakannya di
  * dashboard → Sambutan.
  */
-import type { GuildMember, PartialGuildMember } from 'discord.js';
+import type { Client, GuildMember, PartialGuildMember } from 'discord.js';
 import { config } from '../config.js';
 import { errorMessage, logger } from '../lib/logger.js';
 import { goodbyeMember, welcomeMember } from '../features/welcome.js';
+import { runTriggers } from '../features/post-trigger.js';
 
-/** Member baru bergabung → sambutan. */
-export async function onGuildMemberAdd(member: GuildMember): Promise<void> {
+/**
+ * Member baru bergabung → sambutan + pesan /pesan ber-pemicu `member_add`.
+ *
+ * `client` opsional supaya pemanggil lama (dan test) tetap jalan: tanpa client,
+ * hanya sambutan yang diproses.
+ */
+export async function onGuildMemberAdd(member: GuildMember, client?: Client | null): Promise<void> {
   // Dicatat SEBELUM penyaringan apa pun. Tanpa baris ini, event yang tidak
   // pernah sampai (intent mati) dan event yang sengaja dilewati terlihat sama
   // persis dari log: tidak ada apa-apa. Itu yang membuat kebuntuan sebelumnya
@@ -41,6 +47,20 @@ export async function onGuildMemberAdd(member: GuildMember): Promise<void> {
   } catch (error) {
     logger.error(`Error pada guildMemberAdd (${member.user?.tag ?? member.id})`, errorMessage(error));
   }
+
+  /*
+   * Pesan /pesan ber-pemicu. Dijalankan SESUDAH sambutan dan di luar
+   * try/catch-nya: kegagalan sambutan tidak boleh menahan pesan pemicu, dan
+   * sebaliknya. Pesan dari bot lain (`member.user.bot`) tetap dilayani —
+   * admin yang memasang pemicu "member masuk" memang menginginkan tiap
+   * anggota baru, termasuk bot, sama seperti Discohook.
+   */
+  if (!client) return;
+  try {
+    await runTriggers({ client, guildId: member.guild.id, trigger: 'member_add' });
+  } catch (error) {
+    logger.error(`Error pada pemicu member_add (${member.user?.tag ?? member.id})`, errorMessage(error));
+  }
 }
 
 /**
@@ -49,7 +69,10 @@ export async function onGuildMemberAdd(member: GuildMember): Promise<void> {
  * `PartialGuildMember` muncul kalau event terjadi saat cache belum lengkap;
  * semua field yang dipakai (`displayName`, `user`, `guild`) tetap tersedia.
  */
-export async function onGuildMemberRemove(member: GuildMember | PartialGuildMember): Promise<void> {
+export async function onGuildMemberRemove(
+  member: GuildMember | PartialGuildMember,
+  client?: Client | null,
+): Promise<void> {
   logger.info(
     `Event member keluar: ${member.user?.tag ?? member.id}` +
       `${member.user?.bot ? ' (bot)' : ''} dari ${member.guild?.name ?? member.guild?.id ?? '?'}`,
@@ -65,5 +88,12 @@ export async function onGuildMemberRemove(member: GuildMember | PartialGuildMemb
     if (!sent) logger.info('  ↳ salam perpisahan tidak terkirim (lihat alasan di atas).');
   } catch (error) {
     logger.error(`Error pada guildMemberRemove (${member.user?.tag ?? member.id})`, errorMessage(error));
+  }
+
+  if (!client) return;
+  try {
+    await runTriggers({ client, guildId: member.guild.id, trigger: 'member_remove' });
+  } catch (error) {
+    logger.error(`Error pada pemicu member_remove (${member.user?.tag ?? member.id})`, errorMessage(error));
   }
 }

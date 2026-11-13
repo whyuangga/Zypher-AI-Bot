@@ -6141,6 +6141,3873 @@ await testAsync('pesan: tombol role - keputusan beri vs lepas', async () => {
   assert.equal(ditolak.blocker, 'member-posisi');
 });
 
+await testAsync('aksi: sanitizer menerima 3 jenis aksi & menolak yang tidak sah', async () => {
+  const { sanitizeActions, ACTION_LIMITS } = await import('../src/features/post-actions.js');
+
+  const { actions, dropped } = sanitizeActions([
+    { kind: 'role', roleId: '900000000000000001', op: 'give' },
+    { kind: 'reply', text: 'Halo {member.name}!', hidden: false },
+    { kind: 'message', postId: 7, toChannel: false, followUp: 'Cek {member.mention}' },
+    // Tidak sah: dibuang dengan alasan, bukan hilang diam-diam.
+    { kind: 'role', roleId: 'bukan-angka' },
+    { kind: 'reply', text: '   ' },
+    { kind: 'message', postId: 0 },
+    { kind: 'teleport' },
+    null,
+  ]);
+
+  assert.deepEqual(
+    actions.map((a) => a.kind).join(','),
+    'role,reply,message',
+    'tiga aksi sah lolos',
+  );
+  assert.equal(actions[0]!.op, 'give');
+  assert.equal(actions[1]!.hidden, false, 'balasan publik dihormati');
+  assert.equal(actions[2]!.toChannel, false);
+  assert.equal(actions[2]!.followUp, 'Cek {member.mention}');
+  assert.equal(dropped.length, 4, 'empat aksi ditolak dengan alasan');
+
+  // Batas per komponen ditegakkan, bukan dipotong diam-diam.
+  const banyak = sanitizeActions(
+    Array.from({ length: ACTION_LIMITS.perComponent + 3 }, () => ({
+      kind: 'reply',
+      text: 'x',
+    })),
+  );
+  assert.equal(banyak.actions.length, ACTION_LIMITS.perComponent);
+  assert.equal(banyak.dropped.length, 1, 'kelebihan aksi dilaporkan');
+});
+
+await testAsync('aksi: rencana menjaga urutan, satu balasan, dan tidak mengirim diri sendiri', async () => {
+  const { planActions, fillActionText, defaultRoleReply } = await import('../src/features/post-actions.js');
+
+  const plan = planActions(
+    [
+      { kind: 'role', roleId: '1', op: 'toggle' },
+      { kind: 'reply', text: 'Role {role} sudah {effect}', hidden: true },
+      { kind: 'message', postId: 12 },
+      // Balasan kedua: Discord hanya menerima satu — dilewati dengan alasan.
+      { kind: 'reply', text: 'Terima kasih' },
+      // Mengirim pesan ini sendiri akan berulang tanpa henti.
+      { kind: 'message', postId: 5 },
+    ],
+    { selfPostId: 5 },
+  );
+
+  assert.deepEqual(
+    plan.steps.map((s) => s.kind).join(','),
+    'role,reply,message',
+    'urutan dipertahankan, balasan kedua & pesan-sendiri dibuang',
+  );
+  assert.equal(plan.firstReply?.text, 'Role {role} sudah {effect}');
+  assert.equal(plan.skipped.length, 2, 'dua langkah dilaporkan dilewati');
+
+  // Template: token yang dikenal diganti, yang tidak dikenal dibiarkan.
+  const teks = fillActionText('Hai {member.name} di {server.name}, role {role} {effect} untuk {member.mention}{unknown}', {
+    member: 'Wahyu',
+    mention: '<@2>',
+    server: 'Zypher',
+    role: 'Gamer',
+    effect: 'ditambahkan',
+  });
+  assert.equal(teks, 'Hai Wahyu di Zypher, role Gamer ditambahkan untuk <@2>{unknown}');
+  assert.equal(defaultRoleReply({ member: 'A', mention: '<@1>', server: 'S', role: 'Gamer', effect: 'dilepas' }), '✅ Role **Gamer** dilepas.');
+});
+
+await testAsync('aksi: tersimpan per target, menempel ke tombol tersimpan, & dijalankan berurutan', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runComponentActions } = await import('../src/features/post-action-runner.js');
+  const GUILD = '123456789012345678';
+  const ROLE = '900000000000000002';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Aksi uji',
+    channelId: null,
+    blocks: [{ kind: 'text', value: 'Klik' }],
+  });
+
+  const awal = await repo.replaceRoleButtons(GUILD, post.id, [{ label: 'Gamer', roleId: ROLE, mode: 'toggle' }]);
+  const buttonId = awal.buttons[0]!.id;
+
+  // Simpan aksi pada tombol itu.
+  const simpan = await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      { kind: 'role', roleId: ROLE, op: 'toggle' },
+      { kind: 'reply', text: '✅ {role} sudah {effect}, {member.mention}!', hidden: true },
+    ],
+    'select:role': [{ kind: 'reply', text: 'Menu role dipakai', hidden: true }],
+    // Target asing tidak boleh menyelipkan baris yatim.
+    'asal-asalan': [{ kind: 'reply', text: 'x' }],
+  });
+  assert.deepEqual(
+    Object.keys(simpan.actions).sort().join(','),
+    `button:${buttonId},select:role`,
+    'dua target tersimpan, target asing ditolak',
+  );
+  assert.equal(simpan.actions[`button:${buttonId}`]!.length, 2);
+
+  // ID tombol DIPERTAHANKAN saat disimpan ulang — aksi tetap menempel.
+  const ulang = await repo.replaceRoleButtons(GUILD, post.id, [
+    { id: buttonId, label: 'Gamer (baru)', roleId: ROLE, mode: 'toggle' },
+  ]);
+  assert.equal(ulang.buttons[0]!.id, buttonId, 'ID tombol lama dipakai ulang');
+  assert.equal(
+    (await repo.findActions(GUILD, `button:${buttonId}`))?.actions.length,
+    2,
+    'aksi ikut bertahan setelah simpan ulang',
+  );
+
+  /** Interaksi tiruan: mencatat role yang berubah & semua balasan. */
+  const jalankan = async (target: string) => {
+    const catatan = { add: [] as string[], remove: [] as string[], balasan: [] as string[] };
+    const interaction = {
+      customId: target.replace('button:', 'post-role:'),
+      guildId: GUILD,
+      deferred: false,
+      replied: false,
+      user: { id: '2', username: 'wahyu', globalName: 'Wahyu', tag: 'uji#0001' },
+      member: {
+        displayName: 'Wahyu',
+        roles: {
+          cache: { has: () => false },
+          highest: { position: 20 },
+          add: async (id: string) => void catatan.add.push(id),
+          remove: async (id: string) => void catatan.remove.push(id),
+        },
+        permissions: { has: () => true },
+      },
+      guild: {
+        id: GUILD,
+        name: 'Server Uji',
+        roles: {
+          cache: new Map([[ROLE, { id: ROLE, name: 'Gamer', position: 3, managed: false }]]),
+          // Role yang tidak dikenal harus benar-benar null: kalau mock ini
+          // selalu mengembalikan role, kasus "role sudah dihapus" tidak teruji.
+          fetch: async (id: string) =>
+            id === ROLE ? { id: ROLE, name: 'Gamer', position: 3, managed: false } : null,
+        },
+        members: {
+          me: { roles: { highest: { position: 10 } }, permissions: { has: () => true } },
+          fetchMe: async () => null,
+          fetch: async () => null,
+        },
+      },
+      reply: async (payload: { content: string }) => void catatan.balasan.push(payload.content),
+      followUp: async (payload: { content: string }) => void catatan.balasan.push(payload.content),
+    };
+    const ditangani = await runComponentActions({
+      client: {} as never,
+      interaction: interaction as never,
+      target,
+    });
+    return { ...catatan, ditangani };
+  };
+
+  const hasil = await jalankan(`button:${buttonId}`);
+  assert.equal(hasil.ditangani, true, 'aksi dikenali');
+  assert.deepEqual(hasil.add, [ROLE], 'role diberikan oleh aksi pertama');
+  assert.equal(hasil.balasan.length, 1, 'hanya satu balasan');
+  assert.equal(hasil.balasan[0], '✅ Gamer sudah ditambahkan, <@2>!', 'template terisi hasil role');
+
+  // Komponen tanpa aksi: runner mengembalikan false supaya jalur lama dipakai.
+  const tanpa = await jalankan('button:999999');
+  assert.equal(tanpa.ditangani, false, 'komponen tanpa aksi tidak ditangani runner');
+
+  // Aksi role yang gagal menghentikan sisa aksi (padanan Stop).
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      { kind: 'role', roleId: '900000000000000009', op: 'give' },
+      { kind: 'reply', text: 'TIDAK BOLEH TERKIRIM' },
+    ],
+  });
+  const gagal = await jalankan(`button:${buttonId}`);
+  assert.equal(gagal.add.length, 0, 'tidak ada role yang berubah');
+  assert.equal(gagal.balasan.length, 1);
+  assert.match(gagal.balasan[0]!, /dihapus|tidak bisa|menolak/i, 'alasan kegagalan diteruskan');
+  assert.notEqual(gagal.balasan[0], 'TIDAK BOLEH TERKIRIM', 'aksi sesudah kegagalan tidak dijalankan');
+});
+
+await testAsync('pesan: select menu membawa ID pesan supaya aksinya tidak tertukar', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const { targetSelectTampilan } = await import('../src/events/interactionCreate.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    RoleSelectMenuBuilder: d.RoleSelectMenuBuilder,
+  };
+  const blok = sanitizeBlocks([{ kind: 'select', selectKind: 'role' }]).blocks;
+
+  const denganId = buildPostPayload(blok, { ...deps, contextPostId: 12 });
+  const idBaru = (denganId!.components as Array<{ toJSON: () => any }>)[0]!
+    .toJSON()
+    .components[0].components[0].custom_id;
+  assert.equal(idBaru, 'post-ctx:12:role', 'ID pesan ikut di customId');
+  assert.deepEqual(
+    targetSelectTampilan(idBaru),
+    { postId: 12, target: 'select:role', fallbackTarget: 'select:role' },
+    'router memisahkan ID pesan & jenis menu',
+  );
+
+  // Pesan lama (dikirim sebelum ID pesan disisipkan) tetap dikenali.
+  const lama = buildPostPayload(blok, deps);
+  const idLama = (lama!.components as Array<{ toJSON: () => any }>)[0]!
+    .toJSON()
+    .components[0].components[0].custom_id;
+  assert.equal(idLama, 'post-ctx:role', 'tanpa postId memakai bentuk pendek');
+  assert.deepEqual(targetSelectTampilan(idLama), {
+    postId: null,
+    target: 'select:role',
+    fallbackTarget: 'select:role',
+  });
+  assert.equal(targetSelectTampilan('post-ctx:')?.target, undefined, 'customId rusak ditolak');
+});
+
+await testAsync('aksi: select berjenis sama di dua pesan tidak saling menjalankan aksi', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runComponentActions } = await import('../src/features/post-action-runner.js');
+  const GUILD = '123456789012345678';
+
+  // Dua pesan, keduanya punya menu role — kasus yang dulu tertukar.
+  const a = await repo.createCustomPost(GUILD, {
+    name: 'Menu A',
+    channelId: null,
+    blocks: [{ kind: 'text', value: 'A' }, { kind: 'select', selectKind: 'role' }],
+  });
+  const b = await repo.createCustomPost(GUILD, {
+    name: 'Menu B',
+    channelId: null,
+    blocks: [{ kind: 'text', value: 'B' }, { kind: 'select', selectKind: 'role' }],
+  });
+
+  await repo.replacePostActions(GUILD, a.id, {
+    'select:role': [{ kind: 'reply', text: 'BALASAN PESAN A', hidden: true }],
+  });
+  await repo.replacePostActions(GUILD, b.id, {
+    'select:role': [{ kind: 'reply', text: 'BALASAN PESAN B', hidden: true }],
+  });
+
+  const balasan: string[] = [];
+  const interaksi = (postId: number) => ({
+    customId: `post-ctx:${postId}:role`,
+    guildId: GUILD,
+    deferred: false,
+    replied: false,
+    user: { id: '2', username: 'wahyu', globalName: 'Wahyu', tag: 'uji#0001' },
+    member: {
+      displayName: 'Wahyu',
+      roles: { cache: { has: () => false }, highest: { position: 20 } },
+      permissions: { has: () => true },
+    },
+    guild: {
+      id: GUILD,
+      name: 'Server Uji',
+      roles: { cache: new Map(), fetch: async () => null },
+      members: { me: { roles: { highest: { position: 10 } }, permissions: { has: () => true } }, fetchMe: async () => null },
+    },
+    reply: async (payload: { content: string }) => void balasan.push(payload.content),
+    followUp: async (payload: { content: string }) => void balasan.push(payload.content),
+  });
+
+  // Meniru router: ID pesan dari customId diteruskan ke runner.
+  const { targetSelectTampilan } = await import('../src/events/interactionCreate.js');
+  const tekan = async (postId: number) => {
+    const customId = `post-ctx:${postId}:role`;
+    const target = targetSelectTampilan(customId)!;
+    return runComponentActions({
+      client: {} as never,
+      interaction: interaksi(postId) as never,
+      target: target.target,
+      postId: target.postId,
+    });
+  };
+
+  assert.equal(await tekan(b.id), true);
+  assert.deepEqual(balasan, ['BALASAN PESAN B'], 'hanya aksi pesan B yang jalan');
+
+  await tekan(a.id);
+  assert.deepEqual(balasan, ['BALASAN PESAN B', 'BALASAN PESAN A'], 'aksi pesan A tidak tertukar');
+
+  // Tanpa ID pesan (pesan lama), perilaku lama dipertahankan: aksi pertama
+  // yang cocok dipakai, bukan error. Menu lama tetap bekerja.
+  const lama = await repo.findActions(GUILD, 'select:role', null);
+  assert.ok(lama, 'bentuk lama masih menemukan aksi');
+});
+
+await testAsync('flow: penantian, syarat, dan variabel dihitung tanpa server', async () => {
+  const flow = await import('../src/features/post-flow.js');
+
+  // Penantian: batas bawah & atas ditegakkan, bukan dipotong diam-diam.
+  assert.equal(flow.waitUntil(1000, 0), null, 'nol detik bukan penantian');
+  assert.equal(flow.waitUntil(1000, -5), null, 'durasi negatif ditolak');
+  assert.equal(flow.waitUntil(1000, 'abc'), null, 'durasi bukan angka ditolak');
+  assert.equal(flow.waitUntil(1000, 60), 61_000, '60 detik = satu menit');
+  assert.equal(flow.waitUntil(0, 10 ** 9), flow.FLOW_LIMITS.waitSeconds * 1000, 'dibatasi 7 hari');
+
+  // Jatuh tempo: angka maupun string (Postgres mengembalikan BIGINT as string).
+  assert.equal(flow.isDue({ dueAt: 100 }, 100), true);
+  assert.equal(flow.isDue({ dueAt: 100 }, 99), false);
+  assert.equal(flow.isDue({ dueAt: '100' }, 100), true, 'string dari Postgres diterima');
+  assert.equal(flow.isDue({ dueAt: null }, 10 ** 12), false, 'tanpa jadwal = tidak jatuh tempo');
+
+  // Pembanding.
+  const uji = (comparator: string, value: string, expected?: string) =>
+    flow.testCondition({ value, comparator: comparator as never, expected });
+  assert.equal(uji('equals', 'a', 'a'), true);
+  assert.equal(uji('notEquals', 'a', 'b'), true);
+  assert.equal(uji('contains', 'halo dunia', 'dunia'), true);
+  assert.equal(uji('contains', 'halo', ''), false, 'pembanding kosong tidak cocok dengan apa pun');
+  assert.equal(uji('notContains', 'halo', ''), true);
+  assert.equal(uji('empty', '   '), true);
+  assert.equal(uji('notEmpty', 'x'), true);
+
+  // Nama variabel: hanya bentuk yang aman dipakai di template.
+  assert.equal(flow.isVariableName('kode'), true);
+  assert.equal(flow.isVariableName('kode_2'), true);
+  assert.equal(flow.isVariableName('2kode'), false);
+  assert.equal(flow.isVariableName('kode salah'), false);
+
+  assert.equal(flow.describeWait(45), '45 detik');
+  assert.equal(flow.describeWait(300), '5 menit');
+  assert.equal(flow.describeWait(7200), '2 jam');
+  assert.equal(flow.describeWait(172800), '2 hari');
+});
+
+await testAsync('aksi: jenis baru divalidasi & aksi sesudah hapus dilaporkan', async () => {
+  const { sanitizeActions, planActions } = await import('../src/features/post-actions.js');
+
+  const { actions, dropped } = sanitizeActions([
+    { kind: 'wait', seconds: 300 },
+    { kind: 'variable', name: 'kode', value: '{member.id}' },
+    { kind: 'condition', value: 'selected', comparator: 'equals', expected: 'gamer' },
+    { kind: 'thread', threadName: 'Bantuan {member.name}' },
+    { kind: 'delete' },
+    // Tidak sah:
+    { kind: 'wait', seconds: 0 },
+    { kind: 'variable', name: '2salah' },
+    { kind: 'condition', value: '' },
+    { kind: 'condition', value: 'selected', comparator: 'equals' },
+    { kind: 'thread', threadName: '  ' },
+  ]);
+
+  assert.deepEqual(
+    actions.map((a) => a.kind).join(','),
+    'wait,variable,condition,thread,delete',
+    'lima jenis baru lolos',
+  );
+  assert.equal(actions[0]!.seconds, 300);
+  assert.equal(actions[1]!.name, 'kode');
+  assert.equal(actions[2]!.comparator, 'equals');
+  assert.equal(actions[3]!.private, false, 'thread publik sebagai bawaan');
+  assert.equal(dropped.length, 5, 'lima aksi tidak sah dilaporkan');
+
+  // `wait` dibatasi 7 hari, bukan ditolak.
+  const panjang = sanitizeActions([{ kind: 'wait', seconds: 10 ** 9 }]);
+  assert.equal(panjang.actions[0]!.seconds, 604800);
+
+  // Aksi sesudah "hapus pesan" tidak akan terlihat — harus dilaporkan.
+  const plan = planActions([
+    { kind: 'delete' },
+    { kind: 'message', postId: 3 },
+  ]);
+  assert.ok(
+    plan.skipped.some((alasan) => alasan.includes('hapus pesan')),
+    'aksi sesudah hapus pesan dilaporkan',
+  );
+});
+
+await testAsync('flow: sesi penantian tersimpan, jatuh tempo, & dilanjutkan', async () => {
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Flow uji',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Klik' }],
+  });
+
+  // Sesi yang SUDAH jatuh tempo harus muncul di daftar; yang belum, tidak.
+  const sekarang = Date.now();
+  const id = await repo.createFlowSession({
+    guildId: GUILD,
+    postId: post.id,
+    channelId: '999',
+    messageId: '111',
+    userId: '2',
+    userName: 'Wahyu',
+    serverName: 'Server Uji',
+    variables: { kode: 'abc' },
+    steps: [{ kind: 'reply', text: 'lanjutan' }],
+    dueAt: sekarang - 1000,
+  });
+  const belum = await repo.createFlowSession({
+    guildId: GUILD,
+    postId: post.id,
+    channelId: '999',
+    messageId: '111',
+    userId: '3',
+    userName: 'Besok',
+    serverName: 'Server Uji',
+    variables: {},
+    steps: [{ kind: 'reply', text: 'nanti' }],
+    dueAt: sekarang + 60_000,
+  });
+
+  const due = await repo.listDueFlowSessions(sekarang);
+  assert.equal(due.length, 1, 'hanya sesi yang jatuh tempo diambil');
+  assert.equal(due[0]!.id, id);
+  assert.equal(due[0]!.variables.kode, 'abc', 'variabel ikut tersimpan');
+  assert.equal((due[0]!.steps as Array<{ text: string }>)[0]!.text, 'lanjutan');
+
+  assert.equal(await repo.countFlowSessions(GUILD), 2);
+
+  // Dihapus SEBELUM dijalankan; kalau tidak, flow yang sama berjalan berulang.
+  await repo.deleteFlowSession(id);
+  assert.equal(await repo.countFlowSessions(GUILD), 1);
+  assert.equal((await repo.listDueFlowSessions(sekarang)).length, 0);
+
+  // Pemangkasan: yang jatuh temponya masih JAUH tidak boleh ikut terbuang oleh
+  // batas yang wajar (30 hari), sedangkan batas yang jauh di depan membuangnya.
+  await repo.pruneFlowSessions(sekarang - 10 ** 12);
+  assert.equal(await repo.countFlowSessions(GUILD), 1, 'batas lampau tidak membuang sesi yang masih menunggu');
+  await repo.pruneFlowSessions(sekarang + 10 ** 12);
+  assert.equal(await repo.countFlowSessions(GUILD), 0, 'batas jauh di depan membuang sesi kedaluwarsa');
+
+  // Menghapus pesan ikut membuang sesinya — jangan ada flow yatim.
+  await repo.createFlowSession({
+    guildId: GUILD,
+    postId: post.id,
+    channelId: '999',
+    messageId: '111',
+    userId: '2',
+    userName: 'Wahyu',
+    serverName: 'Server Uji',
+    variables: {},
+    steps: [],
+    dueAt: sekarang + 1000,
+  });
+  await repo.deleteCustomPost(GUILD, post.id);
+  assert.equal(await repo.countFlowSessions(GUILD), 0, 'sesi pesan terhapus ikut dibuang');
+  void belum;
+});
+
+await testAsync('jadwal: sanitizer, pengulangan minimal 2 jam, & geser setelah kirim', async () => {
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Jadwal uji',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Pengingat' }],
+  });
+
+  const depan = Date.now() + 60 * 60 * 1000;
+  const hasil = await repo.replaceSchedules(GUILD, post.id, '999', [
+    { dueAt: depan, repeatMinutes: 0 },
+    // 30 menit terlalu rapat -> dinaikkan ke batas, bukan ditolak.
+    { dueAt: depan + 1000, repeatMinutes: 30 },
+    // Waktu lampau tidak sah.
+    { dueAt: Date.now() - 10 * 60 * 1000, repeatMinutes: 0 },
+  ]);
+  assert.equal(hasil.schedules.length, 2, 'dua jadwal sah');
+  assert.equal(hasil.schedules[1]!.repeatMinutes, 120, 'pengulangan dinaikkan ke 2 jam');
+  assert.equal(hasil.dropped.length, 1, 'jadwal lampau dilaporkan');
+
+  // Jadwal sekali-kirim dihapus setelah dikirim.
+  const sekali = hasil.schedules.find((s) => s.repeatMinutes === 0)!;
+  await repo.markScheduleSent(sekali);
+  assert.equal((await repo.listSchedules(GUILD, post.id)).length, 1);
+
+  // Jadwal berulang digeser dari SEKARANG, bukan dari jadwal lama — bot yang
+  // mati berhari-hari tidak boleh memuntahkan pesan susulan.
+  const ulang = (await repo.listSchedules(GUILD, post.id))[0]!;
+  const sekarang = Date.now();
+  await repo.markScheduleSent(ulang, sekarang);
+  const sesudah = (await repo.listSchedules(GUILD, post.id))[0]!;
+  assert.equal(sesudah.dueAt, sekarang + 120 * 60_000, 'digeser dari waktu kirim sekarang');
+  assert.equal(sesudah.lastSentAt, sekarang);
+
+  // Menghapus pesan ikut membuang jadwalnya.
+  await repo.deleteCustomPost(GUILD, post.id);
+  assert.equal((await repo.listSchedules(GUILD, post.id)).length, 0);
+});
+
+await testAsync('jadwal: cron kalender per hari/senin/tanggal, batas rapat & zona waktu', async () => {
+  const cron = await import('../src/features/schedule-cron.js');
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  // 2026-11-12 10:30 WIB (UTC+7) = 03:30 UTC. Tanggal 12 Nov 2026 = Kamis.
+  const sekarang = Date.UTC(2026, 10, 12, 3, 30);
+  const wib = (ms: number): string => new Date(ms + 7 * 3_600_000).toISOString().slice(0, 16);
+
+  // Tiap hari 09:00: hari ini sudah lewat (10:30), jadi besok.
+  assert.equal(wib(cron.nextCronTime('0 9 * * *', sekarang, 7)!), '2026-11-13T09:00', 'tiap hari 09:00');
+
+  // Tiap Senin: 12 Nov 2026 Kamis -> Senin 16 Nov.
+  assert.equal(wib(cron.nextCronTime('0 0 * * 1', sekarang, 7)!), '2026-11-16T00:00', 'tiap Senin');
+
+  // Tiap tanggal 1 -> 1 Desember.
+  assert.equal(wib(cron.nextCronTime('0 8 1 * *', sekarang, 7)!), '2026-12-01T08:00', 'tiap tanggal 1');
+
+  // Zona ikut berpengaruh: "09:00" di WITA = 08:00 WIB.
+  const wita = cron.nextCronTime('0 9 * * *', sekarang, 8)!;
+  assert.equal(wib(wita), '2026-11-13T08:00', 'jam mengikuti offset zona server');
+
+  // Pola tidak sah ditolak dengan ALASAN, bukan diam.
+  const alasan: string[] = [];
+  for (const salah of ['60 9 * * *', '* * * *', 'x 9 * * *', '5-1 * * * *', '*/0 * * * *']) {
+    try {
+      cron.parseCron(salah);
+      alasan.push('LOLOS:' + salah);
+    } catch (error) {
+      alasan.push((error as Error).message);
+    }
+  }
+  assert.equal(alasan.filter((t) => t.startsWith('LOLOS')).length, 0, 'semua pola salah ditolak');
+  assert.ok(alasan.some((t) => t.includes('0-59')), 'batas menit dijelaskan');
+  assert.ok(alasan.some((t) => t.includes('5 ruas')), 'jumlah ruas dijelaskan');
+
+  // Tanggal mustahil (30 Februari) tidak pernah berbunyi — dilaporkan, bukan crash.
+  assert.equal(cron.nextCronTime('0 0 30 2 *', sekarang, 7), null, 'tanggal mustahil = tidak pernah');
+  assert.equal(cron.cronIntervalMinutes('0 9 * * *', sekarang, 7), 1440, 'jarak harian 1440 menit');
+  assert.equal(cron.cronIntervalMinutes('0 9 * * 1', sekarang, 7), 10080, 'jarak mingguan');
+
+  /* --- penyimpanan: dueAt dihitung server, bukan dari klien --- */
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Jadwal kalender',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Pengingat mingguan' }],
+  });
+
+  const disimpan = await repo.replaceSchedules(
+    GUILD,
+    post.id,
+    '999',
+    [
+      // dueAt sengaja ngawur: server harus menghitungnya dari cron.
+      { dueAt: 1, cron: '0 9 * * *' },
+      // Lebih rapat dari 2 jam -> ditolak dengan alasan.
+      { dueAt: 1, cron: '*/30 * * * *' },
+      // Pola rusak -> ditolak dengan alasan, bukan diam.
+      { dueAt: 1, cron: '99 9 * * *' },
+    ],
+    'Asia/Makassar',
+  );
+
+  assert.equal(disimpan.schedules.length, 1, 'hanya pola sah yang tersimpan');
+  const jadwal = disimpan.schedules[0]!;
+  assert.equal(jadwal.cron, '0 9 * * *', 'ekspresi disimpan');
+  assert.equal(jadwal.cronOffset, 8, 'offset zona server ikut disimpan');
+  assert.ok(jadwal.dueAt > Date.now(), 'dueAt dihitung dari ekspresi, bukan nilai klien');
+  assert.equal(jadwal.repeatMinutes, 0, 'cron tidak memakai pengulangan menit');
+  assert.equal(disimpan.dropped.length, 2, 'dua jadwal ditolak');
+  assert.ok(disimpan.dropped.some((t) => t.includes('terlalu rapat')), 'alasan rapat dijelaskan');
+  assert.ok(disimpan.dropped.some((t) => t.includes('0-59')), 'alasan pola rusak dijelaskan');
+
+  /* --- setelah dikirim: due bergeser ke pola berikutnya, baris TETAP ada --- */
+  const sebelum = jadwal.dueAt;
+  await repo.markScheduleSent(jadwal, sebelum);
+  const sesudahKirim = await repo.listSchedules(GUILD, post.id);
+  assert.equal(sesudahKirim.length, 1, 'jadwal kalender tidak dihapus setelah dikirim');
+  assert.equal(sesudahKirim[0]!.dueAt, sebelum + 24 * 3_600_000, 'bergeser tepat satu hari');
+  assert.equal(sesudahKirim[0]!.lastSentAt, sebelum, 'waktu kirim terakhir dicatat');
+
+  /*
+   * Jam dinding tetap: dikirim jam 09:00 WITA, jadwal berikutnya juga 09:00
+   * WITA — bukan "24 jam dari sekarang" yang bisa melenceng kalau pengiriman
+   * molor beberapa menit.
+   *
+   * Yang diperiksa JARAKNYA, bukan tanggal absolutnya: `dueAt` dihitung dari
+   * jam mesin saat tes berjalan, jadi menulis tanggal tetap (16 Nov, dst.)
+   * membuat tes ini gagal sendiri sehari setelah ditulis — itu yang dulu
+   * terjadi dan sempat menutupi hasil tes lain.
+   */
+  const berikut = cron.nextCronTime('0 9 * * *', sesudahKirim[0]!.dueAt, 8)!;
+  assert.equal(
+    berikut - sesudahKirim[0]!.dueAt,
+    24 * 3_600_000,
+    'jadwal berikutnya tetap pukul 09:00 WITA (selisih tepat satu hari)',
+  );
+  assert.equal(wib(berikut).slice(11), '08:00', 'jamnya tidak bergeser (08:00 WIB = 09:00 WITA)');
+
+  await repo.deleteCustomPost(GUILD, post.id);
+});
+
+await testAsync('flow: tunggu menyimpan sesi, syarat menghentikan, hapus menghapus pesan', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runComponentActions } = await import('../src/features/post-action-runner.js');
+  const GUILD = '123456789012345678';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Flow nyata',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Klik' }],
+  });
+  const tombol = await repo.replaceRoleButtons(GUILD, post.id, [
+    { label: 'Mulai', roleId: '900000000000000001', mode: 'toggle' },
+  ]);
+  const buttonId = tombol.buttons[0]!.id;
+
+  /** Interaksi tiruan: mencatat balasan, pesan yang dihapus, & thread. */
+  const buatInteraksi = () => {
+    const catatan = {
+      balasan: [] as string[],
+      hapus: 0,
+      thread: [] as string[],
+    };
+    const interaction = {
+      customId: `post-role:${buttonId}`,
+      guildId: GUILD,
+      channelId: '999',
+      message: {
+        id: '555',
+        delete: async () => {
+          catatan.hapus += 1;
+        },
+      },
+      deferred: false,
+      replied: false,
+      user: { id: '2', username: 'wahyu', globalName: 'Wahyu', tag: 'uji#0001' },
+      member: {
+        displayName: 'Wahyu',
+        roles: { cache: { has: () => false }, highest: { position: 20 } },
+        permissions: { has: () => true },
+      },
+      guild: {
+        id: GUILD,
+        name: 'Server Uji',
+        roles: { cache: new Map(), fetch: async () => null },
+        members: { me: { roles: { highest: { position: 10 } }, permissions: { has: () => true } }, fetchMe: async () => null },
+      },
+      reply: async (payload: { content: string }) => void catatan.balasan.push(payload.content),
+      followUp: async (payload: { content: string }) => void catatan.balasan.push(payload.content),
+    };
+    return { catatan, interaction };
+  };
+
+  const jalankan = async () => {
+    const { catatan, interaction } = buatInteraksi();
+    const ditangani = await runComponentActions({
+      client: {} as never,
+      interaction: interaction as never,
+      target: `button:${buttonId}`,
+      postId: post.id,
+    });
+    return { ...catatan, ditangani };
+  };
+
+  // 1. "Tunggu": sesi tersimpan, sisa langkah TIDAK dijalankan sekarang.
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      { kind: 'variable', name: 'sapa', value: 'Hai {member.name}' },
+      { kind: 'wait', seconds: 120 },
+      { kind: 'reply', text: 'pengingat untuk {var.sapa}' },
+    ],
+  });
+  const tunggu = await jalankan();
+  assert.equal(tunggu.ditangani, true);
+  assert.match(tunggu.balasan[0]!, /2 menit/, 'pengklik diberi tahu ada penantian');
+
+  const sesi = await repo.listDueFlowSessions(Date.now() + 10 * 60 * 1000);
+  const milikKita = sesi.filter((s) => s.postId === post.id);
+  assert.equal(milikKita.length, 1, 'sesi penantian tersimpan');
+  assert.equal(milikKita[0]!.variables.sapa, 'Hai Wahyu', 'variabel disimpan tanpa awalan var.');
+  assert.equal((milikKita[0]!.steps as Array<{ text?: string }>)[0]!.text, 'pengingat untuk {var.sapa}');
+  assert.equal(milikKita[0]!.userId, '2');
+
+  // 2. Syarat yang tidak cocok: berhenti, tidak menjalankan sisa aksi.
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      { kind: 'condition', value: 'selected', comparator: 'equals', expected: 'gamer' },
+      { kind: 'reply', text: 'TIDAK BOLEH' },
+    ],
+  });
+  const syarat = await jalankan();
+  assert.equal(syarat.balasan.length, 1);
+  assert.match(syarat.balasan[0]!, /Syarat/, 'alasan berhenti dijelaskan');
+  assert.notEqual(syarat.balasan[0], 'TIDAK BOLEH');
+
+  // 3. Syarat yang cocok: lanjut.
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      { kind: 'condition', value: 'member.name', comparator: 'equals', expected: 'Wahyu' },
+      { kind: 'reply', text: 'cocok' },
+    ],
+  });
+  const cocok = await jalankan();
+  assert.equal(cocok.balasan[0], 'cocok', 'syarat yang cocok melanjutkan flow');
+
+  // 4. Hapus pesan: pesan benar-benar dihapus, tanpa balasan "Selesai".
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [{ kind: 'delete' }],
+  });
+  const hapus = await jalankan();
+  assert.equal(hapus.hapus, 1, 'pesan pemicu dihapus');
+  assert.equal(hapus.balasan.length, 0, 'tidak ada balasan sia-sia sesudah pesan hilang');
+
+  // 5. Thread tanpa channel yang mendukung: gagal dengan penjelasan, bukan diam.
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [{ kind: 'thread', threadName: 'Bantuan' }],
+  });
+  const thread = await jalankan();
+  assert.equal(thread.balasan.length, 1);
+  assert.match(thread.balasan[0]!, /thread/i, 'kegagalan thread dijelaskan');
+});
+
+await testAsync('flow: aksi per pilihan select dipakai sebelum aksi seluruh menu', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runComponentActions } = await import('../src/features/post-action-runner.js');
+  const { targetSelectTampilan } = await import('../src/events/interactionCreate.js');
+  const GUILD = '123456789012345678';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Menu pilihan',
+    channelId: '999',
+    blocks: [
+      { kind: 'text', value: 'Pilih' },
+      { kind: 'select', selectKind: 'string', options: [{ label: 'Gamer', value: 'gamer' }, { label: 'Musik', value: 'musik' }] },
+    ],
+  });
+  await repo.replacePostActions(GUILD, post.id, {
+    'sel:gamer': [{ kind: 'reply', text: 'Kamu memilih gamer' }],
+    'select:string': [{ kind: 'reply', text: 'Pilihan lain' }],
+  });
+
+  // Router: pilihan tunggal memakai target `sel:<nilai>` + cadangan.
+  const customId = `post-ctx:${post.id}:string`;
+  const satu = targetSelectTampilan(customId, ['gamer'])!;
+  assert.equal(satu.target, 'sel:gamer');
+  assert.equal(satu.fallbackTarget, 'select:string');
+  // Banyak pilihan sekaligus tidak bisa dipetakan ke satu aksi.
+  assert.equal(targetSelectTampilan(customId, ['gamer', 'musik'])!.target, 'select:string');
+
+  const balasan: string[] = [];
+  const tekan = async (values: string[]) => {
+    const target = targetSelectTampilan(customId, values)!;
+    const interaction = {
+      customId,
+      guildId: GUILD,
+      channelId: '999',
+      deferred: false,
+      replied: false,
+      values,
+      user: { id: '2', username: 'wahyu', globalName: 'Wahyu', tag: 'uji#0001' },
+      member: {
+        displayName: 'Wahyu',
+        roles: { cache: { has: () => false }, highest: { position: 20 } },
+        permissions: { has: () => true },
+      },
+      guild: {
+        id: GUILD,
+        name: 'Server Uji',
+        roles: { cache: new Map(), fetch: async () => null },
+        members: { me: { roles: { highest: { position: 10 } }, permissions: { has: () => true } }, fetchMe: async () => null },
+      },
+      reply: async (payload: { content: string }) => void balasan.push(payload.content),
+      followUp: async (payload: { content: string }) => void balasan.push(payload.content),
+    };
+    return runComponentActions({
+      client: {} as never,
+      interaction: interaction as never,
+      target: target.target,
+      fallbackTarget: target.fallbackTarget,
+      postId: target.postId,
+    });
+  };
+
+  assert.equal(await tekan(['gamer']), true);
+  assert.deepEqual(balasan, ['Kamu memilih gamer'], 'aksi per pilihan dipakai');
+
+  await tekan(['musik']);
+  assert.deepEqual(balasan, ['Kamu memilih gamer', 'Pilihan lain'], 'pilihan tanpa aksi jatuh ke aksi menu');
+});
+
+await testAsync('pesan: endpoint jadwal dikenali router (bukan 404)', async () => {
+  /*
+   * Regresi nyata: `/api/posts/:id/schedules` sempat tidak masuk pola router,
+   * sehingga dashboard menerima "Tidak ditemukan" walaupun endpoint-nya sudah
+   * ditulis. Menyimpan jadwal dari dashboard adalah satu-satunya jalan
+   * memakainya, jadi kegagalannya harus tertangkap di sini.
+   */
+  const sumber = await readFile(new URL('../src/web/server.ts', import.meta.url), 'utf8');
+  /*
+   * Diperiksa dengan `includes`, bukan regex bersarang: pesan kegagalan
+   * assert.match mencetak seluruh source dan menenggelamkan laporan test.
+   */
+  assert.ok(sumber.includes('\\/roles|\\/schedules'), 'pola router menerima /schedules');
+  assert.ok(sumber.includes("postMatch[2] === '/schedules'"), 'ada cabang yang menangani jadwal');
+});
+
+await testAsync('pesan: teks blok bisa memakai template, dan tanpa konteks tetap apa adanya', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  // Deps lengkap seperti yang dipakai pemanggil sungguhan: tipe deps mensyaratkan
+  // semua builder, dan versi setengah jadi membuat build gagal padahal runtime-nya
+  // tidak apa-apa — persis jenis kesalahan yang tidak boleh lolos.
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SectionBuilder: d.SectionBuilder,
+    ThumbnailBuilder: d.ThumbnailBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    StringSelectMenuBuilder: d.StringSelectMenuBuilder,
+    StringSelectMenuOptionBuilder: d.StringSelectMenuOptionBuilder,
+    UserSelectMenuBuilder: d.UserSelectMenuBuilder,
+    RoleSelectMenuBuilder: d.RoleSelectMenuBuilder,
+    MentionableSelectMenuBuilder: d.MentionableSelectMenuBuilder,
+    ChannelSelectMenuBuilder: d.ChannelSelectMenuBuilder,
+  };
+  const blok = sanitizeBlocks([
+    { kind: 'container' },
+    { kind: 'text', value: 'Hai {member.name} di {server.name}! Pilihanmu {selected}. Sisa {tidak.dikenal}' },
+  ]).blocks;
+
+  const denganTemplate = buildPostPayload(blok, {
+    ...deps,
+    template: { 'member.name': 'Wahyu', 'server.name': 'Zypher', selected: 'gamer' },
+  });
+  const teks = JSON.stringify(denganTemplate!.components.map((c) => (c as unknown as { toJSON: () => unknown }).toJSON()));
+  assert.match(teks, /Hai Wahyu di Zypher/, 'template terisi');
+  assert.match(teks, /Pilihanmu gamer/);
+  assert.match(teks, /Sisa \{tidak\.dikenal\}/, 'token tak dikenal dibiarkan');
+
+  /*
+   * TANPA konteks, teks harus dikirim apa adanya. Ini yang menjaga pesan biasa
+   * buatan admin tidak berubah hanya karena fitur template ada.
+   */
+  const tanpa = buildPostPayload(blok, deps);
+  const teksTanpa = JSON.stringify(tanpa!.components.map((c) => (c as unknown as { toJSON: () => unknown }).toJSON()));
+  assert.match(teksTanpa, /\{member\.name\}/, 'tanpa konteks token dibiarkan');
+});
+
+await testAsync('aksi: kirim teks mentah & hapus pesan bertarget', async () => {
+  const { sanitizeActions, planActions, fillActionText } = await import('../src/features/post-actions.js');
+
+  const { actions, dropped } = sanitizeActions([
+    { kind: 'raw', rawText: '  Halo {member.name}  ', channelId: '123456789012345678' },
+    { kind: 'raw', rawText: '   ' },
+    { kind: 'raw', rawText: 'Halo', channelId: 'bukan-channel' },
+    { kind: 'delete', what: 'sebelumnya' },
+    { kind: 'delete' },
+    { kind: 'delete', what: 'bukan-sasaran' },
+  ]);
+
+  // Teks kosong = pesan kosong, dan Discord menolaknya. Aksi seperti itu
+  // dibuang sekarang, bukan gagal di Discord nanti.
+  assert.deepEqual(
+    actions.map((a) => a.kind + ':' + (a.what ?? '')).join(','),
+    'raw:,raw:,delete:sebelumnya,delete:pesan,delete:pesan',
+    'teks kosong dibuang, sasaran hapus tak dikenal jatuh ke pesan ini',
+  );
+  assert.equal(actions[0]!.rawText, 'Halo {member.name}', 'teks dirapikan');
+  assert.equal(actions[0]!.channelId, '123456789012345678', 'channel sah dipertahankan');
+  assert.equal(actions[1]!.channelId, undefined, 'channel bukan ID dibuang, aksinya tetap');
+  assert.equal(dropped.length, 2, 'dua bagian dilaporkan');
+  assert.ok(dropped.some((alasan) => alasan.includes('tanpa isi')), 'teks kosong dilaporkan');
+  assert.ok(dropped.some((alasan) => alasan.includes('bukan ID channel')), 'channel salah dilaporkan');
+
+  // Rencana: teks mentah membawa isi & channel, hapus membawa sasarannya.
+  const plan = planActions([
+    { kind: 'raw', rawText: 'Halo {member.mention}' },
+    { kind: 'delete', what: 'sebelumnya' },
+  ]);
+  const [teks, hapus] = plan.steps as Array<Record<string, unknown>>;
+  assert.equal(teks!.kind, 'raw');
+  assert.equal(teks!.text, 'Halo {member.mention}');
+  assert.equal(teks!.channelId, undefined, 'tanpa channel = ikut channel pemicu');
+  assert.equal(hapus!.kind, 'delete');
+  assert.equal(hapus!.what, 'sebelumnya', 'sasaran hapus ikut ke langkah');
+
+  // Templat tetap berlaku di teks mentah.
+  const terisi = fillActionText('Halo {member.name} di {server.name}', {
+    member: 'Wahyu',
+    mention: '<@1>',
+    server: 'Zypher',
+  } as never);
+  assert.equal(terisi, 'Halo Wahyu di Zypher');
+});
+
+await testAsync('aksi: cabang bersyarat, dud, stop, & variabel adaptif', async () => {
+  const { sanitizeActions, planActions } = await import('../src/features/post-actions.js');
+
+  const { actions, dropped } = sanitizeActions([
+    { kind: 'dud' },
+    { kind: 'stop', stopMessage: 'Selesai di sini.' },
+    {
+      kind: 'condition',
+      value: 'selected',
+      comparator: 'equals',
+      expected: 'gamer',
+      then: [{ kind: 'reply', text: 'kamu gamer' }],
+      else: [{ kind: 'reply', text: 'bukan gamer' }],
+    },
+    { kind: 'variable', name: 'pesan', value: 'messageId', source: 'adaptive' },
+    { kind: 'variable', name: 'salinan', value: 'var.kode', source: 'get' },
+    // adaptive tanpa nilai = menyesatkan, harus ditolak.
+    { kind: 'variable', name: 'kosong', source: 'adaptive' },
+  ]);
+
+  assert.deepEqual(
+    actions.map((a) => a.kind).join(','),
+    'dud,stop,condition,variable,variable',
+    'jenis baru lolos, variabel adaptive tanpa nilai ditolak',
+  );
+  assert.equal(actions[1]!.stopMessage, 'Selesai di sini.');
+  assert.equal(actions[2]!.then!.length, 1, 'cabang cocok tersimpan');
+  assert.equal(actions[2]!.else!.length, 1, 'cabang tidak cocok tersimpan');
+  assert.equal(dropped.length, 1);
+  assert.match(dropped[0]!, /hasil aksi sebelumnya/);
+
+  /*
+   * Cabang bersarang: batasnya 5 tingkat (ACTION_LIMITS.branchDepth), jadi
+   * contoh di bawah ini 6 tingkat dan harus dilaporkan. Angka 6 dipakai
+   * dengan sengaja: contoh 4 tingkat dulu "terlalu dalam" saat batasnya 3,
+   * dan sekarang justru sah.
+   */
+  const dalam = {
+    kind: 'condition',
+    value: 'a',
+    comparator: 'notEmpty',
+    then: [
+      {
+        kind: 'condition',
+        value: 'b',
+        comparator: 'notEmpty',
+        then: [
+          {
+            kind: 'condition',
+            value: 'c',
+            comparator: 'notEmpty',
+            then: [
+              {
+                kind: 'condition',
+                value: 'd',
+                comparator: 'notEmpty',
+                then: [
+                  {
+                    kind: 'condition',
+                    value: 'f',
+                    comparator: 'notEmpty',
+                    then: [{ kind: 'condition', value: 'g', comparator: 'notEmpty', then: [{ kind: 'dud' }] }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  const bersarang = sanitizeActions([dalam]);
+  assert.equal(bersarang.actions.length, 1);
+  assert.ok(
+    bersarang.dropped.some((alasan) => alasan.includes('tingkat')),
+    'cabang terlalu dalam dilaporkan, bukan dipotong diam-diam',
+  );
+
+  // Rencana: cabang diterjemahkan jadi langkah bersarang.
+  const plan = planActions([
+    {
+      kind: 'condition',
+      value: 'selected',
+      comparator: 'equals',
+      expected: 'gamer',
+      then: [{ kind: 'reply', text: 'gamer!' }],
+      else: [{ kind: 'stop', stopMessage: 'bukan gamer' }],
+    },
+    { kind: 'dud' },
+  ]);
+  const syarat = plan.steps[0] as { kind: string; then?: unknown[]; otherwise?: unknown[] };
+  assert.equal(syarat.kind, 'condition');
+  assert.equal(syarat.then!.length, 1, 'cabang "cocok" jadi langkah');
+  assert.equal(syarat.otherwise!.length, 1, 'cabang "tidak cocok" jadi langkah');
+  assert.equal(plan.steps[1]!.kind, 'dud', 'dud tetap jadi langkah (urutan terjaga)');
+});
+
+await testAsync('aksi: cabang bersarang 5 tingkat & kuota flow ala Discohook', async () => {
+  const { sanitizeActions, planActions, hitungAksiFlow, ACTION_LIMITS } = await import(
+    '../src/features/post-actions.js'
+  );
+
+  /* --- kedalaman: 5 tingkat diterima, tingkat keenam dilaporkan --- */
+  const bersarang = (tingkat: number): Record<string, unknown> => {
+    let dalam: Record<string, unknown> = { kind: 'dud' };
+    for (let i = tingkat; i >= 1; i -= 1) {
+      dalam = { kind: 'condition', value: 'member.name', comparator: 'notEmpty', then: [dalam] };
+    }
+    return dalam;
+  };
+
+  assert.equal(ACTION_LIMITS.branchDepth, 5, 'kedalaman cabang sama dengan yang dipakai UI');
+  const lima = sanitizeActions([bersarang(5)]);
+  assert.equal(lima.actions.length, 1, 'lima tingkat masih diterima');
+  assert.equal(lima.dropped.length, 0, 'lima tingkat tidak dilaporkan sebagai terlalu dalam');
+
+  const enam = sanitizeActions([bersarang(6)]);
+  assert.ok(
+    enam.dropped.some((alasan) => alasan.includes('tingkat')),
+    'cabang keenam dilaporkan, bukan dipotong diam-diam',
+  );
+
+  /* --- hitungan: syarat & hentikan tidak dihitung, cabang ikut dihitung --- */
+  const hitung = hitungAksiFlow([
+    { kind: 'condition', value: 'a', comparator: 'notEmpty', then: [{ kind: 'reply', text: 'x' }] },
+    { kind: 'stop' },
+    { kind: 'wait', seconds: 5 },
+    { kind: 'condition', value: 'b', comparator: 'notEmpty', else: [{ kind: 'dud' }] },
+  ]);
+  assert.deepEqual(hitung, { total: 6, berhitung: 3, pesan: 0 }, 'syarat/hentikan tidak dihitung, isi cabang dihitung');
+
+  /* --- kuota 15 aksi kirim pesan per flow, termasuk yang di dalam cabang --- */
+  /*
+   * Tujuh belas aksi kirim pesan: lima di tingkat atas dan dua belas di dalam
+   * cabang. Daftar tingkat atas sengaja 6 aksi (lima pesan + satu syarat),
+   * tepat di batas per komponen — jadi yang menahan di sini benar-benar kuota
+   * 15 aksi kirim pesan per flow, bukan batas 6 itu. Isi cabang tidak dibatasi
+   * 6: cabang bukan komponen.
+   */
+  const banyakPesan = sanitizeActions([
+    ...Array.from({ length: 5 }, () => ({ kind: 'message', postId: 1 })),
+    {
+      kind: 'condition',
+      value: 'member.name',
+      comparator: 'notEmpty',
+      then: Array.from({ length: 12 }, () => ({ kind: 'message', postId: 2 })),
+    },
+  ]);
+  const pesanSaja = hitungAksiFlow(banyakPesan.actions).pesan;
+  assert.equal(pesanSaja, ACTION_LIMITS.messagePerFlow, 'kirim pesan dibatasi 15 per flow');
+  assert.ok(
+    banyakPesan.dropped.some((alasan) => alasan.includes('kirim pesan')),
+    'kelebihan kirim pesan dilaporkan sekali',
+  );
+  assert.equal(
+    banyakPesan.dropped.filter((alasan) => alasan.includes('kirim pesan')).length,
+    1,
+    'alasan kuota pesan tidak diulang 3 kali',
+  );
+
+  /* --- kuota 40 aksi berhitung, dihitung lintas cabang --- */
+  const dibatasi = sanitizeActions([
+    {
+      kind: 'condition',
+      value: 'member.name',
+      comparator: 'notEmpty',
+      then: Array.from({ length: ACTION_LIMITS.countedPerFlow + 5 }, () => ({ kind: 'dud' })),
+    },
+  ]);
+  assert.equal(hitungAksiFlow(dibatasi.actions).berhitung, ACTION_LIMITS.countedPerFlow, 'kuota 40 ditegakkan');
+  assert.ok(
+    dibatasi.dropped.some((alasan) => alasan.includes('dihitung')),
+    'kelebihan aksi berhitung dilaporkan',
+  );
+
+  /*
+   * Syarat SESUDAH kuota habis: aksinya tetap ada (membuangnya akan membuang
+   * cabangnya juga), tetapi isi cabangnya yang melewati kuota ikut hilang.
+   * Cabang yang habis seluruhnya membuat syaratnya dibuang dengan alasan —
+   * syarat tanpa cabang berarti "tidak cocok = hentikan flow", dan perubahan
+   * arti diam-diam seperti itu tidak boleh terjadi.
+   */
+  const syaratDiUjung = sanitizeActions([
+    {
+      kind: 'condition',
+      value: 'member.name',
+      comparator: 'notEmpty',
+      then: Array.from({ length: ACTION_LIMITS.countedPerFlow }, () => ({ kind: 'dud' })),
+    },
+    {
+      kind: 'condition',
+      value: 'member.id',
+      comparator: 'notEmpty',
+      then: [{ kind: 'dud' }, { kind: 'dud' }],
+    },
+  ]);
+  assert.equal(syaratDiUjung.actions.length, 1, 'syarat yang cabangnya habis dibuang');
+  assert.ok(
+    syaratDiUjung.dropped.some((alasan) => alasan.includes('seluruh isi cabang')),
+    'alasan syarat-dibuang dijelaskan',
+  );
+
+  // Syarat dengan cabang yang SEBAGIAN masih muat tetap dipertahankan.
+  const sebagian = sanitizeActions([
+    {
+      kind: 'condition',
+      value: 'member.name',
+      comparator: 'notEmpty',
+      then: Array.from({ length: ACTION_LIMITS.countedPerFlow - 1 }, () => ({ kind: 'dud' })),
+    },
+    { kind: 'condition', value: 'member.id', comparator: 'notEmpty', then: [{ kind: 'dud' }] },
+  ]);
+  assert.equal(sebagian.actions.length, 2, 'syarat kedua tetap ada');
+  assert.equal(sebagian.actions[1]!.then!.length, 1, 'isi cabang yang masih muat dipertahankan');
+
+  /* --- jaring pengaman: total aksi (termasuk yang tak dihitung) dibatasi --- */
+  const totalBanyak = sanitizeActions([
+    {
+      kind: 'condition',
+      value: 'member.name',
+      comparator: 'notEmpty',
+      then: Array.from({ length: ACTION_LIMITS.maxTotal + 20 }, () => ({ kind: 'stop' })),
+    },
+  ]);
+  assert.equal(hitungAksiFlow(totalBanyak.actions).total, ACTION_LIMITS.maxTotal, 'batas total ditegakkan');
+  assert.ok(
+    totalBanyak.dropped.some((alasan) => alasan.includes('total')),
+    'kelebihan total dilaporkan dengan alasannya sendiri',
+  );
+
+  /* --- rencana: cabang bertingkat jadi langkah bersarang, urutan tetap --- */
+  const plan = planActions([
+    {
+      kind: 'condition',
+      value: 'member.name',
+      comparator: 'notEmpty',
+      then: [
+        {
+          kind: 'condition',
+          value: 'member.id',
+          comparator: 'notEmpty',
+          then: [{ kind: 'reply', text: 'dalam sekali' }],
+        },
+      ],
+    },
+    { kind: 'dud' },
+  ]);
+  const luar = plan.steps[0] as { then?: Array<{ kind: string; then?: unknown[] }> };
+  assert.equal(luar.then![0]!.kind, 'condition', 'syarat di dalam cabang tetap syarat');
+  assert.equal(luar.then![0]!.then!.length, 1, 'cabang tingkat ketiga ikut');
+  assert.equal(plan.steps[1]!.kind, 'dud', 'aksi sesudah syarat tidak hilang');
+});
+
+await testAsync('syarat: and / or / not / in bertingkat', async () => {
+  const flow = await import('../src/features/post-flow.js');
+
+  // Nilai yang dipakai bersama oleh semua simpul di bawah.
+  const nilai: Record<string, string> = {
+    'member.name': 'Wahyu',
+    'member.id': '123456789012345678',
+    selected: 'gamer',
+    'var.kode': 'B',
+    kosong: '',
+  };
+  const ambil = (nama: string) => nilai[nama] ?? '';
+
+  // `in`: nilai harus ADA di daftar — pencocokan persis, bukan "mengandung".
+  assert.equal(
+    flow.evaluateCondition({ type: 'in', value: 'selected', list: ['gamer', 'anime'] }, ambil),
+    true,
+  );
+  assert.equal(
+    flow.evaluateCondition({ type: 'in', value: 'var.kode', list: ['gamer'] }, ambil),
+    false,
+    'pencocokan `in` tidak boleh sebagian',
+  );
+  assert.equal(
+    flow.evaluateCondition({ type: 'in', value: 'kosong', list: [''] }, ambil),
+    false,
+    'nilai kosong tidak pernah "termasuk"',
+  );
+
+  // `and` butuh SEMUA benar; `or` cukup satu.
+  const dan = {
+    type: 'and' as const,
+    items: [
+      { type: 'leaf' as const, value: 'member.name', comparator: 'equals' as const, expected: 'Wahyu' },
+      { type: 'leaf' as const, value: 'selected', comparator: 'equals' as const, expected: 'gamer' },
+    ],
+  };
+  assert.equal(flow.evaluateCondition(dan, ambil), true);
+  assert.equal(
+    flow.evaluateCondition(
+      { ...dan, items: [...dan.items, { type: 'leaf', value: 'kosong', comparator: 'notEmpty' }] },
+      ambil,
+    ),
+    false,
+    'satu anak salah membuat `and` salah',
+  );
+  assert.equal(flow.evaluateCondition({ type: 'or', items: dan.items }, ambil), true);
+  assert.equal(
+    flow.evaluateCondition(
+      {
+        type: 'or',
+        items: [
+          { type: 'leaf', value: 'kosong', comparator: 'notEmpty' },
+          { type: 'leaf', value: 'selected', comparator: 'equals', expected: 'gamer' },
+        ],
+      },
+      ambil,
+    ),
+    true,
+  );
+
+  /*
+   * `not` = NOR (semua anak salah), sama seperti Discohook. Ini yang paling
+   * mudah salah diartikan, jadi diuji dua arah.
+   */
+  const bukan = {
+    type: 'not' as const,
+    items: [{ type: 'leaf' as const, value: 'kosong', comparator: 'notEmpty' as const }],
+  };
+  assert.equal(flow.evaluateCondition(bukan, ambil), true, '`not` benar saat anaknya salah');
+  assert.equal(
+    flow.evaluateCondition({ ...bukan, items: [...bukan.items, dan.items[0]!] }, ambil),
+    false,
+    '`not` salah saat ADA anak yang benar (bukan sekadar negasi satu syarat)',
+  );
+  assert.equal(flow.evaluateCondition({ type: 'not', items: [] }, ambil), true, '`not` tanpa anak = benar');
+
+  // Bersarang: (nama=Wahyu DAN (id tidak kosong ATAU kode in [A,B]))
+  assert.equal(
+    flow.evaluateCondition(
+      {
+        type: 'and',
+        items: [
+          { type: 'leaf', value: 'member.name', comparator: 'equals', expected: 'Wahyu' },
+          {
+            type: 'or',
+            items: [
+              { type: 'leaf', value: 'member.id', comparator: 'notEmpty' },
+              { type: 'in', value: 'var.kode', list: ['A', 'B'] },
+            ],
+          },
+        ],
+      },
+      ambil,
+    ),
+    true,
+  );
+
+  // `and`/`or` tanpa anak tidak masuk akal; `not` tanpa anak tetap berarti.
+  const { sanitizeActions } = await import('../src/features/post-actions.js');
+  const kosong = sanitizeActions([
+    { kind: 'condition', check: { type: 'and', items: [] } },
+    { kind: 'condition', check: { type: 'not', items: [] }, then: [{ kind: 'dud' }] },
+  ]);
+  assert.equal(kosong.actions.length, 1, '`and` tanpa anak dibuang');
+  assert.ok(
+    kosong.dropped.some((alasan) => alasan.includes('tanpa syarat di dalamnya')),
+    'alasannya dilaporkan',
+  );
+  assert.equal(kosong.actions[0]!.check!.type, 'not');
+
+  // `in` tanpa daftar juga dibuang — bukan diam-diam selalu salah.
+  const tanpaDaftar = sanitizeActions([{ kind: 'condition', check: { type: 'in', value: 'selected' } }]);
+  assert.equal(tanpaDaftar.actions.length, 0);
+  assert.ok(tanpaDaftar.dropped.some((alasan) => alasan.includes('daftar pembanding')));
+
+  // Daftar `in` dirapikan: dipisah koma/baris, duplikat & kosong dibuang.
+  assert.deepEqual(flow.normalizeList('gamer, anime\n gamer\n\nfilm'), ['gamer', 'anime', 'film']);
+  assert.deepEqual(flow.normalizeList(['a', ' a ', 'b']), ['a', 'b']);
+  assert.deepEqual(flow.normalizeList(undefined), []);
+
+  // Kedalaman: pohon yang terlalu dalam dilaporkan, bukan dipotong diam-diam.
+  let dalam: Record<string, unknown> = { type: 'leaf', value: 'a', comparator: 'notEmpty' };
+  for (let i = 0; i < 6; i += 1) dalam = { type: 'and', items: [dalam] };
+  const terlaluDalam = sanitizeActions([{ kind: 'condition', check: dalam }]);
+  assert.ok(
+    terlaluDalam.dropped.some((alasan) => alasan.includes('tingkat')),
+    'pohon terlalu dalam dilaporkan',
+  );
+
+  // Ringkasan untuk log/dashboard tidak melempar untuk bentuk apa pun.
+  assert.match(flow.describeCondition({ type: 'leaf', value: 'a', comparator: 'equals', expected: 'b' }), /a sama dengan "b"/);
+  assert.match(flow.describeCondition({ type: 'in', value: 'x', list: ['1', '2'] }), /x termasuk \[1, 2\]/);
+});
+
+await testAsync('aksi: thread lengkap & kirim webhook divalidasi', async () => {
+  const { sanitizeActions, planActions } = await import('../src/features/post-actions.js');
+
+  const { actions, dropped } = sanitizeActions([
+    {
+      kind: 'thread',
+      threadName: 'Bantuan {member.name}',
+      private: true,
+      autoArchiveMinutes: 10080,
+      slowmodeSeconds: 30,
+      invitable: false,
+      appliedTags: ['111111111111111111', 'bukan-id', '111111111111111111'],
+      threadMessage: 'Halo {member.mention}',
+    },
+    // Pilihan arsip di luar daftar Discord = dibuang, bukan dibulatkan.
+    { kind: 'thread', threadName: 'Arsip salah', autoArchiveMinutes: 999 },
+    { kind: 'thread', threadName: 'Slowmode salah', slowmodeSeconds: 99999 },
+    { kind: 'webhook', postId: 7 },
+    // Channel tujuan harus ID, bukan nama channel.
+    { kind: 'webhook', postId: 8, channelId: '#umum' },
+    { kind: 'message', postId: 9, channelId: '123456789012345678' },
+    { kind: 'webhook' },
+  ]);
+
+  assert.deepEqual(
+    actions.map((a) => a.kind).join(','),
+    'thread,thread,thread,webhook,webhook,message',
+    'aksi tetap ada; hanya bagian yang tidak sah yang dibuang & dilaporkan',
+  );
+  /*
+   * Setelan yang tidak sah dibuang TANPA membuang aksinya: thread-nya tetap
+   * dibuat dengan setelan bawaan Discord, dan admin diberi tahu. Ini keputusan
+   * sadar — menghapus seluruh aksi karena satu angka salah akan membuat tombol
+   * yang seharusnya membuat thread tidak melakukan apa pun.
+   */
+  assert.equal(actions[1]!.autoArchiveMinutes, undefined, 'arsip tidak sah dibuang, aksi tetap');
+  assert.equal(actions[2]!.slowmodeSeconds, undefined, 'slowmode tidak sah dibuang, aksi tetap');
+  assert.equal(actions[4]!.channelId, undefined, 'channel bukan ID dibuang, aksi tetap');
+  assert.equal(actions[0]!.autoArchiveMinutes, 10080);
+  assert.equal(actions[0]!.slowmodeSeconds, 30);
+  assert.equal(actions[0]!.invitable, false);
+  assert.deepEqual(actions[0]!.appliedTags, ['111111111111111111'], 'tag ganda & bukan angka dibuang');
+  assert.equal(actions[0]!.threadMessage, 'Halo {member.mention}');
+  assert.equal(dropped.length, 4, 'empat bagian tidak sah dilaporkan');
+
+  /*
+   * Rencana: `webhook` jadi langkah pesan dengan `viaWebhook`, dan channel
+   * tujuan tetap dibawa. Tanpa penanda ini, aksi webhook diam-diam terkirim
+   * lewat bot — pesan tampil atas nama bot padahal admin minta server.
+   */
+  const plan = planActions([
+    { kind: 'webhook', postId: 7, toChannel: true },
+    { kind: 'message', postId: 9, toChannel: true, channelId: '123456789012345678' },
+    { kind: 'thread', threadName: 'T', private: true, autoArchiveMinutes: 60, slowmodeSeconds: 5, appliedTags: ['1'] },
+  ]);
+  const [webhook, pesan, thread] = plan.steps as Array<Record<string, unknown>>;
+  assert.equal(webhook!.kind, 'message');
+  assert.equal(webhook!.viaWebhook, true, 'penanda webhook ikut ke langkah');
+  assert.equal(pesan!.channelId, '123456789012345678', 'channel tujuan ikut ke langkah');
+  assert.equal(webhook!.channelId, undefined, 'tanpa channel tujuan = ikut channel pemicu');
+  assert.equal(thread!.autoArchiveMinutes, 60);
+  assert.equal(thread!.slowmodeSeconds, 5);
+});
+
+await testAsync('pesan: allowed_mentions & thread_name bertahan & bawaan aman', async () => {
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  // Bawaan: TANPA ping apa pun. Arah aman ini disengaja — pesan yang tidak
+  // sengaja berisi @everyone tidak bisa ditarik kembali.
+  const polos = await repo.createCustomPost(GUILD, {
+    name: 'Tanpa ping',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Halo' }],
+  });
+  assert.deepEqual(polos.allowedMentions.parse, [], 'bawaan tanpa ping');
+  assert.equal(polos.threadName, null, 'bawaan tanpa thread');
+
+  // Izin ping & nama thread bertahan setelah dibaca ulang dari database.
+  const denganPing = await repo.createCustomPost(GUILD, {
+    name: 'Ping role',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Pengumuman' }],
+    allowedMentions: { parse: ['roles', 'users', 'tidak-dikenal' as never] },
+    threadName: '  Diskusi pengumuman  ',
+  });
+  const dibaca = await repo.getCustomPost(GUILD, denganPing.id);
+  assert.deepEqual(dibaca?.allowedMentions.parse, ['roles', 'users'], 'jenis tak dikenal dibuang');
+  assert.equal(dibaca?.threadName, 'Diskusi pengumuman', 'nama thread dirapikan');
+
+  // Memperbarui TANPA menyebut izin ping = izin lama dipertahankan, bukan
+  // direset jadi "tanpa ping" (itu akan mematikan ping yang sudah disusun).
+  const tanpaUbah = await repo.updateCustomPost(GUILD, denganPing.id, { name: 'Nama baru' });
+  assert.deepEqual(tanpaUbah?.allowedMentions.parse, ['roles', 'users'], 'izin lama bertahan');
+  assert.equal(tanpaUbah?.threadName, 'Diskusi pengumuman', 'thread lama bertahan');
+
+  // Menyebut daftar kosong = sengaja mematikan ping.
+  const dimatikan = await repo.updateCustomPost(GUILD, denganPing.id, { allowedMentions: { parse: [] } });
+  assert.deepEqual(dimatikan?.allowedMentions.parse, [], 'daftar kosong mematikan ping');
+
+  /*
+   * Kolom rusak (mis. disunting manual di database) dibaca sebagai "tanpa
+   * ping" — bukan "semua boleh". Salah baca ke arah aman hanya membuat ping
+   * tidak terjadi.
+   */
+  const { run } = await import('../src/db/index.js');
+  await run('UPDATE custom_posts SET mentions = ? WHERE guild_id = ? AND id = ?', [
+    '{bukan json',
+    GUILD,
+    denganPing.id,
+  ]);
+  const rusak = await repo.getCustomPost(GUILD, denganPing.id);
+  assert.deepEqual(rusak?.allowedMentions.parse, [], 'kolom rusak = tanpa ping');
+
+  /* --- Payload: allowed_mentions & thread_name sampai ke penyusun --- */
+  const { buildPostPayload } = await import('../src/features/custom-post.js');
+  const deps = {
+    ContainerBuilder: (await import('discord.js')).ContainerBuilder,
+    TextDisplayBuilder: (await import('discord.js')).TextDisplayBuilder,
+    SeparatorBuilder: (await import('discord.js')).SeparatorBuilder,
+    MediaGalleryBuilder: (await import('discord.js')).MediaGalleryBuilder,
+    MediaGalleryItemBuilder: (await import('discord.js')).MediaGalleryItemBuilder,
+    ActionRowBuilder: (await import('discord.js')).ActionRowBuilder,
+    ButtonBuilder: (await import('discord.js')).ButtonBuilder,
+    ButtonStyle: (await import('discord.js')).ButtonStyle,
+    accent: 0x6d8cff,
+    accentToNumber: () => 0x6d8cff,
+    roleButtons: [],
+    roleButtonId: (id: number) => `post-role:${id}`,
+  };
+  const blok = [{ kind: 'container' }, { kind: 'text', value: 'Hai' }];
+  const bawaan = buildPostPayload(blok as never, deps as never);
+  assert.deepEqual(bawaan!.allowedMentions.parse, [], 'penyusun payload bawaan tanpa ping');
+  assert.equal(bawaan!.threadName, undefined, 'tanpa thread');
+
+  const dipasang = buildPostPayload(blok as never, {
+    ...deps,
+    allowedMentions: { parse: ['users'] },
+    threadName: 'Ruang diskusi',
+  } as never);
+  assert.deepEqual(dipasang!.allowedMentions.parse, ['users'], 'izin ping diteruskan');
+  assert.equal(dipasang!.threadName, 'Ruang diskusi', 'nama thread diteruskan');
+
+  /* --- default_values pada select --- */
+  const { sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const select = sanitizeBlocks([
+    { kind: 'select', selectKind: 'role', defaultValues: ['900000000000000001', 'bukan-id'] },
+    { kind: 'select', selectKind: 'string', options: [{ label: 'A' }], defaultValues: ['1'] },
+    { kind: 'select', selectKind: 'user', defaultValues: ['111111111111111111', '222222222222222222'] },
+  ]);
+  const pertama = select.blocks[0] as { defaultValues?: string[] };
+  assert.deepEqual(pertama.defaultValues, ['900000000000000001'], 'ID tidak sah dibuang');
+  assert.ok(
+    select.dropped.some((alasan) => alasan.includes('select string')),
+    'default_values pada select string dilaporkan',
+  );
+  const kedua = select.blocks[2] as { defaultValues?: string[] };
+  assert.equal(kedua.defaultValues?.length, 1, 'single-select hanya menyimpan satu default');
+
+  await repo.deleteCustomPost(GUILD, polos.id);
+  await repo.deleteCustomPost(GUILD, denganPing.id);
+});
+
+await testAsync('pesan: riwayat versi & tautan berbagi', async () => {
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Versi awal',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Isi pertama' }],
+    accent: '#5865f2',
+  });
+
+  // Penyimpanan PERTAMA tidak membuat revisi: tidak ada "sebelum" yang perlu
+  // disimpan, dan revisi kosong hanya mengaburkan daftar.
+  assert.equal((await repo.listPostRevisions(GUILD, post.id)).length, 0, 'belum ada versi lama');
+
+  await repo.updateCustomPost(GUILD, post.id, { name: 'Versi kedua', blocks: [{ kind: 'text', value: 'Isi kedua' }] });
+  const setelahDua = await repo.listPostRevisions(GUILD, post.id);
+  assert.equal(setelahDua.length, 1, 'satu versi tersimpan');
+  assert.equal(setelahDua[0]!.name, 'Versi awal', 'yang disimpan adalah isi SEBELUM diubah');
+  assert.equal(
+    (setelahDua[0]!.snapshot.blocks[0] as { value: string }).value,
+    'Isi pertama',
+    'isi lama ikut tersimpan',
+  );
+
+  /*
+   * Bentuk pesan & bagian embed ikut tersimpan di versi. Tanpa ini, mengubah
+   * footer embed lalu mengembalikan versi lama akan mempertahankan footer yang
+   * BARU — versi lama tidak bisa benar-benar dipulihkan.
+   */
+  await repo.updateCustomPost(GUILD, post.id, {
+    layout: 'embed',
+    embed: [{ footer: { text: 'kaki versi dua' } }, { fields: [{ name: 'A', value: '1', inline: false }] }],
+  });
+  const setelahEmbed = await repo.listPostRevisions(GUILD, post.id);
+  assert.equal(setelahEmbed[0]!.snapshot.layout, 'container', 'bentuk pesan lama ikut tersimpan');
+  assert.deepEqual(setelahEmbed[0]!.snapshot.embed, [], 'bagian embed lama (kosong) ikut tersimpan');
+
+  await repo.updateCustomPost(GUILD, post.id, { name: 'Versi ketiga' });
+  const setelahTiga = await repo.listPostRevisions(GUILD, post.id);
+  assert.equal(setelahTiga.length, 3, 'tiga versi (embed menambah satu)');
+  assert.equal(setelahTiga[0]!.name, 'Versi kedua', 'terbaru lebih dulu');
+
+  // Kembalikan ke versi pertama. Versi "sekarang" harus ikut tersimpan,
+  // sehingga mengembalikan versi lama bisa dibatalkan lagi.
+  const kembali = await repo.restorePostRevision(GUILD, post.id, setelahTiga[2]!.id);
+  assert.equal(kembali.post?.name, 'Versi awal', 'nama dikembalikan');
+  assert.equal(
+    (kembali.post?.blocks[0] as { value: string })?.value,
+    'Isi pertama',
+    'blok dikembalikan',
+  );
+  /*
+   * Versi yang dikembalikan dibuat SEBELUM embed diisi, jadi bentuknya masih
+   * container tanpa bagian embed. Versi "sekarang" (berisi dua embed) harus
+   * ikut tersimpan supaya pengembalian ini bisa dibatalkan.
+   */
+  assert.equal(kembali.post?.layout, 'container', 'bentuk pesan ikut dikembalikan');
+  assert.deepEqual(kembali.post?.embed, [], 'bagian embed ikut dikembalikan');
+  const setelahKembali = await repo.listPostRevisions(GUILD, post.id);
+  assert.equal(setelahKembali.length, 4, 'versi sekarang tersimpan sebagai revisi baru');
+  const terbaru = setelahKembali[0]!;
+  assert.equal(terbaru.snapshot.layout, 'embed', 'bentuk pesan terbaru tercatat');
+  assert.equal(terbaru.snapshot.embed?.length, 2, 'bagian embed terbaru tercatat');
+  assert.ok(
+    setelahKembali.some((satu) => satu.name === 'Versi ketiga'),
+    'versi terbaru tidak hilang — bisa dibalik lagi',
+  );
+
+  // Versi yang tidak ada / milik pesan lain harus gagal, bukan mengembalikan
+  // pesan kosong.
+  const lain = await repo.createCustomPost(GUILD, {
+    name: 'Pesan lain',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'x' }],
+  });
+  await repo.updateCustomPost(GUILD, lain.id, { name: 'Pesan lain v2' });
+  const revisiLain = await repo.listPostRevisions(GUILD, lain.id);
+  const salah = await repo.restorePostRevision(GUILD, post.id, revisiLain[0]!.id);
+  assert.equal(salah.post, null, 'versi milik pesan lain ditolak');
+  assert.ok(salah.error, 'alasan penolakan dijelaskan');
+
+  const hantu = await repo.restorePostRevision(GUILD, post.id, 999999);
+  assert.equal(hantu.post, null, 'versi yang tidak ada ditolak');
+
+  /* --- tautan berbagi --- */
+  const token = await repo.createPostShare(GUILD, post.id);
+  assert.ok(/^[A-Za-z0-9_-]{8,64}$/.test(token), 'token aman dipakai di URL');
+  assert.equal(await repo.createPostShare(GUILD, post.id), token, 'token yang sama dipakai ulang');
+
+  const dibagikan = await repo.getSharedPost(token);
+  assert.equal(dibagikan?.name, 'Versi awal', 'nama ikut dibagikan');
+  assert.equal(
+    (dibagikan?.blocks[0] as { value: string })?.value,
+    'Isi pertama',
+    'blok terbaru yang dibagikan',
+  );
+
+  /*
+   * Yang dibagikan hanya blok & nama. Channel, messageId, dan daftar role
+   * TIDAK boleh ikut — tautan ini bisa dibuka siapa saja yang memegangnya.
+   */
+  assert.equal('channelId' in (dibagikan as unknown as Record<string, unknown>), false, 'channel tidak ikut');
+  assert.equal('messageId' in (dibagikan as unknown as Record<string, unknown>), false, 'id pesan tidak ikut');
+
+  await repo.updateCustomPost(GUILD, post.id, { blocks: [{ kind: 'text', value: 'Isi terbaru' }] });
+  assert.equal(
+    ((await repo.getSharedPost(token))?.blocks[0] as { value: string })?.value,
+    'Isi terbaru',
+    'tautan selalu menampilkan isi terkini, bukan salinan beku',
+  );
+
+  // Token ngawur tidak membocorkan apa pun.
+  assert.equal(await repo.getSharedPost('token-palsu-123'), null, 'token tidak dikenal = null');
+  assert.equal(await repo.getSharedPost(''), null, 'token kosong = null');
+
+  await repo.deletePostShare(GUILD, post.id);
+  assert.equal(await repo.getSharedPost(token), null, 'tautan yang dicabut tidak bisa dibuka');
+
+  /*
+   * Halaman publik menyusun HTML dari isi pesan admin. Isi itu harus
+   * di-escape, dan tombol hanya boleh jadi tautan kalau URL-nya http(s) —
+   * URL javascript: akan membuat tautan berbahaya di halaman tanpa login.
+   */
+  const { sharePage } = await import('../src/web/ui/share.js');
+  const halaman = sharePage({
+    name: '<script>alert(1)</script>',
+    blocks: [
+      { kind: 'text', value: 'Halo **dunia** & <b>x</b>' },
+      { kind: 'button', value: 'Klik', url: 'javascript:alert(1)' },
+      { kind: 'button', value: 'Aman', url: 'https://example.com' },
+    ] as never,
+    notFound: false,
+  });
+  assert.equal(halaman.includes('<script>'), false, 'isi pesan tidak bisa menyelipkan script');
+  assert.ok(halaman.includes('&lt;script&gt;'), 'tag ditampilkan sebagai teks');
+  assert.ok(halaman.includes('<strong>dunia</strong>'), 'markdown tebal tetap dirender');
+  assert.equal(halaman.includes('href="javascript:'), false, 'URL javascript: tidak jadi tautan');
+  assert.ok(halaman.includes('href="https://example.com"'), 'URL http(s) tetap jadi tautan');
+  assert.ok(
+    halaman.includes('rel="noopener noreferrer nofollow"'),
+    'tautan luar tidak membawa referrer & tidak diikuti mesin pencari',
+  );
+  const halaman404 = sharePage({ name: '', blocks: [], notFound: true });
+  assert.ok(halaman404.includes('tidak berlaku lagi'), 'token mati dijelaskan, bukan halaman kosong');
+
+  // Menghapus pesan ikut menghapus riwayat & tautannya (tidak ada baris yatim).
+  await repo.deleteCustomPost(GUILD, post.id);
+  assert.equal((await repo.listPostRevisions(GUILD, post.id)).length, 0, 'riwayat ikut terhapus');
+
+  await repo.deleteCustomPost(GUILD, lain.id);
+});
+
+await testAsync('pesan: generator kode & payload JSON dari penyusun yang sama', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { generateCodegen, quoteStr } = await import('../src/features/post-codegen.js');
+  const { payloadUntukPesan } = await import('../src/features/custom-post-send.js');
+  const GUILD = '123456789012345678';
+
+  /* --- escaping: teks admin tidak boleh memutus kode yang dihasilkan --- */
+  assert.equal(quoteStr('a"b'), '"a\\"b"', 'kutip ganda di-escape');
+  assert.equal(quoteStr('baris\nbaru'), '"baris\\nbaru"', 'baris baru di-escape, bukan jadi kode rusak');
+  assert.equal(quoteStr('kembali\\ke'), '"kembali\\\\ke"', 'garis miring di-escape');
+
+  /* --- payload nyata dari database: builder -> JSON --- */
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Kode',
+    channelId: '999',
+    blocks: [
+      { kind: 'container', accent: '#5865f2' },
+      { kind: 'text', value: 'Halo "dunia"' },
+      { kind: 'divider' },
+      { kind: 'button', value: 'Buka', url: 'https://example.com' },
+      { kind: 'close' },
+    ],
+  });
+  await repo.replaceRoleButtons(GUILD, post.id, [
+    { label: 'Gamer', roleId: '900000000000000001', mode: 'toggle' },
+  ]);
+
+  const segar = await repo.getCustomPost(GUILD, post.id);
+  const payload = await payloadUntukPesan(GUILD, segar!);
+  assert.ok(payload, 'payload tersusun');
+  const komponen = payload!.components as Array<Record<string, unknown>>;
+  assert.equal(komponen.length, 1, 'satu container di tingkat atas');
+  assert.equal(komponen[0]!.type, 17, 'container = tipe 17');
+  // toJSON dipakai: hasilnya harus objek polos yang bisa ditempel ke REST API.
+  assert.equal(typeof (komponen[0] as { toJSON?: unknown }).toJSON, 'undefined', 'bukan objek builder');
+
+  const isi = komponen[0]!.components as Array<Record<string, unknown>>;
+  const teks = isi.find((satu) => satu.type === 10)!;
+  assert.equal(teks.content, 'Halo "dunia"', 'teks apa adanya');
+  const semuaTombol = isi
+    .filter((satu) => satu.type === 1)
+    .flatMap((satu) => satu.components as Array<Record<string, unknown>>);
+  // Tombol link admin & tombol role sama-sama ada; cari yang ber-customId bot.
+  const tombolRole = semuaTombol.find((satu) => String(satu.custom_id ?? '').startsWith('post-role:'))!;
+  assert.equal(tombolRole.style, 1, 'tombol role = Primary');
+  assert.match(String(tombolRole.custom_id), /^post-role:\d+$/, 'customId tombol role memakai prefix bot');
+
+  /* --- kode dari payload itu --- */
+  const djs = generateCodegen(komponen, 'djs14');
+  const kode = djs.code.join('\n');
+  assert.ok(djs.imports.join('\n').includes('MessageFlags'), 'flag Components V2 ikut diimpor');
+  assert.ok(kode.includes('new ContainerBuilder()'), 'container diterjemahkan');
+  assert.ok(kode.includes('ButtonStyle.Primary'), 'gaya tombol diterjemahkan');
+  assert.ok(kode.includes('\\"dunia\\"'), 'kutip di teks di-escape di kode');
+  assert.ok(kode.includes('flags: MessageFlags.IsComponentsV2'), 'flag dikirim, bukan hanya diimpor');
+  assert.equal(djs.dropped.length, 0, 'payload sah tidak ada yang dibuang');
+
+  const py = generateCodegen(komponen, 'dpy2');
+  const kodePy = py.code.join('\n');
+  assert.ok(kodePy.includes('ui.Container('), 'discord.py memakai ui.Container');
+  assert.ok(!kodePy.includes(',,'), 'tidak ada koma ganda');
+  assert.ok(kodePy.includes('discord.ui.Button('), 'tombol role diterjemahkan');
+
+  /*
+   * Section dengan thumbnail & blok File: dua kasus yang mudah tertukar karena
+   * nomor tipenya berdekatan (13 = Section, 15 = File).
+   */
+  const pelengkap = [
+    {
+      type: 13,
+      components: [{ type: 10, content: 'Judul' }],
+      accessory: { type: 11, media: { url: 'https://img.test/kecil.png' } },
+    },
+    { type: 15, file: { url: 'https://berkas.test/a.zip' }, spoiler: true },
+  ];
+  const djsLengkap = generateCodegen(pelengkap, 'djs14');
+  const kodeLengkap = djsLengkap.code.join('\n');
+  assert.equal(djsLengkap.dropped.length, 0, 'section & file dikenali, tidak dibuang');
+  assert.ok(kodeLengkap.includes('setThumbnailAccessory'), 'thumbnail pada section diterjemahkan');
+  assert.ok(kodeLengkap.includes('new FileBuilder()'), 'blok file diterjemahkan');
+  assert.ok(kodeLengkap.includes('.setSpoiler(true)'), 'spoiler berkas ikut');
+
+  const pyLengkap = generateCodegen(pelengkap, 'dpy2');
+  const kodePyLengkap = pyLengkap.code.join('\n');
+  assert.equal(pyLengkap.dropped.length, 0, 'discord.py mengenali section & file');
+  assert.ok(kodePyLengkap.includes('ui.Thumbnail('), 'thumbnail discord.py diterjemahkan');
+  assert.ok(kodePyLengkap.includes('ui.File('), 'berkas discord.py diterjemahkan');
+
+  /* --- komponen tak dikenal dilaporkan, bukan hilang diam-diam --- */
+  const asing = generateCodegen([{ type: 99 }], 'djs14');
+  assert.equal(asing.dropped.length, 1, 'komponen asing dilaporkan');
+  const kodeAsing = asing.code.join('\n');
+  assert.ok(kodeAsing.includes('belum didukung'), 'alasan tampil di kode sebagai komentar');
+  /*
+   * Komentar harus gaya JavaScript dan berdiri sendiri: `.addComponents(# …)`
+   * atau `# … ,` bukan kode yang bisa dijalankan.
+   */
+  assert.ok(kodeAsing.includes('// komponen tipe 99'), 'komentar memakai gaya JavaScript');
+  assert.ok(!kodeAsing.includes('#'), 'tidak ada komentar gaya Python di kode JS');
+  assert.ok(!/,\s*$/m.test(kodeAsing.split('//')[0] ?? ''), 'komentar tidak diberi koma');
+
+  // Discord.py: komentar tetap `#`, dan juga tanpa koma.
+  const asingPy = generateCodegen([{ type: 99 }], 'dpy2').code.join('\n');
+  assert.ok(asingPy.includes('# komponen tipe 99'), 'discord.py memakai komentar #');
+  assert.ok(!asingPy.includes('# komponen tipe 99 belum didukung generator kode — lihat JSON pesannya,'), 'komentar py tanpa koma');
+
+  // Pesan tanpa komponen: penjelasan, bukan kode setengah jadi.
+  const kosong = await repo.createCustomPost(GUILD, { name: 'Kosong', channelId: '999', blocks: [] });
+  const kosongPayload = await payloadUntukPesan(GUILD, (await repo.getCustomPost(GUILD, kosong.id))!);
+  assert.equal(kosongPayload, null, 'pesan tanpa komponen menghasilkan null, bukan payload kosong');
+
+  await repo.deleteCustomPost(GUILD, post.id);
+  await repo.deleteCustomPost(GUILD, kosong.id);
+});
+
+await testAsync('pesan: channel tambahan (targets[]) disaring & ID pesan dipertahankan', async () => {
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+  const CH1 = '111111111111111111';
+  const CH2 = '222222222222222222';
+
+  const pesan = await repo.createCustomPost(GUILD, {
+    name: 'Pengumuman',
+    channelId: '999999999999999999',
+    blocks: [{ kind: 'text', value: 'Halo semua' }],
+  });
+
+  /*
+   * Penyaringan: hanya ID channel Discord (17-20 digit), tanpa duplikat, dan
+   * dibatasi POST_TARGET_LIMITS.perPost. Tanpa ini, "channel" berisi nama atau
+   * ID salah akan tersimpan dan baru gagal saat pengumuman dikirim.
+   */
+  const awal = await repo.replacePostTargets(GUILD, pesan.id, [
+    CH1,
+    CH1,
+    'bukan-id',
+    '',
+    CH2,
+  ]);
+  assert.equal(awal.targets.length, 2, 'hanya dua channel sah yang disimpan');
+  assert.equal(awal.targets[0]!.channelId, CH1, 'urutan dipertahankan');
+  assert.equal(awal.targets[1]!.channelId, CH2, 'channel kedua ikut');
+  assert.equal(awal.dropped.length, 3, 'tiga masukan dilaporkan (duplikat, bukan-id, kosong)');
+  assert.ok(awal.dropped.some((satu) => satu.includes('dua kali')), 'duplikat disebut alasannya');
+  assert.ok(awal.dropped.some((satu) => satu.includes('bukan ID channel')), 'nilai bukan ID ditolak');
+
+  // ID pesan yang sudah terkirim dipertahankan saat daftar disimpan ulang.
+  await repo.setPostTargetMessage(GUILD, pesan.id, CH1, '888888888888888888');
+  const ulang = await repo.replacePostTargets(GUILD, pesan.id, [CH1, CH2]);
+  assert.equal(ulang.targets[0]!.messageId, '888888888888888888', 'ID pesan lama tidak hilang');
+  assert.equal(ulang.targets[1]!.messageId, null, 'channel baru belum punya ID pesan');
+
+  // Menghapus channel dari daftar membuang barisnya, bukan menyisakan hantu.
+  const sisa = await repo.replacePostTargets(GUILD, pesan.id, [CH2]);
+  assert.equal(sisa.targets.length, 1, 'hanya channel yang dikirim yang tersimpan');
+  assert.equal(sisa.targets[0]!.channelId, CH2, 'channel yang tersisa benar');
+
+  // Batas jumlah channel tambahan ditegakkan di repo, bukan hanya di dashboard.
+  // 18 digit: '30' + 16 digit nomor, supaya tiap ID unik dan sah.
+  const banyak = Array.from({ length: 8 }, (_, i) => `30${String(i).padStart(16, '0')}`);
+  const dibatasi = await repo.replacePostTargets(GUILD, pesan.id, banyak);
+  assert.equal(dibatasi.targets.length, repo.POST_TARGET_LIMITS.perPost, 'dipotong sesuai batas');
+  assert.ok(dibatasi.dropped.some((satu) => satu.includes('dibatasi')), 'pemotongan dilaporkan');
+
+  /*
+   * Menghapus pesan harus menghapus tujuan tambahannya: baris yang tertinggal
+   * akan dikirimi lagi kalau ID pesannya dipakai ulang.
+   */
+  await repo.deleteCustomPost(GUILD, pesan.id);
+  assert.equal((await repo.listPostTargets(GUILD, pesan.id)).length, 0, 'target ikut terhapus');
+});
+
+await testAsync('pesan: embed klasik dibangun dari blok & aturannya dijaga', async () => {
+  const { buildClassicEmbed, validateEmbed, warnaDari } = await import('../src/features/post-embed.js');
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  /* Warna: hanya #rrggbb yang diterima; nilai lain = tanpa warna embed. */
+  assert.equal(warnaDari('#5865f2'), 0x5865f2, 'hex enam digit dibaca');
+  assert.equal(warnaDari('5865f2'), 0x5865f2, 'tanpa pagar tetap dibaca');
+  assert.equal(warnaDari('#fff'), null, 'hex pendek ditolak, bukan ditebak');
+  assert.equal(warnaDari(null), null, 'kosong = tanpa warna');
+
+  const blok = [
+    { kind: 'container', accent: '#ffffff' },
+    { kind: 'text', value: 'Baris pertama' },
+    { kind: 'text', value: 'Baris kedua' },
+    { kind: 'divider' },
+    { kind: 'image', value: 'https://img.test/utama.png' },
+    { kind: 'image', value: 'https://img.test/kedua.png' },
+    { kind: 'button', value: 'Buka', url: 'https://x.test' },
+    { kind: 'file', value: 'https://x.test/a.pdf' },
+    { kind: 'close' },
+  ];
+  const hasil = buildClassicEmbed(blok, { accent: '#5865f2', title: 'Pengumuman' })!;
+  assert.ok(hasil, 'embed terbentuk');
+  assert.equal(hasil.embed.title, 'Pengumuman', 'judul dari nama pesan');
+  assert.equal(hasil.embed.color, 0x5865f2, 'warna dari aksen');
+  assert.ok(hasil.embed.description!.includes('Baris pertama'), 'teks masuk keterangan');
+  assert.ok(hasil.embed.description!.includes('Baris kedua'), 'semua teks ikut, bukan hanya yang pertama');
+  assert.equal(hasil.embed.image!.url, 'https://img.test/utama.png', 'gambar pertama dipakai');
+  /*
+   * Embed hanya punya satu gambar. Menimpa diam-diam akan menghilangkan pilihan
+   * admin, jadi gambar kedua dilaporkan sebagai bagian yang tidak muat.
+   */
+  assert.ok(
+    hasil.dropped.some((satu) => satu.includes('gambar kedua')),
+    'gambar kedua dilaporkan, bukan ditelan',
+  );
+  assert.ok(hasil.dropped.some((satu) => satu.includes('tombol')), 'tombol dijelaskan ada di luar embed');
+  assert.equal(validateEmbed(hasil.embed).length, 0, 'embed yang dibangun lolos validasi');
+
+  /* Tanpa isi = null, supaya pemanggil memberi tahu admin alih-alih mengirim kosong. */
+  assert.equal(buildClassicEmbed([{ kind: 'container' }, { kind: 'close' }]), null, 'kosong = null');
+  assert.equal(buildClassicEmbed([{ kind: 'text', value: '   ' }]), null, 'spasi saja = kosong');
+
+  /* Validasi menolak yang akan ditolak Discord, dengan alasan yang bisa dibaca. */
+  const kepanjangan = validateEmbed({ description: 'x'.repeat(5000) });
+  assert.ok(kepanjangan.some((satu) => satu.includes('4096')), 'batas isi embed disebut angkanya');
+  const tanpaIsi = validateEmbed({});
+  assert.ok(tanpaIsi.some((satu) => satu.includes('tidak punya isi')), 'embed kosong ditolak');
+
+  /*
+   * Layout disimpan per pesan & nilai asing jatuh ke container: pesan lama tidak
+   * boleh tiba-tiba berubah bentuk hanya karena kolomnya ada.
+   */
+  assert.equal(repo.parseLayout('embed'), 'embed', 'embed dikenali');
+  assert.equal(repo.parseLayout('container'), 'container', 'container dikenali');
+  assert.equal(repo.parseLayout(null), 'container', 'kosong = container (perilaku lama)');
+  assert.equal(repo.parseLayout('klasik'), 'container', 'nilai asing tidak diteruskan');
+
+  const pesan = await repo.createCustomPost(GUILD, {
+    name: 'Embed uji',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Halo' }],
+    layout: 'embed',
+  });
+  assert.equal(pesan.layout, 'embed', 'layout tersimpan saat dibuat');
+  const diubah = await repo.updateCustomPost(GUILD, pesan.id, { layout: 'container' });
+  assert.equal(diubah!.layout, 'container', 'layout bisa diubah');
+  const lain = await repo.updateCustomPost(GUILD, pesan.id, { name: 'Embed uji 2' });
+  assert.equal(lain!.layout, 'container', 'menyimpan field lain tidak mengubah layout');
+  await repo.deleteCustomPost(GUILD, pesan.id);
+});
+
+await testAsync('pesan: sampai 10 embed per pesan, masing-masing dengan bagian sendiri', async () => {
+  const {
+    buildClassicEmbeds,
+    sanitizeEmbedList,
+    validateEmbeds,
+    panjangEmbed,
+  } = await import('../src/features/post-embed.js');
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  /* --- penyaring daftar --- */
+  const satu = sanitizeEmbedList({ footer: { text: 'satu' } });
+  assert.equal(satu.list.length, 1, 'objek tunggal dibaca sebagai daftar satu embed');
+  assert.deepEqual(sanitizeEmbedList(null).list, [], 'null = tidak ada embed');
+  assert.deepEqual(sanitizeEmbedList([]).list, [], 'daftar kosong = tidak ada embed');
+  assert.equal(
+    sanitizeEmbedList([{ footer: { text: 'a' } }, {}, { footer: { text: 'b' } }]).list.length,
+    2,
+    'bagian yang benar-benar kosong dibuang, bukan dikirim sebagai embed kosong',
+  );
+  const banyak = sanitizeEmbedList(
+    Array.from({ length: 14 }, (_, i) => ({ footer: { text: 'kaki ' + i } })),
+  );
+  assert.equal(banyak.list.length, 10, 'dibatasi 10 embed');
+  assert.equal(banyak.dropped.filter((a) => a.includes('10')).length, 1, 'alasan batas dilaporkan sekali');
+
+  /* --- builder --- */
+  const blok = [{ kind: 'text', value: 'Isi utama' }];
+  const satuEmbed = buildClassicEmbeds(blok, { title: 'Judul' });
+  assert.equal(satuEmbed.length, 1, 'tanpa bagian admin tetap satu embed');
+  assert.equal(satuEmbed[0]!.embed.description, 'Isi utama');
+
+  const tiga = buildClassicEmbeds(blok, {
+    title: 'Judul',
+    embedList: [
+      { footer: { text: 'kaki pertama' } },
+      { fields: [{ name: 'A', value: '1', inline: true }], footer: { text: 'kedua' } },
+      { fields: [{ name: 'B', value: '3', inline: false }], author: { name: 'Penulis ketiga' } },
+    ],
+  });
+  assert.equal(tiga.length, 3, 'embed tambahan ikut dibangun');
+  assert.equal(tiga[0]!.embed.title, 'Judul', 'embed pertama tetap membawa blok');
+  assert.equal(tiga[0]!.embed.footer!.text, 'kaki pertama', 'bagian admin pertama melengkapi embed pertama');
+  assert.equal(tiga[1]!.embed.title, undefined, 'embed kedua tidak menyalin judul blok');
+  assert.equal(tiga[1]!.embed.description, undefined, 'embed kedua tidak menyalin isi blok (tidak dobel)');
+  assert.equal(tiga[1]!.embed.fields![0]!.name, 'A', 'embed kedua boleh hanya berisi bidang');
+  assert.equal(tiga[2]!.embed.author!.name, 'Penulis ketiga');
+
+  /*
+   * Embed yang hanya berisi penulis/footer tidak cukup bagi Discord. Daripada
+   * hilang diam-diam, alasannya dilaporkan di embed pertama.
+   */
+  const tanpaIsi = buildClassicEmbeds([{ kind: 'text', value: 'Isi' }], {
+    embedList: [
+      { footer: { text: 'kaki' } },
+      { author: { name: 'Cuma penulis' } },
+      { fields: [{ name: 'B', value: '3', inline: false }] },
+    ],
+  });
+  assert.equal(tanpaIsi.length, 2, 'embed tanpa judul/isi/gambar/bidang tidak dikirim');
+  assert.ok(
+    tanpaIsi[0]!.dropped.some((a) => a.includes('embed 2 dilewati')),
+    'embed yang dilewati dilaporkan dengan nomornya',
+  );
+
+  /*
+   * Pesan yang bloknya tidak menghasilkan embed (hanya tombol) TIDAK boleh
+   * membuang embed pertama milik admin.
+   */
+  const hanyaTombol = buildClassicEmbeds([{ kind: 'button', value: 'Klik' }], {
+    embedList: [{ fields: [{ name: 'Catatan', value: 'dari admin', inline: false }] }],
+  });
+  assert.equal(hanyaTombol.length, 1, 'embed admin tetap dipakai walau blok tidak menghasilkan isi');
+  assert.equal(hanyaTombol[0]!.embed.fields![0]!.value, 'dari admin');
+
+  /* --- validasi gabungan --- */
+  assert.equal(validateEmbeds([{ description: 'halo' }]).length, 0, 'embed sah lolos');
+  assert.ok(validateEmbeds([]).some((a) => a.includes('tidak punya embed')), 'daftar kosong ditolak');
+  const sebelas = validateEmbeds(Array.from({ length: 11 }, () => ({ description: 'x' })));
+  assert.ok(sebelas.some((a) => a.includes('10')), 'lebih dari 10 embed ditolak');
+  const kebanyakan = validateEmbeds([{ description: 'x'.repeat(4000) }, { description: 'y'.repeat(4000) }]);
+  assert.ok(
+    kebanyakan.some((a) => a.includes('6000')),
+    'batas 6000 dihitung untuk SEMUA embed, bukan satu per satu',
+  );
+  assert.equal(panjangEmbed({ title: 'ab', description: 'cde' }), 5, 'panjang dihitung seperti Discord');
+
+  /* --- thumbnail & gambar besar per embed --- */
+  const gambar = sanitizeEmbedList({
+    thumbnail: 'https://img.test/kecil.png',
+    image: 'javascript:alert(1)',
+    fields: [{ name: 'A', value: '1', inline: false }],
+  });
+  assert.equal(gambar.list[0]!.thumbnail, 'https://img.test/kecil.png', 'thumbnail diterima');
+  assert.equal(gambar.list[0]!.image, undefined, 'gambar berbahaya dibuang');
+  assert.ok(gambar.dropped.some((a) => a.includes('gambar embed')), 'alasannya dijelaskan');
+
+  const gambarDipakai = buildClassicEmbeds([{ kind: 'image', value: 'https://img.test/dari-blok.png' }], {
+    embedList: [{ thumbnail: 'https://img.test/kecil.png', image: 'https://img.test/besar.png' }],
+  });
+  assert.equal(gambarDipakai[0]!.embed.image!.url, 'https://img.test/besar.png', 'gambar admin menang atas blok');
+  assert.equal(gambarDipakai[0]!.embed.thumbnail!.url, 'https://img.test/kecil.png', 'thumbnail masuk');
+
+  /*
+   * Thumbnail saja TIDAK cukup untuk embed tambahan: Discord menuntut judul,
+   * isi, gambar, atau bidang. Thumbnail hanya pelengkap.
+   */
+  const thumbnailSaja = buildClassicEmbeds([{ kind: 'text', value: 'Isi' }], {
+    embedList: [{ footer: { text: 'satu' } }, { thumbnail: 'https://img.test/kecil.png' }],
+  });
+  assert.equal(thumbnailSaja.length, 1, 'embed tambahan berisi thumbnail saja tetap tidak cukup');
+
+  /* --- warna per embed (Discohook memakai warna sendiri tiap embed) --- */
+  const warna = sanitizeEmbedList({
+    fields: [{ name: 'A', value: '1', inline: false }],
+    color: '#FF0000',
+  });
+  assert.equal(warna.list[0]!.color, '#ff0000', 'warna embed dinormalkan ke huruf kecil');
+  const warnaSalah = sanitizeEmbedList({ color: 'merah', fields: [{ name: 'A', value: '1', inline: false }] });
+  assert.equal(warnaSalah.list[0]!.color, undefined, 'warna bukan #rrggbb dibuang');
+  assert.ok(warnaSalah.dropped.some((a) => a.includes('#rrggbb')), 'alasannya dijelaskan');
+  /*
+   * Warna saja TETAP disimpan: pada embed pertama warnanya masuk akal karena
+   * isinya datang dari blok. Baru di builder warnanya tidak cukup untuk embed
+   * tambahan (Discord butuh judul/isi/gambar/bidang).
+   */
+  assert.equal(sanitizeEmbedList({ color: '#00ff00' }).list.length, 1, 'warna saja tetap disimpan');
+  const warnaSajaTambahan = buildClassicEmbeds([{ kind: 'text', value: 'Isi' }], {
+    embedList: [{ footer: { text: 'satu' } }, { color: '#00ff00' }],
+  });
+  assert.equal(warnaSajaTambahan.length, 1, 'embed tambahan berisi warna saja tidak dikirim');
+  assert.ok(
+    warnaSajaTambahan[0]!.dropped.some((a) => a.includes('embed 2 dilewati')),
+    'embed yang dilewati dilaporkan',
+  );
+
+  const warnaBerbeda = buildClassicEmbeds([{ kind: 'text', value: 'Isi' }], {
+    accent: '#5865f2',
+    embedList: [
+      { footer: { text: 'satu' } },
+      { color: '#ff0000', fields: [{ name: 'A', value: '1', inline: false }] },
+    ],
+  });
+  assert.equal(warnaBerbeda[0]!.embed.color, 0x5865f2, 'embed pertama memakai aksen pesan');
+  assert.equal(warnaBerbeda[1]!.embed.color, 0xff0000, 'embed kedua memakai warnanya sendiri');
+
+  /* --- template tetap berlaku di setiap embed --- */
+  const templat = buildClassicEmbeds([], {
+    embedList: [
+      { fields: [{ name: 'Nama', value: '{member.name}', inline: true }] },
+      { footer: { text: 'oleh {member.name}' }, fields: [{ name: 'Nama', value: '{member.name}', inline: false }] },
+    ],
+    template: { 'member.name': 'Wahyu' },
+  });
+  assert.equal(templat[0]!.embed.fields![0]!.value, 'Wahyu', 'template berlaku di embed pertama');
+  assert.equal(templat[1]!.embed.footer!.text, 'oleh Wahyu', 'template berlaku juga di embed tambahan');
+
+  /* --- penyimpanan --- */
+  const pesan = await repo.createCustomPost(GUILD, {
+    name: 'Tiga embed',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Halo' }],
+    layout: 'embed',
+    embed: [{ footer: { text: 'satu' } }, { footer: { text: 'dua' } }, { footer: { text: 'tiga' } }],
+  });
+  assert.equal(pesan.embed.length, 3, 'tiga bagian embed tersimpan');
+  assert.equal(pesan.embed[2]!.footer!.text, 'tiga', 'urutan dipertahankan');
+
+  /*
+   * Data LAMA: kolom berisi satu objek (bentuk sebelum batch ini). Harus
+   * terbaca sebagai daftar berisi satu, bukan dibuang.
+   */
+  const lama = await repo.createCustomPost(GUILD, {
+    name: 'Embed lama',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Halo' }],
+    layout: 'embed',
+  });
+  await repo.updateCustomPost(GUILD, lama.id, {
+    // Bentuk lama dikirim langsung: server harus tetap menerimanya.
+    embed: { footer: { text: 'bentuk lama' } },
+  });
+  const dibacaLama = await repo.getCustomPost(GUILD, lama.id);
+  assert.equal(dibacaLama!.embed.length, 1, 'objek tunggal (bentuk lama) terbaca sebagai satu embed');
+  assert.equal(dibacaLama!.embed[0]!.footer!.text, 'bentuk lama');
+
+  /*
+   * --- galeri gambar (Discohook "Image URLs") ---
+   *
+   * Discord hanya menerima SATU gambar per embed, jadi gambar ke-2 dst. dikirim
+   * sebagai embed pelengkap. Tanpa itu, admin mengisi empat URL dan hanya satu
+   * yang muncul — hilang tanpa laporan apa pun.
+   */
+  const galeri = sanitizeEmbedList({
+    images: [
+      'https://img.test/1.png',
+      'javascript:alert(1)',
+      'https://img.test/2.png',
+      'https://img.test/1.png',
+      'https://img.test/3.png',
+      'https://img.test/4.png',
+      'https://img.test/5.png',
+    ],
+    fields: [{ name: 'A', value: '1', inline: false }],
+  });
+  assert.equal(galeri.list[0]!.images!.length, 4, 'galeri dibatasi 4 gambar per embed');
+  assert.equal(galeri.list[0]!.images![0], 'https://img.test/1.png', 'urutan gambar dipertahankan');
+  assert.equal(
+    galeri.list[0]!.images!.indexOf('https://img.test/1.png'),
+    galeri.list[0]!.images!.lastIndexOf('https://img.test/1.png'),
+    'gambar ganda dibuang',
+  );
+  assert.ok(!galeri.list[0]!.images!.includes('javascript:alert(1)'), 'gambar berbahaya dibuang');
+  assert.ok(galeri.dropped.some((a) => a.includes('gambar embed')), 'alasannya dijelaskan');
+  assert.ok(galeri.dropped.some((a) => a.includes('dibatasi 4')), 'pemotongan galeri dilaporkan');
+
+  const galeriDikirim = buildClassicEmbeds([{ kind: 'text', value: 'Isi' }], {
+    embedList: [{ images: ['https://img.test/1.png', 'https://img.test/2.png', 'https://img.test/3.png'] }],
+  });
+  assert.equal(galeriDikirim.length, 3, 'gambar ke-2 & ke-3 jadi embed pelengkap');
+  assert.equal(galeriDikirim[0]!.embed.image!.url, 'https://img.test/1.png', 'gambar pertama di embed utama');
+  assert.equal(galeriDikirim[1]!.embed.image!.url, 'https://img.test/2.png', 'gambar kedua di embed pelengkap');
+  assert.equal(galeriDikirim[2]!.embed.image!.url, 'https://img.test/3.png', 'gambar ketiga di embed pelengkap');
+  assert.equal(galeriDikirim[1]!.embed.title, undefined, 'embed pelengkap tidak mengulang judul');
+  assert.deepEqual(validateEmbeds(galeriDikirim.map((satu) => satu.embed)), [], 'embed hasil galeri lolos validasi');
+
+  /* Galeri di embed KEDUA ikut tersusul sebagai embed pelengkap. */
+  const galeriKedua = buildClassicEmbeds([{ kind: 'text', value: 'Isi' }], {
+    embedList: [
+      { fields: [{ name: 'A', value: '1', inline: false }] },
+      { fields: [{ name: 'B', value: '2', inline: false }], images: ['https://img.test/x.png', 'https://img.test/y.png'] },
+    ],
+  });
+  assert.equal(galeriKedua.length, 3, 'galeri embed kedua ikut terkirim');
+  assert.equal(galeriKedua[2]!.embed.image!.url, 'https://img.test/y.png', 'gambar cadangan membawa isinya');
+
+  /*
+   * 10 embed + galeri TIDAK boleh melewati batas Discord: kelebihannya
+   * dipotong dan alasannya dilaporkan, bukan dikirim lalu ditolak seluruhnya.
+   */
+  const melimpah = buildClassicEmbeds([], {
+    embedList: Array.from({ length: 10 }, (_, i) => ({
+      fields: [{ name: 'A', value: String(i), inline: false }],
+      images: ['https://img.test/a.png', 'https://img.test/b.png'],
+    })),
+  });
+  assert.equal(melimpah.length, 10, 'total embed tetap dibatasi 10');
+  assert.ok(
+    melimpah[0]!.dropped.some((a) => a.includes('dibatasi 10')),
+    'embed yang terpotong dilaporkan',
+  );
+
+  /* Impor Discohook: gambar cadangan digabung jadi satu galeri. */
+  const { gabungGaleriEmbeds, parseDiscohookShare } = await import('../src/features/discohook-import.js');
+  const digabung = gabungGaleriEmbeds([
+    { title: 'Galeri', url: 'https://x.test', image: { url: 'https://img.test/1.png' } },
+    { url: 'https://x.test', image: { url: 'https://img.test/2.png' } },
+    { url: 'https://x.test', image: { url: 'https://img.test/3.png' } },
+    /* Embed bergambar yang punya judul BUKAN gambar lanjutan: berdiri sendiri. */
+    { title: 'Sendiri', image: { url: 'https://img.test/lain.png' } },
+  ]);
+  assert.deepEqual(
+    (digabung[0] as { images?: string[] }).images,
+    ['https://img.test/1.png', 'https://img.test/2.png', 'https://img.test/3.png'],
+    'impor menggabungkan gambar cadangan jadi galeri',
+  );
+  assert.equal(digabung.length, 2, 'embed bergambar berjudul tidak ikut tertelan');
+  assert.equal((digabung[1] as { title?: string }).title, 'Sendiri', 'judulnya utuh');
+
+  const bagi = parseDiscohookShare({
+    messages: [
+      {
+        data: {
+          embeds: [
+            { title: 'Galeri', description: 'empat gambar', url: 'https://x.test', image: { url: 'https://img.test/1.png' } },
+            { url: 'https://x.test', image: { url: 'https://img.test/2.png' } },
+            { url: 'https://x.test', image: { url: 'https://img.test/3.png' } },
+          ],
+        },
+      },
+    ],
+  });
+  const pesanBagi = bagi.messages[0] as unknown as { embed: { images?: string[] }[] };
+  assert.deepEqual(
+    pesanBagi.embed[0]!.images,
+    ['https://img.test/1.png', 'https://img.test/2.png', 'https://img.test/3.png'],
+    'impor tautan Discohook menyimpan galeri, bukan tiga embed kosong',
+  );
+
+  await repo.deleteCustomPost(GUILD, pesan.id);
+  await repo.deleteCustomPost(GUILD, lama.id);
+});
+
+await testAsync('muat pesan: tautan Discord & isi pesan diterjemahkan balik ke blok', async () => {
+  const { parseMessageLink, messageToDraft, pecahTeks } = await import('../src/features/message-load.js');
+
+  /* --- tautan --- */
+  const sah = parseMessageLink('https://discord.com/channels/123456789012345678/234567890123456789/345678901234567890');
+  assert.equal(sah?.guildId, '123456789012345678');
+  assert.equal(sah?.channelId, '234567890123456789');
+  assert.equal(sah?.messageId, '345678901234567890', 'ID dibaca sebagai teks, bukan angka');
+  assert.ok(
+    parseMessageLink('https://ptb.discord.com/channels/123456789012345678/234567890123456789/345678901234567890'),
+    'subdomain ptb/canary diterima',
+  );
+  assert.ok(
+    parseMessageLink('https://discordapp.com/channels/123456789012345678/234567890123456789/345678901234567890'),
+    'domain lama diterima',
+  );
+  assert.equal(parseMessageLink('https://discord.com/channels/1/2/3'), null, 'ID terlalu pendek ditolak');
+  assert.equal(parseMessageLink('https://contoh.test/channels/123456789012345678/234567890123456789/345678901234567890'), null);
+  assert.equal(parseMessageLink(''), null, 'kosong ditolak');
+
+  /* --- pesan teks biasa --- */
+  const teks = messageToDraft({ content: 'Halo semua' });
+  assert.equal(teks.blocks.length, 1);
+  assert.equal(teks.blocks[0]!.kind, 'text');
+  assert.equal(teks.content, 'Halo semua', 'isi dipakai sebagai nama pesan');
+
+  /* Teks panjang dipecah, bukan dipotong di tengah kata. */
+  const panjang = pecahTeks('a'.repeat(40) + '\n' + 'b'.repeat(40), 50);
+  assert.equal(panjang.length, 2, 'teks panjang dipecah');
+  assert.ok(panjang.every((satu) => satu.length <= 50), 'setiap potongan muat');
+
+  /* --- pesan berisi embed saja --- */
+  const embedSaja = messageToDraft({
+    embeds: [
+      {
+        title: 'Judul asli',
+        description: 'Isi embed',
+        color: 0xff0000,
+        author: { name: 'Penulis' },
+        footer: { text: 'kaki' },
+        fields: [{ name: 'A', value: '1', inline: true }],
+      },
+    ],
+  });
+  assert.equal(embedSaja.layout, 'embed', 'pesan embed dimuat sebagai embed');
+  assert.equal(embedSaja.content, 'Judul asli', 'judul embed jadi nama pesan');
+  assert.equal(embedSaja.embed.length, 1);
+  assert.equal(embedSaja.embed[0]!.color, '#ff0000', 'warna embed ikut');
+  assert.equal(embedSaja.embed[0]!.author!.name, 'Penulis');
+  assert.ok(
+    embedSaja.blocks.some((b) => b.kind === 'text' && b.value === 'Isi embed'),
+    'isi embed jadi blok teks',
+  );
+
+  /* --- pesan komponen V2 --- */
+  const v2 = messageToDraft({
+    components: [
+      { type: 17, accent_color: 0x5865f2, components: [{ type: 10, content: 'Di dalam kartu' }] },
+    ],
+  });
+  assert.equal(v2.layout, 'container');
+  assert.equal(v2.blocks[0]!.kind, 'container', 'container V2 jadi blok container');
+  assert.ok(v2.blocks.some((b) => b.kind === 'text' && b.value === 'Di dalam kartu'));
+
+  /* --- pesan yang membawa keduanya --- */
+  const campur = messageToDraft({
+    content: 'Teks biasa',
+    components: [{ type: 10, content: 'Komponen' }],
+    embeds: [{ title: 'Judul', description: 'Isi', color: 0x00ff00 }],
+  });
+  assert.equal(campur.layout, 'container', 'campuran tetap container');
+  assert.equal(campur.embed.length, 0, 'embed tidak dikirim bersama komponen');
+  assert.ok(
+    campur.warnings.some((isi) => isi.includes('menolak keduanya')),
+    'batasan Discord dijelaskan',
+  );
+  assert.ok(campur.blocks.some((b) => b.kind === 'container'), 'embed jadi kartu teks');
+  assert.ok(
+    campur.blocks.some((b) => b.kind === 'text' && b.value.includes('Teks biasa')),
+    'teks biasa tidak hilang',
+  );
+
+  /* --- lampiran dilaporkan --- */
+  const lampiran = messageToDraft({
+    content: 'Dengan berkas',
+    attachments: [{ filename: 'a.pdf', url: 'https://cdn.test/a.pdf' }],
+  });
+  assert.ok(
+    lampiran.warnings.some((isi) => isi.includes('lampiran')),
+    'lampiran tidak dibuang diam-diam',
+  );
+
+  /* --- pesan kosong --- */
+  const kosong = messageToDraft({});
+  assert.equal(kosong.blocks.length, 0);
+  assert.ok(kosong.warnings.length > 0, 'pesan kosong dijelaskan, bukan gagal senyap');
+});
+
+await testAsync('muat pesan: galeri gambar di Discord dibaca kembali sebagai satu galeri', async () => {
+  const { messageToDraft } = await import('../src/features/message-load.js');
+
+  /*
+   * Di Discord, galeri empat gambar tampil sebagai empat embed: satu berisi
+   * isi pesan + gambar pertama, tiga sisanya hanya gambar. Memuatnya kembali
+   * harus menghasilkan SATU embed bergaleri — kalau tidak, admin yang ingin
+   * memperbaiki teksnya harus menempel ulang semua URL.
+   */
+  const draft = messageToDraft({
+    id: '1',
+    channel_id: '2',
+    content: '',
+    embeds: [
+      { title: 'Pengumuman', description: 'Isi pesan', url: 'https://x.test', image: { url: 'https://img.test/1.png' } },
+      { url: 'https://x.test', image: { url: 'https://img.test/2.png' } },
+      { url: 'https://x.test', image: { url: 'https://img.test/3.png' } },
+    ],
+  } as never);
+
+  assert.equal(draft.embed.length, 1, 'tiga embed gambar dibaca sebagai satu embed bergaleri');
+  assert.deepEqual(
+    draft.embed[0]!.images,
+    ['https://img.test/1.png', 'https://img.test/2.png', 'https://img.test/3.png'],
+    'ketiga gambar masuk galeri',
+  );
+  assert.equal(draft.layout, 'embed', 'tetap bentuk embed');
+  assert.ok(
+    draft.blocks.some((b) => b.kind === 'image' && b.value === 'https://img.test/1.png'),
+    'gambar pertama tetap jadi blok gambar (jalur yang sama dengan impor)',
+  );
+});
+
+await testAsync('muat pesan: bentuk JSON yang lazim ditempel dikenali', async () => {
+  const { messageToDraft } = await import('../src/features/message-load.js');
+
+  /*
+   * `ambilPesanMentah` hidup di server (bukan modul murni) karena hanya
+   * menormalkan bentuk masukan. Yang diuji di sini adalah hasil akhirnya:
+   * setiap bentuk harus menghasilkan blok yang sama setelah diterjemahkan.
+   */
+  const bentuk = {
+    langsung: { content: 'Halo', components: [{ type: 10, content: 'Dunia' }] },
+    rest: { body: { content: 'Halo', components: [{ type: 10, content: 'Dunia' }] } },
+    discohook: { messages: [{ data: { content: 'Halo', components: [{ type: 10, content: 'Dunia' }] } }] },
+  };
+
+  const normal = (input: Record<string, unknown>): Record<string, unknown> => {
+    let akar = input;
+    const daftar = akar.messages;
+    if (Array.isArray(daftar) && daftar.length > 0) {
+      const pertama = daftar[0] as Record<string, unknown>;
+      akar = (pertama.data as Record<string, unknown>) ?? pertama;
+    }
+    const dalam = (akar.body as Record<string, unknown>) ?? (akar.data as Record<string, unknown>);
+    if (dalam && (dalam.content !== undefined || dalam.embeds !== undefined || dalam.components !== undefined)) {
+      akar = dalam;
+    }
+    return akar;
+  };
+
+  const hasil = Object.entries(bentuk).map(([nama, isi]) => {
+    const draft = messageToDraft(normal(isi) as never);
+    return nama + ':' + draft.blocks.map((b) => b.kind + '=' + b.value).join(',');
+  });
+  assert.equal(new Set(hasil.map((satu) => satu.split(':')[1])).size, 1, 'tiga bentuk menghasilkan blok yang sama');
+
+  /*
+   * Bentuk yang TIDAK punya content/embeds/components harus ditolak, bukan
+   * diterjemahkan jadi pesan kosong — pesan kosong akan membuat admin mengira
+   * JSON-nya berhasil.
+   */
+  const kosong = messageToDraft(normal({ hello: 'world' }) as never);
+  assert.equal(kosong.blocks.length, 0);
+  assert.ok(kosong.warnings.length > 0, 'bentuk asing dijelaskan');
+});
+
+await testAsync('berbagi: halaman publik menampilkan embed & bagian admin', async () => {
+  const { sharePage } = await import('../src/web/ui/share.js');
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  const pesan = await repo.createCustomPost(GUILD, {
+    name: 'Pengumuman embed',
+    channelId: '999',
+    blocks: [
+      { kind: 'text', value: 'Isi dari blok' },
+      { kind: 'image', value: 'https://img.test/a.png' },
+    ],
+    layout: 'embed',
+    embed: [
+      {
+        author: { name: 'Tim Zypher' },
+        footer: { text: 'kaki' },
+        fields: [{ name: 'Harga', value: 'Rp10.000', inline: true }],
+        /* Galeri: gambar pertama menggantikan gambar dari blok. */
+        images: ['https://img.test/galeri-1.png', 'https://img.test/galeri-2.png'],
+      },
+      { fields: [{ name: 'Catatan', value: 'kedua', inline: false }] },
+    ],
+  });
+
+  const token = await repo.createPostShare(GUILD, pesan.id);
+  const dibagikan = await repo.getSharedPost(token);
+  assert.equal(dibagikan?.layout, 'embed', 'bentuk pesan ikut dibagikan');
+  assert.equal(dibagikan?.embed.length, 2, 'bagian admin ikut dibagikan');
+
+  const halaman = sharePage({
+    name: dibagikan!.name,
+    blocks: dibagikan!.blocks,
+    layout: dibagikan!.layout,
+    embed: dibagikan!.embed,
+    notFound: false,
+  });
+  assert.ok(halaman.includes('Tim Zypher'), 'penulis tampil');
+  assert.ok(halaman.includes('Rp10.000'), 'bidang tampil');
+  assert.ok(halaman.includes('kaki'), 'footer tampil');
+  assert.ok(halaman.includes('Isi dari blok'), 'isi blok tampil');
+  assert.ok(halaman.includes('img.test/galeri-1.png'), 'gambar galeri pertama tampil');
+  assert.ok(halaman.includes('img.test/galeri-2.png'), 'gambar galeri kedua ikut tampil sebagai kartu sendiri');
+  assert.ok(
+    !halaman.includes('img.test/a.png'),
+    'gambar dari blok tidak dipakai saat galeri embed terisi (urutan sama dengan server)',
+  );
+
+  /*
+   * Halaman ini terbuka tanpa login: isi dari admin TIDAK boleh jadi HTML.
+   * Yang diuji bukan sekadar escaping teks, tetapi juga bahwa URL gambar
+   * bukan-http tidak pernah dipasang.
+   */
+  const jahat = sharePage({
+    name: '<script>alert(1)</script>',
+    blocks: [{ kind: 'text', value: '<b>tebal</b>' }],
+    layout: 'container',
+    embed: [],
+    notFound: false,
+  });
+  assert.ok(!jahat.includes('<script>alert(1)</script>'), 'nama di-escape');
+  assert.ok(!jahat.includes('<b>tebal</b>'), 'teks blok di-escape');
+  const gambarJahat = sharePage({
+    name: 'x',
+    blocks: [{ kind: 'text', value: 'isi' }],
+    layout: 'embed',
+    embed: [],
+    notFound: false,
+  });
+  assert.ok(!gambarJahat.includes('javascript:'), 'tidak ada URL berbahaya yang lolos');
+
+  /* Pesan embed tanpa isi apa pun tetap dijelaskan, bukan halaman kosong. */
+  const kosong = sharePage({ name: '', blocks: [], layout: 'embed', embed: [], notFound: false });
+  assert.ok(kosong.includes('tidak punya isi'), 'embed kosong dijelaskan');
+
+  await repo.deleteCustomPost(GUILD, pesan.id);
+});
+
+await testAsync('webhook: identitas per pesan dipakai SEMUA jalur kirim', async () => {
+  const { identitasPost } = await import('../src/features/custom-post-send.js');
+  const server = { username: 'Server', avatarURL: 'https://img.test/server.png' };
+
+  /*
+   * Dulu hanya tombol "Kirim ke Discord" yang memakai nama/avatar per pesan.
+   * Pesan terjadwal & pesan pemicu member tetap tampil atas nama server, jadi
+   * pengaturan yang terlihat di dashboard tidak berlaku di jalur otomatis —
+   * bedanya baru terlihat saat pesannya benar-benar muncul.
+   */
+  assert.deepEqual(
+    identitasPost({ webhookName: 'Tim Pengumuman', webhookAvatar: 'https://img.test/tim.png' }, server),
+    { username: 'Tim Pengumuman', avatarURL: 'https://img.test/tim.png' },
+    'nama & avatar per pesan menang',
+  );
+  assert.deepEqual(
+    identitasPost({ webhookName: null, webhookAvatar: null }, server),
+    { username: 'Server', avatarURL: 'https://img.test/server.png' },
+    'kosong = identitas server',
+  );
+  assert.deepEqual(
+    identitasPost({ webhookName: 'Tim', webhookAvatar: null }, server),
+    { username: 'Tim', avatarURL: 'https://img.test/server.png' },
+    'yang kosong diisi identitas server, bukan dikosongkan',
+  );
+  assert.deepEqual(
+    identitasPost({}, { username: 'Server', avatarURL: null }),
+    { username: 'Server', avatarURL: null },
+    'post tanpa kolom identitas tetap aman (server tanpa ikon)',
+  );
+});
+
+await testAsync('webhook: nama & avatar pengirim per pesan disaring & disimpan', async () => {
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  /* --- penyaring --- */
+  assert.equal(repo.parseWebhookName('  Pengumuman  '), 'Pengumuman', 'spasi dirapikan');
+  assert.equal(repo.parseWebhookName('   '), null, 'spasi saja = kosong (identitas server)');
+  assert.equal(repo.parseWebhookName(null), null, 'null = kosong');
+  assert.equal(repo.parseWebhookName('x'.repeat(120))!.length, 80, 'dipotong ke batas Discord 80');
+  assert.equal(repo.parseWebhookAvatar('https://img.test/a.png'), 'https://img.test/a.png');
+  assert.equal(repo.parseWebhookAvatar('javascript:alert(1)'), null, 'URL berbahaya dibuang');
+  assert.equal(repo.parseWebhookAvatar('bukan-url'), null);
+  assert.equal(repo.parseWebhookAvatar(''), null);
+
+  /* --- penyimpanan --- */
+  const pesan = await repo.createCustomPost(GUILD, {
+    name: 'Webhook nama',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Halo' }],
+    sender: 'webhook',
+    webhookName: 'Tim Pengumuman',
+    webhookAvatar: 'https://img.test/avatar.png',
+  });
+  assert.equal(pesan.webhookName, 'Tim Pengumuman', 'nama tersimpan');
+  assert.equal(pesan.webhookAvatar, 'https://img.test/avatar.png', 'avatar tersimpan');
+
+  /*
+   * Tidak mengirim = dipertahankan (sama seperti field lain); null = dikosongkan.
+   * Tanpa aturan ini, menyimpan ulang dari klien lama akan menghapus nama
+   * pengirim yang sudah diatur admin.
+   */
+  await repo.updateCustomPost(GUILD, pesan.id, { name: 'Ganti nama pesan' });
+  const tetap = await repo.getCustomPost(GUILD, pesan.id);
+  assert.equal(tetap!.webhookName, 'Tim Pengumuman', 'menyimpan field lain tidak menghapus pengirim');
+
+  await repo.updateCustomPost(GUILD, pesan.id, { webhookName: null, webhookAvatar: null });
+  const kosong = await repo.getCustomPost(GUILD, pesan.id);
+  assert.equal(kosong!.webhookName, null, 'bisa dikosongkan');
+  assert.equal(kosong!.webhookAvatar, null);
+
+  await repo.deleteCustomPost(GUILD, pesan.id);
+});
+
+await testAsync('muat pesan: pengaturan tingkat pesan ikut dipulihkan', async () => {
+  const { messageToDraft } = await import('../src/features/message-load.js');
+
+  /*
+   * Load yang hanya membawa blok membuat "sunting lalu kirim ulang" menghapus
+   * identitas webhook, nama thread, dan flag pesan aslinya. Isinya sama di
+   * editor, tetapi pesannya muncul berbeda di Discord.
+   */
+  const webhook = messageToDraft({
+    id: '1',
+    content: 'Pengumuman',
+    webhookId: '999',
+    author: { username: '  Tim Pengumuman  ', avatarUrl: 'https://img.test/tim.png' },
+    thread: { name: '  Diskusi rilis  ' },
+    flags: 4 | 4096 | 32768,
+  } as never);
+
+  assert.equal(webhook.sender, 'webhook', 'pesan webhook dikenali');
+  assert.equal(webhook.webhookName, 'Tim Pengumuman', 'nama pengirim webhook dirapikan');
+  assert.equal(webhook.webhookAvatar, 'https://img.test/tim.png', 'avatar pengirim webhook dibawa');
+  assert.equal(webhook.threadName, 'Diskusi rilis', 'nama thread dirapikan');
+  /*
+   * Hanya dua flag yang boleh diatur admin. Flag 32768 (IS_COMPONENTS_V2)
+   * DIBUANG: membawanya ke pesan berikutnya membuat Discord menolak pesan itu
+   * karena bentuknya bukan Components V2.
+   */
+  assert.equal(webhook.flags, 4 | 4096, 'flag asing (V2) tidak ikut dimuat');
+
+  // Pesan bot biasa: username bot TIDAK dijadikan nama pengirim webhook.
+  const bot = messageToDraft({
+    id: '2',
+    content: 'Halo',
+    author: { username: 'ZypherBot', bot: true },
+    flags: 0,
+  } as never);
+  assert.equal(bot.sender, 'bot', 'pesan bot tetap lewat bot');
+  assert.equal(bot.webhookName, '', 'username bot tidak dijadikan nama webhook');
+  assert.equal(bot.webhookAvatar, '', 'avatar bot tidak dipakai');
+  assert.equal(bot.threadName, '', 'tanpa thread = kosong');
+  assert.equal(bot.flags, 0, 'tanpa flag = 0');
+
+  // Jalur embed juga membawa pengaturan yang sama, bukan hanya jalur blok.
+  const embed = messageToDraft({
+    id: '3',
+    // Bidang membuat embed punya bagian admin; judul/isi saja sudah jadi blok
+    // teks, jadi daftar embed-nya kosong dan bentuknya turun ke container.
+    embeds: [{ title: 'Judul', description: 'Isi', fields: [{ name: 'A', value: '1' }] }],
+    webhookId: '999',
+    author: { username: 'Tim' },
+    flags: 4,
+  } as never);
+  assert.equal(embed.layout, 'embed', 'pesan embed tetap bentuk embed');
+  assert.equal(embed.sender, 'webhook', 'jalur embed juga mengenali webhook');
+  assert.equal(embed.webhookName, 'Tim', 'nama pengirim ikut di jalur embed');
+  assert.equal(embed.flags, 4, 'flag ikut di jalur embed');
+});
+
+await testAsync('muat pesan: pesan dashboard mengikuti pesan Discord asal setelah disimpan', async () => {
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  /*
+   * Alur "Muat pesan" lalu simpan: pesan dashboard harus menunjuk pesan
+   * Discord yang SAMA, supaya Kirim berikutnya memperbarui pesan lama bukan
+   * mengirim salinan kedua.
+   */
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Hasil muat',
+    channelId: null,
+    blocks: [{ kind: 'text', value: 'Isi dari Discord' }],
+  });
+  assert.equal(post.messageId, null, 'pesan baru belum punya ID Discord');
+
+  await repo.setCustomPostTarget(GUILD, post.id, {
+    channelId: '234567890123456789',
+    messageId: '345678901234567890',
+  });
+  const mengikuti = await repo.getCustomPost(GUILD, post.id);
+  assert.equal(mengikuti!.messageId, '345678901234567890', 'pesan Discord asal diikuti');
+  assert.equal(mengikuti!.channelId, '234567890123456789', 'channel asal ikut diikuti');
+
+  /* Menyimpan isi baru TIDAK melepas tautan ke pesan Discord asal. */
+  await repo.updateCustomPost(GUILD, post.id, { blocks: [{ kind: 'text', value: 'Isi diperbaiki' }] });
+  const setelahUbah = await repo.getCustomPost(GUILD, post.id);
+  assert.equal(setelahUbah!.messageId, '345678901234567890', 'ID pesan bertahan setelah isi diubah');
+
+  /* Bisa dilepas: kembali jadi pesan baru yang belum terkirim. */
+  await repo.setCustomPostMessage(GUILD, post.id, null);
+  const dilepas = await repo.getCustomPost(GUILD, post.id);
+  assert.equal(dilepas!.messageId, null, 'tautan ke pesan Discord bisa dilepas');
+
+  await repo.deleteCustomPost(GUILD, post.id);
+});
+
+await testAsync('riwayat: identitas webhook ikut versi & bertahan saat versi dikembalikan', async () => {
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  /*
+   * Snapshot riwayat dulu tidak menyimpan nama/avatar pengirim webhook.
+   * Akibatnya mengembalikan versi lama menghapus identitas yang bahkan tidak
+   * pernah diubah di versi itu — dan panel Bandingkan tidak menampilkannya.
+   */
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Identitas berversi',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Halo' }],
+    sender: 'webhook',
+    webhookName: 'Tim Pengumuman',
+    webhookAvatar: 'https://img.test/tim.png',
+  });
+
+  // Ubah isi: versi LAMA tersimpan, berisi identitas webhook saat itu.
+  await repo.updateCustomPost(GUILD, post.id, { blocks: [{ kind: 'text', value: 'Halo baru' }] });
+  const versi = await repo.listPostRevisions(GUILD, post.id);
+  assert.ok(versi.length >= 1, 'versi lama tersimpan');
+  assert.equal(versi[0]!.snapshot.webhookName, 'Tim Pengumuman', 'nama pengirim masuk snapshot');
+  assert.equal(versi[0]!.snapshot.webhookAvatar, 'https://img.test/tim.png', 'avatar masuk snapshot');
+
+  // Ganti identitas, lalu kembalikan versi lama: identitas versi itu balik.
+  await repo.updateCustomPost(GUILD, post.id, { webhookName: 'Tim Lain', webhookAvatar: null });
+  const kembali = await repo.restorePostRevision(GUILD, post.id, versi[0]!.id);
+  assert.equal(kembali.post?.webhookName, 'Tim Pengumuman', 'nama pengirim versi lama dipulihkan');
+  assert.equal(kembali.post?.webhookAvatar, 'https://img.test/tim.png', 'avatar versi lama dipulihkan');
+
+  /*
+   * Snapshot LAMA (sebelum batch ini) tidak punya dua field itu. Mengembalikan
+   * versi seperti itu TIDAK boleh mengosongkan identitas yang sekarang.
+   */
+  await repo.updateCustomPost(GUILD, post.id, {
+    name: 'Versi tanpa identitas',
+    webhookName: 'Tim Sekarang',
+    webhookAvatar: 'https://img.test/sekarang.png',
+  });
+  const versiLama = await repo.listPostRevisions(GUILD, post.id);
+  assert.ok(versiLama.length > 0);
+  const { run } = await import('../src/db/index.js');
+  await run('UPDATE post_revisions SET payload = ? WHERE id = ?', [
+    JSON.stringify({ blocks: [{ kind: 'text', value: 'isi kuno' }], accent: null, sender: 'webhook', flags: 0, series: false, allowedMentions: { parse: [] }, threadName: null }),
+    versiLama[0]!.id,
+  ]);
+  const kuno = await repo.restorePostRevision(GUILD, post.id, versiLama[0]!.id);
+  assert.equal(kuno.post?.webhookName, 'Tim Sekarang', 'versi tanpa identitas tidak mengosongkannya');
+
+  await repo.deleteCustomPost(GUILD, post.id);
+});
+
+await testAsync('json per pesan: pengaturan tingkat pesan ikut dipulihkan', async () => {
+  const { messageToDraft } = await import('../src/features/message-load.js');
+
+  /*
+   * JSON Data Editor memakai penerjemah yang sama dengan Load (messageToDraft),
+   * dan endpoint-nya sekarang meneruskan pengaturan tingkat pesan. Diuji di
+   * penerjemahnya supaya perilakunya satu, bukan dua yang bisa menyimpang.
+   */
+  const draft = messageToDraft({
+    content: 'Halo',
+    username: 'Tim Pengumuman',
+    avatar_url: 'https://img.test/tim.png',
+    thread_name: 'Diskusi rilis',
+    flags: 4 | 4096,
+  } as never);
+  /*
+   * Bentuk Discohook (`username`/`avatar_url`/`thread_name`) sudah dinormalkan
+   * menjadi author/webhook/thread oleh pemanggil REST; di sini yang diuji
+   * adalah bentuk pesan Discord setelah dinormalkan.
+   */
+  assert.equal(draft.flags, 4 | 4096, 'flag terbawa dari JSON');
+  assert.equal(draft.webhookName, '', 'tanpa webhook_id tidak dianggap webhook');
+
+  const webhook = messageToDraft({
+    content: 'Halo',
+    webhookId: '999',
+    author: { username: 'Tim Pengumuman', avatarUrl: 'https://img.test/tim.png' },
+    thread: { name: 'Diskusi rilis' },
+    flags: 4,
+  } as never);
+  assert.equal(webhook.sender, 'webhook');
+  assert.equal(webhook.webhookName, 'Tim Pengumuman');
+  assert.equal(webhook.webhookAvatar, 'https://img.test/tim.png');
+  assert.equal(webhook.threadName, 'Diskusi rilis');
+  assert.equal(webhook.flags, 4);
+});
+
+await testAsync('generator: pesan bergaya embed menghasilkan kode embed, bukan "belum ada komponen"', async () => {
+  const { generateEmbedCodegen } = await import('../src/features/post-codegen.js');
+
+  /*
+   * Pesan embed tidak punya komponen sama sekali. Tanpa jalur sendiri, panel
+   * payload menampilkan "belum punya komponen" untuk pesan yang jelas berisi,
+   * dan admin menyimpulkan generatornya rusak.
+   */
+  const embeds = [
+    { title: 'Pengumuman', description: 'Isi', color: 0x5865f2 },
+    { image: { url: 'https://img.test/2.png' } },
+  ];
+
+  const djs = generateEmbedCodegen(embeds, 'djs14', { threadName: 'Diskusi rilis', flags: 4 });
+  const djsKode = djs.code.join(String.fromCharCode(10));
+  assert.ok(djsKode.includes('embeds'), 'kode mengirim embeds');
+  assert.ok(djsKode.includes('Pengumuman'), 'isi embed ikut');
+  assert.ok(djsKode.includes('thread_name: "Diskusi rilis"'), 'nama thread ikut');
+  assert.ok(djsKode.includes('flags: 4'), 'flag ikut');
+  assert.ok(!djsKode.toLowerCase().includes('belum punya komponen'), 'tidak menyebut komponen');
+
+  const dpy = generateEmbedCodegen(embeds, 'dpy2');
+  const dpyKode = dpy.code.join(String.fromCharCode(10));
+  assert.ok(dpyKode.includes('discord.Embed.from_dict'), 'discord.py memakai from_dict');
+  assert.ok(
+    dpy.dropped.some((a) => a.includes('import json')),
+    'kebutuhan import json disebut, bukan disembunyikan',
+  );
+
+  // Tanpa embed: pesan yang bisa dibaca, bukan kode kosong.
+  const kosong = generateEmbedCodegen([], 'djs14');
+  assert.ok(kosong.code[0]!.includes('belum punya embed'), 'daftar kosong dijelaskan');
+});
+
+await testAsync('payload: pesan embed melaporkan tombol role yang tidak ikut digenerate', async () => {
+  const { buildClassicEmbeds } = await import('../src/features/post-embed.js');
+
+  /*
+   * Kode yang digenerate untuk pesan embed hanya berisi `embeds`. Kalau pesan
+   * itu masih punya tombol/menu role, developer yang menyalin kodenya akan
+   * mendapat pesan tanpa tombol — dan tidak ada yang memberi tahu. Bagian ini
+   * diuji di pembangun embed + aturan pelaporan, karena endpoint-nya sendiri
+   * sudah memakai keduanya.
+   */
+  const daftar = buildClassicEmbeds([{ kind: 'text', value: 'Isi' }, { kind: 'button', value: 'Klik', url: 'https://a.test' }], {
+    title: 'Judul',
+    embedList: [{ fields: [{ name: 'A', value: '1', inline: false }] }],
+  });
+  assert.equal(daftar.length, 1, 'satu embed terbangun');
+  assert.ok(daftar[0]!.embed.description!.includes('Isi'), 'teks masuk embed');
+  /*
+   * Tombol TIDAK masuk embed (Discord menaruhnya sebagai komponen), jadi
+   * memang tidak ada di payload embed — inilah alasan laporan itu perlu.
+   */
+  assert.equal((daftar[0]!.embed as { components?: unknown }).components, undefined, 'tombol bukan bagian embed');
+});
+
+await testAsync('jadwal: pesan berbentuk embed dikirim lewat jalur embed', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { sendScheduledPost } = await import('../src/features/post-scheduler.js');
+  const GUILD = '123456789012345678';
+
+  /*
+   * Bentuk embed punya jalur kirim sendiri (embed tidak boleh membawa flag V2,
+   * V2 tidak boleh membawa embeds). Dulu jadwal selalu memakai jalur V2, jadi
+   * pesan embed yang dijadwalkan muncul sebagai kartu — berbeda dari saat
+   * dikirim lewat tombol Kirim.
+   */
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Pengumuman terjadwal',
+    channelId: '234567890123456789',
+    blocks: [{ kind: 'text', value: 'Isi pengumuman' }],
+    layout: 'embed',
+    embed: [{ fields: [{ name: 'Harga', value: 'Rp10.000', inline: false }] }],
+  });
+  // Jadwal harus di MASA DEPAN saat disimpan, jadi disimpan sedikit ke depan
+  // lalu waktunya dimajukan langsung di database agar dianggap jatuh tempo.
+  await repo.replaceSchedules(GUILD, post.id, '234567890123456789', [
+    { dueAt: Date.now() + 60_000 },
+  ]);
+  const { run } = await import('../src/db/index.js');
+  await run('UPDATE post_schedules SET due_at = ? WHERE guild_id = ? AND post_id = ?', [
+    Date.now() - 1000,
+    GUILD,
+    post.id,
+  ]);
+
+  const terkirim: Array<{ embeds?: unknown[]; components?: unknown[]; flags?: number }> = [];
+  const client = {
+    channels: {
+      async fetch() {
+        return {
+          id: '234567890123456789',
+          isTextBased: () => true,
+          isDMBased: () => false,
+          async send(payload: { embeds?: unknown[]; components?: unknown[]; flags?: number }) {
+            terkirim.push(payload);
+            return { id: 'pesan-jadwal', async startThread() { return { id: 't' }; } };
+          },
+        };
+      },
+      async fetchWebhooks() {
+        throw new Error('webhook tidak dipakai untuk pesan embed');
+      },
+    },
+    guilds: { async fetch() { return null; } },
+  } as never;
+
+  const jadwal = (await repo.listSchedules(GUILD, post.id))[0]!;
+  const ok = await sendScheduledPost(client, jadwal, GUILD);
+  assert.equal(ok, true, 'jadwal terkirim');
+  assert.equal(terkirim.length, 1, 'satu pesan terkirim');
+  assert.ok(Array.isArray(terkirim[0]!.embeds) && terkirim[0]!.embeds!.length > 0, 'dikirim sebagai EMBED');
+  assert.equal(terkirim[0]!.components, undefined, 'bukan kartu Components V2');
+
+  await repo.deleteCustomPost(GUILD, post.id);
+});
+
+await testAsync('aksi: pesan tujuan berbentuk embed dikirim sebagai embed', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runComponentActions } = await import('../src/features/post-action-runner.js');
+  const GUILD = '123456789012345678';
+  const ROLE = '111111111111111111';
+
+  /*
+   * Sama seperti jadwal: aksi "kirim pesan tersimpan" dulu selalu memakai jalur
+   * V2, jadi pesan embed dari tombol muncul sebagai kartu.
+   */
+  const pemicu = await repo.createCustomPost(GUILD, {
+    name: 'Pemicu',
+    channelId: '234567890123456789',
+    blocks: [{ kind: 'text', value: 'Klik tombol' }],
+  });
+  const tujuan = await repo.createCustomPost(GUILD, {
+    name: 'Tujuan embed',
+    channelId: '234567890123456789',
+    blocks: [{ kind: 'text', value: 'Isi embed' }],
+    layout: 'embed',
+    embed: [{ fields: [{ name: 'A', value: '1', inline: false }] }],
+  });
+  const { buttons } = await repo.replaceRoleButtons(GUILD, pemicu.id, [
+    { label: 'Kirim', roleId: ROLE, mode: 'toggle' },
+  ]);
+  await repo.replacePostActions(GUILD, pemicu.id, {
+    [`button:${buttons[0]!.id}`]: [{ kind: 'message', postId: tujuan.id }],
+  });
+
+  const terkirim: Array<{ embeds?: unknown[]; components?: unknown[] }> = [];
+  const balasan: string[] = [];
+  const interaction = {
+    customId: `post-role:${buttons[0]!.id}`,
+    guildId: GUILD,
+    deferred: false,
+    replied: false,
+    user: { id: '2', username: 'wahyu', globalName: 'Wahyu', tag: 'uji#0001' },
+    member: {
+      displayName: 'Wahyu',
+      roles: { cache: { has: () => false }, highest: { position: 20 }, add: async () => undefined, remove: async () => undefined },
+      permissions: { has: () => true },
+    },
+    guild: {
+      id: GUILD,
+      name: 'Server Uji',
+      roles: {
+        cache: new Map([[ROLE, { id: ROLE, name: 'Gamer', position: 3, managed: false }]]),
+        fetch: async () => ({ id: ROLE, name: 'Gamer', position: 3, managed: false }),
+      },
+      members: {
+        me: { roles: { highest: { position: 10 } }, permissions: { has: () => true } },
+        fetchMe: async () => null,
+        fetch: async () => null,
+      },
+    },
+    reply: async (payload: { content: string }) => void balasan.push(payload.content),
+    followUp: async (payload: { content: string }) => void balasan.push(payload.content),
+  };
+  const client = {
+    channels: {
+      async fetch() {
+        return {
+          id: '234567890123456789',
+          isTextBased: () => true,
+          isDMBased: () => false,
+          async send(payload: { embeds?: unknown[]; components?: unknown[] }) {
+            terkirim.push(payload);
+            return { id: 'pesan-aksi', async startThread() { return { id: 't' }; } };
+          },
+          messages: { async fetch() { throw new Error('tidak ada'); } },
+        };
+      },
+      async fetchWebhooks() {
+        throw new Error('webhook tidak dipakai untuk pesan embed');
+      },
+    },
+    guilds: { async fetch() { return null; } },
+  } as never;
+
+  const ditangani = await runComponentActions({
+    client,
+    interaction: interaction as never,
+    target: `button:${buttons[0]!.id}`,
+    postId: pemicu.id,
+  });
+  assert.equal(ditangani, true, 'aksi dikenali');
+  assert.equal(terkirim.length, 1, 'pesan tujuan terkirim sekali');
+  assert.ok(Array.isArray(terkirim[0]!.embeds) && terkirim[0]!.embeds!.length > 0, 'dikirim sebagai EMBED');
+  assert.equal(terkirim[0]!.components, undefined, 'bukan kartu Components V2');
+
+  await repo.deleteCustomPost(GUILD, pemicu.id);
+  await repo.deleteCustomPost(GUILD, tujuan.id);
+});
+
+await testAsync('template: variabel Discohook dirakit & dipakai di aksi dan teks pesan', async () => {
+  const { buildTemplateValues, applyTemplate, tokenTersisa } = await import('../src/features/post-template.js');
+  const { fillActionText } = await import('../src/features/post-actions.js');
+
+  const waktu = new Date('2026-11-12T09:00:00Z');
+  const nilai = buildTemplateValues({
+    memberName: 'Wahyu',
+    username: 'wahyu',
+    discriminator: '0',
+    memberId: '123456789012345678',
+    avatarUrl: 'https://img.test/a.png',
+    roleIds: ['1', '2'],
+    serverId: '987654321098765432',
+    serverName: 'Zypher',
+    serverIconUrl: 'https://img.test/s.png',
+    memberCount: 42,
+    boostCount: 3,
+    roleCount: 7,
+    channelId: '555555555555555555',
+    channelName: 'umum',
+    roleName: 'Gamer',
+    effect: 'ditambahkan',
+    selected: 'gamer, anime',
+    selectedValues: ['gamer', 'anime'],
+    now: waktu,
+    variables: { kode: 'ABC' },
+  });
+
+  /* --- nama member: sama dengan Discohook --- */
+  assert.equal(nilai['member.name'], 'Wahyu');
+  assert.equal(nilai['member.display_name'], 'Wahyu', 'nama tampilan punya nama Discohook');
+  assert.equal(nilai['member.username'], 'wahyu');
+  assert.equal(nilai['member.tag'], 'wahyu', 'diskriminator 0 = username saja, bukan "#0"');
+  assert.equal(nilai['member.mention'], '<@123456789012345678>');
+  assert.equal(nilai['member.avatar_url'], 'https://img.test/a.png');
+  assert.equal(nilai['member.role_ids'], '["1","2"]', 'ID role sebagai JSON, sama seperti Discohook');
+
+  /* --- server & channel --- */
+  assert.equal(nilai['server.name'], 'Zypher');
+  assert.equal(nilai['server.members'], '42');
+  assert.equal(nilai['server.boosts'], '3');
+  assert.equal(nilai['server.roles'], '7');
+  assert.equal(nilai['channel.name'], 'umum');
+  assert.equal(nilai['channel.mention'], '<#555555555555555555>');
+  assert.equal(
+    nilai['channel.link'],
+    'https://discord.com/channels/987654321098765432/555555555555555555',
+    'tautan channel memakai ID server',
+  );
+
+  /* --- stempel waktu gaya Discord --- */
+  assert.match(nilai.now!, /^<t:\d+:d>$/, 'waktu memakai stempel Discord, bukan teks ISO');
+  assert.match(nilai.now_relative!, /^<t:\d+:R>$/);
+
+  /* --- pilihan menu: satu & bernomor (mulai dari 1) --- */
+  assert.equal(nilai.selected_value, 'gamer');
+  assert.equal(nilai['selected_values.1'], 'gamer');
+  assert.equal(nilai['selected_values.2'], 'anime');
+  assert.equal(nilai['selected_values.3'], undefined, 'tidak mengarang pilihan yang tidak ada');
+
+  /* --- variabel flow: awalan var. dirapikan --- */
+  assert.equal(nilai['var.kode'], 'ABC', 'variabel tanpa awalan tetap terbaca');
+  assert.equal(nilai['var.var.kode'], undefined, 'awalan ganda tidak terjadi');
+
+  /* --- penggantian: kunci terpanjang dulu, token asing dibiarkan --- */
+  const teks = applyTemplate('{member.name} / {member.name_x} / {tidak.ada}', {
+    'member.name': 'Wahyu',
+    'member.name_x': 'PANJANG',
+  });
+  assert.equal(teks, 'Wahyu / PANJANG / {tidak.ada}', 'token asing dibiarkan, kunci panjang menang');
+  assert.deepEqual(tokenTersisa(teks), ['tidak.ada'], 'sisa token bisa dilaporkan');
+
+  /*
+   * Nilai kosong: `{role}` pada tombol tanpa aksi role harus HILANG dari teks.
+   * Ini perilaku versi lama yang dipertahankan — kalau berubah, semua balasan
+   * role bawaan akan memuat "{role}" mentah.
+   */
+  assert.equal(
+    fillActionText('Halo {member.name} {role}', { member: 'Wahyu', mention: '<@1>', server: 'Zypher' }),
+    'Halo Wahyu ',
+    'token role kosong hilang, bukan tercetak mentah',
+  );
+
+  /* Nilai tambahan dari runner menggantikan yang dirakit sendiri. */
+  assert.equal(
+    fillActionText('di #{channel.name}', {
+      member: 'Wahyu',
+      mention: '<@1>',
+      server: 'Zypher',
+      values: { 'channel.name': 'umum' },
+    }),
+    'di #umum',
+    'nilai dari runner dipakai',
+  );
+
+  /* Variabel flow tetap jalan, termasuk yang disetel aksi sebelumnya. */
+  assert.equal(
+    fillActionText('kode {var.kode}', {
+      member: 'Wahyu',
+      mention: '<@1>',
+      server: 'Zypher',
+      variables: { 'var.kode': 'ABC' },
+    }),
+    'kode ABC',
+  );
+});
+
+await testAsync('pesan: bagian embed (penulis, footer, bidang) disaring, disimpan, & dipakai', async () => {
+  const { buildClassicEmbed, sanitizeEmbedExtra } = await import('../src/features/post-embed.js');
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  /* --- penyaring: yang tidak sah dibuang dengan alasan --- */
+  const { extra, dropped } = sanitizeEmbedExtra({
+    url: 'https://contoh.test/pengumuman',
+    author: { name: '  Tim Zypher  ', icon_url: 'https://img.test/a.png', url: 'ftp://salah' },
+    footer: { text: 'Dikirim oleh {member.name}', icon_url: 'bukan-url' },
+    timestamp: '2026-11-12T09:00:00Z',
+    fields: [
+      { name: 'Harga', value: 'Rp10.000', inline: true },
+      { name: 'Kosong', value: '   ' },
+      { name: 'Jadwal', value: 'Senin' },
+    ],
+  });
+  assert.equal(extra.url, 'https://contoh.test/pengumuman', 'URL judul http diterima');
+  assert.equal(extra.author!.name, 'Tim Zypher', 'nama penulis dirapikan');
+  assert.equal(extra.author!.url, undefined, 'URL penulis bukan http dibuang');
+  assert.equal(extra.author!.icon_url, 'https://img.test/a.png', 'ikon penulis diterima');
+  assert.equal(extra.footer!.text, 'Dikirim oleh {member.name}', 'footer boleh bertemplat');
+  assert.equal(extra.footer!.icon_url, undefined, 'ikon footer bukan URL dibuang');
+  assert.equal(extra.fields!.length, 2, 'bidang tanpa isi dibuang');
+  assert.equal(extra.fields![0]!.inline, true, 'penanda sebaris dipertahankan');
+  assert.equal(extra.timestamp, '2026-11-12T09:00:00.000Z', 'stempel waktu dibakukan ISO');
+  assert.ok(dropped.some((a) => a.includes('bidang')), 'bidang kosong dilaporkan');
+
+  /* Stempel waktu yang tidak bisa diurai ditolak, bukan diteruskan ke Discord. */
+  const waktuSalah = sanitizeEmbedExtra({ timestamp: 'kemarin sore' });
+  assert.equal(waktuSalah.extra.timestamp, undefined);
+  assert.ok(waktuSalah.dropped.some((a) => a.includes('ISO 8601')));
+
+  /* Batas Discord ditegakkan: 25 bidang, dan sisanya dilaporkan SEKALI. */
+  const banyak = sanitizeEmbedExtra({
+    fields: Array.from({ length: 30 }, (_, i) => ({ name: 'B' + i, value: 'isi' })),
+  });
+  assert.equal(banyak.extra.fields!.length, 25, 'bidang dibatasi 25');
+  assert.equal(banyak.dropped.filter((a) => a.includes('25')).length, 1, 'alasan batas bidang sekali');
+
+  /* --- builder: bagian admin masuk ke embed, dengan template --- */
+  const hasil = buildClassicEmbed([{ kind: 'text', value: 'Isi pesan' }], {
+    title: 'Judul',
+    extra: {
+      url: 'https://contoh.test/x',
+      author: { name: 'Tim {server.name}' },
+      footer: { text: 'oleh {member.name}' },
+      fields: [{ name: 'Poin', value: '{member.name} dapat poin', inline: true }],
+      timestamp: '2026-11-12T09:00:00.000Z',
+    },
+    template: { 'server.name': 'Zypher', 'member.name': 'Wahyu' },
+  })!;
+  assert.ok(hasil, 'embed dengan bagian admin terbentuk');
+  assert.equal(hasil.embed.url, 'https://contoh.test/x');
+  assert.equal(hasil.embed.author!.name, 'Tim Zypher', 'template berlaku di nama penulis');
+  assert.equal(hasil.embed.footer!.text, 'oleh Wahyu', 'template berlaku di footer');
+  assert.equal(hasil.embed.fields![0]!.value, 'Wahyu dapat poin', 'template berlaku di bidang');
+  assert.equal(hasil.embed.timestamp, '2026-11-12T09:00:00.000Z');
+
+  /*
+   * Embed yang isinya HANYA bidang admin tetap sah: Discord menerimanya, dan
+   * admin yang menulis tiga bidang tanpa teks tidak boleh mendapat "embed
+   * kosong".
+   */
+  const hanyaBidang = buildClassicEmbed([], { extra: { fields: [{ name: 'A', value: 'B', inline: false }] } });
+  assert.ok(hanyaBidang, 'embed berisi bidang saja tetap dibuat');
+
+  /* --- penyimpanan: bertahan, dan bisa dibaca ulang --- */
+  const pesan = await repo.createCustomPost(GUILD, {
+    name: 'Embed lengkap',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Halo' }],
+    layout: 'embed',
+    embed: {
+      author: { name: 'Tim', icon_url: 'https://img.test/a.png' },
+      footer: { text: 'kaki' },
+      fields: [{ name: 'Satu', value: 'Dua', inline: true }],
+      timestamp: '2026-11-12T09:00:00Z',
+    },
+  });
+  assert.equal(pesan.embed[0]!.author!.name, 'Tim', 'penulis tersimpan');
+  assert.equal(pesan.embed[0]!.fields!.length, 1, 'bidang tersimpan');
+  assert.equal(pesan.embed[0]!.timestamp, '2026-11-12T09:00:00.000Z', 'stempel waktu dibakukan saat simpan');
+
+  /* Nilai asing di database tidak lolos mentah: dibaca lewat penyaring. */
+  await repo.updateCustomPost(GUILD, pesan.id, {
+    embed: { author: { name: 'Nama', icon_url: 'javascript:alert(1)' }, footer: { text: 'x'.repeat(3000) } },
+  });
+  const dibaca = await repo.getCustomPost(GUILD, pesan.id);
+  assert.equal(dibaca!.embed[0]!.author!.icon_url, undefined, 'URL berbahaya tidak tersimpan');
+  assert.equal(dibaca!.embed[0]!.footer!.text.length, 2048, 'footer dipotong ke batas Discord');
+
+  /* Tidak mengirim `embed` = bagian lama DIPERTAHANKAN (bukan dihapus). */
+  await repo.updateCustomPost(GUILD, pesan.id, { name: 'Ganti nama saja' });
+  const tetap = await repo.getCustomPost(GUILD, pesan.id);
+  assert.equal(tetap!.embed[0]!.author!.name, 'Nama', 'menyimpan field lain tidak menghapus bagian embed');
+
+  /* Mengirim null = dikosongkan, dan kolomnya jadi NULL. */
+  await repo.updateCustomPost(GUILD, pesan.id, { embed: null });
+  const kosong = await repo.getCustomPost(GUILD, pesan.id);
+  assert.deepEqual(kosong!.embed, [], 'bagian embed bisa dikosongkan');
+  await repo.deleteCustomPost(GUILD, pesan.id);
+});
+
+await testAsync('pesan: pemicu member masuk/keluar tersimpan & dijalankan hanya untuk pemicunya', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runTriggers } = await import('../src/features/post-trigger.js');
+  const GUILD = '123456789012345678';
+
+  /* Nilai asing dibaca sebagai "hanya manual", bukan diteruskan apa adanya. */
+  assert.equal(repo.parseTrigger('member_add'), 'member_add', 'nilai sah diterima');
+  assert.equal(repo.parseTrigger('member_remove'), 'member_remove', 'pemicu keluar diterima');
+  assert.equal(repo.parseTrigger('member_join'), null, 'nama pemicu yang salah tidak diteruskan');
+  assert.equal(repo.parseTrigger(''), null, 'kosong = manual');
+  assert.equal(repo.parseTrigger(null), null, 'null = manual');
+
+  const blok = [{ kind: 'text', value: 'Selamat datang!' }];
+  const masuk = await repo.createCustomPost(GUILD, {
+    name: 'Sambutan pemicu',
+    channelId: '999',
+    blocks: blok,
+    trigger: 'member_add',
+  });
+  const keluar = await repo.createCustomPost(GUILD, {
+    name: 'Perpisahan pemicu',
+    channelId: '999',
+    blocks: blok,
+    trigger: 'member_remove',
+  });
+  const manual = await repo.createCustomPost(GUILD, { name: 'Manual', channelId: '999', blocks: blok });
+
+  assert.equal(masuk.trigger, 'member_add', 'pemicu tersimpan saat dibuat');
+  assert.equal(manual.trigger, null, 'tanpa pemicu = manual (pesan lama tidak berubah perilaku)');
+
+  /*
+   * Pemisahan per pemicu: memasang pesan "member masuk" tidak boleh membuatnya
+   * ikut terkirim saat ada yang keluar.
+   */
+  const daftarMasuk = await repo.listPostsByTrigger(GUILD, 'member_add');
+  assert.equal(daftarMasuk.length, 1, 'hanya pesan ber-pemicu member_add');
+  assert.equal(daftarMasuk[0]!.name, 'Sambutan pemicu', 'pesan yang benar');
+  assert.ok(!daftarMasuk.some((satu) => satu.id === keluar.id), 'pesan member_remove tidak ikut');
+
+  /* Mengubah pemicu jadi kosong mematikan kirim otomatis. */
+  const dimatikan = await repo.updateCustomPost(GUILD, masuk.id, { trigger: null });
+  assert.equal(dimatikan!.trigger, null, 'pemicu bisa dimatikan');
+  assert.equal((await repo.listPostsByTrigger(GUILD, 'member_add')).length, 0, 'tidak lagi terdaftar');
+  /* Menyimpan field lain tidak boleh menghapus pemicu yang sedang aktif. */
+  const tanpaPerubahan = await repo.updateCustomPost(GUILD, keluar.id, { name: 'Perpisahan pemicu 2' });
+  assert.equal(tanpaPerubahan!.trigger, 'member_remove', 'pemicu bertahan saat field lain diubah');
+
+  /*
+   * Pesan ber-pemicu TANPA channel tujuan: harus dilaporkan sebagai kegagalan
+   * beralasan, bukan dilewati diam-diam dan bukan melempar sampai event mati.
+   * Jalur ini juga tidak menyentuh Discord, jadi bisa diuji tanpa client asli.
+   */
+  const tanpaChannel = await repo.createCustomPost(GUILD, {
+    name: 'Belum ada channel',
+    channelId: null,
+    blocks: blok,
+    trigger: 'member_add',
+  });
+  const hasil = await runTriggers({
+    client: {} as never,
+    guildId: GUILD,
+    trigger: 'member_add',
+  });
+  assert.equal(hasil.terkirim, 0, 'tidak ada yang bisa dikirim');
+  assert.equal(hasil.gagal.length, 1, 'kegagalan dilaporkan');
+  assert.ok(hasil.gagal[0]!.includes('Belum ada channel'), 'pesan yang bermasalah disebut namanya');
+  assert.ok(hasil.gagal[0]!.includes('channel'), 'alasannya jelas: channel belum dipilih');
+
+  for (const pesan of [keluar, manual, tanpaChannel]) {
+    await repo.deleteCustomPost(GUILD, pesan.id);
+  }
+});
+
+await testAsync('multi-pesan: rujukan, urutan kirim, & dokumen tersimpan', async () => {
+  const series = await import('../src/features/post-series.js');
+
+  // Rujukan ke pesan yang tidak ada dibuang — kalau tidak, pengiriman gagal
+  // di tengah rangkaian (pesan pertama terkirim, sisanya tidak).
+  const bersih = series.sanitizeSeries([
+    { id: 'a', name: 'Pembuka', blocks: [{ kind: 'text', value: 'Halo' }] },
+    {
+      id: 'b',
+      name: 'Isi',
+      blocks: [{ kind: 'text', value: 'Isi kedua' }],
+      reference: 'a',
+      threadName: 'Diskusi',
+    },
+    { id: 'c', name: 'Hilang', blocks: [{ kind: 'text', value: 'x' }], reference: 'tidak-ada' },
+  ]);
+  /*
+   * Pesan yang rujukannya mati TETAP disimpan, hanya rujukannya yang dilepas:
+   * isi pesan sudah disusun admin, dan membuang seluruh pesan karena satu
+   * rujukan salah akan menghilangkan bagian cerita yang sah.
+   */
+  assert.equal(bersih.messages.length, 3, 'ketiga pesan tetap ada');
+  assert.equal(bersih.messages[2]!.reference, undefined, 'rujukan mati dilepas');
+  assert.equal(bersih.messages[1]!.reference, 'a', 'rujukan yang sah dipertahankan');
+  assert.equal(bersih.messages[1]!.threadName, 'Diskusi');
+  assert.equal(bersih.messages[0]!.reference, undefined, 'tanpa rujukan = pesan biasa');
+  assert.equal(
+    (bersih.messages[0]!.blocks[0] as { value: string }).value,
+    'Halo',
+    'blok dibersihkan tapi isinya tetap',
+  );
+  assert.ok(
+    bersih.dropped.some((alasan) => alasan.includes('tidak ada di dokumen')),
+    'rujukan mati dilaporkan',
+  );
+
+  /*
+   * Flag per pesan disaring ke dua bit yang boleh diatur admin. Bit lain
+   * (mis. flag komponen V2) ditambahkan pengirim; membawanya dari dokumen
+   * akan membuat pesan berikutnya ditolak Discord.
+   */
+  const berflag = series.sanitizeSeries([
+    { id: 'a', blocks: [{ kind: 'text', value: 'a' }], flags: 4 },
+    { id: 'b', blocks: [{ kind: 'text', value: 'b' }], flags: 4 | 4096 | 32768 },
+    { id: 'c', blocks: [{ kind: 'text', value: 'c' }], flags: 'bukan angka' },
+  ]);
+  assert.equal(berflag.messages[0]!.flags, 4, 'flag per pesan dokumen dipertahankan');
+  assert.equal(berflag.messages[1]!.flags, 4 | 4096, 'flag V2 dibuang, dua bit admin tetap');
+  assert.equal(berflag.messages[2]!.flags, undefined, 'flag tidak sah diabaikan');
+
+  // ID wajib unik & aman: ID ganda membuat rujukan menunjuk pesan yang salah.
+  const ganda = series.sanitizeSeries([
+    { id: 'a', blocks: [{ kind: 'text', value: '1' }] },
+    { id: 'a', blocks: [{ kind: 'text', value: '2' }] },
+    { id: 'spasi salah', blocks: [{ kind: 'text', value: '3' }] },
+  ]);
+  assert.equal(ganda.messages.length, 1, 'ID ganda & ID tidak sah dibuang');
+  assert.equal(ganda.dropped.length, 2);
+
+  // Pesan kosong & pesan yang membalas dirinya sendiri.
+  const kosong = series.sanitizeSeries([
+    { id: 'a', blocks: [] },
+    { id: 'b', blocks: [{ kind: 'text', value: 'isi' }], reference: 'b' },
+  ]);
+  assert.equal(kosong.messages.length, 1);
+  assert.equal(kosong.messages[0]!.reference, undefined, 'membalas diri sendiri dilepas');
+  assert.ok(kosong.dropped.some((alasan) => alasan.includes('kosong')));
+  assert.ok(kosong.dropped.some((alasan) => alasan.includes('dirinya sendiri')));
+
+  /*
+   * Urutan: pesan yang membalas HARUS dikirim sesudah yang dibalas, walau
+   * urutan di dokumen terbalik. Tanpa ini, pesan kedua akan menunggu induk
+   * yang belum ada dan terkirim tanpa rujukan.
+   */
+  const terbalik = series.resolveSendOrder([
+    { id: 'b', name: 'Balasan', blocks: [], reference: 'a' },
+    { id: 'a', name: 'Induk', blocks: [] },
+  ]);
+  assert.deepEqual(terbalik.ordered.map((satu) => satu.id).join(','), 'a,b', 'induk dikirim lebih dulu');
+  assert.equal(terbalik.warnings.length, 0);
+
+  // Urutan yang sudah benar TIDAK diubah: admin menyusun cerita, bukan urutan acak.
+  const wajar = series.resolveSendOrder([
+    { id: 'a', name: '1', blocks: [] },
+    { id: 'b', name: '2', blocks: [], reference: 'a' },
+    { id: 'c', name: '3', blocks: [] },
+  ]);
+  assert.deepEqual(wajar.ordered.map((satu) => satu.id).join(','), 'a,b,c');
+
+  // Rujukan melingkar tidak mungkin dikirim; dilepas & dilaporkan.
+  const melingkar = series.sanitizeSeries([
+    { id: 'a', blocks: [{ kind: 'text', value: '1' }], reference: 'b' },
+    { id: 'b', blocks: [{ kind: 'text', value: '2' }], reference: 'a' },
+  ]);
+  assert.equal(melingkar.messages.length, 2);
+  assert.equal(melingkar.messages[0]!.reference, undefined, 'rujukan melingkar dilepas');
+  assert.ok(melingkar.dropped.some((alasan) => alasan.includes('melingkar')));
+
+  // Ringkasan & penanda rangkaian.
+  assert.equal(series.describeSeries([]), 'belum ada pesan');
+  assert.equal(
+    series.describeSeries([
+      { id: 'a', name: '1', blocks: [] },
+      { id: 'b', name: '2', blocks: [], reference: 'a', threadName: 'T' },
+    ]),
+    '2 pesan · 1 berbalas · 1 thread',
+  );
+  assert.equal(series.hasReferences([{ id: 'a', name: '1', blocks: [] }]), false);
+  assert.equal(series.hasReferences([{ id: 'a', name: '1', blocks: [], reference: 'b' }]), true);
+
+  /* --- Dokumen tersimpan (database) --- */
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+  const disimpan = await repo.savePostDocument(GUILD, {
+    name: 'Pengumuman berurutan',
+    series: true,
+    messages: [
+      { id: 'p1', name: 'Pembuka', blocks: [{ kind: 'text', value: 'Halo' }] },
+      { id: 'p2', name: 'Isi', blocks: [{ kind: 'text', value: 'Kedua' }], reference: 'p1' },
+    ],
+  });
+  assert.ok(disimpan, 'dokumen tersimpan');
+  assert.equal(disimpan!.document.series, true);
+  assert.equal(disimpan!.document.messages.length, 2);
+
+  const dibaca = await repo.getPostDocument(GUILD, disimpan!.document.id);
+  assert.equal(dibaca?.messages[1]!.reference, 'p1', 'rujukan bertahan di database');
+
+  // Diperbarui: ID sama, isi baru.
+  const diperbarui = await repo.savePostDocument(GUILD, {
+    id: disimpan!.document.id,
+    name: 'Setelah diperbarui',
+    series: false,
+    messages: [{ id: 'p1', name: 'Tunggal', blocks: [{ kind: 'text', value: 'Baru' }] }],
+  });
+  assert.equal(diperbarui!.document.id, disimpan!.document.id, 'memperbarui, bukan membuat baru');
+  assert.equal(diperbarui!.document.series, false);
+  assert.equal(diperbarui!.document.messages.length, 1);
+
+  // Dokumen tidak sah tidak menghapus data lama (nama kosong tetap disimpan
+  // dengan nama cadangan, bukan melempar).
+  const tanpaPesan = await repo.savePostDocument(GUILD, { name: '', series: false, messages: [] });
+  assert.ok(tanpaPesan, 'dokumen kosong tetap bisa disimpan (untuk disusun bertahap)');
+  assert.equal(tanpaPesan!.document.messages.length, 0);
+  assert.equal(tanpaPesan!.document.name, 'Dokumen', 'nama kosong memakai cadangan');
+
+  await repo.deletePostDocument(GUILD, disimpan!.document.id);
+  assert.equal(await repo.getPostDocument(GUILD, disimpan!.document.id), null, 'dokumen terhapus');
+  await repo.deletePostDocument(GUILD, tanpaPesan!.document.id);
+});
+
+await testAsync('flow: syarat bertingkat dijalankan lewat cabang nyata', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runComponentActions } = await import('../src/features/post-action-runner.js');
+  const GUILD = '123456789012345678';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Syarat bertingkat',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Klik' }],
+  });
+  const tombol = await repo.replaceRoleButtons(GUILD, post.id, [
+    { label: 'Pilih', roleId: '900000000000000001', mode: 'toggle' },
+  ]);
+  const buttonId = tombol.buttons[0]!.id;
+
+  const balasan: string[] = [];
+  const jalankan = async (values?: string[]) => {
+    const interaction = {
+      customId: `post-role:${buttonId}`,
+      guildId: GUILD,
+      channelId: '999',
+      deferred: false,
+      replied: false,
+      user: { id: '2', username: 'wahyu', globalName: 'Wahyu', tag: 'uji#0001' },
+      ...(values ? { values } : {}),
+      member: {
+        displayName: 'Wahyu',
+        roles: { cache: { has: () => false }, highest: { position: 20 } },
+        permissions: { has: () => true },
+      },
+      guild: {
+        id: GUILD,
+        name: 'Server Uji',
+        roles: { cache: new Map(), fetch: async () => null },
+        members: { me: { roles: { highest: { position: 10 } }, permissions: { has: () => true } }, fetchMe: async () => null },
+      },
+      reply: async (payload: { content: string }) => void balasan.push(payload.content),
+      followUp: async (payload: { content: string }) => void balasan.push(payload.content),
+    };
+    return runComponentActions({
+      client: {} as never,
+      interaction: interaction as never,
+      target: `button:${buttonId}`,
+      postId: post.id,
+    });
+  };
+
+  /*
+   * Syarat gabungan: (nama = "Wahyu" DAN selected termasuk [gamer, anime]).
+   * Yang diuji bukan hanya "cocok/tidak", tetapi bahwa aksi cabang benar-benar
+   * DIJALANKAN berdasarkan hasil pohonnya.
+   */
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      {
+        kind: 'condition',
+        check: {
+          type: 'and',
+          items: [
+            { type: 'leaf', value: 'member.name', comparator: 'equals', expected: 'Wahyu' },
+            { type: 'in', value: 'selected', list: ['gamer', 'anime'] },
+          ],
+        },
+        then: [{ kind: 'reply', text: 'masuk gamer' }],
+        else: [{ kind: 'reply', text: 'bukan gamer' }],
+      },
+    ],
+  });
+
+  await jalankan(['gamer']);
+  assert.deepEqual(balasan, ['masuk gamer'], 'pohon `and` + `in` benar-benar dievaluasi');
+
+  balasan.length = 0;
+  await jalankan(['film']);
+  assert.deepEqual(balasan, ['bukan gamer'], 'nilai di luar daftar masuk cabang lain');
+
+  /*
+   * `not` = semua anak salah. Dengan satu syarat di dalamnya, ini berarti
+   * "bukan X" — cara yang sama dipakai admin untuk menulis negasi.
+   */
+  balasan.length = 0;
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      {
+        kind: 'condition',
+        check: { type: 'not', items: [{ type: 'leaf', value: 'member.name', comparator: 'equals', expected: 'Orang Lain' }] },
+        then: [{ kind: 'reply', text: 'bukan orang lain' }],
+      },
+    ],
+  });
+  await jalankan();
+  assert.deepEqual(balasan, ['bukan orang lain'], '`not` menjalankan cabang saat anaknya salah');
+});
+
+await testAsync('aksi: teks mentah benar-benar terkirim & hapus bertarget jalan', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runComponentActions } = await import('../src/features/post-action-runner.js');
+  const GUILD = '123456789012345678';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Teks mentah',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Klik' }],
+  });
+  const tombol = await repo.replaceRoleButtons(GUILD, post.id, [
+    { label: 'Mulai', roleId: '900000000000000001', mode: 'toggle' },
+  ]);
+  const buttonId = tombol.buttons[0]!.id;
+
+  const balasan: string[] = [];
+  const terkirim: Array<{ content: string }> = [];
+  const dihapus: string[] = [];
+  const pesanTerkirim = { id: 'pesan-baru', delete: async () => void dihapus.push('pesan-baru') };
+
+  const jalankan = async (opsi: { pesanPemicu?: boolean } = {}) => {
+    const interaction = {
+      customId: `post-role:${buttonId}`,
+      guildId: GUILD,
+      channelId: '999',
+      deferred: false,
+      replied: false,
+      user: { id: '2', username: 'wahyu', globalName: 'Wahyu', tag: 'uji#0001' },
+      member: {
+        displayName: 'Wahyu',
+        roles: { cache: { has: () => false }, highest: { position: 20 } },
+        permissions: { has: () => true },
+      },
+      guild: {
+        id: GUILD,
+        name: 'Server Uji',
+        roles: { cache: new Map(), fetch: async () => null },
+        members: { me: { roles: { highest: { position: 10 } }, permissions: { has: () => true } }, fetchMe: async () => null },
+      },
+      ...(opsi.pesanPemicu
+        ? { message: { id: 'pesan-pemicu', delete: async () => void dihapus.push('pesan-pemicu') } }
+        : {}),
+      reply: async (payload: { content: string }) => void balasan.push(payload.content),
+      followUp: async (payload: { content: string }) => void balasan.push(payload.content),
+    };
+    const client = {
+      channels: {
+        fetch: async () => ({
+          id: '999',
+          isTextBased: () => true,
+          send: async (payload: { content: string }) => {
+            terkirim.push(payload);
+            return pesanTerkirim;
+          },
+          messages: { fetch: async () => pesanTerkirim },
+        }),
+      },
+    };
+    return runComponentActions({
+      client: client as never,
+      interaction: interaction as never,
+      target: `button:${buttonId}`,
+      postId: post.id,
+    });
+  };
+
+  /* --- teks mentah: templat terisi & benar-benar dikirim --- */
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [{ kind: 'raw', rawText: 'Halo {member.name} di {server.name}' }],
+  });
+  await jalankan();
+  assert.equal(terkirim.length, 1, 'teks mentah dikirim satu kali');
+  assert.equal(terkirim[0]!.content, 'Halo Wahyu di Server Uji', 'templat terisi sebelum dikirim');
+
+  /* --- hapus pesan hasil aksi sebelumnya --- */
+  terkirim.length = 0;
+  dihapus.length = 0;
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      { kind: 'raw', rawText: 'Pesan sementara' },
+      { kind: 'delete', what: 'sebelumnya' },
+    ],
+  });
+  await jalankan();
+  assert.equal(terkirim.length, 1, 'pesan tetap terkirim dulu');
+  assert.deepEqual(dihapus, ['pesan-baru'], 'pesan hasil aksi sebelumnya yang dihapus, bukan pesan pemicu');
+
+  /* --- tidak ada yang bisa dihapus: dilaporkan, bukan diam --- */
+  dihapus.length = 0;
+  balasan.length = 0;
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [{ kind: 'delete', what: 'sebelumnya' }],
+  });
+  await jalankan();
+  assert.equal(dihapus.length, 0, 'tidak ada pesan yang dihapus');
+  assert.ok(
+    balasan.some((teks) => teks.includes('Tidak ada pesan dari aksi sebelumnya')),
+    'pengklik diberi tahu, bukan dibiarkan menebak',
+  );
+
+  /* --- hapus pesan pemicu tetap seperti sebelumnya --- */
+  balasan.length = 0;
+  dihapus.length = 0;
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [{ kind: 'delete', what: 'pesan' }],
+  });
+  await jalankan({ pesanPemicu: true });
+  assert.deepEqual(dihapus, ['pesan-pemicu'], 'sasaran `pesan` menghapus pesan pemilik komponen');
+
+  await repo.deleteCustomPost(GUILD, post.id);
+});
+
+await testAsync('flow: cabang dijalankan, lalu flow lanjut — bukan berhenti', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runComponentActions } = await import('../src/features/post-action-runner.js');
+  const GUILD = '123456789012345678';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Cabang',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Klik' }],
+  });
+  const tombol = await repo.replaceRoleButtons(GUILD, post.id, [
+    { label: 'Cek', roleId: '900000000000000001', mode: 'toggle' },
+  ]);
+  const buttonId = tombol.buttons[0]!.id;
+
+  const balasan: string[] = [];
+  const jalankan = async () => {
+    const interaction = {
+      customId: `post-role:${buttonId}`,
+      guildId: GUILD,
+      channelId: '999',
+      deferred: false,
+      replied: false,
+      user: { id: '2', username: 'wahyu', globalName: 'Wahyu', tag: 'uji#0001' },
+      member: {
+        displayName: 'Wahyu',
+        roles: { cache: { has: () => false }, highest: { position: 20 } },
+        permissions: { has: () => true },
+      },
+      guild: {
+        id: GUILD,
+        name: 'Server Uji',
+        roles: { cache: new Map(), fetch: async () => null },
+        members: { me: { roles: { highest: { position: 10 } }, permissions: { has: () => true } }, fetchMe: async () => null },
+      },
+      reply: async (payload: { content: string }) => void balasan.push(payload.content),
+      followUp: async (payload: { content: string }) => void balasan.push(payload.content),
+    };
+    return runComponentActions({
+      client: {} as never,
+      interaction: interaction as never,
+      target: `button:${buttonId}`,
+      postId: post.id,
+    });
+  };
+
+  /*
+   * Cabang yang COCOK: aksi di dalam cabang jalan, lalu aksi SESUDAH syarat
+   * juga jalan. Dulu syarat yang cocok hanya "lolos", dan cabangnya tidak ada.
+   */
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      {
+        kind: 'condition',
+        value: 'member.name',
+        comparator: 'equals',
+        expected: 'Wahyu',
+        then: [{ kind: 'variable', name: 'jalur', value: 'cocok' }],
+        else: [{ kind: 'variable', name: 'jalur', value: 'lain' }],
+      },
+      { kind: 'reply', text: 'jalur={var.jalur}' },
+    ],
+  });
+  await jalankan();
+  assert.deepEqual(balasan, ['jalur=cocok'], 'cabang cocok dipakai, flow lanjut');
+
+  // Cabang yang TIDAK cocok: cabang lain dipakai, flow tetap lanjut.
+  balasan.length = 0;
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      {
+        kind: 'condition',
+        value: 'member.name',
+        comparator: 'equals',
+        expected: 'Orang Lain',
+        then: [{ kind: 'variable', name: 'jalur', value: 'cocok' }],
+        else: [{ kind: 'variable', name: 'jalur', value: 'lain' }],
+      },
+      { kind: 'reply', text: 'jalur={var.jalur}' },
+    ],
+  });
+  await jalankan();
+  assert.deepEqual(balasan, ['jalur=lain'], 'cabang "tidak cocok" dipakai');
+
+  // Cabang kosong: tidak berhenti, lanjut seperti biasa (Check tanpa isi).
+  balasan.length = 0;
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      { kind: 'condition', value: 'member.name', comparator: 'equals', expected: 'Wahyu', then: [{ kind: 'dud' }] },
+      { kind: 'reply', text: 'lanjut' },
+    ],
+  });
+  await jalankan();
+  assert.deepEqual(balasan, ['lanjut'], 'cabang berisi "tanpa aksi" tetap melanjutkan flow');
+
+  // Stop: berhenti dengan pesan sendiri, sisa aksi tidak jalan.
+  balasan.length = 0;
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      { kind: 'stop', stopMessage: 'Berhenti di sini, {member.name}.' },
+      { kind: 'reply', text: 'TIDAK BOLEH' },
+    ],
+  });
+  await jalankan();
+  assert.deepEqual(balasan, ['Berhenti di sini, Wahyu.'], 'stop memakai pesan sendiri & menghentikan sisa');
+});
+
+await testAsync('flow: tunggu di dalam cabang menyimpan sisa cabang DAN sisa flow', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runComponentActions, resumeFlowSession } = await import('../src/features/post-action-runner.js');
+  const GUILD = '123456789012345678';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Tunggu di cabang',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Klik' }],
+  });
+  const tombol = await repo.replaceRoleButtons(GUILD, post.id, [
+    { label: 'Mulai', roleId: '900000000000000001', mode: 'toggle' },
+  ]);
+  const buttonId = tombol.buttons[0]!.id;
+
+  const balasan: string[] = [];
+  const interaction = {
+    customId: `post-role:${buttonId}`,
+    guildId: GUILD,
+    channelId: '999',
+    message: { id: '555' },
+    deferred: false,
+    replied: false,
+    user: { id: '2', username: 'wahyu', globalName: 'Wahyu', tag: 'uji#0001' },
+    member: {
+      displayName: 'Wahyu',
+      roles: { cache: { has: () => false }, highest: { position: 20 } },
+      permissions: { has: () => true },
+    },
+    guild: {
+      id: GUILD,
+      name: 'Server Uji',
+      roles: { cache: new Map(), fetch: async () => null },
+      members: { me: { roles: { highest: { position: 10 } }, permissions: { has: () => true } }, fetchMe: async () => null },
+    },
+    reply: async (payload: { content: string }) => void balasan.push(payload.content),
+    followUp: async (payload: { content: string }) => void balasan.push(payload.content),
+  };
+
+  /*
+   * Penantian berada DI DALAM cabang. Yang harus tersimpan bukan hanya sisa
+   * cabang, melainkan juga aksi SESUDAH syarat — dulu cabang dijalankan lewat
+   * rekursi, `pending` hanya berisi sisa cabang, dan sapaan sesudah syarat
+   * hilang selamanya begitu bot restart.
+   */
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      {
+        kind: 'condition',
+        value: 'member.name',
+        comparator: 'equals',
+        expected: 'Wahyu',
+        then: [
+          { kind: 'variable', name: 'jalur', value: 'cocok' },
+          { kind: 'wait', seconds: 600 },
+          { kind: 'reply', text: 'di dalam cabang' },
+        ],
+      },
+      { kind: 'reply', text: 'sesudah syarat ({var.jalur})' },
+    ],
+  });
+
+  await runComponentActions({
+    client: {} as never,
+    interaction: interaction as never,
+    target: `button:${buttonId}`,
+    postId: post.id,
+  });
+  assert.equal(balasan.length, 1, 'hanya pemberitahuan penantian yang dikirim sekarang');
+  assert.match(balasan[0]!, /10 menit/, 'durasi penantian dijelaskan');
+
+  const sesi = (await repo.listDueFlowSessions(Date.now() + 60 * 60 * 1000)).filter((s) => s.postId === post.id);
+  assert.equal(sesi.length, 1, 'sesi tersimpan');
+  const sisa = sesi[0]!.steps as Array<{ kind: string; text?: string }>;
+  assert.deepEqual(
+    sisa.map((s) => s.kind),
+    ['reply', 'reply'],
+    'sisa cabang DAN sisa flow sesudah syarat ikut tersimpan',
+  );
+  assert.equal(sisa[0]!.text, 'di dalam cabang', 'urutan: cabang dulu');
+  assert.equal(sisa[1]!.text, 'sesudah syarat ({var.jalur})', 'baru kemudian aksi sesudah syarat');
+  assert.equal(sesi[0]!.variables.jalur, 'cocok', 'variabel dari dalam cabang tersimpan');
+
+  /* --- lanjutan: timer mengirim dua sapaan itu, berurutan --- */
+  const balasanTimer: string[] = [];
+  const client = {
+    guilds: { fetch: async () => ({ id: GUILD, members: { fetch: async () => ({ user: { tag: 'uji#0001' }, roles: { cache: { has: () => false }, highest: { position: 20 } }, permissions: { has: () => true } }) } }) },
+    channels: { fetch: async () => ({ isTextBased: () => true, send: async (p: { content: string }) => void balasanTimer.push(p.content) }) },
+  };
+  await resumeFlowSession(client as never, sesi[0]!);
+  assert.deepEqual(
+    balasanTimer,
+    ['di dalam cabang', 'sesudah syarat (cocok)'],
+    'sesudah penantian, cabang dan sisa flow sama-sama dijalankan',
+  );
+});
+
+await testAsync('flow: cabang bertingkat tiga & stop di dalam cabang menghentikan seluruh flow', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runComponentActions } = await import('../src/features/post-action-runner.js');
+  const GUILD = '123456789012345678';
+
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Cabang bertingkat',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Klik' }],
+  });
+  const tombol = await repo.replaceRoleButtons(GUILD, post.id, [
+    { label: 'Pilih jalur', roleId: '900000000000000001', mode: 'toggle' },
+  ]);
+  const buttonId = tombol.buttons[0]!.id;
+
+  const balasan: string[] = [];
+  const jalankan = async (values?: string[]) => {
+    const interaction = {
+      customId: `post-role:${buttonId}`,
+      guildId: GUILD,
+      channelId: '999',
+      deferred: false,
+      replied: false,
+      user: { id: '2', username: 'wahyu', globalName: 'Wahyu', tag: 'uji#0001' },
+      ...(values ? { values } : {}),
+      member: {
+        displayName: 'Wahyu',
+        roles: { cache: { has: () => false }, highest: { position: 20 } },
+        permissions: { has: () => true },
+      },
+      guild: {
+        id: GUILD,
+        name: 'Server Uji',
+        roles: { cache: new Map(), fetch: async () => null },
+        members: { me: { roles: { highest: { position: 10 } }, permissions: { has: () => true } }, fetchMe: async () => null },
+      },
+      reply: async (payload: { content: string }) => void balasan.push(payload.content),
+      followUp: async (payload: { content: string }) => void balasan.push(payload.content),
+    };
+    return runComponentActions({
+      client: {} as never,
+      interaction: interaction as never,
+      target: `button:${buttonId}`,
+      postId: post.id,
+    });
+  };
+
+  /*
+   * Tiga tingkat sarang, masing-masing memilih cabang yang berbeda. Yang
+   * dibuktikan: cabang tingkat paling dalam benar-benar dijalankan, dan aksi
+   * sesudah syarat TERLUAR tetap jalan sesudah semua cabang selesai (bukti
+   * bahwa cabang disisipkan ke satu daftar kerja, bukan dijalankan terpisah).
+   */
+  const bertingkat = (pilihan: string) => [
+    {
+      kind: 'condition',
+      value: 'selected',
+      comparator: 'equals',
+      expected: 'gamer',
+      then: [
+        {
+          kind: 'condition',
+          value: 'member.name',
+          comparator: 'equals',
+          expected: 'Wahyu',
+          then: [
+            {
+              kind: 'condition',
+              value: 'selected',
+              comparator: 'equals',
+              expected: pilihan,
+              then: [{ kind: 'reply', text: 'paling dalam: ' + pilihan }],
+              else: [{ kind: 'reply', text: 'bukan ' + pilihan }],
+            },
+          ],
+        },
+      ],
+      else: [{ kind: 'reply', text: 'bukan gamer' }],
+    },
+    { kind: 'reply', text: 'sesudah semua cabang' },
+  ];
+
+  await repo.replacePostActions(GUILD, post.id, { [`button:${buttonId}`]: bertingkat('gamer') });
+  await jalankan(['gamer']);
+  /*
+   * Hanya SATU balasan per interaksi (aturan Discord), jadi balasan kedua
+   * dilaporkan sebagai follow-up: di sini keduanya tercatat, yang penting
+   * urutannya benar.
+   */
+  assert.deepEqual(
+    balasan,
+    ['paling dalam: gamer', 'sesudah semua cabang'],
+    'tiga tingkat cabang jalan, lalu lanjut ke aksi sesudah syarat terluar',
+  );
+
+  balasan.length = 0;
+  await repo.replacePostActions(GUILD, post.id, { [`button:${buttonId}`]: bertingkat('anime') });
+  await jalankan(['gamer']);
+  assert.deepEqual(balasan, ['bukan anime', 'sesudah semua cabang'], 'cabang tingkat tiga memilih jalur "tidak cocok"');
+
+  // Berhenti di cabang DALAM: sisa flow di luar cabang juga tidak dijalankan.
+  balasan.length = 0;
+  await repo.replacePostActions(GUILD, post.id, {
+    [`button:${buttonId}`]: [
+      {
+        kind: 'condition',
+        value: 'member.name',
+        comparator: 'equals',
+        expected: 'Wahyu',
+        then: [{ kind: 'stop', stopMessage: 'berhenti di dalam' }],
+      },
+      { kind: 'reply', text: 'TIDAK BOLEH' },
+    ],
+  });
+  await jalankan();
+  assert.deepEqual(balasan, ['berhenti di dalam'], 'stop di cabang menghentikan seluruh flow');
+});
+
+await testAsync('pesan: flag pesan disaring & digabung dengan flag Components V2', async () => {
+  const { sanitizeMessageFlags, describeMessageFlags, MESSAGE_FLAGS, buildPostPayload, sanitizeBlocks } =
+    await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SectionBuilder: d.SectionBuilder,
+    ThumbnailBuilder: d.ThumbnailBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    StringSelectMenuBuilder: d.StringSelectMenuBuilder,
+    StringSelectMenuOptionBuilder: d.StringSelectMenuOptionBuilder,
+    UserSelectMenuBuilder: d.UserSelectMenuBuilder,
+    RoleSelectMenuBuilder: d.RoleSelectMenuBuilder,
+    MentionableSelectMenuBuilder: d.MentionableSelectMenuBuilder,
+    ChannelSelectMenuBuilder: d.ChannelSelectMenuBuilder,
+  };
+
+  assert.equal(sanitizeMessageFlags(4 | 4096), 4 | 4096, 'dua flag sah dipertahankan');
+  assert.equal(sanitizeMessageFlags(4 | 1), 4, 'flag asing (1) dibuang');
+  assert.equal(sanitizeMessageFlags('bukan angka'), 0);
+  assert.equal(sanitizeMessageFlags(0), 0);
+  assert.deepEqual(describeMessageFlags(4 | 4096), ['tanpa kartu embed', 'tanpa notifikasi']);
+  assert.equal(MESSAGE_FLAGS.suppressEmbeds, 1 << 2);
+  assert.equal(MESSAGE_FLAGS.suppressNotifications, 1 << 12);
+
+  // Flag never removes the Components V2 bit (1<<15) that the payload needs.
+  const blok = sanitizeBlocks([{ kind: 'container' }, { kind: 'text', value: 'Hai' }]).blocks;
+  const built = buildPostPayload(blok, deps);
+  const flagsV2 = built!.flags;
+  assert.ok(flagsV2 & (1 << 15), 'payload memakai flag Components V2');
+  // Penggabungan terjadi di pengirim; di sini dipastikan bit-nya tidak bentrok.
+  assert.equal((flagsV2 | 4) & (1 << 15), 1 << 15, 'menggabung flag admin tidak menghapus flag v2');
+});
+
 await testAsync('pesan: klik tombol role benar-benar memberi & melepas role', async () => {
   // Memakai database smoke yang sudah terbuka (:memory:). JANGAN menutupnya:
   // driver itu dipakai test-test sesudah ini — percobaan pertama menutupnya
@@ -6363,6 +10230,79 @@ await testAsync('pesan: kirim memperbarui pesan lama, bukan mengirim ulang', asy
     false,
     'channel hilang tidak melempar',
   );
+});
+
+await testAsync('pesan: embed klasik membuka thread dari nama thread', async () => {
+  const { sendOrUpdateEmbedPost } = await import('../src/features/custom-post-send.js');
+
+  /*
+   * Nama thread dulu hanya dipakai jalur Components V2. Pesan embed dengan
+   * nama thread terkirim TANPA thread, dan admin tidak mendapat laporan apa
+   * pun — bedanya hanya terlihat kalau ia membuka Discord.
+   */
+  const dibuat: string[] = [];
+  let kirim = 0;
+  const client = (threadBerhasil: boolean) =>
+    ({
+      channels: {
+        async fetch(id: string) {
+          return {
+            id,
+            isTextBased: () => true,
+            isDMBased: () => false,
+            messages: { async fetch() { throw new Error('Unknown Message'); } },
+            async send() {
+              kirim += 1;
+              return {
+                id: 'pesan-baru',
+                async startThread(opsi: { name: string }) {
+                  if (!threadBerhasil) throw new Error('Missing Permissions');
+                  dibuat.push(opsi.name);
+                  return { id: 'thread-1' };
+                },
+              };
+            },
+          };
+        },
+      },
+    }) as unknown as import('discord.js').Client;
+
+  const blocks = [{ kind: 'text' as const, value: 'Pengumuman rilis' }];
+
+  const dengan = await sendOrUpdateEmbedPost({
+    client: client(true),
+    channelId: 'c1',
+    messageId: null,
+    blocks,
+    title: 'Rilis',
+    threadName: '  Diskusi rilis  ',
+  });
+  assert.deepEqual(dibuat, ['Diskusi rilis'], 'thread dibuat dengan nama yang dirapikan');
+  assert.deepEqual(dengan.dropped, [], 'tidak ada laporan saat thread berhasil');
+
+  // Tanpa nama thread: tidak ada thread yang dibuat.
+  await sendOrUpdateEmbedPost({ client: client(true), channelId: 'c2', messageId: null, blocks, title: 'Rilis' });
+  assert.equal(dibuat.length, 1, 'tanpa nama thread tidak ada thread');
+
+  /*
+   * Thread gagal (izin kurang): pesannya TETAP terkirim dan kegagalannya
+   * dilaporkan. Membuang pesan hanya karena thread gagal menghilangkan isi
+   * yang sudah disusun admin.
+   */
+  const gagal = await sendOrUpdateEmbedPost({
+    client: client(false),
+    channelId: 'c3',
+    messageId: null,
+    blocks,
+    title: 'Rilis',
+    threadName: 'Diskusi',
+  });
+  assert.equal(gagal.messageId, 'pesan-baru', 'pesan tetap terkirim');
+  assert.ok(
+    (gagal.dropped ?? []).some((a) => a.includes('thread')),
+    'kegagalan thread dilaporkan, bukan hilang diam-diam',
+  );
+  assert.equal(kirim, 3, 'tiap panggilan mengirim satu pesan');
 });
 
 await testAsync('pesan: tombol role tampil di baris bawah sebagai tombol interaktif', async () => {
@@ -6952,6 +10892,838 @@ await testAsync('pesan: batas berkas dan spoiler dihormati', async () => {
   // Penghitung membawa jumlah berkas.
   const ukur = measureBlocks(sanitizeBlocks([{ kind: 'file', value: 'https://a.test/c.pdf' }]).blocks);
   assert.equal(ukur.files, 1);
+});
+
+/* ------------------------------------------------------------------ */
+/*  Impor Discohook                                                    */
+/* ------------------------------------------------------------------ */
+
+/** Contoh persis seperti respons https://discohook.app/api/v1/share/<id>. */
+const discoSample = {
+  data: {
+    version: 'd2',
+    messages: [
+      {
+        _id: 'iFJDZeVzD1',
+        data: {
+          flags: 32768,
+          components: [
+            { type: 10, content: 'Hey, welcome to <:discohook:736648398081622016> **Discohook**!' },
+            {
+              type: 17,
+              accent_color: 5814783,
+              spoiler: true,
+              components: [
+                { type: 10, content: '### What is this?' },
+                { type: 10, content: 'At its core, Discohook is a message designer.' },
+              ],
+            },
+            { type: 14, divider: false, spacing: 1 },
+            {
+              type: 17,
+              accent_color: 5814783,
+              components: [
+                { type: 10, content: '### Get started' },
+                {
+                  type: 9,
+                  components: [{ type: 10, content: 'Butuh bantuan?' }],
+                  accessory: {
+                    type: 2,
+                    style: 5,
+                    label: 'Support',
+                    url: 'https://discohook.app/discord',
+                    emoji: { name: '🎮' },
+                  },
+                },
+                {
+                  type: 12,
+                  items: [{ media: { url: 'https://a.test/a.png' }, description: 'contoh gambar' }],
+                },
+              ],
+            },
+            {
+              type: 1,
+              components: [
+                { type: 2, style: 5, label: 'Support Server', url: 'https://discohook.app/discord' },
+                { type: 2, style: 5, label: 'Invite Bot', url: 'https://discohook.app/bot', disabled: true },
+                { type: 2, style: 1, label: 'Role', custom_id: 'role-1' },
+              ],
+            },
+          ],
+        },
+      },
+    ],
+    targets: [],
+  },
+  expires: '2026-11-19T03:59:26.448Z',
+};
+
+await testAsync('kirim: tujuan diperiksa sebelum mengirim (izin & channel hilang)', async () => {
+  const { periksaTujuan } = await import('../src/features/custom-post-send.js');
+
+  /*
+   * Padanan `WebhookModel.fetch` di Discohook ("Webhook does not exist").
+   * Tanpa pemeriksaan ini admin menerima "Missing Permissions" mentah yang
+   * tidak menyebut channel atau izin apa.
+   */
+  const { PermissionFlagsBits } = await import('discord.js');
+  /* Izin diperiksa sebagai bitfield, bukan nama: itulah bentuk aslinya. */
+  const izin = (punya: bigint) => ({
+    has: (nama: bigint) => (punya & nama) === nama,
+  });
+  const kanal = (extra: Record<string, unknown>) =>
+    ({
+      id: '500',
+      name: 'pengumuman',
+      isTextBased: () => true,
+      isDMBased: () => false,
+      isThread: () => false,
+      guild: { members: { me: { id: '1' } } },
+      permissionsFor: () => izin(PermissionFlagsBits.ViewChannel | PermissionFlagsBits.SendMessages),
+      ...extra,
+    }) as never;
+
+  // Channel tidak ada.
+  const hilang = await periksaTujuan({ channels: { fetch: async () => null } } as never, '500');
+  assert.equal(hilang.ok, false);
+  assert.ok(!hilang.ok && hilang.alasan.includes('tidak ditemukan'));
+
+  // Bukan channel teks.
+  const suara = await periksaTujuan(
+    { channels: { fetch: async () => kanal({ isTextBased: () => false }) } } as never,
+    '500',
+  );
+  assert.equal(suara.ok, false);
+  assert.ok(!suara.ok && suara.alasan.includes('bukan channel teks'));
+
+  // Izin kurang: nama izin & tujuan disebut.
+  const kurang = await periksaTujuan(
+    {
+      channels: {
+        fetch: async () => kanal({ permissionsFor: () => izin(PermissionFlagsBits.ViewChannel) }),
+      },
+    } as never,
+    '500',
+  );
+  assert.equal(kurang.ok, false);
+  assert.ok(!kurang.ok && kurang.alasan.includes('Send Messages'), 'izin yang kurang disebut');
+  assert.ok(!kurang.ok && kurang.alasan.includes('#pengumuman'), 'channel-nya disebut');
+
+  // Izin cukup.
+  const boleh = await periksaTujuan({ channels: { fetch: async () => kanal({}) } } as never, '500');
+  assert.equal(boleh.ok, true);
+
+  /*
+   * Kalau bot tidak bisa mengecek izinnya sendiri (cache `me` belum siap),
+   * kirim TIDAK boleh diblokir — mencoba lebih baik daripada menolak karena
+   * bot tidak tahu.
+   */
+  const tanpaMe = await periksaTujuan(
+    { channels: { fetch: async () => kanal({ guild: { members: { me: null } } }) } } as never,
+    '500',
+  );
+  assert.equal(tanpaMe.ok, true, 'tanpa info izin, kirim tetap diizinkan');
+});
+
+await testAsync('kirim: thread yang sudah ada diterima sebagai tujuan', async () => {
+  const { sendOrUpdatePost } = await import('../src/features/custom-post-send.js');
+
+  /*
+   * Thread adalah tujuan yang sah (padanan ?thread_id= pada webhook Discohook).
+   * Dua hal yang harus dijamin: thread ARSIP dibuka dulu, dan nama thread
+   * tidak dicoba dibuat DI DALAM thread — keduanya dulu berakhir dengan galat
+   * Discord yang tidak menyebut penyebabnya.
+   */
+  let diarsipkan = true;
+  const terkirim: unknown[] = [];
+  const threadTiruan = {
+    id: '900',
+    isTextBased: () => true,
+    isDMBased: () => false,
+    isThread: () => true,
+    get archived() {
+      return diarsipkan;
+    },
+    setArchived: async (nilai: boolean) => {
+      diarsipkan = nilai;
+      return threadTiruan;
+    },
+    messages: { fetch: async () => null },
+    send: async (payload: unknown) => {
+      terkirim.push(payload);
+      return { id: 'pesan-1', startThread: async () => ({ id: 'thread-baru' }) };
+    },
+  };
+  const client = { channels: { fetch: async () => threadTiruan } } as never;
+
+  const hasil = await sendOrUpdatePost({
+    client,
+    channelId: '900',
+    messageId: null,
+    blocks: [{ kind: 'text', value: 'Halo thread' }],
+    threadName: 'Thread baru',
+  } as never);
+
+  assert.equal(diarsipkan, false, 'thread arsip dibuka sebelum mengirim');
+  assert.equal(terkirim.length, 1, 'pesan terkirim ke dalam thread');
+  assert.ok(
+    (hasil.dropped ?? []).some((alasan) => alasan.includes('sudah dikirim ke dalam thread')),
+    'permintaan membuat thread di dalam thread dilaporkan, bukan gagal senyap',
+  );
+});
+
+await testAsync('embed: blok file dikirim sebagai lampiran, bukan dibuang', async () => {
+  const { embedAttachments, buildClassicEmbeds } = await import('../src/features/post-embed.js');
+
+  /*
+   * Dulu blok `file` hanya dilaporkan "berkas jadi lampiran, bukan bagian
+   * embed" lalu dibuang — padahal tidak ada lampiran yang dibuat, jadi berkas
+   * yang diunggah admin tidak pernah sampai ke Discord.
+   */
+  const hasil = embedAttachments([
+    { kind: 'file', value: 'https://cdn.test/dokumen.pdf', name: 'Dokumen Rilis.pdf' },
+    { kind: 'file', value: '', data: 'data:image/png;base64,AAAA', name: 'logo.png' },
+    { kind: 'file', value: 'bukan-url', name: 'rusak.txt' },
+    { kind: 'text', value: 'bukan berkas' },
+  ]);
+
+  assert.equal(hasil.attachments.length, 2, 'dua berkas sah jadi lampiran');
+  assert.equal(hasil.attachments[0]!.remoteUrl, 'https://cdn.test/dokumen.pdf', 'URL jarak-jauh diunduh saat kirim');
+  assert.equal(hasil.attachments[0]!.name, 'Dokumen-Rilis.pdf', 'nama lampiran dibersihkan dari spasi');
+  assert.equal(hasil.attachments[1]!.dataUri, 'data:image/png;base64,AAAA', 'unggahan dashboard jadi data URI');
+  assert.ok(
+    hasil.dropped.some((alasan) => alasan.includes('rusak.txt')),
+    'berkas tidak sah dilaporkan, bukan hilang diam-diam',
+  );
+
+  /*
+   * Embed TIDAK boleh lagi mengeluh "berkas jadi lampiran" — kalimat itu
+   * menyesatkan selama lampirannya tidak pernah dibuat.
+   */
+  const susun = buildClassicEmbeds(
+    [
+      { kind: 'text', value: 'Pengumuman' },
+      { kind: 'file', value: 'https://cdn.test/a.pdf', name: 'a.pdf' },
+    ],
+    { accent: '#6d8cff', title: 'Rilis' },
+  );
+  assert.ok(
+    !susun.flatMap((satu) => satu.dropped).some((alasan) => alasan.includes('berkas jadi lampiran')),
+    'tidak ada laporan menyesatkan soal berkas',
+  );
+
+  // Batas 10 lampiran per pesan ditegakkan di sini, bukan oleh Discord.
+  const banyak = embedAttachments(
+    Array.from({ length: 12 }, (_, i) => ({ kind: 'file', value: `https://cdn.test/${i}.txt`, name: `${i}.txt` })),
+  );
+  assert.equal(banyak.attachments.length, 10, 'lampiran dibatasi 10');
+  assert.ok(banyak.dropped.some((alasan) => alasan.includes('dibatasi 10')));
+});
+
+await testAsync('embed: flag "tanpa kartu embed" tidak ikut bersama embed', async () => {
+  const { flagsUntukEmbed } = await import('../src/features/post-embed.js');
+
+  /*
+   * Discohook memperingatkan hal yang sama di kartu Flags-nya. Meneruskan flag
+   * ini membuat pesan bergambar gagal terkirim dengan galat yang tidak
+   * menyebut flag sebagai penyebab.
+   */
+  const dilepas = flagsUntukEmbed(4 | 4096);
+  assert.equal(dilepas.flags, 4096, 'flag tanpa-notifikasi tetap dipakai');
+  assert.ok(
+    dilepas.dropped[0]!.includes('tanpa kartu embed'),
+    'bagian yang dilepas dilaporkan, bukan hilang diam-diam',
+  );
+
+  assert.equal(flagsUntukEmbed(4).flags, 0, 'hanya flag itu → tidak ada flag tersisa');
+  assert.equal(flagsUntukEmbed(4096).flags, 4096, 'flag lain tidak tersentuh');
+  assert.equal(flagsUntukEmbed(0).dropped.length, 0, 'tanpa flag tidak ada laporan');
+  assert.equal(flagsUntukEmbed(undefined).flags, 0, 'undefined aman');
+});
+
+await testAsync('discohook: tautan ?data= / ?message= dibaca tanpa mengunduh apa pun', async () => {
+  const { parseDiscohookDataLink } = await import('../src/features/discohook-import.js');
+
+  const b64 = (obj: unknown) =>
+    Buffer.from(JSON.stringify(obj), 'utf8').toString('base64url');
+
+  // Bentuk yang dihasilkan tombol Share Discohook: QueryData di dalam base64url.
+  const isi = { messages: [{ data: { content: 'Halo dari ?data=' }, reference: null }] };
+  const tautan = `https://discohook.org/?data=${b64(isi)}`;
+  const hasil = parseDiscohookDataLink(tautan);
+  assert.ok(hasil, 'tautan ?data= dikenali');
+  assert.equal(
+    ((hasil!.data as { messages: Array<{ data: { content: string } }> }).messages[0]!.data.content),
+    'Halo dari ?data=',
+    'isi pesan terbaca dari URL',
+  );
+
+  // Base64 biasa (+, /, =) dari alat lain juga diterima.
+  const biasa = Buffer.from(JSON.stringify(isi), 'utf8').toString('base64');
+  assert.ok(parseDiscohookDataLink(`https://discohook.app/?data=${encodeURIComponent(biasa)}`));
+
+  // Bentuk lama: ?message= berisi SATU pesan (camelCase model editor).
+  const satu = parseDiscohookDataLink(
+    `https://discohook.app/?message=${b64({
+      content: 'Satu pesan',
+      avatar: 'https://cdn.test/a.png',
+      threadName: 'Thread lama',
+      flags_suppress_notifications: true,
+      embeds: [
+        {
+          title: 'Judul',
+          description: 'Isi',
+          color: null,
+          author: 'Penulis',
+          authorUrl: 'https://contoh.test',
+          footer: 'kaki',
+          footerIcon: 'https://cdn.test/f.png',
+          gallery: ['https://cdn.test/1.png', 'https://cdn.test/2.png'],
+          fields: [{ name: 'A', value: 'B', inline: true }],
+        },
+      ],
+    })}`,
+  );
+  assert.ok(satu, 'tautan ?message= dikenali');
+  assert.equal((satu!.data as { messages: unknown[] }).messages.length, 1);
+  assert.ok(satu!.warnings[0]!.includes('bentuk lama'));
+
+  /*
+   * Bentuk editor Discohook (camelCase) harus diterjemahkan, bukan diteruskan
+   * apa adanya: `avatar`/`threadName` bukan nama field MessageData, flag-nya
+   * dua boolean, dan gambar galeri ada di `gallery` bukan `image`.
+   */
+  const pesanLama = (satu!.data as { messages: Array<{ data: Record<string, unknown> }> }).messages[0]!.data;
+  assert.equal(pesanLama.avatar_url, 'https://cdn.test/a.png', 'avatar diterjemahkan');
+  assert.equal(pesanLama.thread_name, 'Thread lama', 'nama thread diterjemahkan');
+  assert.equal(pesanLama.flags, 4096, 'flag boolean jadi bitmask');
+  const embedLama = (pesanLama.embeds as Array<Record<string, unknown>>)[0]!;
+  assert.equal((embedLama.author as { name: string }).name, 'Penulis', 'nama penulis diterjemahkan');
+  assert.equal((embedLama.author as { url: string }).url, 'https://contoh.test', 'URL penulis diterjemahkan');
+  assert.equal((embedLama.footer as { icon_url: string }).icon_url, 'https://cdn.test/f.png', 'ikon footer diterjemahkan');
+  assert.equal((embedLama.image as { url: string }).url, 'https://cdn.test/1.png', 'galeri pertama jadi image');
+  assert.deepEqual(embedLama.images, ['https://cdn.test/1.png', 'https://cdn.test/2.png'], 'galeri ikut');
+  assert.equal(embedLama.color, undefined, 'warna null tidak dikirim');
+
+  // Bukan tautan Discohook / isi rusak / tanpa parameter: null, bukan menebak.
+  assert.equal(parseDiscohookDataLink('https://evil.test/?data=aaa'), null, 'host lain ditolak');
+  assert.equal(parseDiscohookDataLink('https://discohook.app/?share=CpazsKTm'), null, 'share id bukan ?data=');
+  assert.equal(parseDiscohookDataLink('https://discohook.app/?data=bukan-base64-json'), null);
+  assert.equal(parseDiscohookDataLink(''), null);
+});
+
+await testAsync('discohook: mengurai tautan share & hanya menerima host Discohook', async () => {
+  const { parseDiscohookShareId, discohookShareApiUrl } = await import('../src/features/discohook-import.js');
+
+  // Empat bentuk yang dipakai orang, semuanya harus menghasilkan ID yang sama.
+  for (const tautan of [
+    'https://discohook.app/?share=CpazsKTm',
+    'https://discohook.app/share/CpazsKTm',
+    'https://discohook.org/?share=CpazsKTm',
+    'CpazsKTm',
+  ]) {
+    assert.equal(parseDiscohookShareId(tautan), 'CpazsKTm', `ID terbaca dari ${tautan}`);
+  }
+
+  // Host lain ditolak: tanpa ini, endpoint impor bisa disuruh mengunduh
+  // alamat internal (SSRF) hanya dengan menempel tautan.
+  for (const tautan of [
+    'https://evil.test/?share=CpazsKTm',
+    'http://127.0.0.1:8080/?share=CpazsKTm',
+    'https://discohook.app.evil.test/?share=CpazsKTm',
+    'bukan tautan',
+    '',
+  ]) {
+    assert.equal(parseDiscohookShareId(tautan), null, `ditolak: ${tautan}`);
+  }
+
+  assert.equal(discohookShareApiUrl('CpazsKTm'), 'https://discohook.app/api/v1/share/CpazsKTm');
+});
+
+await testAsync('discohook: komponen v2 diterjemahkan jadi blok dengan kartu & batas yang benar', async () => {
+  const { parseDiscohookShare, looksLikeDiscohook } = await import('../src/features/discohook-import.js');
+  const { sanitizeBlocks, buildPostPayload } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+
+  assert.equal(looksLikeDiscohook(discoSample), true, 'respons API dikenali');
+  assert.equal(looksLikeDiscohook({ messages: [] }), true, 'QueryData mentah dikenali');
+  assert.equal(looksLikeDiscohook({ blocks: [] }), false, 'format /pesan sendiri bukan Discohook');
+
+  const hasil = parseDiscohookShare(discoSample);
+  assert.equal(hasil.messages.length, 1);
+  const blok = sanitizeBlocks(hasil.messages[0]!.blocks).blocks;
+
+  // Urutan struktur: pembuka polos → kartu spoiler → tutup → pemisah →
+  // kartu kedua → tutup → baris tombol.
+  assert.deepEqual(
+    blok.map((b) => b.kind),
+    ['text', 'container', 'text', 'text', 'close', 'divider', 'container', 'text', 'section', 'image', 'close', 'button', 'button'],
+    'susunan blok sesuai pesan Discohook',
+  );
+
+  // Properti yang dulu tidak ada di model blok.
+  assert.equal(blok[1]!.accent, '#58b9ff', 'warna container dari accent_color');
+  assert.equal(blok[1]!.spoiler, true, 'spoiler container ikut');
+  assert.equal(blok[5]!.divider, false, 'pemisah tanpa garis ikut');
+  assert.equal(blok[8]!.value, 'Butuh bantuan?', 'teks Section');
+  assert.equal(blok[8]!.accessoryLabel, 'Support', 'tombol aksesori Section');
+  assert.equal(blok[8]!.emoji, '🎮', 'emoji tombol aksesori ikut');
+  assert.equal(blok[9]!.alt, 'contoh gambar', 'alt text gambar ikut');
+  assert.equal(blok[12]!.disabled, true, 'tombol nonaktif ikut');
+
+  // Tombol interaktif tidak bisa dipindah — dilaporkan, bukan hilang diam-diam.
+  assert.ok(
+    hasil.messages[0]!.warnings.some((isi) => isi.includes('Role')),
+    'tombol customId dilaporkan ke admin',
+  );
+
+  // Dan hasilnya benar-benar bisa dikirim Discord: kartu spoiler, pemisah
+  // tanpa garis, tombol nonaktif semuanya tampil di payload.
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SectionBuilder: d.SectionBuilder,
+    ThumbnailBuilder: d.ThumbnailBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    FileBuilder: d.FileBuilder,
+    accent: 0x6d8cff,
+    accentToNumber: (hex: string) => Number.parseInt(hex.slice(1), 16),
+  };
+  type C = {
+    type: number;
+    spoiler?: boolean;
+    accent_color?: number;
+    divider?: boolean;
+    components?: Array<Record<string, any>>;
+  };
+  const built = buildPostPayload(blok, deps);
+  assert.ok(built, 'payload terbentuk');
+  const json = (built!.components as Array<{ toJSON: () => C }>).map((c) => c.toJSON());
+  assert.deepEqual(json.map((c) => c.type), [10, 17, 14, 17, 1], 'pembuka, dua kartu, pemisah, tombol');
+
+  const kartuSpoiler = json[1]!;
+  assert.equal(kartuSpoiler.spoiler, true, 'spoiler container sampai ke payload');
+  assert.equal(kartuSpoiler.accent_color, 5814783, 'warna container sampai ke payload');
+  assert.equal(json[2]!.divider, false, 'pemisah tanpa garis sampai ke payload');
+
+  // json[4] = ActionRow; komponennya adalah tombol-tombolnya.
+  const baris = json[4]!;
+  assert.equal(baris.components![1]!.disabled, true, 'tombol nonaktif sampai ke payload');
+});
+
+await testAsync('pesan: select menu dilaporkan saat tak terdukung, bukan hilang diam-diam', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+
+  /*
+   * Versi discord.js lama tidak punya builder select menu. Komponennya memang
+   * harus dilewati, tetapi alasannya WAJIB sampai ke pemanggil: dulu daftar
+   * `dropped` hanya hidup di dalam fungsi dan hilang tanpa jejak.
+   */
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    accent: 0x6d8cff,
+    accentToNumber: (hex: string) => Number.parseInt(hex.slice(1), 16),
+  };
+  const built = buildPostPayload(
+    sanitizeBlocks([
+      { kind: 'text', value: 'Halo' },
+      { kind: 'select', selectKind: 'user' },
+    ]).blocks,
+    deps,
+  );
+  assert.ok(built, 'pesan tetap terbentuk tanpa select');
+  assert.equal(built!.dropped.length, 1, 'satu komponen dilaporkan');
+  assert.match(built!.dropped[0]!, /select/, 'alasannya menyebut select');
+});
+
+await testAsync('pesan: select menu dikirim sebagai ActionRow penuh & row memotong baris tombol', async () => {
+  const { buildPostPayload, sanitizeBlocks } = await import('../src/features/custom-post.js');
+  const d = await import('discord.js');
+  const deps = {
+    ContainerBuilder: d.ContainerBuilder,
+    TextDisplayBuilder: d.TextDisplayBuilder,
+    SeparatorBuilder: d.SeparatorBuilder,
+    MediaGalleryBuilder: d.MediaGalleryBuilder,
+    MediaGalleryItemBuilder: d.MediaGalleryItemBuilder,
+    ActionRowBuilder: d.ActionRowBuilder,
+    ButtonBuilder: d.ButtonBuilder,
+    ButtonStyle: d.ButtonStyle,
+    StringSelectMenuBuilder: d.StringSelectMenuBuilder,
+    StringSelectMenuOptionBuilder: d.StringSelectMenuOptionBuilder,
+    UserSelectMenuBuilder: d.UserSelectMenuBuilder,
+    RoleSelectMenuBuilder: d.RoleSelectMenuBuilder,
+    MentionableSelectMenuBuilder: d.MentionableSelectMenuBuilder,
+    ChannelSelectMenuBuilder: d.ChannelSelectMenuBuilder,
+    accent: 0x6d8cff,
+    accentToNumber: (hex: string) => Number.parseInt(hex.slice(1), 16),
+  };
+
+  type C = { type: number; components?: Array<Record<string, any>> };
+
+  // Row eksplisit: 3 tombol, satu Row, 2 tombol → dua ActionRow terpisah.
+  const denganRow = buildPostPayload(
+    sanitizeBlocks([
+      { kind: 'text', value: 'Pilih' },
+      { kind: 'button', value: 'A', url: 'https://a.test' },
+      { kind: 'button', value: 'B', url: 'https://b.test' },
+      { kind: 'button', value: 'C', url: 'https://c.test' },
+      { kind: 'row', value: '' },
+      { kind: 'button', value: 'D', url: 'https://d.test' },
+      { kind: 'button', value: 'E', url: 'https://e.test' },
+    ]).blocks,
+    deps,
+  );
+  const isiRow = (denganRow!.components as Array<{ toJSON: () => C }>)[0]!.toJSON().components!;
+  const barisTombol = isiRow.filter((c) => c.type === 1);
+  assert.equal(barisTombol.length, 2, 'dua baris tombol karena ada Row');
+  assert.equal(barisTombol[0]!.components!.length, 3, 'baris pertama 3 tombol');
+  assert.equal(barisTombol[1]!.components!.length, 2, 'baris kedua 2 tombol');
+
+  // Select selalu baris penuh: tombol yang menumpuk ditutup lebih dulu.
+  const campur = buildPostPayload(
+    sanitizeBlocks([
+      { kind: 'button', value: 'A', url: 'https://a.test' },
+      {
+        kind: 'select',
+        selectKind: 'string',
+        placeholder: 'Pilih warna',
+        minValues: 1,
+        maxValues: 2,
+        options: [{ label: 'Merah', value: 'merah' }, { label: 'Biru', emoji: '🔵' }],
+      },
+      { kind: 'button', value: 'B', url: 'https://b.test' },
+    ]).blocks,
+    deps,
+  );
+  const isiCampur = (campur!.components as Array<{ toJSON: () => C }>)[0]!.toJSON().components!;
+  // Urutan yang dipertahankan: baris tombol A, select, baris tombol B.
+  assert.deepEqual(isiCampur.map((c) => c.type), [1, 1, 1], 'tiga baris: tombol, select, tombol');
+  const select = isiCampur[1]!.components![0]!;
+  assert.equal(select.type, 3, 'komponennya StringSelect');
+  assert.match(String(select.custom_id), /^post-ctx:string$/, 'customId menu tampilan');
+  assert.equal(select.placeholder, 'Pilih warna');
+  assert.equal(select.min_values, 1);
+  assert.equal(select.max_values, 2);
+  assert.equal(select.options.length, 2);
+  assert.equal(select.options[1].value, 'Biru', 'nilai kosong memakai label');
+
+  // Empat jenis select lain memakai builder yang sesuai Discord.
+  for (const [jenis, tipe] of [
+    ['user', 5],
+    ['role', 6],
+    ['mentionable', 7],
+    ['channel', 8],
+  ] as const) {
+    const hasil = buildPostPayload(sanitizeBlocks([{ kind: 'select', selectKind: jenis }]).blocks, deps);
+    const isi = (hasil!.components as Array<{ toJSON: () => C }>)[0]!.toJSON().components!;
+    const komponen = isi[0]!.components![0]!;
+    assert.equal(komponen.type, tipe, `select ${jenis} memakai tipe ${tipe}`);
+    assert.equal(komponen.custom_id, `post-ctx:${jenis}`);
+  }
+
+  // Menu string tanpa pilihan ditolak Discord → dibuang, dengan alasan.
+  const kosong = sanitizeBlocks([{ kind: 'select', selectKind: 'string' }]);
+  assert.equal(kosong.blocks.length, 0, 'select string tanpa pilihan dibuang');
+  assert.ok(kosong.dropped.length > 0, 'alasannya dilaporkan');
+});
+
+await testAsync('discohook: select menu & Row diimpor sebagai blok select/row, bukan dibuang', async () => {
+  const { discohookComponentsToBlocks } = await import('../src/features/discohook-import.js');
+  const { sanitizeBlocks } = await import('../src/features/custom-post.js');
+
+  const hasil = discohookComponentsToBlocks([
+    {
+      type: 17,
+      accent_color: 5814783,
+      components: [
+        { type: 10, content: 'Pilih di bawah' },
+        {
+          type: 1,
+          components: [
+            { type: 2, style: 5, label: 'Satu', url: 'https://a.test' },
+            { type: 2, style: 5, label: 'Dua', url: 'https://b.test' },
+          ],
+        },
+        { type: 1, components: [{ type: 2, style: 5, label: 'Tiga', url: 'https://c.test' }] },
+        {
+          type: 1,
+          components: [
+            {
+              type: 3,
+              custom_id: 'menu-warna',
+              placeholder: 'Pilih warna',
+              min_values: 1,
+              max_values: 2,
+              options: [
+                { label: 'Merah', value: 'merah' },
+                { label: 'Biru', description: 'dingin', emoji: { name: '🔵' } },
+              ],
+            },
+          ],
+        },
+        { type: 1, components: [{ type: 6, custom_id: 'menu-role', max_values: 3 }] },
+        { type: 1, components: [{ type: 5, custom_id: 'menu-user' }] },
+        { type: 1, components: [{ type: 7, custom_id: 'menu-dua' }] },
+        { type: 1, components: [{ type: 8, custom_id: 'menu-channel' }] },
+      ],
+    },
+  ]);
+
+  assert.deepEqual(hasil.warnings, [], 'tidak ada menu yang dibuang diam-diam');
+  assert.equal(
+    hasil.blocks.map((b) => (b.kind === 'select' ? 'select:' + b.selectKind : b.kind)).join(' | '),
+    // Row disisipkan karena dua ActionRow berisi tombol berdampingan: di
+    // Discohook keduanya baris terpisah, bukan digabung lima per baris.
+    'container | text | button | button | row | button | select:string | select:role | select:user | select:mentionable | select:channel',
+    'semua jenis menu jadi blok select, baris tombol dipisah Row',
+  );
+
+  const selectString = hasil.blocks.find((b) => b.kind === 'select' && b.selectKind === 'string')!;
+  assert.equal(selectString.placeholder, 'Pilih warna');
+  assert.equal(selectString.minValues, 1);
+  assert.equal(selectString.maxValues, 2);
+  assert.equal(selectString.options?.length, 2, 'dua pilihan ikut');
+  assert.equal(selectString.options?.[1]!.emoji, '🔵', 'emoji pilihan ikut');
+  assert.equal(selectString.options?.[1]!.description, 'dingin', 'keterangan pilihan ikut');
+
+  /*
+   * Sanitizer server harus meloloskan hasil impor apa adanya — dan di sanalah
+   * nilai kosong diisi dengan label (Discord menolak opsi tanpa value).
+   */
+  const bersih = sanitizeBlocks(hasil.blocks);
+  assert.deepEqual(bersih.dropped, [], 'tidak ada blok impor yang dibuang sanitizer');
+  assert.equal(bersih.blocks.filter((b) => b.kind === 'select').length, 5, 'lima select lolos');
+  const stringBersih = bersih.blocks.find((b) => b.kind === 'select' && b.selectKind === 'string')!;
+  assert.equal(stringBersih.options?.[1]!.value, 'Biru', 'nilai kosong memakai label');
+  assert.equal(stringBersih.maxValues, 2, 'batas maksimal ikut tersimpan');
+});
+
+await testAsync('discohook: pesan tanpa container tetap di luar kartu, embed dipertahankan', async () => {
+  const { parseDiscohookShare } = await import('../src/features/discohook-import.js');
+  const { sanitizeBlocks } = await import('../src/features/custom-post.js');
+
+  const hasil = parseDiscohookShare({
+    version: 'd2',
+    messages: [
+      {
+        data: {
+          content: 'Halo dunia',
+          components: [{ type: 10, content: 'Tanpa container' }],
+        },
+      },
+      {
+        data: {
+          embeds: [
+            {
+              title: 'Judul embed',
+              description: 'Isi embed',
+              color: 0x58b4ff,
+              fields: [{ name: 'Bidang', value: 'Nilai', inline: true }],
+              footer: { text: 'kaki' },
+              author: { name: 'Penulis' },
+              image: { url: 'https://a.test/x.png' },
+              timestamp: '2026-11-12T09:00:00Z',
+            },
+          ],
+        },
+      },
+      {
+        name: 'Campuran',
+        data: {
+          components: [{ type: 10, content: 'Teks V2' }],
+          embeds: [{ title: 'Judul', description: 'Isi', color: 0x58b4ff }],
+        },
+      },
+    ],
+  });
+
+  assert.equal(hasil.messages.length, 3);
+
+  // Pesan tanpa container: satu `close` di awal menahan pembungkusan kartu,
+  // supaya tampilannya tetap seperti Discohook (polos di pesan).
+  const pertama = sanitizeBlocks(hasil.messages[0]!.blocks).blocks;
+  assert.equal(pertama[0]!.kind, 'close', 'penanda di luar kartu');
+  assert.deepEqual(pertama.map((b) => b.kind), ['close', 'text', 'text']);
+
+  /*
+   * Pesan yang HANYA berisi embed: embed dipertahankan sebagai embed asli.
+   * Judul embed jadi nama pesan, isi jadi blok teks, gambar jadi blok gambar;
+   * penulis, footer, bidang, dan stempel waktu masuk ke bagian admin.
+   */
+  const kedua = hasil.messages[1]!;
+  assert.equal(kedua.layout, 'embed', 'bentuk pesan dipilih otomatis');
+  assert.equal(kedua.name, 'Judul embed', 'judul embed jadi nama pesan');
+  assert.equal(kedua.embed.length, 1, 'satu bagian embed');
+  assert.equal(kedua.embed[0]!.author!.name, 'Penulis', 'penulis ikut');
+  assert.equal(kedua.embed[0]!.footer!.text, 'kaki', 'footer ikut');
+  assert.equal(kedua.embed[0]!.fields![0]!.inline, true, 'penanda sebaris ikut');
+  assert.equal(kedua.embed[0]!.timestamp, '2026-11-12T09:00:00.000Z', 'stempel waktu dibakukan');
+  assert.ok(
+    kedua.blocks.some((b) => b.kind === 'text' && b.value === 'Isi embed'),
+    'isi embed jadi blok teks',
+  );
+  assert.ok(kedua.blocks.some((b) => b.kind === 'image'), 'gambar embed jadi blok gambar');
+  assert.ok(
+    !kedua.warnings.some((isi) => isi.includes('kartu teks')),
+    'tidak ada peringatan konversi — bentuknya tidak berubah',
+  );
+
+  /*
+   * Pesan yang membawa komponen V2 DAN embed: Discord menolak keduanya
+   * sekaligus, jadi embed tetap diterjemahkan jadi kartu teks dan admin
+   * diberi tahu. Ini bukan kemunduran, ini batasan Discord.
+   */
+  const ketiga = hasil.messages[2]!;
+  assert.equal(ketiga.layout, 'container', 'pesan campuran tetap container');
+  assert.equal(ketiga.embed.length, 0, 'embed tidak dikirim bersama komponen');
+  assert.ok(ketiga.blocks.some((b) => b.kind === 'container'), 'embed jadi kartu teks');
+  assert.ok(
+    ketiga.warnings.some((isi) => isi.includes('kartu teks')),
+    'perubahan bentuk embed dilaporkan',
+  );
+});
+
+await testAsync('discohook: berkas ekspor backup (version+backups) bisa diimpor', async () => {
+  const { parseDiscohookShare, looksLikeDiscohook } = await import('../src/features/discohook-import.js');
+
+  /*
+   * Bentuk persis `modules/database/backup/types/ExportData.ts` versi 7 di repo
+   * Discohook. Tanpa cabang backup, seluruh berkas ditolak dengan "tidak punya
+   * messages" padahal isinya sama dan hanya dibungkus satu tingkat lagi.
+   */
+  const backup = {
+    version: 7,
+    backups: [
+      {
+        name: 'Pengumuman Rilis',
+        messages: [
+          { data: { content: 'Halo', username: 'Tim Rilis' }, reference: null },
+          { data: { content: 'Kedua' }, reference: null },
+        ],
+        targets: [{ url: 'https://discord.com/api/webhooks/1/rahasia' }],
+      },
+      { name: 'Backup lain', messages: [{ data: { content: 'Tidak dipakai' } }] },
+    ],
+  };
+
+  assert.equal(looksLikeDiscohook(backup), true, 'berkas backup dikenali sebagai Discohook');
+  const hasil = parseDiscohookShare(backup);
+  assert.equal(hasil.messages.length, 2, 'semua pesan backup pertama diimpor');
+  assert.equal(hasil.messages[0]!.settings.webhookName, 'Tim Rilis', 'pengaturan per pesan ikut');
+  assert.ok(
+    hasil.warnings.some((isi) => isi.includes('Pengumuman Rilis')),
+    'nama backup disebut supaya admin tahu mana yang dipakai',
+  );
+  assert.ok(
+    !JSON.stringify(hasil).includes('rahasia'),
+    'URL webhook dari berkas tidak pernah diteruskan',
+  );
+
+  // Pembungkus QueryData & berkas rusak tetap berperilaku seperti sebelumnya.
+  assert.equal(looksLikeDiscohook({ messages: [] }), true);
+  assert.equal(looksLikeDiscohook({ version: 7, backups: [] }), false, 'backups kosong bukan Discohook');
+});
+
+await testAsync('discohook: pengaturan tingkat pesan (pengirim, thread, flag) ikut diimpor', async () => {
+  const { parseDiscohookShare } = await import('../src/features/discohook-import.js');
+
+  const hasil = parseDiscohookShare({
+    data: {
+      messages: [
+        {
+          data: {
+            content: 'Halo',
+            username: 'Tim Pengumuman',
+            avatar_url: 'https://cdn.test/a.png',
+            thread_name: 'Diskusi',
+            flags: 4096,
+          },
+        },
+        {
+          // Nama yang ditolak Discord, avatar bukan http, flag asing, dan
+          // suppress-embeds pada pesan berisi embed.
+          data: {
+            content: 'Kedua',
+            username: 'Discord Official',
+            avatar_url: 'ftp://bukan-http/a.png',
+            thread_name: 'T'.repeat(160),
+            flags: 4 | 32768,
+            embeds: [{ title: 'Ada embed', description: 'isi' }],
+          },
+        },
+        { data: { content: 'Tanpa pengaturan' } },
+      ],
+    },
+  });
+
+  /*
+   * Tanpa ini, pesan yang disusun atas nama "Tim Pengumuman" muncul atas nama
+   * server, thread tidak dibuat, dan flag senyap hilang — tanpa peringatan.
+   */
+  assert.deepEqual(hasil.messages[0]!.settings, {
+    webhookName: 'Tim Pengumuman',
+    webhookAvatar: 'https://cdn.test/a.png',
+    threadName: 'Diskusi',
+    flags: 4096,
+  });
+  assert.equal(hasil.messages[2]!.settings.flags, 0, 'pesan tanpa pengaturan tetap kosong');
+
+  const kedua = hasil.messages[1]!;
+  assert.equal(kedua.settings.webhookName, null, 'nama terlarang dibuang, bukan diteruskan');
+  assert.equal(kedua.settings.webhookAvatar, null, 'avatar non-http dibuang');
+  assert.equal(kedua.settings.threadName!.length, 100, 'nama thread dipotong ke batas Discord');
+  assert.equal(kedua.settings.flags, 0, 'flag asing & suppress-embeds dilepas');
+  assert.ok(
+    hasil.warnings.some((isi) => isi.includes('nama pengirim webhook ditolak Discord')),
+    'alasan nama ditolak dilaporkan',
+  );
+  assert.ok(
+    hasil.warnings.some((isi) => isi.includes('tidak mengizinkan keduanya')),
+    'alasan suppress-embeds dilepas dilaporkan',
+  );
+});
+
+await testAsync('discohook: data asing & lampiran attachment:// dilaporkan, bukan gagal senyap', async () => {
+  const { parseDiscohookShare } = await import('../src/features/discohook-import.js');
+
+  const asing = parseDiscohookShare({ hello: 'world' });
+  assert.equal(asing.messages.length, 0);
+  assert.ok(asing.warnings[0]!.includes('messages'), 'alasan jelas');
+
+  const lampiran = parseDiscohookShare({
+    messages: [
+      {
+        data: {
+          components: [
+            {
+              type: 12,
+              items: [{ media: { url: 'attachment://gambar.png' } }],
+            },
+            { type: 10, content: 'Teks asli' },
+          ],
+        },
+      },
+    ],
+  });
+  assert.ok(
+    lampiran.messages[0]!.warnings.some((isi) => isi.includes('attachment://')),
+    'lampiran Discohook dijelaskan, bukan dibuang tanpa kabar',
+  );
+  assert.equal(lampiran.messages[0]!.blocks.some((b) => b.kind === 'image'), false);
+  assert.equal(lampiran.messages[0]!.blocks.some((b) => b.kind === 'text'), true, 'sisa isi tetap diimpor');
 });
 
 await testAsync('pesan: penghitung batas komponen menghitung seperti Discord', async () => {
