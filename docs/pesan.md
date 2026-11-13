@@ -640,7 +640,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | `targets[]` (satu pesan, beberapa channel) | ✅ **Kirim juga ke channel lain** di kartu pengaturan: sampai 5 channel tambahan, tiap channel punya ID pesan sendiri |
 | Riwayat/undo revisi (padanan backup) | ✅ 20 versi terakhir per pesan, dibuat otomatis setiap pesan diubah; kartu "Riwayat & bagikan" (tab **Riwayat**) |
 | Share link (tautan berbagi) | ✅ tautan `/bagi/<token>` bisa dibuka tanpa login, berisi blok **dan** embed pesan (bentuk pesan ikut), bisa dicabut |
-| Impor backup | ✅ JSON/URL Discohook di tab **Impor**; ekspor JSON juga ada |
+| Impor backup | ✅ JSON/URL Discohook di tab **Impor**; ekspor JSON juga ada, memakai nama field Discohook (`username`, `avatar_url`, `thread_name`, `flags`, `allowed_mentions`) supaya berkasnya bisa dibaca bolak-balik oleh alat lain |
 | **Load** pesan Discord yang sudah terkirim | ✅ kartu **Muat pesan Discord** di tab **Impor**: tempel Message Link, pesan dibuka di editor (bot butuh *Read Message History*) |
 | Jadwal kirim (sekali / berulang / cron) | ✅ sekali, tiap N jam (min. 2 jam), dan **cron kalender** lima ruas (tiap hari, tiap Senin, tiap tanggal 1, …) memakai zona waktu server. Pola lebih rapat dari 2 jam ditolak dengan alasan |
 | Trigger event (member masuk/keluar) | ✅ pilihan **Kirim otomatis saat**: `member_add` / `member_remove`; pesan yang sama diperbarui tiap kejadian, bukan dikirim ulang |
@@ -650,6 +650,31 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, satu gambar besar, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 23: ekspor JSON membawa pengaturan tingkat pesan
+
+Ekspor JSON dulu hanya membawa blok dan bagian embed. Nama pengirim webhook,
+nama thread, flag pesan, dan izin ping **hilang** saat berkas itu diimpor
+kembali — cadangan yang tampak lengkap tetapi diam-diam menghapus pengaturan.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Nama & avatar pengirim webhook | tidak diekspor | `username`, `avatar_url` |
+| Nama thread | tidak diekspor | `thread_name` |
+| Flag pesan | tidak diekspor | `flags` (bitmask Discord) |
+| Izin ping | tidak diekspor | `allowed_mentions.parse` |
+| Isian yang tidak ada di berkas | dibiarkan dari pesan sebelumnya | **dikosongkan** |
+
+Catatan:
+
+- Nama field mengikuti Discord/Discohook, bukan nama isian di halaman ini,
+  supaya berkas ekspor bisa dipahami alat lain (dan sebaliknya).
+- Channel, jadwal, dan tombol role tetap **tidak** ikut: semuanya menunjuk ID
+  milik server ini dan akan salah di server lain.
+- Saat impor, isian yang tidak ada di berkas dikosongkan, bukan dipertahankan:
+  menyisakan nama webhook milik pesan sebelumnya membuat pesan hasil impor
+  tampil atas nama orang lain tanpa admin menyadarinya. `avatar` juga diterima
+  sebagai alias `avatar_url` (nama di Discohook).
 
 ### Batch 22: membuka kembali satu pesan di dalam dokumen
 

@@ -1049,14 +1049,44 @@ await check('pesan: ekspor dan impor JSON mempertahankan semua field', async () 
       ];
       renderBlocks();
       document.getElementById('postName').value = 'Rules';
+      /*
+       * Pengaturan tingkat pesan: nama/avatar webhook, nama thread, flag, dan
+       * izin ping. Tanpa ikut diekspor, cadangan lalu pulih akan menghapusnya
+       * diam-diam.
+       */
+      document.getElementById('postWebhookName').value = 'Tim Pengumuman';
+      document.getElementById('postWebhookAvatar').value = 'https://cdn.test/a.png';
+      document.getElementById('postThreadName').value = 'Diskusi rilis';
+      document.getElementById('postFlagEmbeds').checked = true;
+      document.getElementById('postMentionRoles').checked = true;
       exportJson();
       var json = document.getElementById('jsonText').value;
 
       blocks = [];
+      document.getElementById('postWebhookName').value = '';
+      document.getElementById('postWebhookAvatar').value = '';
+      document.getElementById('postThreadName').value = '';
+      document.getElementById('postFlagEmbeds').checked = false;
+      document.getElementById('postMentionRoles').checked = false;
+      document.getElementById('postMentionEveryone').checked = true;
       document.getElementById('jsonText').value = json;
       importJson();
       var pulih = blocks;
       return {
+        tingkatPesan: {
+          username: JSON.parse(json).username,
+          avatar: JSON.parse(json).avatar_url,
+          thread: JSON.parse(json).thread_name,
+          flags: JSON.parse(json).flags,
+          ping: (JSON.parse(json).allowed_mentions || {}).parse || [],
+          namaKembali: document.getElementById('postWebhookName').value,
+          avatarKembali: document.getElementById('postWebhookAvatar').value,
+          threadKembali: document.getElementById('postThreadName').value,
+          flagKembali: document.getElementById('postFlagEmbeds').checked,
+          notifKembali: document.getElementById('postFlagNotif').checked,
+          pingRole: document.getElementById('postMentionRoles').checked,
+          pingSemua: document.getElementById('postMentionEveryone').checked
+        },
         panjang: json.length,
         versi: JSON.parse(json).version,
         format: JSON.parse(json).format,
@@ -1091,6 +1121,22 @@ await check('pesan: ekspor dan impor JSON mempertahankan semua field', async () 
   assert.equal(hasil.emojiTombol, '🎮', 'emoji tombol pulih');
   assert.equal(hasil.tombolNonaktif, true, 'tombol nonaktif pulih');
   assert.equal(hasil.namaPesanan, 'Rules', 'nama pesan pulih');
+
+  const tingkat = (
+    hasil as unknown as { tingkatPesan: Record<string, string | number | boolean | string[]> }
+  ).tingkatPesan;
+  assert.equal(tingkat.username, 'Tim Pengumuman', 'nama pengirim webhook diekspor');
+  assert.equal(tingkat.avatar, 'https://cdn.test/a.png', 'avatar pengirim diekspor');
+  assert.equal(tingkat.thread, 'Diskusi rilis', 'nama thread diekspor');
+  assert.equal(tingkat.flags, 4, 'flag pesan diekspor sebagai bitmask');
+  assert.deepEqual(tingkat.ping, ['roles'], 'hanya izin ping yang dicentang yang diekspor');
+  assert.equal(tingkat.namaKembali, 'Tim Pengumuman', 'nama pengirim pulih');
+  assert.equal(tingkat.avatarKembali, 'https://cdn.test/a.png', 'avatar pulih');
+  assert.equal(tingkat.threadKembali, 'Diskusi rilis', 'nama thread pulih');
+  assert.equal(tingkat.flagKembali, true, 'flag tanpa-kartu pulih');
+  assert.equal(tingkat.notifKembali, false, 'flag yang tidak ada di berkas dimatikan');
+  assert.equal(tingkat.pingRole, true, 'izin ping role pulih');
+  assert.equal(tingkat.pingSemua, false, 'izin ping @everyone milik pesan lama tidak tertinggal');
 });
 
 await check('pesan: tidak ada id ganda antar tab (penyebab isian mati)', async () => {

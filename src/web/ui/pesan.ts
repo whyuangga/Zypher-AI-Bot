@@ -1566,7 +1566,18 @@ function exportJson() {
      * diam-diam menghapus penulis/footer/bidang yang sudah ditulis admin.
      */
     embed: payloadEmbed(),
+    /*
+     * Pengaturan tingkat pesan ikut, memakai nama field Discord/Discohook
+     * (username, avatar_url, thread_name). Konfigurasi lain — channel, jadwal,
+     * tombol role — sengaja tidak: semuanya menunjuk ID milik server ini.
+     */
+    username: (document.getElementById('postWebhookName') || {}).value || '',
+    avatar_url: (document.getElementById('postWebhookAvatar') || {}).value || '',
+    thread_name: (document.getElementById('postThreadName') || {}).value || '',
   };
+  if (flagPesan() !== 0) data.flags = flagPesan();
+  var izinPing = allowedMentionsPesan();
+  if (izinPing.parse.length) data.allowed_mentions = izinPing;
   var teks = JSON.stringify(data, null, 2);
   var kotak = document.getElementById('jsonText');
   if (kotak) kotak.value = teks;
@@ -1627,6 +1638,33 @@ function importJson() {
     if (pengirim) pengirim.value = data.sender;
   }
   editingId = null; // hasil impor = pesan baru, bukan menimpa yang lama
+  /*
+   * Pengaturan tingkat pesan. Isian yang tidak ada di berkas DIKOSONGKAN, bukan
+   * dibiarkan: menyisakan nama webhook milik pesan sebelumnya membuat pesan
+   * hasil impor tampil atas nama orang lain tanpa admin menyadarinya.
+   */
+  var whNamaImpor = document.getElementById('postWebhookName');
+  if (whNamaImpor) whNamaImpor.value = typeof data.username === 'string' ? data.username.slice(0, 80) : '';
+  var whAvatarImpor = document.getElementById('postWebhookAvatar');
+  if (whAvatarImpor) {
+    var avatarImpor = data.avatar_url || data.avatar;
+    whAvatarImpor.value = typeof avatarImpor === 'string' ? avatarImpor.slice(0, 2048) : '';
+  }
+  var threadImpor = document.getElementById('postThreadName');
+  if (threadImpor) {
+    threadImpor.value = typeof data.thread_name === 'string' ? data.thread_name.slice(0, 100) : '';
+  }
+  var flagEmbedsImpor = document.getElementById('postFlagEmbeds');
+  var flagNotifImpor = document.getElementById('postFlagNotif');
+  var bitFlag = typeof data.flags === 'number' && isFinite(data.flags) ? data.flags : 0;
+  if (flagEmbedsImpor) flagEmbedsImpor.checked = Boolean(bitFlag & 4);
+  if (flagNotifImpor) flagNotifImpor.checked = Boolean(bitFlag & 4096);
+  var pingImpor = data.allowed_mentions && Array.isArray(data.allowed_mentions.parse) ? data.allowed_mentions.parse : [];
+  var centangPing = { postMentionUsers: 'users', postMentionRoles: 'roles', postMentionEveryone: 'everyone' };
+  Object.keys(centangPing).forEach(function (id) {
+    var kotak = document.getElementById(id);
+    if (kotak) kotak.checked = pingImpor.indexOf(centangPing[id]) !== -1;
+  });
   // Bagian embed ikut dokumen: dokumen tanpa bagian ini harus MENGOSONGKAN
   // isian lama, bukan menyisakan penulis milik pesan sebelumnya.
   if (data.embed && typeof data.embed === 'object') loadEmbedExtra(data.embed);
