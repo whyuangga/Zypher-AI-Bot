@@ -27,6 +27,7 @@ import {
 } from '../db/repo.js';
 import {
   identitasPost,
+  sendOrUpdateEmbedPost,
   sendOrUpdatePost,
   sendOrUpdatePostViaWebhook,
   webhookIdentityFor,
@@ -52,7 +53,55 @@ export async function sendScheduledPost(client: Client, schedule: PostSchedule, 
   }
 
   try {
-    if (post.sender === 'webhook') {
+    /*
+     * Bentuk EMBED punya jalur kirim sendiri, dan harus didahulukan.
+     *
+     * Aturan Discord berlawanan: embed tidak boleh membawa flag Components V2,
+     * dan V2 tidak boleh membawa embeds. Tanpa cabang ini, pesan bergaya embed
+     * yang dijadwalkan terkirim sebagai kartu V2 — tombol "Kirim" dan jadwal
+     * menghasilkan pesan yang berbeda bentuknya, dan admin baru sadar setelah
+     * pesannya muncul.
+     */
+    if (post.layout === 'embed') {
+      const roleButtons = await listRoleButtons(guildId, post.id);
+      const roleMenus = await listRoleMenus(guildId, post.id);
+      const hasilEmbed = await sendOrUpdateEmbedPost({
+        client,
+        channelId: post.channelId,
+        // Selalu pesan baru: admin tidak ingin satu pesan berubah isinya.
+        messageId: null,
+        blocks: post.blocks,
+        accent: post.accent,
+        title: post.name,
+        postId: post.id,
+        flags: post.flags,
+        allowedMentions: post.allowedMentions,
+        embed: post.embed,
+        threadName: post.threadName,
+        roleButtons: roleButtons.map((b) => ({
+          id: b.id,
+          label: b.label,
+          emoji: b.emoji ?? null,
+          style: b.style ?? null,
+        })),
+        roleMenus: roleMenus.map((menu) => ({
+          id: menu.id,
+          placeholder: menu.placeholder,
+          minValues: menu.minValues,
+          maxValues: menu.maxValues,
+          options: menu.options.map((option) => ({
+            roleId: option.roleId,
+            label: option.label,
+            emoji: option.emoji,
+            description: option.description,
+          })),
+        })),
+      });
+      const dilewatiEmbed = hasilEmbed.dropped ?? [];
+      if (dilewatiEmbed.length > 0) {
+        logger.warn(`Jadwal ${schedule.id}: bagian embed dilewati — ${dilewatiEmbed.join('; ')}`);
+      }
+    } else if (post.sender === 'webhook') {
       /*
        * Pesan webhook tidak bisa punya tombol role maupun aksi. Dijadwalkan
        * tetap boleh — tetapi kalau pesannya memuat komponen interaktif,

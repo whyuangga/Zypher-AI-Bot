@@ -651,6 +651,32 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
 
+### Batch 28: jadwal & aksi flow menghormati bentuk embed
+
+Jalur **jadwal** dan **aksi "kirim pesan tersimpan"** selalu memakai penyusun
+Components V2. Pesan yang disetel **Bentuk pesan: Embed klasik** karena itu
+muncul sebagai kartu biasa saat dikirim otomatis — padahal tombol Kirim
+mengirimnya sebagai embed.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Pesan embed dikirim lewat jadwal | jadi kartu V2 | **embed**, sama seperti Kirim |
+| Pesan embed dikirim lewat aksi flow | jadi kartu V2 | **embed** |
+| Bagian admin (penulis, footer, bidang, galeri) | hilang di jalur otomatis | ikut terkirim |
+| Nama thread pada pesan embed terjadwal | tidak dibuat | dibuat |
+
+Catatan:
+
+- Urutan cabang penting: `layout === 'embed'` diperiksa **sebelum** webhook/V2.
+  Aturan Discord berlawanan (embed tidak boleh membawa flag V2, V2 tidak boleh
+  membawa embeds), jadi dua jalur itu tidak boleh saling menimpa.
+- Aksi flow pada pesan embed mengirim **pesan baru** dan memberi tahu pengklik
+  kalau balasan tidak bisa dipakai — Discord tidak mengizinkan balasan berisi
+  embed, dan pesan yang hilang diam-diam lebih buruk daripada pesan yang
+  muncul di tempat lain dengan penjelasan.
+- Bagian yang dilewati (mis. galeri lebih dari batas) masuk log jadwal, bukan
+  hilang tanpa jejak.
+
 ### Batch 27: Load memulihkan pengaturan tingkat pesan
 
 Tombol **Load** membawa blok dan bagian embed, tetapi **bukan** pengirim,

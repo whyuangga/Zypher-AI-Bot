@@ -44,6 +44,7 @@ import {
   sendOrUpdatePost,
   sendOrUpdatePostViaWebhook,
   identitasPost,
+  sendOrUpdateEmbedPost,
   webhookIdentityFor,
 } from './custom-post-send.js';
 import { listRoleButtons, listRoleMenus } from '../db/repo.js';
@@ -607,6 +608,61 @@ async function jalankanLangkah(
 
     try {
       let terkirim: { messageId: string };
+      /*
+       * Pesan tujuan berBENTUK EMBED punya jalur kirim sendiri, dan harus
+       * didahulukan dari jalur webhook/V2: aturan Discord berlawanan (embed
+       * tidak boleh membawa flag V2, V2 tidak boleh membawa embeds). Tanpa
+       * cabang ini, aksi "kirim pesan tersimpan" mengirim embed sebagai kartu
+       * V2 — pesan yang tampak berbeda dari saat dikirim manual.
+       */
+      if (tujuan.layout === 'embed') {
+        if (step.viaWebhook) {
+          await runtime.peringatan(
+            'ℹ️ Pesan tujuan berbentuk embed dikirim lewat bot — embed klasik tidak butuh webhook.',
+          );
+        }
+        if (runtime.messageId && !step.toChannel) {
+          await runtime.peringatan(
+            'ℹ️ Pesan berbentuk embed dikirim sebagai pesan baru, bukan balasan — Discord tidak mengizinkan balasan berisi embed dari aksi ini.',
+          );
+        }
+        const tombolEmbed = await listRoleButtons(runtime.guildId, tujuan.id).catch(() => []);
+        const menuEmbed = await listRoleMenus(runtime.guildId, tujuan.id).catch(() => []);
+        terkirim = await sendOrUpdateEmbedPost({
+          client: runtime.client,
+          channelId: channelTujuan,
+          messageId: null,
+          blocks: tujuan.blocks,
+          accent: tujuan.accent,
+          title: tujuan.name,
+          postId: tujuan.id,
+          flags: tujuan.flags || undefined,
+          allowedMentions: tujuan.allowedMentions,
+          embed: tujuan.embed,
+          threadName: tujuan.threadName,
+          roleButtons: tombolEmbed.map((satu) => ({
+            id: satu.id,
+            label: satu.label,
+            emoji: satu.emoji ?? null,
+            style: satu.style ?? null,
+          })),
+          roleMenus: menuEmbed.map((menu) => ({
+            id: menu.id,
+            placeholder: menu.placeholder,
+            minValues: menu.minValues,
+            maxValues: menu.maxValues,
+            options: menu.options.map((option) => ({
+              roleId: option.roleId,
+              label: option.label,
+              emoji: option.emoji,
+              description: option.description,
+            })),
+          })),
+          template: runtime.variables,
+        });
+        runtime.hasil = { messageId: terkirim.messageId, channelId: channelTujuan };
+        continue;
+      }
       if (step.viaWebhook) {
         /*
          * Jalur webhook: pesan tampil atas nama server. Komponen role tidak

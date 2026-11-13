@@ -8703,6 +8703,161 @@ await testAsync('muat pesan: pesan dashboard mengikuti pesan Discord asal setela
   await repo.deleteCustomPost(GUILD, post.id);
 });
 
+await testAsync('jadwal: pesan berbentuk embed dikirim lewat jalur embed', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { sendScheduledPost } = await import('../src/features/post-scheduler.js');
+  const GUILD = '123456789012345678';
+
+  /*
+   * Bentuk embed punya jalur kirim sendiri (embed tidak boleh membawa flag V2,
+   * V2 tidak boleh membawa embeds). Dulu jadwal selalu memakai jalur V2, jadi
+   * pesan embed yang dijadwalkan muncul sebagai kartu — berbeda dari saat
+   * dikirim lewat tombol Kirim.
+   */
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Pengumuman terjadwal',
+    channelId: '234567890123456789',
+    blocks: [{ kind: 'text', value: 'Isi pengumuman' }],
+    layout: 'embed',
+    embed: [{ fields: [{ name: 'Harga', value: 'Rp10.000', inline: false }] }],
+  });
+  // Jadwal harus di MASA DEPAN saat disimpan, jadi disimpan sedikit ke depan
+  // lalu waktunya dimajukan langsung di database agar dianggap jatuh tempo.
+  await repo.replaceSchedules(GUILD, post.id, '234567890123456789', [
+    { dueAt: Date.now() + 60_000 },
+  ]);
+  const { run } = await import('../src/db/index.js');
+  await run('UPDATE post_schedules SET due_at = ? WHERE guild_id = ? AND post_id = ?', [
+    Date.now() - 1000,
+    GUILD,
+    post.id,
+  ]);
+
+  const terkirim: Array<{ embeds?: unknown[]; components?: unknown[]; flags?: number }> = [];
+  const client = {
+    channels: {
+      async fetch() {
+        return {
+          id: '234567890123456789',
+          isTextBased: () => true,
+          isDMBased: () => false,
+          async send(payload: { embeds?: unknown[]; components?: unknown[]; flags?: number }) {
+            terkirim.push(payload);
+            return { id: 'pesan-jadwal', async startThread() { return { id: 't' }; } };
+          },
+        };
+      },
+      async fetchWebhooks() {
+        throw new Error('webhook tidak dipakai untuk pesan embed');
+      },
+    },
+    guilds: { async fetch() { return null; } },
+  } as never;
+
+  const jadwal = (await repo.listSchedules(GUILD, post.id))[0]!;
+  const ok = await sendScheduledPost(client, jadwal, GUILD);
+  assert.equal(ok, true, 'jadwal terkirim');
+  assert.equal(terkirim.length, 1, 'satu pesan terkirim');
+  assert.ok(Array.isArray(terkirim[0]!.embeds) && terkirim[0]!.embeds!.length > 0, 'dikirim sebagai EMBED');
+  assert.equal(terkirim[0]!.components, undefined, 'bukan kartu Components V2');
+
+  await repo.deleteCustomPost(GUILD, post.id);
+});
+
+await testAsync('aksi: pesan tujuan berbentuk embed dikirim sebagai embed', async () => {
+  const repo = await import('../src/db/repo.js');
+  const { runComponentActions } = await import('../src/features/post-action-runner.js');
+  const GUILD = '123456789012345678';
+  const ROLE = '111111111111111111';
+
+  /*
+   * Sama seperti jadwal: aksi "kirim pesan tersimpan" dulu selalu memakai jalur
+   * V2, jadi pesan embed dari tombol muncul sebagai kartu.
+   */
+  const pemicu = await repo.createCustomPost(GUILD, {
+    name: 'Pemicu',
+    channelId: '234567890123456789',
+    blocks: [{ kind: 'text', value: 'Klik tombol' }],
+  });
+  const tujuan = await repo.createCustomPost(GUILD, {
+    name: 'Tujuan embed',
+    channelId: '234567890123456789',
+    blocks: [{ kind: 'text', value: 'Isi embed' }],
+    layout: 'embed',
+    embed: [{ fields: [{ name: 'A', value: '1', inline: false }] }],
+  });
+  const { buttons } = await repo.replaceRoleButtons(GUILD, pemicu.id, [
+    { label: 'Kirim', roleId: ROLE, mode: 'toggle' },
+  ]);
+  await repo.replacePostActions(GUILD, pemicu.id, {
+    [`button:${buttons[0]!.id}`]: [{ kind: 'message', postId: tujuan.id }],
+  });
+
+  const terkirim: Array<{ embeds?: unknown[]; components?: unknown[] }> = [];
+  const balasan: string[] = [];
+  const interaction = {
+    customId: `post-role:${buttons[0]!.id}`,
+    guildId: GUILD,
+    deferred: false,
+    replied: false,
+    user: { id: '2', username: 'wahyu', globalName: 'Wahyu', tag: 'uji#0001' },
+    member: {
+      displayName: 'Wahyu',
+      roles: { cache: { has: () => false }, highest: { position: 20 }, add: async () => undefined, remove: async () => undefined },
+      permissions: { has: () => true },
+    },
+    guild: {
+      id: GUILD,
+      name: 'Server Uji',
+      roles: {
+        cache: new Map([[ROLE, { id: ROLE, name: 'Gamer', position: 3, managed: false }]]),
+        fetch: async () => ({ id: ROLE, name: 'Gamer', position: 3, managed: false }),
+      },
+      members: {
+        me: { roles: { highest: { position: 10 } }, permissions: { has: () => true } },
+        fetchMe: async () => null,
+        fetch: async () => null,
+      },
+    },
+    reply: async (payload: { content: string }) => void balasan.push(payload.content),
+    followUp: async (payload: { content: string }) => void balasan.push(payload.content),
+  };
+  const client = {
+    channels: {
+      async fetch() {
+        return {
+          id: '234567890123456789',
+          isTextBased: () => true,
+          isDMBased: () => false,
+          async send(payload: { embeds?: unknown[]; components?: unknown[] }) {
+            terkirim.push(payload);
+            return { id: 'pesan-aksi', async startThread() { return { id: 't' }; } };
+          },
+          messages: { async fetch() { throw new Error('tidak ada'); } },
+        };
+      },
+      async fetchWebhooks() {
+        throw new Error('webhook tidak dipakai untuk pesan embed');
+      },
+    },
+    guilds: { async fetch() { return null; } },
+  } as never;
+
+  const ditangani = await runComponentActions({
+    client,
+    interaction: interaction as never,
+    target: `button:${buttons[0]!.id}`,
+    postId: pemicu.id,
+  });
+  assert.equal(ditangani, true, 'aksi dikenali');
+  assert.equal(terkirim.length, 1, 'pesan tujuan terkirim sekali');
+  assert.ok(Array.isArray(terkirim[0]!.embeds) && terkirim[0]!.embeds!.length > 0, 'dikirim sebagai EMBED');
+  assert.equal(terkirim[0]!.components, undefined, 'bukan kartu Components V2');
+
+  await repo.deleteCustomPost(GUILD, pemicu.id);
+  await repo.deleteCustomPost(GUILD, tujuan.id);
+});
+
 await testAsync('template: variabel Discohook dirakit & dipakai di aksi dan teks pesan', async () => {
   const { buildTemplateValues, applyTemplate, tokenTersisa } = await import('../src/features/post-template.js');
   const { fillActionText } = await import('../src/features/post-actions.js');
