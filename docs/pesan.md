@@ -641,7 +641,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Riwayat/undo revisi (padanan backup) | ✅ 20 versi terakhir per pesan, dibuat otomatis setiap pesan diubah; kartu "Riwayat & bagikan" (tab **Riwayat**) |
 | Share link (tautan berbagi) | ✅ tautan `/bagi/<token>` bisa dibuka tanpa login, berisi blok **dan** embed pesan (bentuk pesan ikut), bisa dicabut |
 | Impor backup | ✅ JSON/URL Discohook di tab **Impor**; ekspor JSON juga ada, memakai nama field Discohook (`username`, `avatar_url`, `thread_name`, `flags`, `allowed_mentions`) supaya berkasnya bisa dibaca bolak-balik oleh alat lain |
-| **Load** pesan Discord yang sudah terkirim | ✅ kartu **Muat pesan Discord** di tab **Impor**: tempel Message Link, pesan dibuka di editor (bot butuh *Read Message History*) |
+| **Load** pesan Discord yang sudah terkirim | ✅ kartu **Muat pesan Discord** di tab **Impor**: tempel Message Link, pesan dibuka di editor (bot butuh *Read Message History*); galeri gambar yang di Discord tampil sebagai beberapa embed dibaca kembali sebagai **satu galeri** (lihat **Batch 24**) |
 | Jadwal kirim (sekali / berulang / cron) | ✅ sekali, tiap N jam (min. 2 jam), dan **cron kalender** lima ruas (tiap hari, tiap Senin, tiap tanggal 1, …) memakai zona waktu server. Pola lebih rapat dari 2 jam ditolak dengan alasan |
 | Trigger event (member masuk/keluar) | ✅ pilihan **Kirim otomatis saat**: `member_add` / `member_remove`; pesan yang sama diperbarui tiap kejadian, bukan dikirim ulang |
 | Generator kode (payload → kode bot) | ✅ tab **Impor** → panel "JSON payload & generator kode": keluaran `discord.js` v14 & `discord.py` v2, diterjemahkan dari payload yang benar-benar dikirim |
@@ -679,6 +679,9 @@ Catatan:
   punya judul tetap berdiri sendiri — itu embed tersendiri, bukan gambar lanjutan.
 - Pratinjau menggambar gambar ke-2 dst. sebagai kartu sendiri, supaya yang
   terlihat sama dengan yang terkirim.
+- **Load** membalik arah yang sama: beberapa embed bergambar tanpa isi dibaca
+  sebagai satu galeri, jadi pesan yang dimuat lalu disunting lagi tidak memaksa
+  admin menempel ulang semua URL.
 
 ### Batch 23: ekspor JSON membawa pengaturan tingkat pesan
 

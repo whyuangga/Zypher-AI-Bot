@@ -1,5 +1,5 @@
 import type { PostBlock } from './custom-post.js';
-import { embedKeExtra, parseMessageLink, v2ToBlocks } from './discohook-import.js';
+import { embedKeExtra, gabungGaleriEmbeds, parseMessageLink, v2ToBlocks } from './discohook-import.js';
 import { sanitizeEmbedList, type EmbedExtra } from './post-embed.js';
 
 /**
@@ -134,7 +134,13 @@ export function messageToDraft(pesan: LoadedMessage): LoadResult {
   }
 
   if (embeds.length > 0) {
-    const { list, dropped } = sanitizeEmbedList(embeds.map(embedKeExtra));
+    /*
+     * Galeri di Discord tampil sebagai beberapa embed yang hanya berisi gambar.
+     * Saat dimuat kembali, bentuk itu dibaca ulang sebagai SATU galeri supaya
+     * menyuntingnya lagi tidak memaksa admin menempel empat URL dari nol.
+     */
+    const padat = gabungGaleriEmbeds(embeds);
+    const { list, dropped } = sanitizeEmbedList(padat.map(embedKeExtra));
     warnings.push(...dropped);
 
     /*

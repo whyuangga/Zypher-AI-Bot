@@ -8379,6 +8379,39 @@ await testAsync('muat pesan: tautan Discord & isi pesan diterjemahkan balik ke b
   assert.ok(kosong.warnings.length > 0, 'pesan kosong dijelaskan, bukan gagal senyap');
 });
 
+await testAsync('muat pesan: galeri gambar di Discord dibaca kembali sebagai satu galeri', async () => {
+  const { messageToDraft } = await import('../src/features/message-load.js');
+
+  /*
+   * Di Discord, galeri empat gambar tampil sebagai empat embed: satu berisi
+   * isi pesan + gambar pertama, tiga sisanya hanya gambar. Memuatnya kembali
+   * harus menghasilkan SATU embed bergaleri — kalau tidak, admin yang ingin
+   * memperbaiki teksnya harus menempel ulang semua URL.
+   */
+  const draft = messageToDraft({
+    id: '1',
+    channel_id: '2',
+    content: '',
+    embeds: [
+      { title: 'Pengumuman', description: 'Isi pesan', url: 'https://x.test', image: { url: 'https://img.test/1.png' } },
+      { url: 'https://x.test', image: { url: 'https://img.test/2.png' } },
+      { url: 'https://x.test', image: { url: 'https://img.test/3.png' } },
+    ],
+  } as never);
+
+  assert.equal(draft.embed.length, 1, 'tiga embed gambar dibaca sebagai satu embed bergaleri');
+  assert.deepEqual(
+    draft.embed[0]!.images,
+    ['https://img.test/1.png', 'https://img.test/2.png', 'https://img.test/3.png'],
+    'ketiga gambar masuk galeri',
+  );
+  assert.equal(draft.layout, 'embed', 'tetap bentuk embed');
+  assert.ok(
+    draft.blocks.some((b) => b.kind === 'image' && b.value === 'https://img.test/1.png'),
+    'gambar pertama tetap jadi blok gambar (jalur yang sama dengan impor)',
+  );
+});
+
 await testAsync('muat pesan: bentuk JSON yang lazim ditempel dikenali', async () => {
   const { messageToDraft } = await import('../src/features/message-load.js');
 
