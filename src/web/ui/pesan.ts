@@ -41,6 +41,17 @@ export interface PostRowView {
   trigger?: 'member_add' | 'member_remove' | null;
   /** Bentuk pesan: container (Components V2) atau embed klasik. */
   layout?: 'container' | 'embed';
+  /** Bitmask flag pesan (4 = sembunyikan embed, 4096 = tanpa notifikasi). */
+  flags?: number | null;
+  /** Nama thread yang dibuat dari pesan ini; null = tidak membuat thread. */
+  threadName?: string | null;
+  /** Izin ping yang tersimpan (`{ parse: ['users', …] }`). */
+  allowedMentions?: { parse: Array<'users' | 'roles' | 'everyone'> } | null;
+  /** Bagian embed klasik (penulis, footer, bidang) — hanya dipakai layout embed. */
+  embed?: unknown;
+  /** Nama pengirim webhook; null = identitas server. */
+  webhookName?: string | null;
+  webhookAvatar?: string | null;
 }
 
 /** Satu pesan di dalam dokumen multi-pesan (bentuk dari post-series.ts). */
@@ -3134,9 +3145,108 @@ async function removePost(id, name) {
   }
 }
 
+/**
+ * Isi SEMUA pengaturan tingkat pesan dari satu objek pesan.
+ *
+ * Ada karena daftar field editor sempat ditulis ulang di beberapa tempat, dan
+ * setiap salinan kehilangan field yang berbeda:
+ *
+ *   - loadExisting tidak memuat flags, threadName, allowedMentions, embed,
+ *     webhookName, webhookAvatar, dan trigger;
+ *   - kembalikanVersi hanya memuat nama, channel, dan blok.
+ *
+ * Akibatnya nyata dan senyap: buka pesan → ubah satu kata → Simpan, dan
+ * centang "ping role", nama thread, atau nama pengirim webhook kembali ke
+ * bawaan tanpa satu pun peringatan. Satu fungsi ini dipakai kedua jalur supaya
+ * field baru berikutnya tidak bisa tertinggal di salah satunya.
+ *
+ * Sumber boleh sebagian (versi lama tidak menyimpan semua field): field yang
+ * tidak ada dibiarkan seperti di editor, bukan dikosongkan.
+ */
+function terapkanPengaturan(sumber) {
+  var data = sumber || {};
+  var nama = document.getElementById('postName');
+  if (nama && typeof data.name === 'string') nama.value = data.name;
+  var channel = document.getElementById('postChannel');
+  if (channel && data.channelId !== undefined) channel.value = data.channelId || '';
+  if (data.accent) {
+    var warna = document.getElementById('postAccent');
+    if (warna) warna.value = data.accent;
+  }
+  if (data.sender === 'bot' || data.sender === 'webhook') {
+    var pengirim = document.getElementById('postSender');
+    if (pengirim) pengirim.value = data.sender;
+  }
+  /*
+   * Flag pesan: dicentang dari bitmask yang tersimpan. Nilai lain diabaikan —
+   * hanya dua flag ini yang boleh diatur admin.
+   */
+  if (data.flags !== undefined) {
+    var flagEmbeds = document.getElementById('postFlagEmbeds');
+    var flagNotif = document.getElementById('postFlagNotif');
+    if (flagEmbeds) flagEmbeds.checked = Boolean((data.flags || 0) & 4);
+    if (flagNotif) flagNotif.checked = Boolean((data.flags || 0) & 4096);
+  }
+  /*
+   * Pemicu event: nilai asing ditampilkan sebagai "hanya manual", bukan
+   * dibiarkan memilih opsi pertama secara diam-diam — admin harus tahu
+   * pesannya tidak lagi punya pemicu.
+   */
+  if (data.trigger !== undefined) {
+    var pemicu = document.getElementById('postTrigger');
+    if (pemicu) {
+      pemicu.value =
+        data.trigger === 'member_add' || data.trigger === 'member_remove' ? data.trigger : '';
+    }
+  }
+  if (data.layout !== undefined) {
+    var bentuk = document.getElementById('postLayout');
+    if (bentuk) bentuk.value = data.layout === 'embed' ? 'embed' : 'container';
+  }
+  if (data.threadName !== undefined) {
+    var thread = document.getElementById('postThreadName');
+    if (thread) thread.value = data.threadName || '';
+  }
+  /*
+   * Izin ping disimpan sebagai daftar pada field parse. Centang harus MENGOSONGKAN
+   * lebih dulu: tanpa itu centang milik pesan sebelumnya tetap menyala dan
+   * pesan ini tiba-tiba mem-ping @everyone.
+   */
+  if (data.allowedMentions !== undefined) {
+    var parse = (data.allowedMentions && data.allowedMentions.parse) || [];
+    var centang = { postMentionUsers: 'users', postMentionRoles: 'roles', postMentionEveryone: 'everyone' };
+    Object.keys(centang).forEach(function (id) {
+      var kotak = document.getElementById(id);
+      if (kotak) kotak.checked = parse.indexOf(centang[id]) !== -1;
+    });
+  }
+  if (data.webhookName !== undefined) {
+    var whNama = document.getElementById('postWebhookName');
+    if (whNama) whNama.value = data.webhookName || '';
+  }
+  if (data.webhookAvatar !== undefined) {
+    var whAvatar = document.getElementById('postWebhookAvatar');
+    if (whAvatar) whAvatar.value = data.webhookAvatar || '';
+  }
+  // Bagian embed: dimuat dari pesan, bukan dibiarkan dari pesan sebelumnya.
+  if (data.embed !== undefined) loadEmbedExtra(data.embed);
+  /*
+   * normalBlock memuat SEMUA field yang dikenal, termasuk spoiler dan nama
+   * berkas — dulu daftarnya ditulis ulang di sini dan dua field itu tertinggal.
+   */
+  if (Array.isArray(data.blocks)) blocks = data.blocks.map(normalBlock);
+}
+
 /** Muat pesan yang mau diubah (dari ?id=). */
 function loadExisting() {
   var existing = ${jsonForScript(
+    /*
+     * Daftar ini dipakai untuk MENGISI editor saat ?id= dibuka. Dulu hanya id,
+     * nama, channel, blok, aksen, dan pengirim yang dikirim — flag, nama
+     * thread, bentuk pesan, nama/avatar webhook, dan embed tidak ikut. Akibatnya
+     * admin membuka pesan, mengubah satu kata, menyimpan, dan pengaturan lain
+     * diam-diam kembali ke bawaan.
+     */
     options.posts.map((p) => ({
       id: p.id,
       name: p.name,
@@ -3144,6 +3254,14 @@ function loadExisting() {
       blocks: p.blocks,
       accent: p.accent,
       sender: p.sender,
+      flags: p.flags ?? null,
+      threadName: p.threadName ?? null,
+      allowedMentions: p.allowedMentions ?? null,
+      layout: p.layout ?? 'container',
+      embed: p.embed ?? [],
+      webhookName: p.webhookName ?? null,
+      webhookAvatar: p.webhookAvatar ?? null,
+      trigger: p.trigger ?? null,
     })),
   )};
   var id = Number(new URLSearchParams(location.search).get('id'));
@@ -3151,46 +3269,11 @@ function loadExisting() {
   var found = existing.find(function (p) { return p.id === id; });
   if (!found) return;
   editingId = found.id;
-  document.getElementById('postName').value = found.name;
-  document.getElementById('postChannel').value = found.channelId || '';
-  if (found.accent) {
-    var warna = document.getElementById('postAccent');
-    if (warna) warna.value = found.accent;
-  }
-  if (found.sender) {
-    var pengirim = document.getElementById('postSender');
-    if (pengirim) pengirim.value = found.sender;
-  }
-  /*
-   * Flag pesan: dicentang dari bitmask yang tersimpan. Nilai lain diabaikan —
-   * hanya dua flag ini yang boleh diatur admin.
-   */
-  var flagEmbeds = document.getElementById('postFlagEmbeds');
-  var flagNotif = document.getElementById('postFlagNotif');
-  if (flagEmbeds) flagEmbeds.checked = Boolean((found.flags || 0) & 4);
-  if (flagNotif) flagNotif.checked = Boolean((found.flags || 0) & 4096);
-  /*
-   * Pemicu event: nilai asing ditampilkan sebagai "hanya manual", bukan
-   * dibiarkan memilih opsi pertama secara diam-diam — admin harus tahu
-   * pesannya tidak lagi punya pemicu.
-   */
-  var bentuk = document.getElementById('postLayout');
-  if (bentuk) bentuk.value = found.layout === 'embed' ? 'embed' : 'container';
-  var whNama = document.getElementById('postWebhookName');
-  if (whNama) whNama.value = found.webhookName || '';
-  var whAvatar = document.getElementById('postWebhookAvatar');
-  if (whAvatar) whAvatar.value = found.webhookAvatar || '';
-  var pemicu = document.getElementById('postTrigger');
-  if (pemicu) pemicu.value = found.trigger === 'member_add' || found.trigger === 'member_remove' ? found.trigger : '';
-  // normalBlock memuat SEMUA field yang dikenal, termasuk spoiler dan nama
-  // berkas — dulu daftarnya ditulis ulang di sini dan dua field itu tertinggal.
-  blocks = found.blocks.map(normalBlock);
+  terapkanPengaturan(found);
   // Sumber muat milik pesan lain tidak boleh terpakai pesan ini.
   MUAT_SUMBER = null;
   var sumberLama = document.getElementById('muatSumber');
   if (sumberLama) sumberLama.textContent = '';
-  // Bagian embed: dimuat dari pesan, bukan dibiarkan dari pesan sebelumnya.
-  loadEmbedExtra(found.embed);
   var send = document.getElementById('postSend');
   if (send) send.textContent = 'Simpan & kirim ulang';
   loadRoleButtonsFor(found.id);
@@ -3494,9 +3577,14 @@ async function kembalikanVersi(revisionId) {
     var hasil = await apiMetode('/api/posts/' + editingId + '/revisions', { revisionId: revisionId }, 'POST');
     var pesan = hasil.post;
     if (pesan) {
-      document.getElementById('postName').value = pesan.name || '';
-      document.getElementById('postChannel').value = pesan.channelId || '';
-      blocks = (pesan.blocks || []).map(normalBlock);
+      /*
+       * Seluruh pengaturan versi itu diterapkan, bukan hanya nama/channel/blok.
+       * Server SUDAH mengembalikan flags, threadName, layout, embed, dan
+       * identitas webhook dari versi tersebut; dulu nilai-nilai itu tidak
+       * dipakai editor sehingga Simpan berikutnya menimpa versi yang baru
+       * dipulihkan dengan nilai basi milik pesan sebelum dikembalikan.
+       */
+      terapkanPengaturan(pesan);
       renderBlocks();
     }
     await muatRiwayat();

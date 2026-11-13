@@ -319,6 +319,31 @@ function mountPage(html: string, label: string): PageContext {
                 dropped: [],
               },
             }
+          : /*
+             * Kembalikan versi: server mengembalikan pesan SETELAH dipulihkan,
+             * lengkap dengan pengaturan tingkat pesan. Tiruan ini sengaja
+             * berbeda dari isi editor supaya tes membuktikan nilainya benar
+             * benar dipakai, bukan sekadar tidak error.
+             */
+            String(path).match(/^\/api\/posts\/\d+\/revisions$/) && body
+          ? {
+              ok: true,
+              post: {
+                id: 1,
+                name: 'Rules',
+                channelId: '123456789012345678',
+                blocks: [{ kind: 'text', value: 'isi versi lama' }],
+                accent: '#ff8800',
+                sender: 'webhook',
+                flags: 4096,
+                threadName: 'Diskusi aturan',
+                allowedMentions: { parse: ['roles'] },
+                layout: 'embed',
+                embed: [{ color: '#ff8800', author: { name: 'Tim' }, footer: { text: 'kaki' }, fields: [] }],
+                webhookName: 'Tim Pengumuman',
+                webhookAvatar: 'https://img.test/tim.png',
+              },
+            }
           : String(path) === '/api/posts/import/discohook'
           ? {
               ok: true,
@@ -642,6 +667,26 @@ const pages: Array<{ name: string; render: () => string }> = [
             updatedAt: Date.now(),
             accent: '#ff8800',
             sender: 'webhook' as const,
+            /*
+             * Pengaturan tingkat pesan yang tersimpan. Dipakai tes "membuka
+             * pesan tidak mereset pengaturan": dulu field-field ini tidak
+             * dikirim ke editor sama sekali.
+             */
+            flags: 4096,
+            threadName: 'Diskusi aturan',
+            allowedMentions: { parse: ['roles'] },
+            layout: 'embed' as const,
+            embed: [
+              {
+                url: 'https://x.test/judul',
+                color: '#ff8800',
+                author: { name: 'Tim', url: '', icon_url: '' },
+                footer: { text: 'kaki', icon_url: '' },
+                fields: [{ name: 'Bidang', value: 'isi', inline: true }],
+              },
+            ],
+            webhookName: 'Tim Pengumuman',
+            webhookAvatar: 'https://img.test/tim.png',
           },
         ],
         channels: [channel],
@@ -2608,6 +2653,96 @@ await check('pesan: diff versi menghitung tambah/hapus/ubah & menampilkan teks l
   `)) as boolean;
   assert.equal(ditutup, true, 'menekan Bandingkan lagi menutup panel');
   assert.equal(page.errors.length, 0, `diff error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: membuka pesan memuat SEMUA pengaturan, bukan sebagian', async () => {
+  /*
+   * Dulu `loadExisting` hanya mengisi nama, channel, blok, aksen, dan pengirim.
+   * Flag, nama thread, izin ping, bentuk pesan, embed, serta nama/avatar
+   * webhook tidak dimuat — jadi membuka pesan lalu menyimpannya diam-diam
+   * mengembalikan pengaturan itu ke bawaan. Tes ini mengunci kelengkapannya.
+   */
+  const html = mounted.find((page) => page.name === '/pesan?isi')?.html ?? '';
+  const page = mountPage(html, 'uji-muat-lengkap');
+
+  const isi = (await page.evaluate(`
+    (function () {
+      location.search = '?id=1';
+      loadExisting();
+      return {
+        nama: document.getElementById('postName').value,
+        channel: document.getElementById('postChannel').value,
+        layout: document.getElementById('postLayout').value,
+        thread: document.getElementById('postThreadName').value,
+        whNama: document.getElementById('postWebhookName').value,
+        whAvatar: document.getElementById('postWebhookAvatar').value,
+        flagNotif: document.getElementById('postFlagNotif').checked,
+        flagEmbeds: document.getElementById('postFlagEmbeds').checked,
+        pingRole: document.getElementById('postMentionRoles').checked,
+        pingEveryone: document.getElementById('postMentionEveryone').checked,
+        accent: document.getElementById('postAccent').value,
+        pengirim: document.getElementById('postSender').value,
+        jumlahBlok: blocks.length,
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(isi.nama, 'Rules');
+  assert.equal(isi.layout, 'embed', 'bentuk pesan embed ikut dimuat');
+  assert.equal(isi.thread, 'Diskusi aturan', 'nama thread ikut dimuat');
+  assert.equal(isi.whNama, 'Tim Pengumuman', 'nama pengirim webhook ikut dimuat');
+  assert.equal(isi.whAvatar, 'https://img.test/tim.png', 'avatar webhook ikut dimuat');
+  assert.equal(isi.flagNotif, true, 'flag tanpa notifikasi ikut dimuat');
+  assert.equal(isi.flagEmbeds, false, 'flag yang tidak diset tidak dicentang');
+  assert.equal(isi.pingRole, true, 'izin ping role ikut dimuat');
+  assert.equal(isi.pingEveryone, false, 'ping @everyone tidak dicentang kalau tidak tersimpan');
+  assert.equal(isi.accent, '#ff8800');
+  assert.equal(isi.pengirim, 'webhook');
+  assert.ok((isi.jumlahBlok as number) > 0, 'blok ikut dimuat');
+  assert.equal(page.errors.length, 0, `muat lengkap error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: mengembalikan versi memakai pengaturan versi itu, bukan sisa editor', async () => {
+  /*
+   * `kembalikanVersi` dulu hanya mengisi nama, channel, dan blok. Server sudah
+   * mengembalikan flags/threadName/layout/embed/identitas webhook dari versi
+   * yang dipulihkan, tetapi editor mengabaikannya — Simpan berikutnya menimpa
+   * versi itu dengan nilai basi. Diuji dengan memastikan nilai basi yang
+   * sengaja dipasang lebih dulu benar-benar diganti.
+   */
+  const html = mounted.find((page) => page.name === '/pesan?isi')?.html ?? '';
+  const page = mountPage(html, 'uji-kembali-lengkap');
+
+  // Endpoint revisi tiruan: kembalikan pengaturan yang jelas berbeda.
+  page.fetches.length = 0;
+  const hasil = (await page.evaluate(`
+    (async function () {
+      editingId = 1;
+      // Nilai basi: seolah editor masih memuat pengaturan pesan sebelumnya.
+      document.getElementById('postName').value = 'Basi';
+      document.getElementById('postThreadName').value = 'Thread basi';
+      document.getElementById('postWebhookName').value = 'Webhook basi';
+      document.getElementById('postFlagNotif').checked = false;
+      document.getElementById('postMentionEveryone').checked = true;
+
+      askConfirm = async function () { return true; };
+      await kembalikanVersi(77);
+      return {
+        nama: document.getElementById('postName').value,
+        thread: document.getElementById('postThreadName').value,
+        whNama: document.getElementById('postWebhookName').value,
+        flagNotif: document.getElementById('postFlagNotif').checked,
+        pingEveryone: document.getElementById('postMentionEveryone').checked,
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(hasil.nama, 'Rules', 'nama dari versi dipakai');
+  assert.equal(hasil.thread, 'Diskusi aturan', 'nama thread dari versi dipakai, bukan nilai basi');
+  assert.equal(hasil.whNama, 'Tim Pengumuman', 'nama pengirim webhook dari versi dipakai');
+  assert.equal(hasil.flagNotif, true, 'flag dari versi dipakai');
+  assert.equal(hasil.pingEveryone, false, 'izin ping dari versi dipakai, bukan centang basi');
+  assert.equal(page.errors.length, 0, `kembalikan lengkap error: ${page.errors.join('|')}`);
 });
 
 await check('pesan: tab riwayat memuat versi & tautan berbagi bisa dibuat', async () => {

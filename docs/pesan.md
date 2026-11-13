@@ -676,6 +676,28 @@ Bedanya bukan kemalasan, tapi konsekuensi:
   diperbaiki sendiri saat channel dibuat ulang — hal yang tidak mungkin
   dilakukan pada URL asing.
 
+### Batch 42: membuka pesan & mengembalikan versi memuat SEMUA pengaturan
+
+Ini bug senyap yang paling mahal dari seluruh audit: **membuka pesan lalu
+menyimpannya mengembalikan sebagian pengaturan ke bawaan.**
+
+Daftar field editor ditulis ulang di beberapa tempat, dan setiap salinan
+kehilangan field yang berbeda:
+
+| Jalur | Dulu dimuat | Akibatnya |
+|---|---|---|
+| Buka pesan (`?id=`) | nama, channel, blok, aksen, pengirim | flag "tanpa notifikasi", **nama thread**, **izin ping**, bentuk embed, isi embed, nama & avatar webhook hilang saat Simpan |
+| Kembalikan versi | nama, channel, blok | field lain dari versi tidak dipakai; Simpan berikutnya menimpa versi yang baru dipulihkan dengan nilai basi |
+
+Sekarang keduanya memakai **satu** fungsi `terapkanPengaturan()`, dan server
+mengirim pengaturan lengkap ke editor. Field yang tidak ada di sumber (versi
+lama) dibiarkan seperti di editor — bukan dikosongkan.
+
+Kenapa berbahaya: tidak ada galat, tidak ada peringatan. Admin mengubah satu
+kata di pesan lama, menekan Simpan, dan pesan yang tadinya mem-ping role
+berhenti mem-ping; pengumuman yang tadinya masuk ke thread rilis berhenti
+membuat thread. Semua terlihat "berhasil".
+
 ### Batch 41: tujuan diperiksa sebelum mengirim
 
 Discohook memeriksa webhook tujuannya lebih dulu (`WebhookModel.fetch`) dan
