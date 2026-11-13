@@ -251,6 +251,7 @@ Dua cara, kotak yang sama:
 |---|---|---|
 | **Tautan share** | `https://discohook.app/?share=abcdefgh` atau ID-nya saja | Discohook bisa diakses dari server bot |
 | **Tautan berisi data** | `https://discohook.app/?data=…` (tombol **Share** di Discohook) atau `?message=…` versi lama | selalu bisa — isinya ada di URL, tidak perlu unduh apa pun |
+| **Berkas ekspor backup** | isi berkas `.json` dari modal **Backups** Discohook (`{ "version": 7, "backups": [ … ] }`) | dipakai **backup pertama**; nama backup-nya disebut supaya jelas mana yang diimpor (lihat **Batch 39**) |
 | **JSON** | salin dari Discohook (tombol berbagi → *Copy JSON*) | Server bot tidak punya akses internet, atau tautan sudah kedaluwarsa |
 
 Yang perlu diketahui:
@@ -652,6 +653,31 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, sampai **4 gambar besar** per embed, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 39: berkas ekspor backup Discohook bisa diimpor
+
+Modal **Backups** di Discohook bisa mengekspor berkas `{ "version": 7,
+"backups": [ { "name", "messages", "targets" } ] }` (`ExportData` di repo itu).
+Impor di sini hanya mengenali QueryData (`{ messages: [...] }` atau pembungkus
+`{ data: { messages } }`), jadi berkas backup ditolak **seluruhnya** dengan
+"tidak punya messages" — padahal isinya sama, hanya dibungkus satu tingkat lagi.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| `{ version, backups: [...] }` | ditolak | diimpor dari **backup pertama** |
+| Nama backup | — | disebut di catatan impor |
+| Pengaturan tingkat pesan per pesan | — | tetap ikut (Batch 33) |
+| `targets[].url` (webhook Discohook) | — | **tidak** dipakai |
+
+Catatan:
+
+- `targets` sengaja diabaikan: itu webhook milik akun Discohook admin. Di sini
+  webhook dibuat sendiri per channel, jadi meneruskan URL asing hanya
+  menambah rahasia yang tersimpan tanpa manfaat.
+- Hanya backup **pertama** yang diimpor, dan jumlah sisanya disebutkan — sama
+  seperti perlakuan terhadap berkas multi-pesan sebelum Batch 35.
+- Berkas dengan `backups` kosong tetap tidak dikenali sebagai Discohook, supaya
+  galatnya tetap jujur ("bukan berkas Discohook") alih-alih "tidak ada pesan".
 
 ### Batch 38: urutkan & duplikat bidang embed
 

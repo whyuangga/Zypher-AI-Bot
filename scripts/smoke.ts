@@ -11445,6 +11445,47 @@ await testAsync('discohook: pesan tanpa container tetap di luar kartu, embed dip
   );
 });
 
+await testAsync('discohook: berkas ekspor backup (version+backups) bisa diimpor', async () => {
+  const { parseDiscohookShare, looksLikeDiscohook } = await import('../src/features/discohook-import.js');
+
+  /*
+   * Bentuk persis `modules/database/backup/types/ExportData.ts` versi 7 di repo
+   * Discohook. Tanpa cabang backup, seluruh berkas ditolak dengan "tidak punya
+   * messages" padahal isinya sama dan hanya dibungkus satu tingkat lagi.
+   */
+  const backup = {
+    version: 7,
+    backups: [
+      {
+        name: 'Pengumuman Rilis',
+        messages: [
+          { data: { content: 'Halo', username: 'Tim Rilis' }, reference: null },
+          { data: { content: 'Kedua' }, reference: null },
+        ],
+        targets: [{ url: 'https://discord.com/api/webhooks/1/rahasia' }],
+      },
+      { name: 'Backup lain', messages: [{ data: { content: 'Tidak dipakai' } }] },
+    ],
+  };
+
+  assert.equal(looksLikeDiscohook(backup), true, 'berkas backup dikenali sebagai Discohook');
+  const hasil = parseDiscohookShare(backup);
+  assert.equal(hasil.messages.length, 2, 'semua pesan backup pertama diimpor');
+  assert.equal(hasil.messages[0]!.settings.webhookName, 'Tim Rilis', 'pengaturan per pesan ikut');
+  assert.ok(
+    hasil.warnings.some((isi) => isi.includes('Pengumuman Rilis')),
+    'nama backup disebut supaya admin tahu mana yang dipakai',
+  );
+  assert.ok(
+    !JSON.stringify(hasil).includes('rahasia'),
+    'URL webhook dari berkas tidak pernah diteruskan',
+  );
+
+  // Pembungkus QueryData & berkas rusak tetap berperilaku seperti sebelumnya.
+  assert.equal(looksLikeDiscohook({ messages: [] }), true);
+  assert.equal(looksLikeDiscohook({ version: 7, backups: [] }), false, 'backups kosong bukan Discohook');
+});
+
 await testAsync('discohook: pengaturan tingkat pesan (pengirim, thread, flag) ikut diimpor', async () => {
   const { parseDiscohookShare } = await import('../src/features/discohook-import.js');
 

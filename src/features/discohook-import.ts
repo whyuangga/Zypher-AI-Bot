@@ -705,6 +705,8 @@ export function looksLikeDiscohook(value: unknown): boolean {
   if (!data) return false;
   // Pembungkus respons API: { data: QueryData, expires }
   if (asObject(data.data)?.messages) return true;
+  // Berkas ekspor backup: { version, backups: [{ messages }] }
+  if (Array.isArray(data.backups) && asObject(data.backups[0])?.messages) return true;
   return Array.isArray(data.messages);
 }
 
@@ -824,6 +826,34 @@ export function parseDiscohookShare(input: unknown): DiscohookImport {
   const root = asObject(input);
   if (!root) {
     return { messages: [], warnings: ['Data Discohook kosong atau bukan objek.'] };
+  }
+
+  /*
+   * Berkas EKSPOR BACKUP dari modal "Backups" Discohook berbentuk
+   * `{ version: 7, backups: [{ name, messages, targets }] }` — bukan QueryData.
+   * Tanpa cabang ini, seluruh berkas ditolak dengan "tidak punya messages",
+   * padahal isinya sama dan hanya dibungkus satu tingkat lagi.
+   */
+  const daftarBackup = asArray(root.backups);
+  const dariBackup = !('messages' in root) && daftarBackup.length > 0 ? asObject(daftarBackup[0]) : null;
+  if (dariBackup) {
+    if (!Array.isArray(dariBackup.messages)) {
+      return { messages: [], warnings: ['Backup Discohook ini tidak punya daftar "messages".'] };
+    }
+    const nama = asString(dariBackup.name).trim();
+    warnings.push(
+      `Berkas ekspor backup Discohook${nama ? ` "${nama}"` : ''} — memakai backup pertama dari ${daftarBackup.length}. ` +
+        'Impor satu backup sekaligus, atau ekspor ulang lewat menu Share bila ingin semuanya dalam satu tautan.',
+    );
+    /*
+     * Bentuk `messages[]` di berkas backup sama dengan QueryData (`{ data }`
+     * atau `{ data, reference }`), jadi cukup dipakai sebagai `query`.
+     * `targets` (URL webhook milik Discohook) sengaja TIDAK dipakai: token itu
+     * milik akun Discohook admin, dan di sini webhook dibuat sendiri per
+     * channel.
+     */
+    const dalam = parseDiscohookShare({ messages: dariBackup.messages });
+    return { messages: dalam.messages, warnings: [...warnings, ...dalam.warnings] };
   }
 
   const query = asObject(root.data)?.messages !== undefined ? asObject(root.data)! : root;
