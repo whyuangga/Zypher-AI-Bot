@@ -639,7 +639,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | JSON Data Editor **per pesan** | ✅ kartu **JSON Data Editor (satu pesan)** di tab Impor: tempel objek pesan Discord, payload REST, atau data Discohook |
 | `targets[]` (satu pesan, beberapa channel) | ✅ **Kirim juga ke channel lain** di kartu pengaturan: sampai 5 channel tambahan, tiap channel punya ID pesan sendiri |
 | Riwayat/undo revisi (padanan backup) | ✅ 20 versi terakhir per pesan, dibuat otomatis setiap pesan diubah; kartu "Riwayat & bagikan" (tab **Riwayat**) |
-| Share link (tautan berbagi) | ✅ tautan `/bagi/<token>` bisa dibuka tanpa login, berisi blok **dan** embed pesan (bentuk pesan ikut), bisa dicabut |
+| Share link (tautan berbagi) | ✅ tautan `/bagi/<token>` bisa dibuka tanpa login, berisi blok **dan** embed pesan (bentuk pesan & seluruh gambar galeri ikut), bisa dicabut |
 | Impor backup | ✅ JSON/URL Discohook di tab **Impor**; ekspor JSON juga ada, memakai nama field Discohook (`username`, `avatar_url`, `thread_name`, `flags`, `allowed_mentions`) supaya berkasnya bisa dibaca bolak-balik oleh alat lain |
 | **Load** pesan Discord yang sudah terkirim | ✅ kartu **Muat pesan Discord** di tab **Impor**: tempel Message Link, pesan dibuka di editor (bot butuh *Read Message History*); galeri gambar yang di Discord tampil sebagai beberapa embed dibaca kembali sebagai **satu galeri** (lihat **Batch 24**) |
 | Jadwal kirim (sekali / berulang / cron) | ✅ sekali, tiap N jam (min. 2 jam), dan **cron kalender** lima ruas (tiap hari, tiap Senin, tiap tanggal 1, …) memakai zona waktu server. Pola lebih rapat dari 2 jam ditolak dengan alasan |
@@ -682,6 +682,9 @@ Catatan:
 - **Load** membalik arah yang sama: beberapa embed bergambar tanpa isi dibaca
   sebagai satu galeri, jadi pesan yang dimuat lalu disunting lagi tidak memaksa
   admin menempel ulang semua URL.
+- Halaman **`/bagi/<token>`** memakai urutan gambar yang sama (galeri menang atas
+  gambar blok) dan menampilkan gambar ke-2 dst. sebagai kartu sendiri — pratinjau
+  publik tidak boleh menghilangkan gambar yang akan terkirim.
 
 ### Batch 23: ekspor JSON membawa pengaturan tingkat pesan
 

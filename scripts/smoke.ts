@@ -8474,6 +8474,8 @@ await testAsync('berbagi: halaman publik menampilkan embed & bagian admin', asyn
         author: { name: 'Tim Zypher' },
         footer: { text: 'kaki' },
         fields: [{ name: 'Harga', value: 'Rp10.000', inline: true }],
+        /* Galeri: gambar pertama menggantikan gambar dari blok. */
+        images: ['https://img.test/galeri-1.png', 'https://img.test/galeri-2.png'],
       },
       { fields: [{ name: 'Catatan', value: 'kedua', inline: false }] },
     ],
@@ -8495,7 +8497,12 @@ await testAsync('berbagi: halaman publik menampilkan embed & bagian admin', asyn
   assert.ok(halaman.includes('Rp10.000'), 'bidang tampil');
   assert.ok(halaman.includes('kaki'), 'footer tampil');
   assert.ok(halaman.includes('Isi dari blok'), 'isi blok tampil');
-  assert.ok(halaman.includes('img.test/a.png'), 'gambar tampil');
+  assert.ok(halaman.includes('img.test/galeri-1.png'), 'gambar galeri pertama tampil');
+  assert.ok(halaman.includes('img.test/galeri-2.png'), 'gambar galeri kedua ikut tampil sebagai kartu sendiri');
+  assert.ok(
+    !halaman.includes('img.test/a.png'),
+    'gambar dari blok tidak dipakai saat galeri embed terisi (urutan sama dengan server)',
+  );
 
   /*
    * Halaman ini terbuka tanpa login: isi dari admin TIDAK boleh jadi HTML.

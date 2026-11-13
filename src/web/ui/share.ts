@@ -145,7 +145,13 @@ function renderEmbed(name: string, embed: EmbedExtra[], blocks: PostBlock[]): st
     .map((blok) => String(blok.value ?? '').trim())
     .filter(Boolean)
     .join('<br>');
-  const gambar = blocks.find((blok) => blok.kind === 'image')?.value;
+  /*
+   * Gambar utama: galeri embed menang atas blok, sama seperti saat dikirim
+   * (terapkanExtra menimpa gambar dari blok). Halaman berbagi yang memakai
+   * urutan lain menampilkan gambar yang tidak akan muncul di Discord.
+   */
+  const galeriUtama = Array.isArray(utama?.images) ? utama.images : [];
+  const gambar = galeriUtama[0] || utama?.image || blocks.find((blok) => blok.kind === 'image')?.value;
 
   const kartu: string[] = [];
   if (utama?.author?.name) {
@@ -175,6 +181,24 @@ function renderEmbed(name: string, embed: EmbedExtra[], blocks: PostBlock[]): st
   }
 
   const warna = /^#[0-9a-fA-F]{6}$/.test(String(utama?.color ?? '')) ? String(utama?.color).toLowerCase() : 'none';
+  /*
+   * Gambar ke-2 dst.: saat dikirim, Discord menerimanya sebagai embed
+   * pelengkap — jadi di sini pun tampil sebagai kartu gambar sendiri, bukan
+   * menghilang dari pratinjau.
+   */
+  const pelengkapEmbed = embed.reduce<string[]>((semua, satu, nomor) => {
+    const galeri = Array.isArray(satu.images) ? satu.images : [];
+    galeri.forEach((url, urutan) => {
+      if (nomor === 0 && urutan === 0) return; // sudah jadi gambar utama
+      const aman = urlAman(url);
+      if (aman) semua.push(aman);
+    });
+    return semua;
+  }, []);
+  const pelengkap = pelengkapEmbed
+    .map((url) => `<div class="kartu" data-aksen="none"><img class="gambar" src="${esc(url)}" alt=""></div>`)
+    .join('');
+
   const tambahan = embed
     .slice(1)
     .map((satu) => {
@@ -193,11 +217,13 @@ function renderEmbed(name: string, embed: EmbedExtra[], blocks: PostBlock[]): st
     })
     .join('');
 
-  if (kartu.length === 0 && !tambahan) {
+  if (kartu.length === 0 && !tambahan && !pelengkap) {
     return '<div class="kartu kosong"><p>Pesan ini tidak punya isi yang bisa ditampilkan.</p></div>';
   }
   return (
-    (kartu.length ? `<div class="kartu" data-aksen="${esc(warna)}">${kartu.join('')}</div>` : '') + tambahan
+    (kartu.length ? `<div class="kartu" data-aksen="${esc(warna)}">${kartu.join('')}</div>` : '') +
+    pelengkap +
+    tambahan
   );
 }
 
