@@ -87,6 +87,7 @@ import {
   sendOrUpdateEmbedPost,
   sendToTargets,
   sendOrUpdatePostViaWebhook,
+  identitasPost,
   webhookIdentityFor,
 } from '../features/custom-post-send.js';
 import {
@@ -3319,15 +3320,7 @@ function ambilSumberMuat(input: unknown): { channelId: string | null; messageId:
  * server, sehingga pesan lama yang tidak punya isian ini tampil sama seperti
  * sebelumnya.
  */
-function identitasWebhook(
-  post: { webhookName: string | null; webhookAvatar: string | null },
-  bawaan: { username: string; avatarURL?: string | null },
-): { username: string; avatarURL?: string | null } {
-  return {
-    username: post.webhookName ?? bawaan.username,
-    avatarURL: post.webhookAvatar ?? bawaan.avatarURL ?? null,
-  };
-}
+const identitasWebhook = identitasPost;
 
 /**
  * Ambil objek pesan dari beberapa bentuk JSON yang lazim ditempel.

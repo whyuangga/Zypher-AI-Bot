@@ -43,6 +43,7 @@ import {
 import {
   sendOrUpdatePost,
   sendOrUpdatePostViaWebhook,
+  identitasPost,
   webhookIdentityFor,
 } from './custom-post-send.js';
 import { listRoleButtons, listRoleMenus } from '../db/repo.js';
@@ -628,7 +629,7 @@ async function jalankanLangkah(
           messageId: null,
           blocks: tujuan.blocks,
           accent: tujuan.accent ?? undefined,
-          identity: await webhookIdentityFor(runtime.client, runtime.guildId),
+          identity: identitasPost(tujuan, await webhookIdentityFor(runtime.client, runtime.guildId)),
           postId: tujuan.id,
           flags: tujuan.flags || undefined,
           template: runtime.variables,

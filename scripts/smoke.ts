@@ -8534,6 +8534,38 @@ await testAsync('berbagi: halaman publik menampilkan embed & bagian admin', asyn
   await repo.deleteCustomPost(GUILD, pesan.id);
 });
 
+await testAsync('webhook: identitas per pesan dipakai SEMUA jalur kirim', async () => {
+  const { identitasPost } = await import('../src/features/custom-post-send.js');
+  const server = { username: 'Server', avatarURL: 'https://img.test/server.png' };
+
+  /*
+   * Dulu hanya tombol "Kirim ke Discord" yang memakai nama/avatar per pesan.
+   * Pesan terjadwal & pesan pemicu member tetap tampil atas nama server, jadi
+   * pengaturan yang terlihat di dashboard tidak berlaku di jalur otomatis —
+   * bedanya baru terlihat saat pesannya benar-benar muncul.
+   */
+  assert.deepEqual(
+    identitasPost({ webhookName: 'Tim Pengumuman', webhookAvatar: 'https://img.test/tim.png' }, server),
+    { username: 'Tim Pengumuman', avatarURL: 'https://img.test/tim.png' },
+    'nama & avatar per pesan menang',
+  );
+  assert.deepEqual(
+    identitasPost({ webhookName: null, webhookAvatar: null }, server),
+    { username: 'Server', avatarURL: 'https://img.test/server.png' },
+    'kosong = identitas server',
+  );
+  assert.deepEqual(
+    identitasPost({ webhookName: 'Tim', webhookAvatar: null }, server),
+    { username: 'Tim', avatarURL: 'https://img.test/server.png' },
+    'yang kosong diisi identitas server, bukan dikosongkan',
+  );
+  assert.deepEqual(
+    identitasPost({}, { username: 'Server', avatarURL: null }),
+    { username: 'Server', avatarURL: null },
+    'post tanpa kolom identitas tetap aman (server tanpa ikon)',
+  );
+});
+
 await testAsync('webhook: nama & avatar pengirim per pesan disaring & disimpan', async () => {
   const repo = await import('../src/db/repo.js');
   const GUILD = '123456789012345678';

@@ -800,6 +800,25 @@ export interface WebhookIdentity {
 }
 
 /**
+ * Identitas webhook untuk SATU pesan: isian per pesan menang, sisanya identitas
+ * server.
+ *
+ * Dipakai semua jalur kirim webhook — kirim manual, jadwal, pemicu member, dan
+ * aksi flow. Dulu hanya jalur manual yang memakainya; jalur lain selalu memakai
+ * nama server, jadi pesan terjadwal yang disetel "Tim Pengumuman" muncul atas
+ * nama server tanpa penjelasan apa pun.
+ */
+export function identitasPost(
+  post: { webhookName?: string | null; webhookAvatar?: string | null },
+  bawaan: WebhookIdentity,
+): WebhookIdentity {
+  return {
+    username: post.webhookName ?? bawaan.username,
+    avatarURL: post.webhookAvatar ?? bawaan.avatarURL ?? null,
+  };
+}
+
+/**
  * Ambil webhook untuk channel, atau buat baru kalau belum ada.
  *
  * Kenapa webhook, bukan bot biasa: hanya webhook yang bisa membuat pesan

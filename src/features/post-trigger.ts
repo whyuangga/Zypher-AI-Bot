@@ -22,6 +22,7 @@ import {
   sendOrUpdateEmbedPost,
   sendOrUpdatePost,
   sendOrUpdatePostViaWebhook,
+  identitasPost,
   webhookIdentityFor,
 } from './custom-post-send.js';
 import { setCustomPostMessage } from '../db/repo.js';
@@ -116,7 +117,7 @@ export async function runTriggers(options: {
         await sendOrUpdatePostViaWebhook({
           client,
           guildId,
-          identity: await webhookIdentityFor(client, guildId),
+          identity: identitasPost(post, await webhookIdentityFor(client, guildId)),
           channelId: post.channelId,
           messageId: post.messageId,
           blocks: post.blocks,

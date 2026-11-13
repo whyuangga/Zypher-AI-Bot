@@ -646,10 +646,33 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Trigger event (member masuk/keluar) | ✅ pilihan **Kirim otomatis saat**: `member_add` / `member_remove`; pesan yang sama diperbarui tiap kejadian, bukan dikirim ulang |
 | Generator kode (payload → kode bot) | ✅ tab **Impor** → panel "JSON payload & generator kode": keluaran `discord.js` v14 & `discord.py` v2, diterjemahkan dari payload yang benar-benar dikirim |
 | Melihat payload JSON mentah | ✅ panel yang sama menampilkan `components` persis seperti yang diterima Discord, siap ditempel ke REST API |
-| Nama & avatar pengirim webhook | ✅ isian **Nama & avatar pengirim** di kartu pengaturan (bawaan: identitas server) |
+| Nama & avatar pengirim webhook | ✅ isian **Nama & avatar pengirim** di kartu pengaturan (bawaan: identitas server); berlaku di **semua jalur kirim** — manual, jadwal, pemicu member, dan aksi flow |
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, satu gambar besar, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 26: identitas webhook berlaku di semua jalur kirim
+
+Isian nama & avatar pengirim webhook hanya dipakai tombol **Kirim ke Discord**.
+Pesan yang sama, kalau dikirim lewat **jadwal**, **pemicu member masuk/keluar**,
+atau **aksi flow**, tampil atas nama server — pengaturan yang terlihat di
+dashboard tidak berlaku, dan bedanya baru terlihat saat pesannya muncul.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Kirim manual | identitas per pesan | identitas per pesan |
+| Kirim terjadwal | selalu identitas server | identitas per pesan |
+| Pemicu member masuk/keluar | selalu identitas server | identitas per pesan |
+| Aksi flow "kirim lewat webhook" | selalu identitas server | identitas per pesan |
+| Penyaringan | di `server.ts` | satu fungsi `identitasPost`, dipakai semua jalur |
+
+Catatan:
+
+- Logika "isian kosong = identitas server" hidup di **satu** fungsi sekarang.
+  Sebelumnya tiap jalur menuliskan sendiri, dan yang lupa menuliskan ulang
+  adalah jalur otomatis.
+- Yang kosong diisi identitas server **per field**: mengisi nama saja tidak
+  menghapus avatar server.
 
 ### Batch 24: beberapa gambar besar per embed (galeri)
 

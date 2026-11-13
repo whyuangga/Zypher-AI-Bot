@@ -25,7 +25,12 @@ import {
   markScheduleSent,
   type PostSchedule,
 } from '../db/repo.js';
-import { sendOrUpdatePost, sendOrUpdatePostViaWebhook, webhookIdentityFor } from './custom-post-send.js';
+import {
+  identitasPost,
+  sendOrUpdatePost,
+  sendOrUpdatePostViaWebhook,
+  webhookIdentityFor,
+} from './custom-post-send.js';
 import { errorMessage, logger } from '../lib/logger.js';
 
 /** Kirim satu pesan sesuai jadwal. Mengembalikan `true` kalau terkirim. */
@@ -61,7 +66,7 @@ export async function sendScheduledPost(client: Client, schedule: PostSchedule, 
         messageId: null,
         blocks: post.blocks,
         accent: post.accent ?? undefined,
-        identity: await webhookIdentityFor(client, guildId),
+        identity: identitasPost(post, await webhookIdentityFor(client, guildId)),
         postId: post.id,
       });
     } else {
