@@ -543,6 +543,12 @@ export function discohookComponentsToBlocks(components: unknown[]): { blocks: Po
 function embedKeExtra(raw: Raw): Record<string, unknown> {
   const hasil: Record<string, unknown> = {};
   if (asString(raw.url).trim()) hasil.url = asString(raw.url).trim();
+  /*
+   * Warna embed ikut dipertahankan: Discohook memakai warna per embed, dan
+   * menghapusnya berarti semua embed impor tampil dengan warna aksen pesan.
+   */
+  const warna = discohookColorToHex(raw.color);
+  if (warna) hasil.color = warna;
   if (asString(raw.timestamp).trim()) hasil.timestamp = asString(raw.timestamp).trim();
 
   const author = asObject(raw.author);

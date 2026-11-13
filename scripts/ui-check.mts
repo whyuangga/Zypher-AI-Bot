@@ -1987,6 +1987,85 @@ await check('pesan: sampai 10 embed bisa disusun & diedit satu per satu', async 
   assert.equal(page.errors.length, 0, `editor multi-embed error: ${page.errors.join('|')}`);
 });
 
+await check('pesan: embed bisa dipindah/diduplikat & punya warna sendiri', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-embed-urut');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      try {
+      resetEmbedExtra();
+      tambahEmbed();
+      tambahEmbed();
+      pilihEmbed(0);
+      embedAktif().footer = { text: 'pertama' };
+      embedAktif().color = '#ff0000';
+      pilihEmbed(1);
+      embedAktif().fields = [{ name: 'B', value: '2', inline: false }];
+      pilihEmbed(2);
+      embedAktif().author = { name: 'ketiga' };
+
+      /* Naikkan embed ketiga ke posisi pertama. */
+      pindahEmbed(2, -1);
+
+      pindahEmbed(1, -1);
+      var urutan = EMBED_LIST.map(function (e) {
+        if (e.footer && e.footer.text) return 'footer:' + e.footer.text;
+        if (e.author && e.author.name) return 'author:' + e.author.name;
+        return 'fields:' + (e.fields || []).length;
+      });
+
+      /*
+       * Duplikat harus SALINAN DALAM: mengubah bidang di salinan tidak boleh
+       * mengubah aslinya.
+       */
+      pilihEmbed(2);
+      duplikatEmbed(2);
+      var jumlahSetelahDuplikat = EMBED_LIST.length;
+      var isiDuplikat = EMBED_LIST[3] ? JSON.stringify(EMBED_LIST[3]) : 'HILANG';
+      var aktifIndex = EMBED_AKTIF;
+      embedAktif().fields[0].name = 'DIUBAH';
+      var asli = EMBED_LIST[2] ? EMBED_LIST[2].fields[0].name : 'HILANG';
+      var salinanNama = EMBED_LIST[3] ? EMBED_LIST[3].fields[0].name : 'HILANG';
+
+      hapusEmbed(0);
+      var warnaPayload = null;
+      var daftarPayload = payloadEmbed();
+      warnaPayload = daftarPayload && daftarPayload.length ? daftarPayload[0].color : null;
+      return {
+        urutan: urutan,
+        jumlahSetelahDuplikat: jumlahSetelahDuplikat,
+        isiDuplikat: isiDuplikat,
+        aktifIndex: aktifIndex,
+        asli: asli,
+        salinan: salinanNama,
+        jumlah: EMBED_LIST.length,
+        warna: warnaPayload,
+      };
+      } catch (e) { return { galat: String(e && e.message) }; }
+    })()
+  `)) as {
+    urutan: string[];
+    jumlahSetelahDuplikat: number;
+    isiDuplikat: string;
+    aktifIndex: number;
+    asli: string;
+    salinan: string;
+    jumlah: number;
+    warna?: string;
+    galat?: string;
+  };
+
+  assert.equal(hasil.galat, undefined, 'skrip editor embed gagal: ' + hasil.galat);
+  assert.equal(hasil.urutan.join('|'), 'author:ketiga|footer:pertama|fields:1', 'urutan embed bisa diubah');
+  assert.equal(hasil.jumlahSetelahDuplikat, 4, 'duplikat menambah satu embed');
+  assert.equal(hasil.aktifIndex, 3, 'embed hasil duplikat langsung dipilih');
+  assert.equal(hasil.asli, 'B', 'salinan tidak mengubah embed aslinya');
+  assert.equal(hasil.salinan, 'DIUBAH', 'salinan bisa disunting sendiri');
+  assert.equal(hasil.jumlah, 3, 'hapus embed mengurangi daftar');
+  assert.equal(page.errors.length, 0, `editor urutan embed error: ${page.errors.join('|')}`);
+});
+
 await check('pesan: izin ping & nama thread ikut dikirim, bawaan tanpa ping', async () => {
   const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
   const page = mountPage(html, 'uji-mention');

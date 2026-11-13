@@ -63,6 +63,13 @@ export interface EmbedBuildResult {
 export interface EmbedExtra {
   /** URL yang dibuka saat judul diklik (embed `url`). */
   url?: string;
+  /**
+   * Warna garis kiri embed ini saja (`#rrggbb`).
+   *
+   * Discohook mengizinkan tiap embed punya warnanya sendiri; tanpa ini semua
+   * embed dalam satu pesan terpaksa berwarna sama dengan aksen pesan.
+   */
+  color?: string;
   author?: { name: string; url?: string; icon_url?: string };
   footer?: { text: string; icon_url?: string };
   fields?: EmbedField[];
@@ -72,6 +79,7 @@ export interface EmbedExtra {
 
 const BATAS_EXTRA = {
   url: 2048,
+  color: 7,
   iconUrl: 2048,
   authorName: 256,
   footer: 2048,
@@ -111,6 +119,13 @@ export function sanitizeEmbedExtra(input: unknown): { extra: EmbedExtra; dropped
   const url = urlSah(source.url);
   if (url) extra.url = url;
   else if (teksAtauKosong(source.url, 2048)) dropped.push('URL judul harus alamat http/https');
+
+  /* --- warna embed sendiri (opsional; bawaan = aksen pesan) --- */
+  const warnaExtra = teksAtauKosong(source.color, BATAS_EXTRA.color).replace(/^#/, '');
+  if (warnaExtra) {
+    if (/^[0-9a-fA-F]{6}$/.test(warnaExtra)) extra.color = `#${warnaExtra.toLowerCase()}`;
+    else dropped.push('warna embed harus #rrggbb');
+  }
 
   /* --- penulis --- */
   if (source.author && typeof source.author === 'object' && !Array.isArray(source.author)) {
@@ -185,7 +200,8 @@ export function embedExtraKosong(extra: EmbedExtra | null | undefined): boolean 
     !extra.author?.name &&
     !extra.footer?.text &&
     !(extra.fields?.length ?? 0) &&
-    !extra.timestamp
+    !extra.timestamp &&
+    !extra.color
   );
 }
 
@@ -455,6 +471,12 @@ function terapkanExtra(
 
   if (extra.url) embed.url = extra.url;
   if (extra.timestamp) embed.timestamp = extra.timestamp;
+  /*
+   * Warna per embed menang atas aksen pesan: admin yang mengisi warna untuk
+   * satu embed berarti memang ingin embed itu beda.
+   */
+  const warna = warnaDari(extra.color);
+  if (warna !== null) embed.color = warna;
   if (extra.author?.name) {
     embed.author = {
       name: isiTemplate(extra.author.name),

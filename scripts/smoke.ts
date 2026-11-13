@@ -8075,6 +8075,40 @@ await testAsync('pesan: sampai 10 embed per pesan, masing-masing dengan bagian s
   );
   assert.equal(panjangEmbed({ title: 'ab', description: 'cde' }), 5, 'panjang dihitung seperti Discord');
 
+  /* --- warna per embed (Discohook memakai warna sendiri tiap embed) --- */
+  const warna = sanitizeEmbedList({
+    fields: [{ name: 'A', value: '1', inline: false }],
+    color: '#FF0000',
+  });
+  assert.equal(warna.list[0]!.color, '#ff0000', 'warna embed dinormalkan ke huruf kecil');
+  const warnaSalah = sanitizeEmbedList({ color: 'merah', fields: [{ name: 'A', value: '1', inline: false }] });
+  assert.equal(warnaSalah.list[0]!.color, undefined, 'warna bukan #rrggbb dibuang');
+  assert.ok(warnaSalah.dropped.some((a) => a.includes('#rrggbb')), 'alasannya dijelaskan');
+  /*
+   * Warna saja TETAP disimpan: pada embed pertama warnanya masuk akal karena
+   * isinya datang dari blok. Baru di builder warnanya tidak cukup untuk embed
+   * tambahan (Discord butuh judul/isi/gambar/bidang).
+   */
+  assert.equal(sanitizeEmbedList({ color: '#00ff00' }).list.length, 1, 'warna saja tetap disimpan');
+  const warnaSajaTambahan = buildClassicEmbeds([{ kind: 'text', value: 'Isi' }], {
+    embedList: [{ footer: { text: 'satu' } }, { color: '#00ff00' }],
+  });
+  assert.equal(warnaSajaTambahan.length, 1, 'embed tambahan berisi warna saja tidak dikirim');
+  assert.ok(
+    warnaSajaTambahan[0]!.dropped.some((a) => a.includes('embed 2 dilewati')),
+    'embed yang dilewati dilaporkan',
+  );
+
+  const warnaBerbeda = buildClassicEmbeds([{ kind: 'text', value: 'Isi' }], {
+    accent: '#5865f2',
+    embedList: [
+      { footer: { text: 'satu' } },
+      { color: '#ff0000', fields: [{ name: 'A', value: '1', inline: false }] },
+    ],
+  });
+  assert.equal(warnaBerbeda[0]!.embed.color, 0x5865f2, 'embed pertama memakai aksen pesan');
+  assert.equal(warnaBerbeda[1]!.embed.color, 0xff0000, 'embed kedua memakai warnanya sendiri');
+
   /* --- template tetap berlaku di setiap embed --- */
   const templat = buildClassicEmbeds([], {
     embedList: [

@@ -450,6 +450,11 @@ export function pesanPage(options: PesanPageOptions): string {
     <div id="embedPilihList" class="block-list" style="margin-bottom:12px"></div>
     <div id="embedEditor" style="display:grid;gap:8px">
       <input type="text" id="embedUrl" placeholder="URL saat judul diklik (opsional, http/https)" />
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="color" id="embedColor" value="#6d8cff" style="width:48px;height:38px;padding:2px;border-radius:8px;border:1px solid var(--line);background:var(--panel)" />
+        <span class="hint" id="embedColorText" style="margin:0">warna embed ini (kosong = ikut aksen pesan)</span>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="resetEmbedColor()">Ikut aksen pesan</button>
+      </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <input type="text" id="embedAuthorName" placeholder="Nama penulis (mis. {server.name})" style="flex:1;min-width:160px" />
         <input type="text" id="embedAuthorIcon" placeholder="URL ikon penulis" style="flex:1;min-width:160px" />
@@ -3175,7 +3180,7 @@ var EMBED_FIELDS_MAKS = 25;
 
 /** Satu bagian embed kosong. */
 function embarKosong() {
-  return { url: '', author: {}, footer: {}, fields: [], timestamp: '' };
+  return { url: '', color: '', author: {}, footer: {}, fields: [], timestamp: '' };
 }
 
 /** Bagian embed yang sedang diedit (selalu ada, walau daftarnya kosong). */
@@ -3198,6 +3203,7 @@ function embedTerisi(extra) {
   if (!extra) return false;
   return Boolean(
     extra.url ||
+      extra.color ||
       (extra.author && extra.author.name) ||
       (extra.footer && extra.footer.text) ||
       (extra.fields && extra.fields.length) ||
@@ -3212,6 +3218,41 @@ function tambahEmbed() {
   }
   EMBED_LIST.push(embarKosong());
   EMBED_AKTIF = EMBED_LIST.length - 1;
+  renderEmbedExtra();
+  renderPreview();
+}
+
+/**
+ * Geser satu embed ke atas/bawah.
+ *
+ * Discohook memberi tombol Move up/Move down per embed. Urutan menentukan mana
+ * yang tampil lebih dulu di Discord, jadi tanpa ini admin harus menyusun ulang
+ * dengan menyalin isinya.
+ */
+function pindahEmbed(nomor, arah) {
+  var tujuan = nomor + arah;
+  if (tujuan < 0 || tujuan >= EMBED_LIST.length) return;
+  var dipindah = EMBED_LIST.splice(nomor, 1)[0];
+  EMBED_LIST.splice(tujuan, 0, dipindah);
+  EMBED_AKTIF = tujuan;
+  renderEmbedExtra();
+  renderPreview();
+}
+
+/**
+ * Duplikat satu embed.
+ *
+ * Disalin dalam (bukan berbagi objek): tanpa itu, mengubah bidang di salinan
+ * ikut mengubah aslinya — kesalahan yang sulit terlihat karena tampilannya
+ * benar sampai salah satu disunting.
+ */
+function duplikatEmbed(nomor) {
+  if (EMBED_LIST.length >= EMBED_MAKS) {
+    return toast('Maksimal ' + EMBED_MAKS + ' embed per pesan', true);
+  }
+  var sumber = JSON.parse(JSON.stringify(EMBED_LIST[nomor] || embarKosong()));
+  EMBED_LIST.splice(nomor + 1, 0, sumber);
+  EMBED_AKTIF = nomor + 1;
   renderEmbedExtra();
   renderPreview();
 }
@@ -3253,6 +3294,7 @@ function loadEmbedExtra(data) {
     var sumber = satu && typeof satu === 'object' ? satu : {};
     return {
       url: String(sumber.url || ''),
+      color: String(sumber.color || ''),
       author: {
         name: String((sumber.author || {}).name || ''),
         url: String((sumber.author || {}).url || ''),
@@ -3344,6 +3386,27 @@ function renderEmbedExtra() {
     get: function () { return bacaEmbed('footer.icon_url'); },
     set: function (v) { targetEmbed('footer.icon_url', v.trim()); },
   }, 'URL ikon footer');
+  /*
+   * Warna per embed: input color selalu punya nilai, jadi "ikut aksen pesan"
+   * diwakili oleh string kosong di data, bukan oleh nilai bawaan input.
+   */
+  var warnaEl = document.getElementById('embedColor');
+  var warnaTeks = document.getElementById('embedColorText');
+  if (warnaEl) {
+    var aktif = embedAktif();
+    warnaEl.value = /^#[0-9a-fA-F]{6}$/.test(aktif.color || '') ? aktif.color : accentNow();
+    warnaEl.oninput = function () {
+      embedAktif().color = warnaEl.value;
+      if (warnaTeks) warnaTeks.textContent = warnaEl.value;
+      renderPreview();
+    };
+    if (warnaTeks) {
+      warnaTeks.textContent = aktif.color
+        ? warnaEl.value
+        : 'ikut aksen pesan (' + accentNow() + ')';
+    }
+  }
+
   isianEmbed('embedTimestamp', {
     get: function () { return bacaEmbed('timestamp'); },
     set: function (v) { embedAktif().timestamp = v.trim(); },
@@ -3371,6 +3434,36 @@ function renderEmbedExtra() {
       tombol.onclick = function () { pilihEmbed(nomor); };
       head.appendChild(tombol);
 
+      var alat = document.createElement('span');
+      alat.style.display = 'flex';
+      alat.style.gap = '4px';
+
+      var naik = document.createElement('button');
+      naik.className = 'btn btn-ghost btn-sm btn-icon';
+      naik.type = 'button';
+      naik.title = 'Naikkan';
+      naik.textContent = '↑';
+      naik.disabled = nomor === 0;
+      naik.onclick = function () { pindahEmbed(nomor, -1); };
+      alat.appendChild(naik);
+
+      var turun = document.createElement('button');
+      turun.className = 'btn btn-ghost btn-sm btn-icon';
+      turun.type = 'button';
+      turun.title = 'Turunkan';
+      turun.textContent = '↓';
+      turun.disabled = nomor === EMBED_LIST.length - 1;
+      turun.onclick = function () { pindahEmbed(nomor, 1); };
+      alat.appendChild(turun);
+
+      var salin = document.createElement('button');
+      salin.className = 'btn btn-ghost btn-sm btn-icon';
+      salin.type = 'button';
+      salin.title = 'Duplikat';
+      salin.textContent = '⧉';
+      salin.onclick = function () { duplikatEmbed(nomor); };
+      alat.appendChild(salin);
+
       var hapus = document.createElement('button');
       hapus.className = 'btn-danger btn-sm btn-icon';
       hapus.type = 'button';
@@ -3378,7 +3471,9 @@ function renderEmbedExtra() {
       hapus.textContent = 'x';
       hapus.disabled = EMBED_LIST.length <= 1;
       hapus.onclick = function () { hapusEmbed(nomor); };
-      head.appendChild(hapus);
+      alat.appendChild(hapus);
+
+      head.appendChild(alat);
       baris.appendChild(head);
       pilihHost.appendChild(baris);
     });
@@ -3481,6 +3576,7 @@ function payloadEmbed() {
     if (!embedTerisi(extra)) return;
     var satu = {};
     if (extra.url) satu.url = extra.url;
+    if (extra.color) satu.color = extra.color;
     if (extra.timestamp) satu.timestamp = extra.timestamp;
     if (extra.author && extra.author.name) {
       satu.author = { name: extra.author.name };
@@ -3502,6 +3598,14 @@ function payloadEmbed() {
     if (Object.keys(satu).length) hasil.push(satu);
   });
   return hasil.length ? hasil : null;
+}
+
+/** Kembalikan warna embed yang sedang diedit ke warna aksen pesan. */
+function resetEmbedColor() {
+  var aktif = embedAktif();
+  aktif.color = '';
+  renderEmbedExtra();
+  renderPreview();
 }
 
 function resetAccent() {
@@ -3701,7 +3805,14 @@ function gambarPratinjauEmbed(host, hostId) {
 function gambarSatuEmbed(host, dasar, extra, pakaiDasar) {
   var kotak = document.createElement('div');
   kotak.className = 'preview-embed';
-  kotak.style.borderLeftColor = dasar.color === null || dasar.color === undefined ? accentNow() : '#' + aksenHex(dasar.color);
+  /*
+   * Urutan warna: warna embed itu sendiri, lalu aksen pesan. Sama dengan
+   * server (terapkanExtra menimpa warna dari blok).
+   */
+  var warnaSendiri = extra && /^#[0-9a-fA-F]{6}$/.test(extra.color || '') ? extra.color : null;
+  kotak.style.borderLeftColor =
+    warnaSendiri ||
+    (dasar.color === null || dasar.color === undefined ? accentNow() : '#' + aksenHex(dasar.color));
 
   if (extra && extra.author && extra.author.name) {
     var penulis = document.createElement('div');

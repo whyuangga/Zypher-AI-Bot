@@ -625,7 +625,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Discohook | Di sini |
 |---|---|
 | Container / Text Display / Section / Separator / Media Gallery / File / Action Row | ✅ |
-| Embed klasik (judul, penulis, footer, field, thumbnail, gambar) | ✅ judul, warna, isi, satu gambar, thumbnail, **penulis, footer, bidang (maks 25), URL judul, stempel waktu**, dan **sampai 10 embed per pesan** (lihat **Batch 9**, **13**, **14**) |
+| Embed klasik (judul, penulis, footer, field, thumbnail, gambar) | ✅ judul, warna (**per embed**), isi, satu gambar, thumbnail, **penulis, footer, bidang (maks 25), URL judul, stempel waktu**, dan **sampai 10 embed per pesan** dengan naik/turun/duplikat (lihat **Batch 9**, **13**, **14**, **15**) |
 | Poll | ❌ di Discohook pun masih dinonaktifkan |
 | Tombol link & tombol interaktif ber-flow | ✅ |
 | Select menu: string (flow per opsi), user/role/mentionable/channel | ✅ |
@@ -647,6 +647,28 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, satu gambar besar, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 15: warna per embed, pindah & duplikat embed
+
+Dua hal kecil dari editor embed Discohook yang menentukan kenyamanan menyusun
+pesan berisi banyak embed.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Warna embed | semua ikut aksen pesan | **warna sendiri per embed** (`#rrggbb`), bawaan tetap ikut aksen |
+| Urutan embed | hanya bisa menambah & menghapus | **naik / turun** per embed |
+| Menyalin embed | harus menyusun ulang | **duplikat** (salinan dalam, bukan berbagi objek) |
+| Impor Discohook | warna embed dibuang | warna tiap embed dipertahankan |
+
+Catatan:
+
+- Warna yang bukan `#rrggbb` dibuang dengan alasan yang bisa dibaca; warna
+  ditulis huruf kecil supaya dua nilai yang sama selalu dibandingkan sama.
+- Warna saja **tidak** membuat embed tambahan bisa dikirim: Discord tetap
+  menuntut judul, isi, gambar, atau bidang. Untuk embed pertama, warna tetap
+  berguna karena isinya datang dari blok.
+- Duplikat menyalin isinya secara dalam: menyunting bidang di salinan tidak
+  mengubah embed aslinya.
 
 ### Batch 14: sampai 10 embed per pesan & impor embed yang setia
 
