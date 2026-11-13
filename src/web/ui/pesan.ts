@@ -240,7 +240,7 @@ export function pesanPage(options: PesanPageOptions): string {
     <details class="json-panel">
       <summary>${icon('external', 15)} Impor dari Discohook</summary>
       <div class="json-isi">
-        <p class="hint" style="margin:0">Tempel <b>tautan share Discohook</b> (mis. <code>https://discohook.app/?share=abcdefgh</code>) atau <b>ID</b>-nya saja, lalu klik Tarik. Server yang mengunduh, jadi tidak kena masalah CORS. Kalau discohook.app tidak bisa dihubungi, salin JSON-nya dari Discohook (<i>Share → Copy JSON</i>) dan tempel di kotak yang sama — keduanya diterima.</p>
+        <p class="hint" style="margin:0">Tempel <b>tautan Discohook</b> — <code>…/?data=…</code> (tombol <b>Share</b>), <code>…/?share=…</code>, atau <b>ID</b>-nya saja — lalu klik Tarik. Server yang mengunduh, jadi tidak kena masalah CORS. Kalau discohook.app tidak bisa dihubungi, salin JSON-nya dari Discohook (<i>Share → Copy JSON</i>) dan tempel di kotak yang sama — keduanya diterima.</p>
         <textarea id="discoText" rows="5" spellcheck="false" placeholder="https://discohook.app/?share=…  — atau tempel JSON Discohook di sini"></textarea>
         <div class="json-aksi">
           <button class="btn btn-ghost btn-sm" type="button" onclick="importDiscohook()">${icon('download', 15)} Tarik &amp; impor</button>

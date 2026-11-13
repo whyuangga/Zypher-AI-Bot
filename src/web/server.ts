@@ -100,6 +100,7 @@ import {
 import {
   discohookShareApiUrl,
   looksLikeDiscohook,
+  parseDiscohookDataLink,
   parseDiscohookShare,
   parseDiscohookShareId,
 } from '../features/discohook-import.js';
@@ -1955,11 +1956,30 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     const sumber = payload.url ?? payload.share ?? '';
 
     if (typeof sumber === 'string' && sumber.trim()) {
+      /*
+       * Tautan `?data=`/`?message=` membawa isinya sendiri; tidak perlu diunduh
+       * dan tidak terpengaruh masa berlaku share. Diperiksa LEBIH DULU karena
+       * `?data=` juga lolos pemeriksaan ID di bawah (isinya bisa berupa
+       * base64url panjang) dan akan dianggap ID share yang tidak ada.
+       */
+      const langsung = parseDiscohookDataLink(sumber);
+      if (langsung) {
+        data = langsung.data;
+      }
+    }
+
+    if (data === null && typeof sumber === 'string' && sumber.trim()) {
       const shareId = parseDiscohookShareId(sumber);
       if (!shareId) {
+        /*
+         * Pesan galat menyebut bentuk tautan yang BENAR-BENAR ada di Discohook:
+         * tombol Share menghasilkan `?data=`, dan panduan lama memakai
+         * `?message=`. Tanpa itu admin hanya melihat "tidak dikenali" untuk
+         * tautan yang jelas berasal dari Discohook.
+         */
         sendJson(response, 400, {
           error:
-            'Tautan tidak dikenali. Tempel tautan share Discohook (https://discohook.app/?share=…) atau ID-nya saja.',
+            'Tautan tidak dikenali. Tempel tautan Discohook (…/?share=… atau …/?data=…), ID share-nya, atau JSON-nya langsung.',
         });
         return;
       }

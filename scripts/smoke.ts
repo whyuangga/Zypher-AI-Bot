@@ -10958,6 +10958,40 @@ const discoSample = {
   expires: '2026-11-19T03:59:26.448Z',
 };
 
+await testAsync('discohook: tautan ?data= / ?message= dibaca tanpa mengunduh apa pun', async () => {
+  const { parseDiscohookDataLink } = await import('../src/features/discohook-import.js');
+
+  const b64 = (obj: unknown) =>
+    Buffer.from(JSON.stringify(obj), 'utf8').toString('base64url');
+
+  // Bentuk yang dihasilkan tombol Share Discohook: QueryData di dalam base64url.
+  const isi = { messages: [{ data: { content: 'Halo dari ?data=' }, reference: null }] };
+  const tautan = `https://discohook.org/?data=${b64(isi)}`;
+  const hasil = parseDiscohookDataLink(tautan);
+  assert.ok(hasil, 'tautan ?data= dikenali');
+  assert.equal(
+    ((hasil!.data as { messages: Array<{ data: { content: string } }> }).messages[0]!.data.content),
+    'Halo dari ?data=',
+    'isi pesan terbaca dari URL',
+  );
+
+  // Base64 biasa (+, /, =) dari alat lain juga diterima.
+  const biasa = Buffer.from(JSON.stringify(isi), 'utf8').toString('base64');
+  assert.ok(parseDiscohookDataLink(`https://discohook.app/?data=${encodeURIComponent(biasa)}`));
+
+  // Bentuk lama: ?message= berisi SATU MessageData, dibungkus jadi satu pesan.
+  const satu = parseDiscohookDataLink(`https://discohook.app/?message=${b64({ content: 'Satu pesan' })}`);
+  assert.ok(satu, 'tautan ?message= dikenali');
+  assert.equal((satu!.data as { messages: unknown[] }).messages.length, 1);
+  assert.ok(satu!.warnings[0]!.includes('bentuk lama'));
+
+  // Bukan tautan Discohook / isi rusak / tanpa parameter: null, bukan menebak.
+  assert.equal(parseDiscohookDataLink('https://evil.test/?data=aaa'), null, 'host lain ditolak');
+  assert.equal(parseDiscohookDataLink('https://discohook.app/?share=CpazsKTm'), null, 'share id bukan ?data=');
+  assert.equal(parseDiscohookDataLink('https://discohook.app/?data=bukan-base64-json'), null);
+  assert.equal(parseDiscohookDataLink(''), null);
+});
+
 await testAsync('discohook: mengurai tautan share & hanya menerima host Discohook', async () => {
   const { parseDiscohookShareId, discohookShareApiUrl } = await import('../src/features/discohook-import.js');
 

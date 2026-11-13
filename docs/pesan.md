@@ -250,6 +250,7 @@ Dua cara, kotak yang sama:
 | Cara | Yang ditempel | Kapan dipakai |
 |---|---|---|
 | **Tautan share** | `https://discohook.app/?share=abcdefgh` atau ID-nya saja | Discohook bisa diakses dari server bot |
+| **Tautan berisi data** | `https://discohook.app/?data=…` (tombol **Share** di Discohook) atau `?message=…` versi lama | selalu bisa — isinya ada di URL, tidak perlu unduh apa pun |
 | **JSON** | salin dari Discohook (tombol berbagi → *Copy JSON*) | Server bot tidak punya akses internet, atau tautan sudah kedaluwarsa |
 
 Yang perlu diketahui:
@@ -258,7 +259,7 @@ Yang perlu diketahui:
 |---|---|
 | **Siapa yang mengunduh** | **server bot**, bukan browser — Discohook tidak mengirim header CORS, jadi `fetch` dari halaman akan ditolak browser |
 | **Host yang diterima** | hanya `discohook.app` / `discohook.org`. Host lain ditolak, supaya endpoint ini tidak bisa disuruh membaca alamat internal |
-| **Masa berlaku tautan** | maksimal 4 minggu (aturan Discohook). Kalau kedaluwarsa, tempel JSON-nya |
+| **Masa berlaku tautan** | `?share=` maksimal 4 minggu (aturan Discohook). Tautan `?data=` tidak punya masa berlaku. Kalau kedaluwarsa, tempel JSON-nya |
 | **Multi-pesan** | Discohook menyimpan beberapa pesan sekaligus; yang diimpor adalah **pesan pertama**, jumlah sisanya disebutkan |
 | **Pengaturan tingkat pesan** | `username`, `avatar_url`, `thread_name`, dan `flags` dari berkas ikut dipulihkan (pengirim webhook, nama thread, dua flag) — lihat **Batch 33** |
 | **Hasil** | selalu **pesan baru** di editor, belum tersimpan — periksa dulu, lalu **Simpan** |
@@ -651,6 +652,30 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, sampai **4 gambar besar** per embed, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 34: tautan `?data=` (tombol Share Discohook) bisa diimpor
+
+Tombol **Share** di Discohook tidak menghasilkan `?share=<id>`, melainkan
+`?data=<base64url>` — isi pesannya ada di URL itu sendiri, dan halaman
+Discohook memakai bentuk itu sebagai URL utamanya. Impor di sini hanya
+mengenali `?share=`, jadi tautan yang jelas berasal dari Discohook ditolak
+dengan "tautan tidak dikenali".
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| `…/?data=<base64url>` | ditolak | diuraikan di server, tanpa unduhan |
+| `…/?message=<base64url>` (panduan lama) | ditolak | dibungkus jadi satu pesan, alasannya disebut |
+| Base64 biasa (`+`, `/`, `=`) | — | diterima, tidak hanya base64url |
+| Butuh internet ke discohook.app | ya | **tidak** |
+
+Catatan:
+
+- Diperiksa **sebelum** pemeriksaan ID share: isi base64url panjang juga lolos
+  pola ID, lalu dianggap ID share yang tidak ada — galatnya menyesatkan.
+- Host tetap dibatasi host Discohook, dan isinya dibaca sebagai data (bukan
+  diunduh), jadi tidak ada jalur SSRF baru.
+- Pesan galat sekarang menyebut bentuk tautan yang benar-benar ada
+  (`?share=`, `?data=`, ID, atau JSON).
 
 ### Batch 33: impor Discohook memulihkan pengaturan tingkat pesan
 

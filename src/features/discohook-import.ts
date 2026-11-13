@@ -1021,6 +1021,74 @@ export function parseDiscohookShareId(input: string): string | null {
   return cocok ? cocok[1]! : null;
 }
 
+/**
+ * Tautan share Discohook yang membawa ISINYA sendiri di URL.
+ *
+ * Selain `?share=<id>` (data disimpan Discohook), tombol **Share** di sana
+ * membuat tautan `?data=<base64url>` — dan halaman lived-nya memakai bentuk itu
+ * sebagai URL utama (`getEditorUrl` di repo Discohook). Isinya sama dengan
+ * QueryData: `{ messages: [{ data, reference }], targets }`. Tautan seperti ini
+ * tidak butuh unduhan apa pun, jadi tetap bisa diimpor walau discohook.app
+ * tidak bisa dihubungi server bot.
+ *
+ * `?message=` (tautan satu pesan versi lama) dibungkus menjadi satu pesan,
+ * sama seperti yang dilakukan `getEditorManagerFromQuery` di Discohook.
+ *
+ * Mengembalikan null kalau bukan tautan Discohook, tidak punya `data`/
+ * `message`, atau isinya bukan JSON yang bisa dibaca — pemanggil yang
+ * menjelaskan alasannya ke admin.
+ */
+export function parseDiscohookDataLink(input: string): { data: unknown; warnings: string[] } | null {
+  const teks = input.trim();
+  if (!teks) return null;
+
+  let url: URL;
+  try {
+    url = new URL(teks.startsWith('http') ? teks : `https://${teks}`);
+  } catch {
+    return null;
+  }
+  if (!DISCOHOOK_HOSTS.has(url.hostname.toLowerCase())) return null;
+
+  const mentah = url.searchParams.get('data') ?? url.searchParams.get('message');
+  if (!mentah) return null;
+
+  /*
+   * Buffer menerima base64url apa adanya, tetapi tautan yang disalin ulang
+   * lewat alat lain kadang memakai base64 biasa (+, /, =). Keduanya diterima:
+   * menolak yang satu hanya membuat admin melihat "tautan tidak dikenali" tanpa
+   * tahu kenapa.
+   */
+  const baku = mentah.replace(/-/g, '+').replace(/_/g, '/');
+  let isi: string;
+  try {
+    isi = Buffer.from(baku, 'base64').toString('utf8');
+  } catch {
+    return null;
+  }
+  if (!isi.trim()) return null;
+
+  let data: unknown;
+  try {
+    data = JSON.parse(isi) as unknown;
+  } catch {
+    return null;
+  }
+  const root = asObject(data);
+  if (!root) return null;
+
+  /* `?message=` berisi SATU MessageData, bukan daftar. */
+  if (!('messages' in root) && ('content' in root || 'embeds' in root || 'components' in root)) {
+    return {
+      data: { messages: [{ data: root }] },
+      warnings: ['Tautan berisi satu pesan (bentuk lama "?message=") — diimpor sebagai satu pesan.'],
+    };
+  }
+  if (!Array.isArray(root.messages)) return null;
+
+  return { data: root, warnings: [] };
+}
+
 /** URL API untuk satu ID share. */
 export function discohookShareApiUrl(shareId: string): string {
   return `${DISCOHOOK_SHARE_API}/${encodeURIComponent(shareId)}`;
