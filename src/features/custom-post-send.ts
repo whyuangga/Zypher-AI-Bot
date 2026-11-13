@@ -30,6 +30,7 @@ import {
   TextDisplayBuilder,
   ThumbnailBuilder,
   WebhookClient,
+  PermissionFlagsBits,
   type Client,
   type Message,
   type TextChannel,
@@ -308,6 +309,52 @@ function laporan(payload: { dropped: string[]; droppedFiles: string[] }): Pick<S
     ...(payload.dropped.length ? { dropped: payload.dropped } : {}),
     ...(payload.droppedFiles.length ? { droppedFiles: payload.droppedFiles } : {}),
   };
+}
+
+/**
+ * Periksa tujuan SEBELUM menyusun payload, seperti `WebhookModel.fetch` di
+ * Discohook yang memunculkan modal "Webhook does not exist".
+ *
+ * Kenapa perlu: tanpa ini admin menekan Kirim, menunggu, lalu mendapat galat
+ * mentah dari Discord ("Missing Permissions") yang tidak menyebut channel mana
+ * atau izin apa. Yang bisa diperiksa tanpa menebak: channel ada, masih bisa
+ * dibaca, dan bot punya izin mengirim di sana.
+ *
+ * TIDAK melempar untuk hal yang tidak bisa dipastikan (cache `me` belum siap,
+ * `permissionsFor` null): menolak kirim karena bot tidak bisa mengecek sendiri
+ * akan lebih buruk daripada mencoba dan gagal dengan pesan Discord.
+ */
+export async function periksaTujuan(
+  client: Client,
+  channelId: string,
+): Promise<{ ok: true; channel: TextChannel } | { ok: false; alasan: string }> {
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+  if (!channel) {
+    return { ok: false, alasan: 'Channel tidak ditemukan. Mungkin sudah dihapus — pilih tujuan lain.' };
+  }
+  if (!channel.isTextBased() || channel.isDMBased()) {
+    return { ok: false, alasan: 'Tujuan itu bukan channel teks di server.' };
+  }
+
+  const berupaThread = typeof channel.isThread === 'function' && channel.isThread() === true;
+  const induk = berupaThread ? `thread "${channel.name}"` : `#${channel.name}`;
+  /*
+   * `guild` bisa tidak ada pada kanal tiruan (test) maupun kanal yang cache
+   * guild-nya belum siap; kedua kasus berarti "tidak bisa diperiksa", bukan
+   * "tidak boleh kirim".
+   */
+  const guildDari = (channel as unknown as { guild?: { members?: { me?: unknown } } }).guild;
+  const me = guildDari?.members?.me ?? null;
+  const izin = me && typeof channel.permissionsFor === 'function' ? channel.permissionsFor(me as never) : null;
+  if (izin) {
+    const kurang: string[] = [];
+    if (!izin.has(PermissionFlagsBits.ViewChannel)) kurang.push('View Channel');
+    if (!izin.has(PermissionFlagsBits.SendMessages)) kurang.push('Send Messages');
+    if (kurang.length) {
+      return { ok: false, alasan: `Bot kurang izin di ${induk}: ${kurang.join(', ')}.` };
+    }
+  }
+  return { ok: true, channel: channel as TextChannel };
 }
 
 /**

@@ -95,6 +95,7 @@ import {
   sendOrUpdatePostViaWebhook,
   identitasPost,
   webhookIdentityFor,
+  periksaTujuan,
 } from '../features/custom-post-send.js';
 import {
   measureBlocks,
@@ -244,11 +245,25 @@ async function kirimTarget(options: {
 }): Promise<Array<{ channelId: string; messageId?: string; error?: string }>> {
   const targets = await listPostTargets(options.guildId, options.postId);
   if (targets.length === 0) return [];
+  /*
+   * Tujuan diperiksa lebih dulu, per channel: pemeriksaan yang sama dengan
+   * channel utama, supaya galatnya menyebut izin & channelnya, bukan
+   * "Missing Permissions".
+   */
+  const diperiksa: Array<{ channelId: string; messageId: string | null }> = [];
+  const gagalCek: Array<{ channelId: string; error: string }> = [];
+  for (const target of targets) {
+    const cek = await periksaTujuan(options.client, target.channelId);
+    if (cek.ok) diperiksa.push(target);
+    else gagalCek.push({ channelId: target.channelId, error: cek.alasan });
+  }
+
   const hasil = await sendToTargets({
     client: options.client,
-    targets,
+    targets: diperiksa,
     kirim: options.kirim,
   });
+  hasil.hasil.push(...gagalCek);
   for (const satu of hasil.hasil) {
     if (satu.messageId) {
       await setPostTargetMessage(options.guildId, options.postId, satu.channelId, satu.messageId);
@@ -2700,6 +2715,18 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         sendJson(response, 400, { error: 'Channel tujuan belum dipilih.' });
         return;
       }
+      /*
+       * Tujuan diperiksa SEBELUM menyusun payload — padanan `WebhookModel.fetch`
+       * di Discohook yang memunculkan "Webhook does not exist". Tanpa ini admin
+       * menunggu lalu menerima galat mentah Discord ("Missing Permissions")
+       * yang tidak menyebut channel mana atau izin apa.
+       */
+      const tujuan = await periksaTujuan(bot, post.channelId);
+      if (!tujuan.ok) {
+        sendJson(response, 400, { error: tujuan.alasan });
+        return;
+      }
+
       try {
         const roleButtons = await listRoleButtons(guildId, id);
         const roleMenus = await listRoleMenus(guildId, id);

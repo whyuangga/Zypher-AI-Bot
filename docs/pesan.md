@@ -655,6 +655,30 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
 
+### Batch 41: tujuan diperiksa sebelum mengirim
+
+Discohook memeriksa webhook tujuannya lebih dulu (`WebhookModel.fetch`) dan
+memunculkan **"Webhook does not exist"** sebelum admin menunggu pengiriman. Di
+sini pemeriksaan seperti itu tidak ada: admin menekan Kirim, menunggu, lalu
+menerima galat mentah Discord ("Missing Permissions") yang tidak menyebut
+**channel mana** atau **izin apa**.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Channel sudah dihapus | galat mentah | "Channel tidak ditemukan…" sebelum kirim |
+| Bot kurang izin | "Missing Permissions" | `Bot kurang izin di #pengumuman: Send Messages.` |
+| Tujuan berupa thread | nama channel tidak disebut | `thread "Rilis v2"` |
+| Channel tambahan (`targets[]`) | satu gagal = galat tanpa nama channel | diperiksa satu per satu, galatnya per channel |
+| Bot belum bisa membaca izinnya sendiri | — | **tidak** diblokir (mencoba lebih baik daripada menolak) |
+
+Catatan:
+
+- Pemeriksaan berjalan **sebelum** payload disusun, jadi tidak ada kerja yang
+  terbuang dan tidak ada pesan yang setengah terkirim karena satu tujuan salah.
+- Pemeriksaan hanya menolak kalau hasilnya pasti. Kalau `me`/`permissionsFor`
+  belum siap, pengiriman tetap dicoba: bot tidak boleh menolak hanya karena ia
+  belum tahu.
+
 ### Batch 40: kirim ke thread yang sudah ada
 
 Discohook bisa mengirim ke thread yang **sudah berjalan** dengan menambahkan

@@ -10958,6 +10958,73 @@ const discoSample = {
   expires: '2026-11-19T03:59:26.448Z',
 };
 
+await testAsync('kirim: tujuan diperiksa sebelum mengirim (izin & channel hilang)', async () => {
+  const { periksaTujuan } = await import('../src/features/custom-post-send.js');
+
+  /*
+   * Padanan `WebhookModel.fetch` di Discohook ("Webhook does not exist").
+   * Tanpa pemeriksaan ini admin menerima "Missing Permissions" mentah yang
+   * tidak menyebut channel atau izin apa.
+   */
+  const { PermissionFlagsBits } = await import('discord.js');
+  /* Izin diperiksa sebagai bitfield, bukan nama: itulah bentuk aslinya. */
+  const izin = (punya: bigint) => ({
+    has: (nama: bigint) => (punya & nama) === nama,
+  });
+  const kanal = (extra: Record<string, unknown>) =>
+    ({
+      id: '500',
+      name: 'pengumuman',
+      isTextBased: () => true,
+      isDMBased: () => false,
+      isThread: () => false,
+      guild: { members: { me: { id: '1' } } },
+      permissionsFor: () => izin(PermissionFlagsBits.ViewChannel | PermissionFlagsBits.SendMessages),
+      ...extra,
+    }) as never;
+
+  // Channel tidak ada.
+  const hilang = await periksaTujuan({ channels: { fetch: async () => null } } as never, '500');
+  assert.equal(hilang.ok, false);
+  assert.ok(!hilang.ok && hilang.alasan.includes('tidak ditemukan'));
+
+  // Bukan channel teks.
+  const suara = await periksaTujuan(
+    { channels: { fetch: async () => kanal({ isTextBased: () => false }) } } as never,
+    '500',
+  );
+  assert.equal(suara.ok, false);
+  assert.ok(!suara.ok && suara.alasan.includes('bukan channel teks'));
+
+  // Izin kurang: nama izin & tujuan disebut.
+  const kurang = await periksaTujuan(
+    {
+      channels: {
+        fetch: async () => kanal({ permissionsFor: () => izin(PermissionFlagsBits.ViewChannel) }),
+      },
+    } as never,
+    '500',
+  );
+  assert.equal(kurang.ok, false);
+  assert.ok(!kurang.ok && kurang.alasan.includes('Send Messages'), 'izin yang kurang disebut');
+  assert.ok(!kurang.ok && kurang.alasan.includes('#pengumuman'), 'channel-nya disebut');
+
+  // Izin cukup.
+  const boleh = await periksaTujuan({ channels: { fetch: async () => kanal({}) } } as never, '500');
+  assert.equal(boleh.ok, true);
+
+  /*
+   * Kalau bot tidak bisa mengecek izinnya sendiri (cache `me` belum siap),
+   * kirim TIDAK boleh diblokir — mencoba lebih baik daripada menolak karena
+   * bot tidak tahu.
+   */
+  const tanpaMe = await periksaTujuan(
+    { channels: { fetch: async () => kanal({ guild: { members: { me: null } } }) } } as never,
+    '500',
+  );
+  assert.equal(tanpaMe.ok, true, 'tanpa info izin, kirim tetap diizinkan');
+});
+
 await testAsync('kirim: thread yang sudah ada diterima sebagai tujuan', async () => {
   const { sendOrUpdatePost } = await import('../src/features/custom-post-send.js');
 
