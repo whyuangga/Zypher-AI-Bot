@@ -2109,6 +2109,26 @@ await check('pesan: pesan Discord bisa dimuat lewat tautan & mengisi editor', as
   assert.equal(isi, 'text:Isi pesan dari Discord', 'blok hasil muat masuk ke editor');
   const nama = (await page.evaluate("document.getElementById('postName').value")) as string;
   assert.equal(nama, 'Judul dari Discord', 'nama pesan terisi dari hasil muat');
+
+  /*
+   * Simpan mengirim `source`: server memakainya supaya pesan dashboard ini
+   * menunjuk pesan Discord ASAL, sehingga Kirim berikutnya memperbarui pesan
+   * itu — bukan mengirim salinan kedua.
+   */
+  await page.evaluate(`
+    (async function () {
+      await savePost();
+    })()
+  `);
+  const simpan = page.fetches.find((call) => call.path === '/api/posts' || /^\/api\/posts\/\d+$/.test(call.path));
+  assert.ok(simpan, 'Simpan memanggil /api/posts');
+  const muatan = simpan!.body as { source?: { channelId?: string; messageId?: string } };
+  assert.equal(muatan.source?.messageId, '345678901234567890', 'pesan asal ikut dikirim');
+  assert.equal(muatan.source?.channelId, '234567890123456789', 'channel asal ikut dikirim');
+
+  /* Setelah tersimpan, sumber dilepas: pesan sudah punya jalur messageId sendiri. */
+  const sumberSetelah = await page.evaluate('MUAT_SUMBER');
+  assert.equal(sumberSetelah, null, 'sumber muat dilepas setelah simpan');
   assert.equal(page.errors.length, 0, `editor muat pesan error: ${page.errors.join('|')}`);
 });
 

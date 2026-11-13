@@ -1913,6 +1913,28 @@ export async function setPostTargetMessage(
   ]);
 }
 
+/**
+ * Ikuti pesan Discord yang SUDAH ada (hasil "Muat pesan").
+ *
+ * Dipakai saat admin memuat pesan lama lalu menyimpannya: pesan dashboard itu
+ * harus menunjuk pesan Discord yang sama, sehingga Kirim berikutnya
+ * MEMPERBARUI pesan lama alih-alih mengirim salinan baru. Tanpa ini, memuat
+ * pesan lalu mengirimnya akan menghasilkan dua pesan yang hampir sama di
+ * channel — persis yang ingin dihindari tombol Load.
+ *
+ * Channel juga ikut disetel: pesan asal bisa saja berada di channel lain.
+ */
+export async function setCustomPostTarget(
+  guildId: string,
+  id: number,
+  target: { channelId: string | null; messageId: string },
+): Promise<void> {
+  await run(
+    'UPDATE custom_posts SET channel_id = ?, message_id = ?, updated_at = ? WHERE guild_id = ? AND id = ?',
+    [target.channelId, target.messageId, Date.now(), guildId, id],
+  );
+}
+
 /** Simpan ID pesan Discord setelah berhasil dikirim. */
 export async function setCustomPostMessage(
   guildId: string,

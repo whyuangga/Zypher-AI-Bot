@@ -651,6 +651,27 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
 
+### Batch 20: muat pesan lalu perbarui pesan asalnya (Load yang utuh)
+
+Batch 16 bisa memuat pesan Discord, tetapi hasilnya menjadi pesan dashboard
+**baru**: menekan Kirim mengirim salinan kedua, padahal tujuan tombol Load
+adalah memperbaiki pesan yang sudah ada.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Setelah memuat & menyimpan | Kirim = pesan baru | Kirim **memperbarui pesan asal** |
+| Channel tujuan | harus dipilih manual | ikut channel pesan asal |
+| Tautan ke pesan asal | — | hanya dikirim saat pesan belum punya ID sendiri |
+
+Catatan:
+
+- `source` (channel + pesan asal) divalidasi ketat sebagai snowflake; bentuk
+  yang tidak jelas dibaca sebagai `null` = kirim pesan baru. Salah ID berarti
+  menimpa pesan orang lain, jadi tidak boleh ditebak.
+- Setelah tersimpan, sumber dilepas di editor: pesan sudah punya `message_id`
+  sendiri, dan mengirim `source` terus akan membuat tiap penyimpanan menimpa
+  pesan Discord yang sama — padahal admin mungkin ingin memisahkannya.
+
 ### Batch 19: nama & avatar pengirim webhook per pesan
 
 Di Discohook, pesan webhook punya isian **Username** dan **Avatar URL**: satu

@@ -8409,6 +8409,43 @@ await testAsync('webhook: nama & avatar pengirim per pesan disaring & disimpan',
   await repo.deleteCustomPost(GUILD, pesan.id);
 });
 
+await testAsync('muat pesan: pesan dashboard mengikuti pesan Discord asal setelah disimpan', async () => {
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  /*
+   * Alur "Muat pesan" lalu simpan: pesan dashboard harus menunjuk pesan
+   * Discord yang SAMA, supaya Kirim berikutnya memperbarui pesan lama bukan
+   * mengirim salinan kedua.
+   */
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Hasil muat',
+    channelId: null,
+    blocks: [{ kind: 'text', value: 'Isi dari Discord' }],
+  });
+  assert.equal(post.messageId, null, 'pesan baru belum punya ID Discord');
+
+  await repo.setCustomPostTarget(GUILD, post.id, {
+    channelId: '234567890123456789',
+    messageId: '345678901234567890',
+  });
+  const mengikuti = await repo.getCustomPost(GUILD, post.id);
+  assert.equal(mengikuti!.messageId, '345678901234567890', 'pesan Discord asal diikuti');
+  assert.equal(mengikuti!.channelId, '234567890123456789', 'channel asal ikut diikuti');
+
+  /* Menyimpan isi baru TIDAK melepas tautan ke pesan Discord asal. */
+  await repo.updateCustomPost(GUILD, post.id, { blocks: [{ kind: 'text', value: 'Isi diperbaiki' }] });
+  const setelahUbah = await repo.getCustomPost(GUILD, post.id);
+  assert.equal(setelahUbah!.messageId, '345678901234567890', 'ID pesan bertahan setelah isi diubah');
+
+  /* Bisa dilepas: kembali jadi pesan baru yang belum terkirim. */
+  await repo.setCustomPostMessage(GUILD, post.id, null);
+  const dilepas = await repo.getCustomPost(GUILD, post.id);
+  assert.equal(dilepas!.messageId, null, 'tautan ke pesan Discord bisa dilepas');
+
+  await repo.deleteCustomPost(GUILD, post.id);
+});
+
 await testAsync('template: variabel Discohook dirakit & dipakai di aksi dan teks pesan', async () => {
   const { buildTemplateValues, applyTemplate, tokenTersisa } = await import('../src/features/post-template.js');
   const { fillActionText } = await import('../src/features/post-actions.js');

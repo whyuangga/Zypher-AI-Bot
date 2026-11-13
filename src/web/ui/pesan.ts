@@ -1758,7 +1758,7 @@ async function muatPesanDiscord() {
     sumberEl.textContent = hasil.source
       ? 'Asal: channel ' + hasil.source.channelId + ', pesan ' + hasil.source.messageId +
         (hasil.source.webhook ? ' (dikirim webhook)' : '') +
-        ' — tekan Kirim untuk memuatnya sebagai pesan dashboard.'
+        ' — simpan dulu, lalu Kirim akan MEMPERBARUI pesan itu (bukan mengirim salinan baru).'
       : '';
   }
 
@@ -2807,6 +2807,14 @@ async function savePost(andSend) {
         embed: payloadEmbed(),
         webhookName: ((document.getElementById('postWebhookName') || {}).value || '').trim(),
         webhookAvatar: ((document.getElementById('postWebhookAvatar') || {}).value || '').trim(),
+        /*
+         * Pesan asal yang dimuat lewat "Muat pesan Discord". Hanya dikirim saat
+         * pesan ini BELUM punya ID dashboard: begitu tersimpan, pesan mengikuti
+         * jalur biasa (messageId di database). Mengirim source terus akan
+         * membuat pesan ini terus menimpa pesan Discord yang sama setiap kali
+         * disimpan, padahal admin mungkin ingin memisahkannya.
+         */
+        ...(MUAT_SUMBER && !editingId ? { source: MUAT_SUMBER } : {}),
       }),
     });
     if (result.dropped && result.dropped.length) {
@@ -2816,6 +2824,15 @@ async function savePost(andSend) {
     }
     // Tombol role & channel tambahan disimpan setelah pesan punya ID —
     // endpoint-nya per pesan.
+    /*
+     * Sumber muat dilepas setelah tersimpan: pesan sekarang punya ID sendiri,
+     * dan Kirim berikutnya mengikuti messageId dari database.
+     */
+    if (MUAT_SUMBER) {
+      MUAT_SUMBER = null;
+      var sumberEl = document.getElementById('muatSumber');
+      if (sumberEl) sumberEl.textContent = '';
+    }
     await saveRoleButtons(result.post.id);
     await saveTargets(result.post.id);
 
@@ -2958,6 +2975,10 @@ function loadExisting() {
   // normalBlock memuat SEMUA field yang dikenal, termasuk spoiler dan nama
   // berkas — dulu daftarnya ditulis ulang di sini dan dua field itu tertinggal.
   blocks = found.blocks.map(normalBlock);
+  // Sumber muat milik pesan lain tidak boleh terpakai pesan ini.
+  MUAT_SUMBER = null;
+  var sumberLama = document.getElementById('muatSumber');
+  if (sumberLama) sumberLama.textContent = '';
   // Bagian embed: dimuat dari pesan, bukan dibiarkan dari pesan sebelumnya.
   loadEmbedExtra(found.embed);
   var send = document.getElementById('postSend');

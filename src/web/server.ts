@@ -55,6 +55,7 @@ import {
   updateCustomPost,
   deleteCustomPost,
   setCustomPostMessage,
+  setCustomPostTarget,
   listRoleButtons,
   listRoleMenus,
   replaceRoleButtons,
@@ -2445,6 +2446,23 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       webhookName: typeof payload.webhookName === 'string' ? payload.webhookName : null,
       webhookAvatar: typeof payload.webhookAvatar === 'string' ? payload.webhookAvatar : null,
     });
+
+    /*
+     * Pesan hasil "Muat pesan Discord": pesan dashboard ini mewakili pesan
+     * yang SUDAH ada di Discord, jadi Kirim berikutnya harus memperbaruinya.
+     * Tanpa ini, memuat lalu mengirim menghasilkan salinan kedua — kebalikan
+     * dari tujuan tombol Load.
+     *
+     * Hanya dipakai kalau admin memang mengirim `source` hasil muat, dan admin
+     * masih bisa melepasnya dengan mengosongkan `source`.
+     */
+    const sumber = ambilSumberMuat(payload.source);
+    if (sumber) {
+      await setCustomPostTarget(guildId, post.id, sumber);
+      post.messageId = sumber.messageId;
+      post.channelId = sumber.channelId;
+    }
+
     const { blocks: blokSah, dropped } = sanitizeBlocks(payload.blocks);
     // `usage` = hitungan versi SERVER. Dashboard boleh menghitung sendiri
     // untuk pratinjau, tapi angka inilah yang menentukan boleh-kirim.
@@ -3270,6 +3288,22 @@ async function readJson(
 }
 
 /** Sama seperti `readJson`, tapi batas ukurannya bisa diatur (mis. gambar). */
+/**
+ * Baca `source` hasil muat pesan (channel + pesan Discord asal).
+ *
+ * Divalidasi ketat: nilai ini menentukan pesan MANA yang akan ditimpa saat
+ * Kirim ditekan. ID yang salah berarti menimpa pesan orang lain, jadi bentuk
+ * yang tidak jelas dibaca sebagai null (= kirim pesan baru).
+ */
+function ambilSumberMuat(input: unknown): { channelId: string | null; messageId: string } | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const sumber = input as Record<string, unknown>;
+  const pesan = typeof sumber.messageId === 'string' ? sumber.messageId.trim() : '';
+  if (!/^\d{15,25}$/.test(pesan)) return null;
+  const channel = typeof sumber.channelId === 'string' ? sumber.channelId.trim() : '';
+  return { channelId: /^\d{15,25}$/.test(channel) ? channel : null, messageId: pesan };
+}
+
 /**
  * Gabungkan identitas server dengan isian per pesan.
  *
