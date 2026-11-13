@@ -639,7 +639,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | JSON Data Editor **per pesan** | ✅ kartu **JSON Data Editor (satu pesan)** di tab Impor: tempel objek pesan Discord, payload REST, atau data Discohook |
 | `targets[]` (satu pesan, beberapa channel) | ✅ **Kirim juga ke channel lain** di kartu pengaturan: sampai 5 channel tambahan, tiap channel punya ID pesan sendiri |
 | Riwayat/undo revisi (padanan backup) | ✅ 20 versi terakhir per pesan, dibuat otomatis setiap pesan diubah; kartu "Riwayat & bagikan" (tab **Riwayat**) |
-| Share link (tautan berbagi) | ✅ tautan `/bagi/<token>` bisa dibuka tanpa login, hanya berisi blok pesan, bisa dicabut |
+| Share link (tautan berbagi) | ✅ tautan `/bagi/<token>` bisa dibuka tanpa login, berisi blok **dan** embed pesan (bentuk pesan ikut), bisa dicabut |
 | Impor backup | ✅ JSON/URL Discohook di tab **Impor**; ekspor JSON juga ada |
 | **Load** pesan Discord yang sudah terkirim | ✅ kartu **Muat pesan Discord** di tab **Impor**: tempel Message Link, pesan dibuka di editor (bot butuh *Read Message History*) |
 | Jadwal kirim (sekali / berulang / cron) | ✅ sekali, tiap N jam (min. 2 jam), dan **cron kalender** lima ruas (tiap hari, tiap Senin, tiap tanggal 1, …) memakai zona waktu server. Pola lebih rapat dari 2 jam ditolak dengan alasan |
@@ -649,6 +649,24 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, satu gambar besar, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 18: halaman berbagi menampilkan embed & bentuk pesan
+
+Tautan berbagi (`/bagi/<token>`) dulu hanya menggambar blok. Pesan berbentuk
+**embed klasik** karena itu terbuka sebagai halaman **kosong**: isinya memang
+tidak ada di blok, melainkan di pengaturan pesan.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Pesan berbentuk embed | halaman kosong | **kartu embed** dengan penulis, judul, isi, bidang, gambar, footer |
+| Embed kedua dan seterusnya | tidak tampil | tampil sebagai kartu tambahan (penulis & bidang) |
+| Warna embed | tidak terbawa | garis kiri mengikuti warna tiap embed |
+| Bentuk pesan | tidak ikut dibagikan | `getSharedPost` mengembalikan `layout` + `embed` |
+
+Yang tetap dijaga: halaman ini **terbuka tanpa login**, jadi semua teks
+di-escape sebelum masuk HTML dan hanya URL `http/https` yang pernah dipasang
+sebagai gambar. Tidak ada tombol yang bisa mengubah role, dan tidak ada data
+server yang ditampilkan.
 
 ### Batch 17: JSON Data Editor per pesan
 

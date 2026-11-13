@@ -2235,7 +2235,9 @@ export async function deletePostShare(guildId: string, postId: number): Promise<
  * isi pesan (blok + nama), bukan ID channel atau ID pesan Discord — tautan
  * berbagi tidak boleh membocorkan struktur server.
  */
-export async function getSharedPost(token: string): Promise<{ name: string; blocks: PostBlock[] } | null> {
+export async function getSharedPost(
+  token: string,
+): Promise<{ name: string; blocks: PostBlock[]; layout: PostLayout; embed: EmbedExtra[] } | null> {
   const bersih = token.trim();
   if (!/^[A-Za-z0-9_-]{8,64}$/.test(bersih)) return null;
   const baris = await get<{ post_id: number | string; guild_id: string }>(
@@ -2245,7 +2247,7 @@ export async function getSharedPost(token: string): Promise<{ name: string; bloc
   if (!baris) return null;
   const post = await getCustomPost(baris.guild_id, Number(baris.post_id));
   if (!post) return null;
-  return { name: post.name, blocks: post.blocks };
+  return { name: post.name, blocks: post.blocks, layout: post.layout, embed: post.embed };
 }
 
 /* ------------------------------------------------------------------ */

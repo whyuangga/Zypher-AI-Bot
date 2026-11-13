@@ -8295,6 +8295,77 @@ await testAsync('muat pesan: bentuk JSON yang lazim ditempel dikenali', async ()
   assert.ok(kosong.warnings.length > 0, 'bentuk asing dijelaskan');
 });
 
+await testAsync('berbagi: halaman publik menampilkan embed & bagian admin', async () => {
+  const { sharePage } = await import('../src/web/ui/share.js');
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  const pesan = await repo.createCustomPost(GUILD, {
+    name: 'Pengumuman embed',
+    channelId: '999',
+    blocks: [
+      { kind: 'text', value: 'Isi dari blok' },
+      { kind: 'image', value: 'https://img.test/a.png' },
+    ],
+    layout: 'embed',
+    embed: [
+      {
+        author: { name: 'Tim Zypher' },
+        footer: { text: 'kaki' },
+        fields: [{ name: 'Harga', value: 'Rp10.000', inline: true }],
+      },
+      { fields: [{ name: 'Catatan', value: 'kedua', inline: false }] },
+    ],
+  });
+
+  const token = await repo.createPostShare(GUILD, pesan.id);
+  const dibagikan = await repo.getSharedPost(token);
+  assert.equal(dibagikan?.layout, 'embed', 'bentuk pesan ikut dibagikan');
+  assert.equal(dibagikan?.embed.length, 2, 'bagian admin ikut dibagikan');
+
+  const halaman = sharePage({
+    name: dibagikan!.name,
+    blocks: dibagikan!.blocks,
+    layout: dibagikan!.layout,
+    embed: dibagikan!.embed,
+    notFound: false,
+  });
+  assert.ok(halaman.includes('Tim Zypher'), 'penulis tampil');
+  assert.ok(halaman.includes('Rp10.000'), 'bidang tampil');
+  assert.ok(halaman.includes('kaki'), 'footer tampil');
+  assert.ok(halaman.includes('Isi dari blok'), 'isi blok tampil');
+  assert.ok(halaman.includes('img.test/a.png'), 'gambar tampil');
+
+  /*
+   * Halaman ini terbuka tanpa login: isi dari admin TIDAK boleh jadi HTML.
+   * Yang diuji bukan sekadar escaping teks, tetapi juga bahwa URL gambar
+   * bukan-http tidak pernah dipasang.
+   */
+  const jahat = sharePage({
+    name: '<script>alert(1)</script>',
+    blocks: [{ kind: 'text', value: '<b>tebal</b>' }],
+    layout: 'container',
+    embed: [],
+    notFound: false,
+  });
+  assert.ok(!jahat.includes('<script>alert(1)</script>'), 'nama di-escape');
+  assert.ok(!jahat.includes('<b>tebal</b>'), 'teks blok di-escape');
+  const gambarJahat = sharePage({
+    name: 'x',
+    blocks: [{ kind: 'text', value: 'isi' }],
+    layout: 'embed',
+    embed: [],
+    notFound: false,
+  });
+  assert.ok(!gambarJahat.includes('javascript:'), 'tidak ada URL berbahaya yang lolos');
+
+  /* Pesan embed tanpa isi apa pun tetap dijelaskan, bukan halaman kosong. */
+  const kosong = sharePage({ name: '', blocks: [], layout: 'embed', embed: [], notFound: false });
+  assert.ok(kosong.includes('tidak punya isi'), 'embed kosong dijelaskan');
+
+  await repo.deleteCustomPost(GUILD, pesan.id);
+});
+
 await testAsync('template: variabel Discohook dirakit & dipakai di aksi dan teks pesan', async () => {
   const { buildTemplateValues, applyTemplate, tokenTersisa } = await import('../src/features/post-template.js');
   const { fillActionText } = await import('../src/features/post-actions.js');

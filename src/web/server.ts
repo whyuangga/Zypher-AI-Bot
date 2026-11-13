@@ -583,11 +583,21 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       sendHtml(
         response,
         404,
-        sharePage({ name: '', blocks: [], notFound: true }),
+        sharePage({ name: '', blocks: [], layout: 'container', embed: [], notFound: true }),
       );
       return;
     }
-    sendHtml(response, 200, sharePage({ name: dibagikan.name, blocks: dibagikan.blocks, notFound: false }));
+    sendHtml(
+      response,
+      200,
+      sharePage({
+        name: dibagikan.name,
+        blocks: dibagikan.blocks,
+        layout: dibagikan.layout,
+        embed: dibagikan.embed,
+        notFound: false,
+      }),
+    );
     return;
   }
 

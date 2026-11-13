@@ -1,4 +1,5 @@
 import type { PostBlock } from '../../features/custom-post.js';
+import type { EmbedExtra } from '../../features/post-embed.js';
 
 /**
  * Halaman pratinjau publik untuk tautan berbagi (`/bagi/<token>`).
@@ -128,15 +129,92 @@ function render(blocks: PostBlock[]): string {
   return bagian.join('');
 }
 
+/**
+ * Kartu embed klasik untuk halaman berbagi.
+ *
+ * Tanpa ini, pesan berbentuk embed dibagikan sebagai halaman KOSONG: bloknya
+ * memang tidak ada, karena isi embed datang dari pengaturan pesan. Yang
+ * ditampilkan hanya bagian yang tersimpan (penulis, judul, bidang, footer) —
+ * cukup untuk menunjukkan isi pesan tanpa perlu bot.
+ */
+function renderEmbed(name: string, embed: EmbedExtra[], blocks: PostBlock[]): string {
+  const utama = embed[0] ?? null;
+  const judul = name.trim();
+  const isiBlok = blocks
+    .filter((blok) => blok.kind === 'text' || blok.kind === 'section')
+    .map((blok) => String(blok.value ?? '').trim())
+    .filter(Boolean)
+    .join('<br>');
+  const gambar = blocks.find((blok) => blok.kind === 'image')?.value;
+
+  const kartu: string[] = [];
+  if (utama?.author?.name) {
+    kartu.push(`<div class="embed-penulis">${esc(String(utama.author.name))}</div>`);
+  }
+  if (judul) kartu.push(`<div class="embed-judul">${esc(judul)}</div>`);
+  if (isiBlok) kartu.push(`<div class="embed-isi">${markdown(isiBlok.replace(/<br>/g, '\n'))}</div>`);
+  if (utama?.fields?.length) {
+    const bidang = utama.fields
+      .map(
+        (satu) =>
+          `<div class="embed-bidang"><b>${esc(String(satu.name))}</b><br>${esc(String(satu.value))}</div>`,
+      )
+      .join('');
+    kartu.push(`<div class="embed-bidang-wrap">${bidang}</div>`);
+  }
+  const gambarAman = urlAman(gambar);
+  if (gambarAman) kartu.push(`<img class="gambar" src="${esc(gambarAman)}" alt="">`);
+  if (utama?.footer?.text) {
+    kartu.push(
+      `<div class="embed-footer">${esc(String(utama.footer.text))}${
+        utama.timestamp ? ' · ' + esc(String(utama.timestamp)) : ''
+      }</div>`,
+    );
+  } else if (utama?.timestamp) {
+    kartu.push(`<div class="embed-footer">${esc(String(utama.timestamp))}</div>`);
+  }
+
+  const warna = /^#[0-9a-fA-F]{6}$/.test(String(utama?.color ?? '')) ? String(utama?.color).toLowerCase() : 'none';
+  const tambahan = embed
+    .slice(1)
+    .map((satu) => {
+      const bagian: string[] = [];
+      if (satu.author?.name) bagian.push(`<div class="embed-penulis">${esc(String(satu.author.name))}</div>`);
+      if (satu.fields?.length) {
+        bagian.push(
+          `<div class="embed-bidang-wrap">${satu.fields
+            .map((f) => `<div class="embed-bidang"><b>${esc(String(f.name))}</b><br>${esc(String(f.value))}</div>`)
+            .join('')}</div>`,
+        );
+      }
+      if (!bagian.length) return '';
+      const warnaLain = /^#[0-9a-fA-F]{6}$/.test(String(satu.color ?? '')) ? String(satu.color).toLowerCase() : 'none';
+      return `<div class="kartu" data-aksen="${esc(warnaLain)}">${bagian.join('')}</div>`;
+    })
+    .join('');
+
+  if (kartu.length === 0 && !tambahan) {
+    return '<div class="kartu kosong"><p>Pesan ini tidak punya isi yang bisa ditampilkan.</p></div>';
+  }
+  return (
+    (kartu.length ? `<div class="kartu" data-aksen="${esc(warna)}">${kartu.join('')}</div>` : '') + tambahan
+  );
+}
+
 export function sharePage(input: {
   name: string;
   blocks: PostBlock[];
+  /** Bentuk pesan; embed dibaca dari bagian admin, bukan dari blok. */
+  layout?: 'container' | 'embed';
+  embed?: EmbedExtra[];
   notFound: boolean;
 }): string {
   const judul = input.name.trim() || 'Pesan dibagikan';
   const isi = input.notFound
     ? '<div class="kartu kosong"><p>Tautan ini tidak berlaku lagi. Admin bisa mencabut tautan berbagi kapan saja — minta tautan baru kalau masih dibutuhkan.</p></div>'
-    : render(input.blocks);
+    : input.layout === 'embed'
+      ? renderEmbed(input.name, input.embed ?? [], input.blocks)
+      : render(input.blocks);
 
   return `<!doctype html>
 <html lang="id">
@@ -178,6 +256,14 @@ export function sharePage(input: {
     background: #4e5058; color: #fff; text-decoration: none; font-size: 14px; }
   .tombol.mati { background: #383a40; color: #b5bac1; cursor: default; }
   .mati { color: #949ba4; font-size: 13px; }
+  /* Embed klasik: bagian-bagiannya mengikuti tampilan Discord. */
+  .embed-penulis { font-size: 13px; font-weight: 600; color: #f2f3f5; margin-bottom: 4px; }
+  .embed-judul { font-size: 15px; font-weight: 600; color: #f2f3f5; margin-bottom: 6px; }
+  .embed-isi { font-size: 14px; color: #dbdee1; }
+  .embed-bidang-wrap { margin-top: 8px; }
+  .embed-bidang { font-size: 13px; color: #b5bac1; margin-bottom: 6px; }
+  .embed-bidang b { color: #f2f3f5; }
+  .embed-footer { font-size: 12px; color: #949ba4; margin-top: 8px; }
   footer { max-width: 680px; margin: 20px auto 0; font-size: 12px; color: #949ba4; }
 </style>
 </head>
