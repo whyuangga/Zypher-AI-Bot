@@ -95,6 +95,7 @@ export async function runTriggers(options: {
           flags: post.flags,
           allowedMentions: post.allowedMentions,
           embed: post.embed,
+          threadName: post.threadName,
 
           roleButtons: tombol.map((satu) => ({
             id: satu.id,

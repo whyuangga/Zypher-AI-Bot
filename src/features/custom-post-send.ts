@@ -480,6 +480,13 @@ export async function sendOrUpdateEmbedPost(options: {
   embed?: EmbedExtra[] | null;
   /** Nilai template teks (`{member.name}`, …) — berlaku juga di footer/bidang. */
   template?: Record<string, string> | null;
+  /**
+   * Nama thread yang dibuka dari pesan ini (`thread_name` di Discohook).
+   *
+   * Hanya dipakai saat pesan BARU dikirim: Discord membuat thread sesudah
+   * pesan ada, dan memperbarui pesan tidak membuka thread kedua.
+   */
+  threadName?: string | null;
 }): Promise<SendResult> {
   const daftar = buildClassicEmbeds(options.blocks, {
     accent: options.accent ?? null,
@@ -523,6 +530,19 @@ export async function sendOrUpdateEmbedPost(options: {
   }
 
   const sent: Message = await channel.send(payload);
+  /*
+   * Thread dibuat SESUDAH pesan ada (Discord tidak punya field payload untuk
+   * ini). Kegagalannya dilaporkan, bukan menggagalkan pesan: isi yang sudah
+   * tersusun admin tidak boleh hilang hanya karena izin Create Public Threads
+   * belum ada.
+   */
+  const namaThread = String(options.threadName ?? '').trim();
+  if (namaThread) {
+    const thread = await sent
+      .startThread({ name: namaThread.slice(0, 100) })
+      .catch((): null => null);
+    if (!thread) dropped.push('thread tidak bisa dibuat (izin Create Public Threads?)');
+  }
   return { messageId: sent.id, edited: false, dropped, droppedFiles: [] };
 }
 

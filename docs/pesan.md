@@ -631,7 +631,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Select menu: string (flow per opsi), user/role/mentionable/channel | ✅ |
 | `default_values` pada select user/role/channel | ✅ (isian ID di kartu blok Select; select string ditolak Discord & dilaporkan) |
 | `allowed_mentions` (ping role/user tertentu) | ✅ tiga centang di kartu "Tampilan & pengirim"; bawaannya **tanpa ping** |
-| `thread_name` (pesan menjadi awal thread) | ✅ isian "Nama thread" di kartu pengaturan |
+| `thread_name` (pesan menjadi awal thread) | ✅ isian "Nama thread" di kartu pengaturan, berlaku untuk **Components V2 maupun embed klasik** (sebelumnya jalur embed mengabaikannya tanpa laporan) |
 | Message flags: suppress embeds, suppress notifications | ✅ |
 | Message flags: voice message, `IS_COMPONENTS_V2` manual | ❌ (v2 diurus pengirim) |
 | Multi-pesan dalam satu backup (beberapa pesan, `reference`, `thread_id`) | ✅ tab **Multi-pesan** (`?tab=grup`): sampai 20 pesan per dokumen, `reference` antar pesan, nama thread per pesan, **tiap pesan bisa dibuka lagi di tab Susun, diduplikat, diurutkan, atau dihapus**, disimpan di `post_documents` |

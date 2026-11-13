@@ -2591,6 +2591,12 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
             flags: post.flags,
             allowedMentions: post.allowedMentions,
             embed: post.embed,
+            /*
+             * Nama thread ikut di jalur embed: dulu hanya jalur Components V2
+             * yang membukanya, jadi pesan embed dengan nama thread terkirim
+             * tanpa thread dan admin tidak tahu kenapa.
+             */
+            threadName: post.threadName,
             roleButtons: roleButtons.map((b) => ({
               id: b.id,
               label: b.label,
@@ -2621,6 +2627,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
                 flags: post.flags,
                 allowedMentions: post.allowedMentions,
                 embed: post.embed,
+                threadName: post.threadName,
                 roleButtons: roleButtons.map((b) => ({
                   id: b.id,
                   label: b.label,

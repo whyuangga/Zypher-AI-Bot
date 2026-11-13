@@ -9827,6 +9827,79 @@ await testAsync('pesan: kirim memperbarui pesan lama, bukan mengirim ulang', asy
   );
 });
 
+await testAsync('pesan: embed klasik membuka thread dari nama thread', async () => {
+  const { sendOrUpdateEmbedPost } = await import('../src/features/custom-post-send.js');
+
+  /*
+   * Nama thread dulu hanya dipakai jalur Components V2. Pesan embed dengan
+   * nama thread terkirim TANPA thread, dan admin tidak mendapat laporan apa
+   * pun — bedanya hanya terlihat kalau ia membuka Discord.
+   */
+  const dibuat: string[] = [];
+  let kirim = 0;
+  const client = (threadBerhasil: boolean) =>
+    ({
+      channels: {
+        async fetch(id: string) {
+          return {
+            id,
+            isTextBased: () => true,
+            isDMBased: () => false,
+            messages: { async fetch() { throw new Error('Unknown Message'); } },
+            async send() {
+              kirim += 1;
+              return {
+                id: 'pesan-baru',
+                async startThread(opsi: { name: string }) {
+                  if (!threadBerhasil) throw new Error('Missing Permissions');
+                  dibuat.push(opsi.name);
+                  return { id: 'thread-1' };
+                },
+              };
+            },
+          };
+        },
+      },
+    }) as unknown as import('discord.js').Client;
+
+  const blocks = [{ kind: 'text' as const, value: 'Pengumuman rilis' }];
+
+  const dengan = await sendOrUpdateEmbedPost({
+    client: client(true),
+    channelId: 'c1',
+    messageId: null,
+    blocks,
+    title: 'Rilis',
+    threadName: '  Diskusi rilis  ',
+  });
+  assert.deepEqual(dibuat, ['Diskusi rilis'], 'thread dibuat dengan nama yang dirapikan');
+  assert.deepEqual(dengan.dropped, [], 'tidak ada laporan saat thread berhasil');
+
+  // Tanpa nama thread: tidak ada thread yang dibuat.
+  await sendOrUpdateEmbedPost({ client: client(true), channelId: 'c2', messageId: null, blocks, title: 'Rilis' });
+  assert.equal(dibuat.length, 1, 'tanpa nama thread tidak ada thread');
+
+  /*
+   * Thread gagal (izin kurang): pesannya TETAP terkirim dan kegagalannya
+   * dilaporkan. Membuang pesan hanya karena thread gagal menghilangkan isi
+   * yang sudah disusun admin.
+   */
+  const gagal = await sendOrUpdateEmbedPost({
+    client: client(false),
+    channelId: 'c3',
+    messageId: null,
+    blocks,
+    title: 'Rilis',
+    threadName: 'Diskusi',
+  });
+  assert.equal(gagal.messageId, 'pesan-baru', 'pesan tetap terkirim');
+  assert.ok(
+    (gagal.dropped ?? []).some((a) => a.includes('thread')),
+    'kegagalan thread dilaporkan, bukan hilang diam-diam',
+  );
+  assert.equal(kirim, 3, 'tiap panggilan mengirim satu pesan');
+});
+
 await testAsync('pesan: tombol role tampil di baris bawah sebagai tombol interaktif', async () => {
   const { buildPostPayload } = await import('../src/features/custom-post.js');
   const { roleButtonId } = await import('../src/features/role-buttons.js');
