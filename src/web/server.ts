@@ -2239,6 +2239,17 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       blocks: bersih.blocks,
       embed: hasil.embed,
       layout: hasil.layout,
+      /*
+       * Pengaturan tingkat pesan ikut, sama seperti /api/posts/load: JSON yang
+       * ditempel bisa memuat username/avatar/thread_name/flags, dan editor
+       * yang mengabaikannya membuat pesan hasil tempel terkirim dengan bentuk
+       * berbeda dari yang tertulis di JSON-nya.
+       */
+      sender: hasil.sender,
+      webhookName: hasil.webhookName,
+      webhookAvatar: hasil.webhookAvatar,
+      threadName: hasil.threadName,
+      flags: hasil.flags,
       warnings: [...hasil.warnings, ...bersih.dropped.map((alasan) => `Blok dibuang: ${alasan}`)],
     });
     return;

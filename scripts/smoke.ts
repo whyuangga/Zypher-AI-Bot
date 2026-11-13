@@ -8703,6 +8703,43 @@ await testAsync('muat pesan: pesan dashboard mengikuti pesan Discord asal setela
   await repo.deleteCustomPost(GUILD, post.id);
 });
 
+await testAsync('json per pesan: pengaturan tingkat pesan ikut dipulihkan', async () => {
+  const { messageToDraft } = await import('../src/features/message-load.js');
+
+  /*
+   * JSON Data Editor memakai penerjemah yang sama dengan Load (messageToDraft),
+   * dan endpoint-nya sekarang meneruskan pengaturan tingkat pesan. Diuji di
+   * penerjemahnya supaya perilakunya satu, bukan dua yang bisa menyimpang.
+   */
+  const draft = messageToDraft({
+    content: 'Halo',
+    username: 'Tim Pengumuman',
+    avatar_url: 'https://img.test/tim.png',
+    thread_name: 'Diskusi rilis',
+    flags: 4 | 4096,
+  } as never);
+  /*
+   * Bentuk Discohook (`username`/`avatar_url`/`thread_name`) sudah dinormalkan
+   * menjadi author/webhook/thread oleh pemanggil REST; di sini yang diuji
+   * adalah bentuk pesan Discord setelah dinormalkan.
+   */
+  assert.equal(draft.flags, 4 | 4096, 'flag terbawa dari JSON');
+  assert.equal(draft.webhookName, '', 'tanpa webhook_id tidak dianggap webhook');
+
+  const webhook = messageToDraft({
+    content: 'Halo',
+    webhookId: '999',
+    author: { username: 'Tim Pengumuman', avatarUrl: 'https://img.test/tim.png' },
+    thread: { name: 'Diskusi rilis' },
+    flags: 4,
+  } as never);
+  assert.equal(webhook.sender, 'webhook');
+  assert.equal(webhook.webhookName, 'Tim Pengumuman');
+  assert.equal(webhook.webhookAvatar, 'https://img.test/tim.png');
+  assert.equal(webhook.threadName, 'Diskusi rilis');
+  assert.equal(webhook.flags, 4);
+});
+
 await testAsync('generator: pesan bergaya embed menghasilkan kode embed, bukan "belum ada komponen"', async () => {
   const { generateEmbedCodegen } = await import('../src/features/post-codegen.js');
 

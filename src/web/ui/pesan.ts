@@ -1891,6 +1891,25 @@ async function muatJsonPesan() {
   var nama = document.getElementById('postName');
   if (nama && hasil.name && !nama.value) nama.value = String(hasil.name).slice(0, 120);
 
+  /*
+   * Pengaturan tingkat pesan ikut dipulihkan, sama seperti tombol Load. JSON
+   * yang memuat username/avatar/thread_name/flags harus menghasilkan pesan
+   * yang bentuknya sama dengan yang tertulis di JSON itu.
+   */
+  var pengirimJson = document.getElementById('postSender');
+  if (pengirimJson) pengirimJson.value = hasil.sender === 'webhook' ? 'webhook' : 'bot';
+  var namaWebhookJson = document.getElementById('postWebhookName');
+  if (namaWebhookJson) namaWebhookJson.value = hasil.webhookName || '';
+  var avatarWebhookJson = document.getElementById('postWebhookAvatar');
+  if (avatarWebhookJson) avatarWebhookJson.value = hasil.webhookAvatar || '';
+  var threadJson = document.getElementById('postThreadName');
+  if (threadJson) threadJson.value = hasil.threadName || '';
+  var bitFlagJson = typeof hasil.flags === 'number' && isFinite(hasil.flags) ? hasil.flags : 0;
+  var flagTautanJson = document.getElementById('postFlagEmbeds');
+  if (flagTautanJson) flagTautanJson.checked = Boolean(bitFlagJson & 4);
+  var flagNotifJson = document.getElementById('postFlagNotif');
+  if (flagNotifJson) flagNotifJson.checked = Boolean(bitFlagJson & 4096);
+
   renderBlocks();
   renderEmbedExtra();
   renderPreview();

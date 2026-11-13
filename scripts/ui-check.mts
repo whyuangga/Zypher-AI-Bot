@@ -326,6 +326,12 @@ function mountPage(html: string, label: string): PageContext {
               blocks: [{ kind: 'text', value: 'Dari JSON' }],
               embed: [],
               layout: 'container',
+              /* Pengaturan tingkat pesan: JSON Discohook memuatnya juga. */
+              sender: 'webhook',
+              webhookName: 'Tim Pengumuman',
+              webhookAvatar: 'https://img.test/tim.png',
+              threadName: 'Diskusi rilis',
+              flags: 4,
               warnings: [],
             }
           : String(path) === '/api/posts/load'
@@ -2197,6 +2203,30 @@ await check('pesan: JSON Data Editor memuat satu pesan & menolak JSON tanpa isi'
   assert.ok(panggil, 'Muat memanggil /api/posts/from-json');
   const isi = (await page.evaluate('blocks.map(function (b) { return b.kind + ":" + b.value; }).join("|")')) as string;
   assert.equal(isi, 'text:Dari JSON', 'blok hasil JSON masuk ke editor: ' + isi);
+
+  /*
+   * Pengaturan tingkat pesan ikut dipulihkan, sama seperti tombol Load. Tanpa
+   * ini, JSON yang memuat username/avatar/thread_name menghasilkan pesan yang
+   * bentuknya berbeda dari yang tertulis di JSON-nya.
+   */
+  const tingkat = (await page.evaluate(`
+    (function () {
+      return {
+        sender: document.getElementById('postSender').value,
+        nama: document.getElementById('postWebhookName').value,
+        avatar: document.getElementById('postWebhookAvatar').value,
+        thread: document.getElementById('postThreadName').value,
+        flagTautan: document.getElementById('postFlagEmbeds').checked,
+        flagNotif: document.getElementById('postFlagNotif').checked
+      };
+    })()
+  `)) as Record<string, unknown>;
+  assert.equal(tingkat.sender, 'webhook', 'pengirim webhook dipulihkan dari JSON');
+  assert.equal(tingkat.nama, 'Tim Pengumuman', 'nama pengirim dipulihkan');
+  assert.equal(tingkat.avatar, 'https://img.test/tim.png', 'avatar pengirim dipulihkan');
+  assert.equal(tingkat.thread, 'Diskusi rilis', 'nama thread dipulihkan');
+  assert.equal(tingkat.flagTautan, true, 'flag tanpa-kartu dipulihkan');
+  assert.equal(tingkat.flagNotif, false, 'flag yang tidak ada di JSON tidak dicentang');
   assert.equal(page.errors.length, 0, `editor JSON per pesan error: ${page.errors.join('|')}`);
 });
 

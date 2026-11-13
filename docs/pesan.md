@@ -636,7 +636,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Message flags: voice message, `IS_COMPONENTS_V2` manual | ❌ (v2 diurus pengirim) |
 | Multi-pesan dalam satu backup (beberapa pesan, `reference`, `thread_id`) | ✅ tab **Multi-pesan** (`?tab=grup`): sampai 20 pesan per dokumen, `reference` antar pesan, nama thread per pesan, **tiap pesan bisa dibuka lagi di tab Susun, diduplikat, diurutkan, atau dihapus**, disimpan di `post_documents` |
 | JSON editor dokumen | ✅ kartu **JSON dokumen** di tab Multi-pesan: ekspor/impor satu dokumen (semua pesan, rujukan balasan, nama thread, mode rangkaian) |
-| JSON Data Editor **per pesan** | ✅ kartu **JSON Data Editor (satu pesan)** di tab Impor: tempel objek pesan Discord, payload REST, atau data Discohook |
+| JSON Data Editor **per pesan** | ✅ kartu **JSON Data Editor (satu pesan)** di tab Impor: tempel objek pesan Discord, payload REST, atau data Discohook — pengaturan tingkat pesan (`username`, `avatar`, `thread_name`, `flags`) ikut dipulihkan, sama seperti **Load** |
 | `targets[]` (satu pesan, beberapa channel) | ✅ **Kirim juga ke channel lain** di kartu pengaturan: sampai 5 channel tambahan, tiap channel punya ID pesan sendiri |
 | Riwayat/undo revisi (padanan backup) | ✅ 20 versi terakhir per pesan, dibuat otomatis setiap pesan diubah; kartu "Riwayat & bagikan" (tab **Riwayat**) |
 | Share link (tautan berbagi) | ✅ tautan `/bagi/<token>` bisa dibuka tanpa login, berisi blok **dan** embed pesan (bentuk pesan & seluruh gambar galeri ikut), bisa dicabut |
@@ -650,6 +650,27 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, sampai **4 gambar besar** per embed, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 30: JSON Data Editor memulihkan pengaturan tingkat pesan
+
+JSON Data Editor sudah membawa blok & bagian embed, tetapi mengabaikan
+`username`, `avatar`, `thread_name`, dan `flags`. Pesan hasil tempel karena itu
+terkirim dengan bentuk berbeda dari yang tertulis di JSON-nya — persis celah
+yang ditutup **Load** pada Batch 27, hanya lewat pintu lain.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Pengirim (bot / webhook) | selalu bot | mengikuti JSON |
+| Nama & avatar pengirim webhook | diabaikan | dipulihkan |
+| Nama thread | diabaikan | dipulihkan |
+| Flag tanpa-kartu & tanpa-notifikasi | diabaikan | dipulihkan |
+
+Catatan:
+
+- Kedua pintu masuk (`/api/posts/load` dan `/api/posts/from-json`) memakai
+  penerjemah yang **sama**, jadi aturan "hanya `webhook_id` yang menandai
+  webhook" dan "flag disaring ke dua bit" berlaku di keduanya. Kalau aturannya
+  ditulis dua kali, cepat atau lambat salah satunya tertinggal.
 
 ### Batch 29: generator kode untuk pesan bergaya embed
 
