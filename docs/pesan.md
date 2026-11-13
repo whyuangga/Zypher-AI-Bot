@@ -654,6 +654,27 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, sampai **4 gambar besar** per embed, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+| Webhook URL manual (`Add Webhook`, sampai beberapa target) | ❌ **sengaja tidak dibuat** — lihat catatan di bawah |
+| Kirim ke thread yang sudah ada (`?thread_id=`) | ✅ lihat **Batch 40** |
+| Cek tujuan sebelum kirim (`Webhook does not exist`) | ✅ padanannya pemeriksaan channel & izin bot — lihat **Batch 41** |
+
+#### Kenapa webhook URL manual tidak dibuat
+
+Discohook adalah alat untuk **siapa saja**: orang menempelkan URL webhook
+miliknya sendiri, dan alat itu tidak punya bot. Bot ini dirancang **1 bot,
+1 server**: admin memilih channel, dan bot membuat webhook-nya sendiri
+(token tersimpan terenkripsi) untuk tampil atas nama server.
+
+Bedanya bukan kemalasan, tapi konsekuensi:
+
+- URL webhook manual berarti **token pihak ketiga** masuk database bot ini —
+  rahasia milik orang lain yang harus dijaga, tanpa manfaat apa pun kalau
+  servernya memang server bot itu sendiri.
+- Pesan bisa dikirim ke **server lain** lewat webhook asing, melewati seluruh
+  pemeriksaan tujuan yang baru dipasang di **Batch 41**.
+- Webhook buatan bot bisa dipakai ulang, diperiksa keberadaannya, dan
+  diperbaiki sendiri saat channel dibuat ulang — hal yang tidak mungkin
+  dilakukan pada URL asing.
 
 ### Batch 41: tujuan diperiksa sebelum mengirim
 
