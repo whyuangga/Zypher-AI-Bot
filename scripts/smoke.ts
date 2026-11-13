@@ -8703,6 +8703,40 @@ await testAsync('muat pesan: pesan dashboard mengikuti pesan Discord asal setela
   await repo.deleteCustomPost(GUILD, post.id);
 });
 
+await testAsync('generator: pesan bergaya embed menghasilkan kode embed, bukan "belum ada komponen"', async () => {
+  const { generateEmbedCodegen } = await import('../src/features/post-codegen.js');
+
+  /*
+   * Pesan embed tidak punya komponen sama sekali. Tanpa jalur sendiri, panel
+   * payload menampilkan "belum punya komponen" untuk pesan yang jelas berisi,
+   * dan admin menyimpulkan generatornya rusak.
+   */
+  const embeds = [
+    { title: 'Pengumuman', description: 'Isi', color: 0x5865f2 },
+    { image: { url: 'https://img.test/2.png' } },
+  ];
+
+  const djs = generateEmbedCodegen(embeds, 'djs14', { threadName: 'Diskusi rilis', flags: 4 });
+  const djsKode = djs.code.join(String.fromCharCode(10));
+  assert.ok(djsKode.includes('embeds'), 'kode mengirim embeds');
+  assert.ok(djsKode.includes('Pengumuman'), 'isi embed ikut');
+  assert.ok(djsKode.includes('thread_name: "Diskusi rilis"'), 'nama thread ikut');
+  assert.ok(djsKode.includes('flags: 4'), 'flag ikut');
+  assert.ok(!djsKode.toLowerCase().includes('belum punya komponen'), 'tidak menyebut komponen');
+
+  const dpy = generateEmbedCodegen(embeds, 'dpy2');
+  const dpyKode = dpy.code.join(String.fromCharCode(10));
+  assert.ok(dpyKode.includes('discord.Embed.from_dict'), 'discord.py memakai from_dict');
+  assert.ok(
+    dpy.dropped.some((a) => a.includes('import json')),
+    'kebutuhan import json disebut, bukan disembunyikan',
+  );
+
+  // Tanpa embed: pesan yang bisa dibaca, bukan kode kosong.
+  const kosong = generateEmbedCodegen([], 'djs14');
+  assert.ok(kosong.code[0]!.includes('belum punya embed'), 'daftar kosong dijelaskan');
+});
+
 await testAsync('jadwal: pesan berbentuk embed dikirim lewat jalur embed', async () => {
   const repo = await import('../src/db/repo.js');
   const { sendScheduledPost } = await import('../src/features/post-scheduler.js');

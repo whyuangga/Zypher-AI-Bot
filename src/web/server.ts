@@ -107,7 +107,8 @@ import { messageToDraft, parseMessageLink, type LoadedMessage } from '../feature
 import { listGuildRoles } from '../features/role-buttons.js';
 import { sharePage } from './ui/share.js';
 import { payloadUntukPesan } from '../features/custom-post-send.js';
-import { CODEGEN_LIBRARIES, generateCodegen } from '../features/post-codegen.js';
+import { buildClassicEmbeds, validateEmbeds } from '../features/post-embed.js';
+import { CODEGEN_LIBRARIES, generateCodegen, generateEmbedCodegen } from '../features/post-codegen.js';
 import { ACTION_LIMITS } from '../features/post-actions.js';
 import { DocumentError, ingestDocument, removeDocument, searchKnowledge } from '../features/rag.js';
 import {
@@ -2281,6 +2282,39 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     const pilihan = CODEGEN_LIBRARIES.includes(library as (typeof CODEGEN_LIBRARIES)[number])
       ? (library as (typeof CODEGEN_LIBRARIES)[number])
       : 'djs14';
+    /*
+     * Pesan BERGAYA EMBED tidak punya komponen sama sekali — isinya `embeds`.
+     * Jalurnya dipisah di sini supaya panel payload menampilkan yang
+     * benar-benar dikirim, bukan "belum punya komponen" untuk pesan yang jelas
+     * berisi.
+     */
+    if (post.layout === 'embed') {
+      const daftar = buildClassicEmbeds(post.blocks, {
+        accent: post.accent,
+        title: post.name,
+        embedList: post.embed,
+      });
+      const embeds = daftar.map((satu) => satu.embed);
+      const droppedEmbed = daftar.flatMap((satu) => satu.dropped);
+      sendJson(response, 200, {
+        post: { id: post.id, name: post.name, channelId: post.channelId },
+        blocks: post.blocks,
+        allowedMentions: post.allowedMentions,
+        threadName: post.threadName,
+        flags: post.flags,
+        layout: 'embed',
+        embeds,
+        components: null,
+        dropped: [...droppedEmbed, ...validateEmbeds(embeds)],
+        codegen: generateEmbedCodegen(embeds, pilihan, {
+          threadName: post.threadName,
+          flags: post.flags,
+        }),
+        library: pilihan,
+      });
+      return;
+    }
+
     const built = await payloadUntukPesan(guildId, post);
     sendJson(response, 200, {
       post: { id: post.id, name: post.name, channelId: post.channelId },
@@ -2288,6 +2322,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       allowedMentions: post.allowedMentions,
       threadName: post.threadName,
       flags: post.flags,
+      layout: post.layout,
       // `null` = pesan kosong; dashboard menampilkan penjelasannya.
       components: built?.components ?? null,
       dropped: built?.dropped ?? [],

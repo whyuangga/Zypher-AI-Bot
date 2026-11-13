@@ -97,6 +97,86 @@ function komentarDjs(baris: string[]): string[] {
 }
 
 /**
+ * Kode untuk pesan BERGAYA EMBED klasik.
+ *
+ * Generator komponen tidak bisa dipakai: pesan embed TIDAK punya komponen
+ * (dan Discord menolak keduanya sekaligus). Tanpa jalur ini, halaman
+ * menampilkan "pesan ini belum punya komponen" untuk pesan embed yang jelas
+ * berisi — dan admin menyimpulkan generatornya rusak.
+ */
+export function generateEmbedCodegen(
+  embeds: unknown[],
+  library: CodegenLibrary,
+  opsi: { quoteStyle?: '"' | "'"; threadName?: string | null; flags?: number } = {},
+): CodegenResult {
+  const q = opsi.quoteStyle === "'" ? "'" : '"';
+  const dropped: string[] = [];
+  const daftar = (Array.isArray(embeds) ? embeds : []).filter(
+    (satu): satu is Record<string, unknown> => Boolean(satu) && typeof satu === 'object' && !Array.isArray(satu),
+  );
+  if (daftar.length === 0) {
+    return {
+      imports: [],
+      code:
+        library === 'dpy2'
+          ? ['# Pesan ini belum punya embed yang bisa dikirim.']
+          : ['// Pesan ini belum punya embed yang bisa dikirim.'],
+      documentation:
+        library === 'dpy2'
+          ? 'https://discordpy.readthedocs.io/en/stable/api.html#discord.Embed'
+          : 'https://discord.js.org/docs/packages/builders/main/EmbedBuilder:Class',
+      dropped,
+    };
+  }
+
+  /*
+   * Payload embed ditulis sebagai objek apa adanya, bukan diterjemahkan ke
+   * builder satu per satu: bentuknya sudah payload Discord (judul, isi,
+   * bidang, gambar), jadi yang paling jujur adalah menampilkan yang benar-benar
+   * dikirim. Terjemahan ke builder justru menambah peluang menyimpang.
+   */
+  const json = JSON.stringify(daftar, null, 2);
+  if (library === 'dpy2') {
+    const barisJson = json.split('\n').map((satu) => (satu ? `    ${satu}` : satu));
+    return {
+      imports: ['import discord'],
+      code: [
+        'embeds = json.loads(',
+        "    '''",
+        ...barisJson,
+        "    '''",
+        ')',
+        'embeds = [discord.Embed.from_dict(satu) for satu in embeds]',
+        '# lalu kirim: await channel.send(embeds=embeds)',
+        ...(opsi.threadName
+          ? [
+              '# nama thread:',
+              `# await channel.send(embeds=embeds, thread_name=${quoteStr(opsi.threadName, q)})`,
+            ]
+          : []),
+      ],
+      documentation: 'https://discordpy.readthedocs.io/en/stable/api.html#discord.Embed',
+      dropped: [...dropped, 'kode memakai json.loads — tambahkan "import json" di berkas bot'],
+    };
+  }
+
+  return {
+    imports: [],
+    code: [
+      `const embeds = ${json};`,
+      '',
+      'await channel.send({',
+      '  embeds,',
+      ...(opsi.flags ? ['  // flag admin (tanpa kartu tautan / tanpa notifikasi)', `  flags: ${opsi.flags},`] : []),
+      ...(opsi.threadName ? [`  thread_name: ${quoteStr(opsi.threadName, q)},`] : []),
+      '});',
+    ],
+    documentation: 'https://discord.js.org/docs/packages/builders/main/EmbedBuilder:Class',
+    dropped,
+  };
+}
+
+/**
  * Beri koma pada baris terakhir satu blok — kecuali blok itu komentar.
  *
  * Komentar di dalam array bukan elemen, jadi `# komponen tipe 99 …,` membuat

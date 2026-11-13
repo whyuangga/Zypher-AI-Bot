@@ -3100,18 +3100,34 @@ async function muatPayloadJson() {
     var json = document.getElementById('payloadJson');
     var kode = document.getElementById('codegenOut');
     if (json) {
-      json.value = hasil.components
+      /*
+       * Pesan bergaya embed membawa bagian embeds, bukan components. Menampilkan
+       * "belum punya komponen" untuk pesan yang jelas berisi membuat admin
+       * menyimpulkan panel ini rusak.
+       */
+      json.value = hasil.layout === 'embed'
         ? JSON.stringify(
             {
-              flags: hasil.flags,
+              flags: hasil.flags || undefined,
               allowed_mentions: hasil.allowedMentions,
               thread_name: hasil.threadName || undefined,
-              components: hasil.components
+              embeds: hasil.embeds || []
             },
             null,
             2
           )
-        : 'Pesan ini belum punya komponen yang bisa dikirim.';
+        : hasil.components
+          ? JSON.stringify(
+              {
+                flags: hasil.flags,
+                allowed_mentions: hasil.allowedMentions,
+                thread_name: hasil.threadName || undefined,
+                components: hasil.components
+              },
+              null,
+              2
+            )
+          : 'Pesan ini belum punya komponen yang bisa dikirim.';
     }
     if (kode) {
       kode.value = [String((hasil.codegen && hasil.codegen.imports) || '').trim(), String((hasil.codegen && hasil.codegen.code) || '').trim()]

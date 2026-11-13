@@ -644,12 +644,34 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | **Load** pesan Discord yang sudah terkirim | ✅ kartu **Muat pesan Discord** di tab **Impor**: tempel Message Link, pesan dibuka di editor (bot butuh *Read Message History*) **beserta pengaturan tingkat pesannya** — pengirim webhook, nama & avatar, nama thread, flag (lihat **Batch 27**); galeri gambar yang di Discord tampil sebagai beberapa embed dibaca kembali sebagai **satu galeri** (lihat **Batch 24**) |
 | Jadwal kirim (sekali / berulang / cron) | ✅ sekali, tiap N jam (min. 2 jam), dan **cron kalender** lima ruas (tiap hari, tiap Senin, tiap tanggal 1, …) memakai zona waktu server. Pola lebih rapat dari 2 jam ditolak dengan alasan |
 | Trigger event (member masuk/keluar) | ✅ pilihan **Kirim otomatis saat**: `member_add` / `member_remove`; pesan yang sama diperbarui tiap kejadian, bukan dikirim ulang |
-| Generator kode (payload → kode bot) | ✅ tab **Impor** → panel "JSON payload & generator kode": keluaran `discord.js` v14 & `discord.py` v2, diterjemahkan dari payload yang benar-benar dikirim |
+| Generator kode (payload → kode bot) | ✅ tab **Impor** → panel "JSON payload & generator kode": keluaran `discord.js` v14 & `discord.py` v2, diterjemahkan dari payload yang benar-benar dikirim — termasuk pesan **bergaya embed** (`embeds`, nama thread, flag) yang tidak punya komponen sama sekali |
 | Melihat payload JSON mentah | ✅ panel yang sama menampilkan `components` persis seperti yang diterima Discord, siap ditempel ke REST API |
 | Nama & avatar pengirim webhook | ✅ isian **Nama & avatar pengirim** di kartu pengaturan (bawaan: identitas server); berlaku di **semua jalur kirim** — manual, jadwal, pemicu member, dan aksi flow |
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, sampai **4 gambar besar** per embed, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 29: generator kode untuk pesan bergaya embed
+
+Panel payload hanya tahu tentang komponen. Untuk pesan **Bentuk pesan: Embed
+klasik** ia menampilkan "Pesan ini belum punya komponen" — padahal pesannya
+jelas berisi, hanya saja isinya `embeds`. Admin yang membuka panel itu
+menyimpulkan generatornya rusak.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Payload pesan embed | "belum punya komponen" | objek **`embeds`** yang benar-benar dikirim |
+| Kode `discord.js` | tidak ada | `await channel.send({ embeds })`, plus flag & nama thread |
+| Kode `discord.py` | tidak ada | `discord.Embed.from_dict(...)` + catatan `import json` |
+| Bagian embed yang dibuang | tidak terlihat | masuk `dropped`, sama seperti jalur komponen |
+
+Catatan:
+
+- Embed ditulis sebagai **payload apa adanya**, bukan diterjemahkan ke builder
+  satu per satu. Bentuknya sudah payload Discord, jadi yang paling jujur adalah
+  yang benar-benar dikirim — terjemahan kedua hanya menambah peluang menyimpang.
+- Kebutuhan `import json` disebut di `dropped`, bukan dibiarkan menghasilkan
+  kode yang gagal dijalankan.
 
 ### Batch 28: jadwal & aksi flow menghormati bentuk embed
 
