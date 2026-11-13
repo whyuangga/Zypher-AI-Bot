@@ -8251,6 +8251,50 @@ await testAsync('muat pesan: tautan Discord & isi pesan diterjemahkan balik ke b
   assert.ok(kosong.warnings.length > 0, 'pesan kosong dijelaskan, bukan gagal senyap');
 });
 
+await testAsync('muat pesan: bentuk JSON yang lazim ditempel dikenali', async () => {
+  const { messageToDraft } = await import('../src/features/message-load.js');
+
+  /*
+   * `ambilPesanMentah` hidup di server (bukan modul murni) karena hanya
+   * menormalkan bentuk masukan. Yang diuji di sini adalah hasil akhirnya:
+   * setiap bentuk harus menghasilkan blok yang sama setelah diterjemahkan.
+   */
+  const bentuk = {
+    langsung: { content: 'Halo', components: [{ type: 10, content: 'Dunia' }] },
+    rest: { body: { content: 'Halo', components: [{ type: 10, content: 'Dunia' }] } },
+    discohook: { messages: [{ data: { content: 'Halo', components: [{ type: 10, content: 'Dunia' }] } }] },
+  };
+
+  const normal = (input: Record<string, unknown>): Record<string, unknown> => {
+    let akar = input;
+    const daftar = akar.messages;
+    if (Array.isArray(daftar) && daftar.length > 0) {
+      const pertama = daftar[0] as Record<string, unknown>;
+      akar = (pertama.data as Record<string, unknown>) ?? pertama;
+    }
+    const dalam = (akar.body as Record<string, unknown>) ?? (akar.data as Record<string, unknown>);
+    if (dalam && (dalam.content !== undefined || dalam.embeds !== undefined || dalam.components !== undefined)) {
+      akar = dalam;
+    }
+    return akar;
+  };
+
+  const hasil = Object.entries(bentuk).map(([nama, isi]) => {
+    const draft = messageToDraft(normal(isi) as never);
+    return nama + ':' + draft.blocks.map((b) => b.kind + '=' + b.value).join(',');
+  });
+  assert.equal(new Set(hasil.map((satu) => satu.split(':')[1])).size, 1, 'tiga bentuk menghasilkan blok yang sama');
+
+  /*
+   * Bentuk yang TIDAK punya content/embeds/components harus ditolak, bukan
+   * diterjemahkan jadi pesan kosong — pesan kosong akan membuat admin mengira
+   * JSON-nya berhasil.
+   */
+  const kosong = messageToDraft(normal({ hello: 'world' }) as never);
+  assert.equal(kosong.blocks.length, 0);
+  assert.ok(kosong.warnings.length > 0, 'bentuk asing dijelaskan');
+});
+
 await testAsync('template: variabel Discohook dirakit & dipakai di aksi dan teks pesan', async () => {
   const { buildTemplateValues, applyTemplate, tokenTersisa } = await import('../src/features/post-template.js');
   const { fillActionText } = await import('../src/features/post-actions.js');

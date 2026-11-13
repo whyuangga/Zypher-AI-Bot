@@ -636,6 +636,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Message flags: voice message, `IS_COMPONENTS_V2` manual | ❌ (v2 diurus pengirim) |
 | Multi-pesan dalam satu backup (beberapa pesan, `reference`, `thread_id`) | ✅ tab **Multi-pesan** (`?tab=grup`): sampai 20 pesan per dokumen, `reference` antar pesan, nama thread per pesan, disimpan di `post_documents` |
 | JSON editor dokumen | ✅ kartu **JSON dokumen** di tab Multi-pesan: ekspor/impor satu dokumen (semua pesan, rujukan balasan, nama thread, mode rangkaian) |
+| JSON Data Editor **per pesan** | ✅ kartu **JSON Data Editor (satu pesan)** di tab Impor: tempel objek pesan Discord, payload REST, atau data Discohook |
 | `targets[]` (satu pesan, beberapa channel) | ✅ **Kirim juga ke channel lain** di kartu pengaturan: sampai 5 channel tambahan, tiap channel punya ID pesan sendiri |
 | Riwayat/undo revisi (padanan backup) | ✅ 20 versi terakhir per pesan, dibuat otomatis setiap pesan diubah; kartu "Riwayat & bagikan" (tab **Riwayat**) |
 | Share link (tautan berbagi) | ✅ tautan `/bagi/<token>` bisa dibuka tanpa login, hanya berisi blok pesan, bisa dicabut |
@@ -648,6 +649,34 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, satu gambar besar, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 17: JSON Data Editor per pesan
+
+Discohook punya **JSON Data Editor** per pesan: tempel JSON mentah Discord,
+lalu pesannya terbuka di editor. Bot sebelumnya hanya punya JSON dokumen
+(ekspor/impor seluruh susunan), bukan JSON **satu pesan** yang ditempel dari
+luar.
+
+Kartu baru di tab **Impor** → *JSON Data Editor (satu pesan)*, dengan endpoint
+`POST /api/posts/from-json { json }`.
+
+Tiga bentuk yang diterima, semuanya diterjemahkan ke blok yang sama:
+
+| Bentuk tempelan | Asal |
+|---|---|
+| `{ content, embeds, components }` | objek pesan Discord / dokumentasi API |
+| `{ body: { … } }` atau `{ data: { … } }` | payload REST yang disalin utuh |
+| `{ messages: [{ data: { … } }] }` | data Discohook |
+
+Catatan:
+
+- Endpoint ini **tidak butuh bot online**: tidak ada yang diambil dari Discord,
+  jadi tidak ikut gagal hanya karena bot mati.
+- Bentuk yang tidak punya `content`/`embeds`/`components` **ditolak** dengan
+  pesan, bukan diterjemahkan jadi pesan kosong — pesan kosong akan membuat
+  admin mengira JSON-nya berhasil.
+- Penerjemahannya memakai `messageToDraft` yang sama dengan fitur **Muat pesan
+  Discord**, jadi dua jalur itu tidak bisa berbeda hasil.
 
 ### Batch 16: memuat pesan Discord yang sudah terkirim (padanan tombol Load)
 
@@ -1383,6 +1412,7 @@ tidak bisa dibuka lagi — bot akan membuat webhook baru otomatis.
 | `GET` | `/api/roles` | daftar role server + alasan tidak bisa dibagi |
 | `POST` | `/api/posts/import/discohook` | terjemahkan tautan/JSON Discohook jadi blok (`{ url }` atau `{ json }`) |
 | `POST` | `/api/posts/load` | muat pesan Discord yang sudah terkirim jadi blok (`{ url }` berisi Message Link) |
+| `POST` | `/api/posts/from-json` | muat satu pesan dari JSON mentah (`{ json }`) — padanan JSON Data Editor |
 
 Kalau bot sedang offline, tombol kirim dinonaktifkan dan permintaan kirim
 dijawab `400` dengan pesan yang jelas — bukan `500`.

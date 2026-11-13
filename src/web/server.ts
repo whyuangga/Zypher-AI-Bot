@@ -2162,6 +2162,49 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
   }
 
   /*
+   * POST /api/posts/from-json  { json }
+   *
+   * Padanan "JSON Data Editor" per pesan di Discohook: tempel JSON mentah
+   * Discord (bentuk yang sama dengan kotak "Payload komponen"), lalu pesan itu
+   * dibuka di editor sebagai blok.
+   *
+   * Endpoint terpisah dari /api/posts/load karena sumbernya BUKAN pesan yang
+   * sudah ada di Discord: tidak ada yang perlu diambil lewat bot, jadi tidak
+   * boleh ikut gagal hanya karena bot sedang offline.
+   */
+  if (path === '/api/posts/from-json' && method === 'POST') {
+    const payload = await readJsonBody(request, response, 512 * 1024);
+    if (!payload) return;
+
+    /*
+     * Menerima tiga bentuk yang wajar ditempel admin:
+     *   1. objek pesan Discord ({ content, embeds, components }),
+     *   2. payload REST yang membungkusnya ({ body: {...} } atau { data: {...} }),
+     *   3. data Discohook ({ messages: [{ data: {...} }] }).
+     */
+    const mentah = ambilPesanMentah(payload.json);
+    if (!mentah) {
+      sendJson(response, 400, {
+        error:
+          'JSON tidak dikenali. Tempel objek pesan Discord (content/embeds/components), payload REST-nya, atau data Discohook.',
+      });
+      return;
+    }
+
+    const hasil = messageToDraft(mentah);
+    const bersih = sanitizeBlocks(hasil.blocks);
+    sendJson(response, 200, {
+      ok: true,
+      name: hasil.content ? hasil.content.slice(0, 120) : '',
+      blocks: bersih.blocks,
+      embed: hasil.embed,
+      layout: hasil.layout,
+      warnings: [...hasil.warnings, ...bersih.dropped.map((alasan) => `Blok dibuang: ${alasan}`)],
+    });
+    return;
+  }
+
+  /*
    * ---------- riwayat revisi & tautan berbagi ----------
    *
    *   GET  /api/posts/:id/revisions       daftar versi
@@ -3198,6 +3241,45 @@ async function readJson(
 }
 
 /** Sama seperti `readJson`, tapi batas ukurannya bisa diatur (mis. gambar). */
+/**
+ * Ambil objek pesan dari beberapa bentuk JSON yang lazim ditempel.
+ *
+ * Dipakai `/api/posts/from-json`. Tidak pernah melempar: isi tempelan admin
+ * tidak boleh membuat server membalas 500.
+ */
+function ambilPesanMentah(input: unknown): LoadedMessage | null {
+  const objek = (nilai: unknown): Record<string, unknown> | null =>
+    nilai && typeof nilai === 'object' && !Array.isArray(nilai) ? (nilai as Record<string, unknown>) : null;
+
+  const akarAwal = objek(input);
+  if (!akarAwal) return null;
+  let akar = akarAwal;
+
+  // Data Discohook: messages[0].data
+  const daftarPesan = akar.messages;
+  if (Array.isArray(daftarPesan) && daftarPesan.length > 0) {
+    const pertama = objek(daftarPesan[0]);
+    const data = objek(pertama?.data) ?? pertama;
+    if (data) akar = data;
+  }
+
+  // Payload REST: { body: {...} } atau { data: {...} }
+  const dalam = objek(akar.body) ?? objek(akar.data);
+  if (dalam && (dalam.content !== undefined || dalam.embeds !== undefined || dalam.components !== undefined)) {
+    akar = dalam;
+  }
+
+  const punyaIsi = akar.content !== undefined || akar.embeds !== undefined || akar.components !== undefined;
+  if (!punyaIsi) return null;
+
+  return {
+    content: akar.content,
+    embeds: Array.isArray(akar.embeds) ? akar.embeds : [],
+    components: Array.isArray(akar.components) ? akar.components : [],
+    attachments: Array.isArray(akar.attachments) ? akar.attachments : [],
+  };
+}
+
 async function readJsonBody(
   request: IncomingMessage,
   response: ServerResponse,

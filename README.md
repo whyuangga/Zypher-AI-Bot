@@ -393,7 +393,9 @@ adanya supaya terlihat. Bentuk **Embed klasik** juga sudah bisa diisi penuh:
 yang berisi embed kini mendarat sebagai **embed asli**, bukan kartu teks. Pesan
 yang **sudah terkirim di Discord** bisa ditarik balik ke editor lewat *Message
 Link* (padanan tombol **Load** Discohook) — komponen V2, embed, dan teksnya
-diterjemahkan ulang jadi blok, lalu bisa diperbaiki dan dikirim lagi.
+diterjemahkan ulang jadi blok, lalu bisa diperbaiki dan dikirim lagi. Ada juga
+**JSON Data Editor per pesan**: tempel objek pesan Discord, payload REST, atau
+data Discohook, dan isinya masuk ke editor.
 Untuk role yang banyak tersedia **menu dropdown**
 sampai 25 pilihan, dengan opsi **hanya satu pilihan** yang otomatis mencabut
 role lain di menu yang sama — cocok untuk menu warna nama atau platform. Bot
@@ -519,10 +521,10 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke # 428 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
+npm run smoke # 429 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
 npm run smoke:pg       # 21 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # 15 pemeriksaan rantai fallback provider (server tiruan)
-npm run test:ui        # 129 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
+npm run test:ui        # 130 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
 npm run test:browser   # uji klik sungguhan di Chromium (butuh dashboard hidup)
 npm run verify         # semuanya sekaligus: typecheck ketat + smoke + fallback + UI
 npm run dashboard      # nyalakan dashboard web saja (node dist/web/standalone.js)

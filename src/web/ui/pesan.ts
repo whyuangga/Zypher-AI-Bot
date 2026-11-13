@@ -250,6 +250,18 @@ export function pesanPage(options: PesanPageOptions): string {
     </details>
 
     <details class="json-panel">
+      <summary>${icon('cpu', 15)} JSON Data Editor (satu pesan)</summary>
+      <div class="json-isi">
+        <p class="hint" style="margin:0">Padanan <b>JSON Data Editor</b> Discohook: tempel JSON satu pesan Discord (bentuk <code>content</code>/<code>embeds</code>/<code>components</code>, payload REST-nya, atau data Discohook), lalu isinya masuk ke editor sebagai blok. Berguna saat menyalin satu pesan dari bot lain atau dari dokumentasi.</p>
+        <textarea id="pesanJsonText" rows="8" spellcheck="false" placeholder="{ &quot;content&quot;: &quot;Halo&quot;, &quot;components&quot;: [ ... ] }"></textarea>
+        <div class="json-aksi">
+          <button class="btn btn-ghost btn-sm" type="button" onclick="muatJsonPesan()">${icon('download', 15)} Muat ke editor</button>
+          <span class="hint" id="pesanJsonStatus" style="margin:0"></span>
+        </div>
+      </div>
+    </details>
+
+    <details class="json-panel">
       <summary>${icon('file', 15)} Import / ekspor JSON</summary>
       <div class="json-isi">
         <p class="hint" style="margin:0">Untuk memindahkan susunan pesan ke server lain, atau menyimpan cadangan sebelum mengubah banyak hal. Channel tujuan sengaja <b>tidak</b> ikut — ID channel berbeda di tiap server.</p>
@@ -1744,6 +1756,59 @@ async function muatPesanDiscord() {
 
   var peringatan = hasil.warnings || [];
   var ringkas = '✅ ' + blocks.length + ' blok dimuat dari Discord';
+  if (peringatan.length) ringkas += '. ' + peringatan.length + ' catatan: ' + peringatan[0];
+  if (status) status.textContent = ringkas;
+  toast(ringkas);
+  showPesanTab('susun');
+}
+
+/**
+ * Muat satu pesan dari JSON mentah ke editor ("JSON Data Editor").
+ *
+ * Berbeda dari "Muat pesan Discord": tidak ada yang diambil dari Discord, jadi
+ * tetap bekerja saat bot offline. Penerjemahannya di server supaya bentuk yang
+ * diterima persis sama dengan yang diterima endpoint /api/posts/from-json.
+ */
+async function muatJsonPesan() {
+  var kotak = document.getElementById('pesanJsonText');
+  var status = document.getElementById('pesanJsonStatus');
+  var teks = kotak ? String(kotak.value || '').trim() : '';
+  if (!teks) return toast('Tempel JSON pesan dulu', true);
+
+  var data;
+  try {
+    data = JSON.parse(teks);
+  } catch (error) {
+    if (status) status.textContent = '';
+    return toast('JSON tidak valid: ' + error.message, true);
+  }
+
+  var hasil;
+  try {
+    hasil = await api('/api/posts/from-json', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ json: data }),
+    });
+  } catch (error) {
+    if (status) status.textContent = '';
+    return toast('Gagal memuat JSON: ' + error.message, true);
+  }
+
+  blocks = (hasil.blocks || []).map(normalBlock);
+  editingId = null;
+  loadEmbedExtra(hasil.embed);
+  var bentuk = document.getElementById('postLayout');
+  if (bentuk) bentuk.value = hasil.layout === 'embed' ? 'embed' : 'container';
+  var nama = document.getElementById('postName');
+  if (nama && hasil.name && !nama.value) nama.value = String(hasil.name).slice(0, 120);
+
+  renderBlocks();
+  renderEmbedExtra();
+  renderPreview();
+
+  var peringatan = hasil.warnings || [];
+  var ringkas = '✅ ' + blocks.length + ' blok dimuat dari JSON';
   if (peringatan.length) ringkas += '. ' + peringatan.length + ' catatan: ' + peringatan[0];
   if (status) status.textContent = ringkas;
   toast(ringkas);

@@ -319,6 +319,15 @@ function mountPage(html: string, label: string): PageContext {
                 dropped: [],
               },
             }
+          : String(path) === '/api/posts/from-json'
+          ? {
+              ok: true,
+              name: 'Halo dari JSON',
+              blocks: [{ kind: 'text', value: 'Dari JSON' }],
+              embed: [],
+              layout: 'container',
+              warnings: [],
+            }
           : String(path) === '/api/posts/load'
           ? {
               ok: true,
@@ -2101,6 +2110,28 @@ await check('pesan: pesan Discord bisa dimuat lewat tautan & mengisi editor', as
   const nama = (await page.evaluate("document.getElementById('postName').value")) as string;
   assert.equal(nama, 'Judul dari Discord', 'nama pesan terisi dari hasil muat');
   assert.equal(page.errors.length, 0, `editor muat pesan error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: JSON Data Editor memuat satu pesan & menolak JSON tanpa isi', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-json-pesan');
+
+  assert.ok(html.includes('id="pesanJsonText"'), 'kotak JSON per pesan ada');
+  assert.ok(html.includes('muatJsonPesan()'), 'tombolnya terpasang');
+
+  await page.evaluate(`
+    (async function () {
+      document.getElementById('pesanJsonText').value = JSON.stringify({ content: 'Halo dari JSON' });
+      document.getElementById('postName').value = '';
+      await muatJsonPesan();
+    })()
+  `);
+
+  const panggil = page.fetches.find((call) => call.path === '/api/posts/from-json');
+  assert.ok(panggil, 'Muat memanggil /api/posts/from-json');
+  const isi = (await page.evaluate('blocks.map(function (b) { return b.kind + ":" + b.value; }).join("|")')) as string;
+  assert.equal(isi, 'text:Dari JSON', 'blok hasil JSON masuk ke editor: ' + isi);
+  assert.equal(page.errors.length, 0, `editor JSON per pesan error: ${page.errors.join('|')}`);
 });
 
 await check('pesan: izin ping & nama thread ikut dikirim, bawaan tanpa ping', async () => {
