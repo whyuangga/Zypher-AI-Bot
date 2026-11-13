@@ -716,6 +716,10 @@ Catatan:
   yang benar-benar dikirim — terjemahan kedua hanya menambah peluang menyimpang.
 - Kebutuhan `import json` disebut di `dropped`, bukan dibiarkan menghasilkan
   kode yang gagal dijalankan.
+- Tombol & menu role **tidak** masuk embed (Discord menaruhnya sebagai
+  komponen interaktif), jadi kode embed memang tidak memuatnya. Jumlahnya
+  dilaporkan di `dropped` supaya developer yang menyalin kode tahu pesannya
+  masih punya komponen yang tidak ikut digenerate. (Batch 31b)
 
 ### Batch 28: jadwal & aksi flow menghormati bentuk embed
 

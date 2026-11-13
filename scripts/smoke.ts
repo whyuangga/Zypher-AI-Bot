@@ -8827,6 +8827,29 @@ await testAsync('generator: pesan bergaya embed menghasilkan kode embed, bukan "
   assert.ok(kosong.code[0]!.includes('belum punya embed'), 'daftar kosong dijelaskan');
 });
 
+await testAsync('payload: pesan embed melaporkan tombol role yang tidak ikut digenerate', async () => {
+  const { buildClassicEmbeds } = await import('../src/features/post-embed.js');
+
+  /*
+   * Kode yang digenerate untuk pesan embed hanya berisi `embeds`. Kalau pesan
+   * itu masih punya tombol/menu role, developer yang menyalin kodenya akan
+   * mendapat pesan tanpa tombol — dan tidak ada yang memberi tahu. Bagian ini
+   * diuji di pembangun embed + aturan pelaporan, karena endpoint-nya sendiri
+   * sudah memakai keduanya.
+   */
+  const daftar = buildClassicEmbeds([{ kind: 'text', value: 'Isi' }, { kind: 'button', value: 'Klik', url: 'https://a.test' }], {
+    title: 'Judul',
+    embedList: [{ fields: [{ name: 'A', value: '1', inline: false }] }],
+  });
+  assert.equal(daftar.length, 1, 'satu embed terbangun');
+  assert.ok(daftar[0]!.embed.description!.includes('Isi'), 'teks masuk embed');
+  /*
+   * Tombol TIDAK masuk embed (Discord menaruhnya sebagai komponen), jadi
+   * memang tidak ada di payload embed — inilah alasan laporan itu perlu.
+   */
+  assert.equal((daftar[0]!.embed as { components?: unknown }).components, undefined, 'tombol bukan bagian embed');
+});
+
 await testAsync('jadwal: pesan berbentuk embed dikirim lewat jalur embed', async () => {
   const repo = await import('../src/db/repo.js');
   const { sendScheduledPost } = await import('../src/features/post-scheduler.js');

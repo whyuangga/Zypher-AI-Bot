@@ -2307,6 +2307,19 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       });
       const embeds = daftar.map((satu) => satu.embed);
       const droppedEmbed = daftar.flatMap((satu) => satu.dropped);
+      /*
+       * Tombol & menu role tetap ikut terkirim bersama embed sebagai komponen
+       * interaktif. Kode di bawah hanya menggambarkan `embeds`, jadi bagian ini
+       * DIlaporkan — developer yang menyalin kode berhak tahu pesannya masih
+       * punya komponen yang tidak ikut digenerate.
+       */
+      const tombolEmbed = await listRoleButtons(guildId, post.id).catch(() => []);
+      const menuEmbed = await listRoleMenus(guildId, post.id).catch(() => []);
+      if (tombolEmbed.length || menuEmbed.length) {
+        droppedEmbed.push(
+          `${tombolEmbed.length + menuEmbed.length} tombol/menu role ikut terkirim sebagai komponen interaktif dan tidak digenerate di sini`,
+        );
+      }
       sendJson(response, 200, {
         post: { id: post.id, name: post.name, channelId: post.channelId },
         blocks: post.blocks,
