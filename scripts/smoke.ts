@@ -7615,22 +7615,45 @@ await testAsync('pesan: riwayat versi & tautan berbagi', async () => {
     'isi lama ikut tersimpan',
   );
 
+  /*
+   * Bentuk pesan & bagian embed ikut tersimpan di versi. Tanpa ini, mengubah
+   * footer embed lalu mengembalikan versi lama akan mempertahankan footer yang
+   * BARU — versi lama tidak bisa benar-benar dipulihkan.
+   */
+  await repo.updateCustomPost(GUILD, post.id, {
+    layout: 'embed',
+    embed: [{ footer: { text: 'kaki versi dua' } }, { fields: [{ name: 'A', value: '1', inline: false }] }],
+  });
+  const setelahEmbed = await repo.listPostRevisions(GUILD, post.id);
+  assert.equal(setelahEmbed[0]!.snapshot.layout, 'container', 'bentuk pesan lama ikut tersimpan');
+  assert.deepEqual(setelahEmbed[0]!.snapshot.embed, [], 'bagian embed lama (kosong) ikut tersimpan');
+
   await repo.updateCustomPost(GUILD, post.id, { name: 'Versi ketiga' });
   const setelahTiga = await repo.listPostRevisions(GUILD, post.id);
-  assert.equal(setelahTiga.length, 2, 'dua versi');
+  assert.equal(setelahTiga.length, 3, 'tiga versi (embed menambah satu)');
   assert.equal(setelahTiga[0]!.name, 'Versi kedua', 'terbaru lebih dulu');
 
   // Kembalikan ke versi pertama. Versi "sekarang" harus ikut tersimpan,
   // sehingga mengembalikan versi lama bisa dibatalkan lagi.
-  const kembali = await repo.restorePostRevision(GUILD, post.id, setelahTiga[1]!.id);
+  const kembali = await repo.restorePostRevision(GUILD, post.id, setelahTiga[2]!.id);
   assert.equal(kembali.post?.name, 'Versi awal', 'nama dikembalikan');
   assert.equal(
     (kembali.post?.blocks[0] as { value: string })?.value,
     'Isi pertama',
     'blok dikembalikan',
   );
+  /*
+   * Versi yang dikembalikan dibuat SEBELUM embed diisi, jadi bentuknya masih
+   * container tanpa bagian embed. Versi "sekarang" (berisi dua embed) harus
+   * ikut tersimpan supaya pengembalian ini bisa dibatalkan.
+   */
+  assert.equal(kembali.post?.layout, 'container', 'bentuk pesan ikut dikembalikan');
+  assert.deepEqual(kembali.post?.embed, [], 'bagian embed ikut dikembalikan');
   const setelahKembali = await repo.listPostRevisions(GUILD, post.id);
-  assert.equal(setelahKembali.length, 3, 'versi sekarang tersimpan sebagai revisi baru');
+  assert.equal(setelahKembali.length, 4, 'versi sekarang tersimpan sebagai revisi baru');
+  const terbaru = setelahKembali[0]!;
+  assert.equal(terbaru.snapshot.layout, 'embed', 'bentuk pesan terbaru tercatat');
+  assert.equal(terbaru.snapshot.embed?.length, 2, 'bagian embed terbaru tercatat');
   assert.ok(
     setelahKembali.some((satu) => satu.name === 'Versi ketiga'),
     'versi terbaru tidak hilang — bisa dibalik lagi',
@@ -7965,6 +7988,137 @@ await testAsync('pesan: embed klasik dibangun dari blok & aturannya dijaga', asy
   await repo.deleteCustomPost(GUILD, pesan.id);
 });
 
+await testAsync('pesan: sampai 10 embed per pesan, masing-masing dengan bagian sendiri', async () => {
+  const {
+    buildClassicEmbeds,
+    sanitizeEmbedList,
+    validateEmbeds,
+    panjangEmbed,
+  } = await import('../src/features/post-embed.js');
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  /* --- penyaring daftar --- */
+  const satu = sanitizeEmbedList({ footer: { text: 'satu' } });
+  assert.equal(satu.list.length, 1, 'objek tunggal dibaca sebagai daftar satu embed');
+  assert.deepEqual(sanitizeEmbedList(null).list, [], 'null = tidak ada embed');
+  assert.deepEqual(sanitizeEmbedList([]).list, [], 'daftar kosong = tidak ada embed');
+  assert.equal(
+    sanitizeEmbedList([{ footer: { text: 'a' } }, {}, { footer: { text: 'b' } }]).list.length,
+    2,
+    'bagian yang benar-benar kosong dibuang, bukan dikirim sebagai embed kosong',
+  );
+  const banyak = sanitizeEmbedList(
+    Array.from({ length: 14 }, (_, i) => ({ footer: { text: 'kaki ' + i } })),
+  );
+  assert.equal(banyak.list.length, 10, 'dibatasi 10 embed');
+  assert.equal(banyak.dropped.filter((a) => a.includes('10')).length, 1, 'alasan batas dilaporkan sekali');
+
+  /* --- builder --- */
+  const blok = [{ kind: 'text', value: 'Isi utama' }];
+  const satuEmbed = buildClassicEmbeds(blok, { title: 'Judul' });
+  assert.equal(satuEmbed.length, 1, 'tanpa bagian admin tetap satu embed');
+  assert.equal(satuEmbed[0]!.embed.description, 'Isi utama');
+
+  const tiga = buildClassicEmbeds(blok, {
+    title: 'Judul',
+    embedList: [
+      { footer: { text: 'kaki pertama' } },
+      { fields: [{ name: 'A', value: '1', inline: true }], footer: { text: 'kedua' } },
+      { fields: [{ name: 'B', value: '3', inline: false }], author: { name: 'Penulis ketiga' } },
+    ],
+  });
+  assert.equal(tiga.length, 3, 'embed tambahan ikut dibangun');
+  assert.equal(tiga[0]!.embed.title, 'Judul', 'embed pertama tetap membawa blok');
+  assert.equal(tiga[0]!.embed.footer!.text, 'kaki pertama', 'bagian admin pertama melengkapi embed pertama');
+  assert.equal(tiga[1]!.embed.title, undefined, 'embed kedua tidak menyalin judul blok');
+  assert.equal(tiga[1]!.embed.description, undefined, 'embed kedua tidak menyalin isi blok (tidak dobel)');
+  assert.equal(tiga[1]!.embed.fields![0]!.name, 'A', 'embed kedua boleh hanya berisi bidang');
+  assert.equal(tiga[2]!.embed.author!.name, 'Penulis ketiga');
+
+  /*
+   * Embed yang hanya berisi penulis/footer tidak cukup bagi Discord. Daripada
+   * hilang diam-diam, alasannya dilaporkan di embed pertama.
+   */
+  const tanpaIsi = buildClassicEmbeds([{ kind: 'text', value: 'Isi' }], {
+    embedList: [
+      { footer: { text: 'kaki' } },
+      { author: { name: 'Cuma penulis' } },
+      { fields: [{ name: 'B', value: '3', inline: false }] },
+    ],
+  });
+  assert.equal(tanpaIsi.length, 2, 'embed tanpa judul/isi/gambar/bidang tidak dikirim');
+  assert.ok(
+    tanpaIsi[0]!.dropped.some((a) => a.includes('embed 2 dilewati')),
+    'embed yang dilewati dilaporkan dengan nomornya',
+  );
+
+  /*
+   * Pesan yang bloknya tidak menghasilkan embed (hanya tombol) TIDAK boleh
+   * membuang embed pertama milik admin.
+   */
+  const hanyaTombol = buildClassicEmbeds([{ kind: 'button', value: 'Klik' }], {
+    embedList: [{ fields: [{ name: 'Catatan', value: 'dari admin', inline: false }] }],
+  });
+  assert.equal(hanyaTombol.length, 1, 'embed admin tetap dipakai walau blok tidak menghasilkan isi');
+  assert.equal(hanyaTombol[0]!.embed.fields![0]!.value, 'dari admin');
+
+  /* --- validasi gabungan --- */
+  assert.equal(validateEmbeds([{ description: 'halo' }]).length, 0, 'embed sah lolos');
+  assert.ok(validateEmbeds([]).some((a) => a.includes('tidak punya embed')), 'daftar kosong ditolak');
+  const sebelas = validateEmbeds(Array.from({ length: 11 }, () => ({ description: 'x' })));
+  assert.ok(sebelas.some((a) => a.includes('10')), 'lebih dari 10 embed ditolak');
+  const kebanyakan = validateEmbeds([{ description: 'x'.repeat(4000) }, { description: 'y'.repeat(4000) }]);
+  assert.ok(
+    kebanyakan.some((a) => a.includes('6000')),
+    'batas 6000 dihitung untuk SEMUA embed, bukan satu per satu',
+  );
+  assert.equal(panjangEmbed({ title: 'ab', description: 'cde' }), 5, 'panjang dihitung seperti Discord');
+
+  /* --- template tetap berlaku di setiap embed --- */
+  const templat = buildClassicEmbeds([], {
+    embedList: [
+      { fields: [{ name: 'Nama', value: '{member.name}', inline: true }] },
+      { footer: { text: 'oleh {member.name}' }, fields: [{ name: 'Nama', value: '{member.name}', inline: false }] },
+    ],
+    template: { 'member.name': 'Wahyu' },
+  });
+  assert.equal(templat[0]!.embed.fields![0]!.value, 'Wahyu', 'template berlaku di embed pertama');
+  assert.equal(templat[1]!.embed.footer!.text, 'oleh Wahyu', 'template berlaku juga di embed tambahan');
+
+  /* --- penyimpanan --- */
+  const pesan = await repo.createCustomPost(GUILD, {
+    name: 'Tiga embed',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Halo' }],
+    layout: 'embed',
+    embed: [{ footer: { text: 'satu' } }, { footer: { text: 'dua' } }, { footer: { text: 'tiga' } }],
+  });
+  assert.equal(pesan.embed.length, 3, 'tiga bagian embed tersimpan');
+  assert.equal(pesan.embed[2]!.footer!.text, 'tiga', 'urutan dipertahankan');
+
+  /*
+   * Data LAMA: kolom berisi satu objek (bentuk sebelum batch ini). Harus
+   * terbaca sebagai daftar berisi satu, bukan dibuang.
+   */
+  const lama = await repo.createCustomPost(GUILD, {
+    name: 'Embed lama',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Halo' }],
+    layout: 'embed',
+  });
+  await repo.updateCustomPost(GUILD, lama.id, {
+    // Bentuk lama dikirim langsung: server harus tetap menerimanya.
+    embed: { footer: { text: 'bentuk lama' } },
+  });
+  const dibacaLama = await repo.getCustomPost(GUILD, lama.id);
+  assert.equal(dibacaLama!.embed.length, 1, 'objek tunggal (bentuk lama) terbaca sebagai satu embed');
+  assert.equal(dibacaLama!.embed[0]!.footer!.text, 'bentuk lama');
+
+  await repo.deleteCustomPost(GUILD, pesan.id);
+  await repo.deleteCustomPost(GUILD, lama.id);
+});
+
 await testAsync('template: variabel Discohook dirakit & dipakai di aksi dan teks pesan', async () => {
   const { buildTemplateValues, applyTemplate, tokenTersisa } = await import('../src/features/post-template.js');
   const { fillActionText } = await import('../src/features/post-actions.js');
@@ -8152,27 +8306,27 @@ await testAsync('pesan: bagian embed (penulis, footer, bidang) disaring, disimpa
       timestamp: '2026-11-12T09:00:00Z',
     },
   });
-  assert.equal(pesan.embed.author!.name, 'Tim', 'penulis tersimpan');
-  assert.equal(pesan.embed.fields!.length, 1, 'bidang tersimpan');
-  assert.equal(pesan.embed.timestamp, '2026-11-12T09:00:00.000Z', 'stempel waktu dibakukan saat simpan');
+  assert.equal(pesan.embed[0]!.author!.name, 'Tim', 'penulis tersimpan');
+  assert.equal(pesan.embed[0]!.fields!.length, 1, 'bidang tersimpan');
+  assert.equal(pesan.embed[0]!.timestamp, '2026-11-12T09:00:00.000Z', 'stempel waktu dibakukan saat simpan');
 
   /* Nilai asing di database tidak lolos mentah: dibaca lewat penyaring. */
   await repo.updateCustomPost(GUILD, pesan.id, {
     embed: { author: { name: 'Nama', icon_url: 'javascript:alert(1)' }, footer: { text: 'x'.repeat(3000) } },
   });
   const dibaca = await repo.getCustomPost(GUILD, pesan.id);
-  assert.equal(dibaca!.embed.author!.icon_url, undefined, 'URL berbahaya tidak tersimpan');
-  assert.equal(dibaca!.embed.footer!.text.length, 2048, 'footer dipotong ke batas Discord');
+  assert.equal(dibaca!.embed[0]!.author!.icon_url, undefined, 'URL berbahaya tidak tersimpan');
+  assert.equal(dibaca!.embed[0]!.footer!.text.length, 2048, 'footer dipotong ke batas Discord');
 
   /* Tidak mengirim `embed` = bagian lama DIPERTAHANKAN (bukan dihapus). */
   await repo.updateCustomPost(GUILD, pesan.id, { name: 'Ganti nama saja' });
   const tetap = await repo.getCustomPost(GUILD, pesan.id);
-  assert.equal(tetap!.embed.author!.name, 'Nama', 'menyimpan field lain tidak menghapus bagian embed');
+  assert.equal(tetap!.embed[0]!.author!.name, 'Nama', 'menyimpan field lain tidak menghapus bagian embed');
 
   /* Mengirim null = dikosongkan, dan kolomnya jadi NULL. */
   await repo.updateCustomPost(GUILD, pesan.id, { embed: null });
   const kosong = await repo.getCustomPost(GUILD, pesan.id);
-  assert.deepEqual(kosong!.embed, {}, 'bagian embed bisa dikosongkan');
+  assert.deepEqual(kosong!.embed, [], 'bagian embed bisa dikosongkan');
   await repo.deleteCustomPost(GUILD, pesan.id);
 });
 
@@ -10130,7 +10284,7 @@ await testAsync('discohook: select menu & Row diimpor sebagai blok select/row, b
   assert.equal(stringBersih.maxValues, 2, 'batas maksimal ikut tersimpan');
 });
 
-await testAsync('discohook: pesan tanpa container tetap di luar kartu, embed jadi kartu teks', async () => {
+await testAsync('discohook: pesan tanpa container tetap di luar kartu, embed dipertahankan', async () => {
   const { parseDiscohookShare } = await import('../src/features/discohook-import.js');
   const { sanitizeBlocks } = await import('../src/features/custom-post.js');
 
@@ -10144,24 +10298,32 @@ await testAsync('discohook: pesan tanpa container tetap di luar kartu, embed jad
         },
       },
       {
-        name: 'Embed lama',
         data: {
           embeds: [
             {
-              title: 'Judul',
+              title: 'Judul embed',
               description: 'Isi embed',
               color: 0x58b4ff,
-              fields: [{ name: 'Bidang', value: 'Nilai' }],
+              fields: [{ name: 'Bidang', value: 'Nilai', inline: true }],
               footer: { text: 'kaki' },
+              author: { name: 'Penulis' },
               image: { url: 'https://a.test/x.png' },
+              timestamp: '2026-11-12T09:00:00Z',
             },
           ],
+        },
+      },
+      {
+        name: 'Campuran',
+        data: {
+          components: [{ type: 10, content: 'Teks V2' }],
+          embeds: [{ title: 'Judul', description: 'Isi', color: 0x58b4ff }],
         },
       },
     ],
   });
 
-  assert.equal(hasil.messages.length, 2);
+  assert.equal(hasil.messages.length, 3);
 
   // Pesan tanpa container: satu `close` di awal menahan pembungkusan kartu,
   // supaya tampilannya tetap seperti Discohook (polos di pesan).
@@ -10169,18 +10331,40 @@ await testAsync('discohook: pesan tanpa container tetap di luar kartu, embed jad
   assert.equal(pertama[0]!.kind, 'close', 'penanda di luar kartu');
   assert.deepEqual(pertama.map((b) => b.kind), ['close', 'text', 'text']);
 
-  // Embed: diterjemahkan menjadi kartu teks + gambar + footer kecil, dengan
-  // peringatan bahwa bentuknya berubah.
-  const kedua = sanitizeBlocks(hasil.messages[1]!.blocks).blocks;
-  assert.equal(kedua[0]!.kind, 'container', 'embed jadi kartu');
-  assert.equal(kedua[0]!.accent, '#58b4ff', 'warna embed dipakai');
-  assert.ok(kedua.some((b) => b.kind === 'image'), 'gambar embed ikut');
+  /*
+   * Pesan yang HANYA berisi embed: embed dipertahankan sebagai embed asli.
+   * Judul embed jadi nama pesan, isi jadi blok teks, gambar jadi blok gambar;
+   * penulis, footer, bidang, dan stempel waktu masuk ke bagian admin.
+   */
+  const kedua = hasil.messages[1]!;
+  assert.equal(kedua.layout, 'embed', 'bentuk pesan dipilih otomatis');
+  assert.equal(kedua.name, 'Judul embed', 'judul embed jadi nama pesan');
+  assert.equal(kedua.embed.length, 1, 'satu bagian embed');
+  assert.equal(kedua.embed[0]!.author!.name, 'Penulis', 'penulis ikut');
+  assert.equal(kedua.embed[0]!.footer!.text, 'kaki', 'footer ikut');
+  assert.equal(kedua.embed[0]!.fields![0]!.inline, true, 'penanda sebaris ikut');
+  assert.equal(kedua.embed[0]!.timestamp, '2026-11-12T09:00:00.000Z', 'stempel waktu dibakukan');
   assert.ok(
-    kedua.some((b) => b.kind === 'text' && b.value.startsWith('-# ')),
-    'footer jadi teks kecil',
+    kedua.blocks.some((b) => b.kind === 'text' && b.value === 'Isi embed'),
+    'isi embed jadi blok teks',
   );
+  assert.ok(kedua.blocks.some((b) => b.kind === 'image'), 'gambar embed jadi blok gambar');
   assert.ok(
-    hasil.messages[1]!.warnings.some((isi) => isi.includes('Embed')),
+    !kedua.warnings.some((isi) => isi.includes('kartu teks')),
+    'tidak ada peringatan konversi — bentuknya tidak berubah',
+  );
+
+  /*
+   * Pesan yang membawa komponen V2 DAN embed: Discord menolak keduanya
+   * sekaligus, jadi embed tetap diterjemahkan jadi kartu teks dan admin
+   * diberi tahu. Ini bukan kemunduran, ini batasan Discord.
+   */
+  const ketiga = hasil.messages[2]!;
+  assert.equal(ketiga.layout, 'container', 'pesan campuran tetap container');
+  assert.equal(ketiga.embed.length, 0, 'embed tidak dikirim bersama komponen');
+  assert.ok(ketiga.blocks.some((b) => b.kind === 'container'), 'embed jadi kartu teks');
+  assert.ok(
+    ketiga.warnings.some((isi) => isi.includes('kartu teks')),
     'perubahan bentuk embed dilaporkan',
   );
 });

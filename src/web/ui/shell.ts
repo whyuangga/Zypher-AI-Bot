@@ -138,10 +138,41 @@ function diffRingkas(lama, baru) {
   beda('nama thread', lama && lama.threadName, baru && baru.threadName);
   beda('mode rangkaian', lama && lama.series === true, baru && baru.series === true);
   beda('flag pesan', (lama && lama.flags) || 0, (baru && baru.flags) || 0);
+  /*
+   * Bagian embed (penulis, footer, bidang) dibandingkan sebagai satu nilai:
+   * perubahan pada footer kedua embed tetap terlihat, tanpa membuat panel
+   * riwayat penuh dengan baris per bidang.
+   */
+  beda('bentuk pesan', lama && lama.layout, baru && baru.layout);
+  beda('embed', ringkasEmbedDiff(lama && lama.embed), ringkasEmbedDiff(baru && baru.embed));
 
   var total = ditambah + dihapus + diubah + pengaturan;
   if (total === 0) baris.push('Tidak ada perbedaan — versi ini sama dengan yang sekarang.');
   return { total: total, ditambah: ditambah, dihapus: dihapus, diubah: diubah, baris: baris, teks: teks };
+}
+
+/**
+ * Ringkasan daftar bagian embed untuk pembanding versi.
+ *
+ * Diringkas jadi satu baris per embed ("Embed 1: penulis Tim, 2 bidang"), bukan
+ * JSON mentah: admin membandingkan versi untuk tahu APA yang berubah, dan JSON
+ * penuh hanya membuat panel diff sulit dibaca. Nilai kosong tetap muncul
+ * sebagai "tanpa bagian admin" supaya menghapus semua embed terlihat.
+ */
+function ringkasEmbedDiff(daftar) {
+  var isi = Object.prototype.toString.call(daftar) === '[object Array]' ? daftar : daftar ? [daftar] : [];
+  var bagian = [];
+  for (var i = 0; i < isi.length; i += 1) {
+    var satu = isi[i] || {};
+    var potongan = [];
+    if (satu.author && satu.author.name) potongan.push('penulis ' + String(satu.author.name).slice(0, 30));
+    if (satu.footer && satu.footer.text) potongan.push('footer ' + String(satu.footer.text).slice(0, 30));
+    if (satu.fields && satu.fields.length) potongan.push(satu.fields.length + ' bidang');
+    if (satu.url) potongan.push('tautan judul');
+    if (satu.timestamp) potongan.push('stempel waktu');
+    bagian.push('embed ' + (i + 1) + ': ' + (potongan.length ? potongan.join(', ') : 'hanya isi blok'));
+  }
+  return bagian.length ? bagian.join('; ') : 'tanpa bagian admin';
 }
 
 /** "3 perubahan (1 tambah, 2 ubah)" — judul panel diff. */

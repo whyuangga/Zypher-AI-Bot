@@ -36,7 +36,7 @@ import {
 } from 'discord.js';
 import { accentToNumber, buildPostPayload, type BuiltPost, type PostBlock } from './custom-post.js';
 import type { SeriesMessage } from './post-series.js';
-import { buildClassicEmbed, validateEmbed, type EmbedExtra } from './post-embed.js';
+import { buildClassicEmbeds, validateEmbeds, type EmbedExtra } from './post-embed.js';
 import { roleButtonId, roleMenuId } from './role-buttons.js';
 import {
   deleteChannelWebhook,
@@ -473,22 +473,24 @@ export async function sendOrUpdateEmbedPost(options: {
   allowedMentions?: BuiltPost['allowedMentions'];
   /**
    * Bagian embed yang diisi admin (penulis, footer, bidang, stempel waktu,
-   * URL judul). Sudah disaring saat disimpan.
+   * URL judul), sampai 10 embed per pesan. Sudah disaring saat disimpan.
+   *
+   * Elemen pertama melengkapi embed dari blok; sisanya menjadi embed tambahan.
    */
-  embed?: EmbedExtra | null;
+  embed?: EmbedExtra[] | null;
   /** Nilai template teks (`{member.name}`, …) — berlaku juga di footer/bidang. */
   template?: Record<string, string> | null;
 }): Promise<SendResult> {
-  const hasil = buildClassicEmbed(options.blocks, {
+  const daftar = buildClassicEmbeds(options.blocks, {
     accent: options.accent ?? null,
     title: options.title ?? null,
-    extra: options.embed ?? null,
+    embedList: options.embed ?? null,
     template: options.template ?? null,
   });
-  if (!hasil) {
+  if (daftar.length === 0) {
     throw new PostSendError('Embed masih kosong — isi minimal satu teks atau gambar.');
   }
-  const masalah = validateEmbed(hasil.embed);
+  const masalah = validateEmbeds(daftar.map((satu) => satu.embed));
   if (masalah.length) {
     throw new PostSendError(`Embed tidak bisa dikirim: ${masalah[0]}`);
   }
@@ -500,7 +502,7 @@ export async function sendOrUpdateEmbedPost(options: {
    */
   const komponen = await komponenInteraktif(options);
   const payload = {
-    embeds: [hasil.embed],
+    embeds: daftar.map((satu) => satu.embed),
     ...(komponen.length ? { components: komponen } : {}),
     ...(options.flags ? { flags: options.flags } : {}),
     ...(options.allowedMentions ? { allowedMentions: { ...options.allowedMentions, repliedUser: false } } : {}),
@@ -509,7 +511,7 @@ export async function sendOrUpdateEmbedPost(options: {
   };
 
   const channel = await resolveChannel(options.client, options.channelId);
-  const dropped = [...hasil.dropped];
+  const dropped = daftar.flatMap((satu) => satu.dropped);
 
   if (options.messageId) {
     const lama = await channel.messages.fetch(options.messageId).catch((): null => null);

@@ -22,10 +22,23 @@
 import { normalizeAccent, type PostBlock } from './custom-post.js';
 
 /** Satu pesan hasil impor, siap dimasukkan ke editor `/pesan`. */
+import { sanitizeEmbedList, type EmbedExtra } from './post-embed.js';
+
 export interface DiscohookMessage {
   /** Nama pesan di Discohook (opsional di sana). */
   name: string | null;
   blocks: PostBlock[];
+  /**
+   * Embed asli dari Discohook, siap disimpan ke `custom_posts.embed`.
+   *
+   * Dulu embed diterjemahkan menjadi kartu teks karena bot belum bisa mengirim
+   * embed. Sekarang bisa, jadi embed DIPERTAHANKAN apa adanya — dan hanya
+   * diterjemahkan menjadi blok kalau pesannya juga membawa komponen V2
+   * (Discord tidak mengizinkan keduanya dalam satu pesan).
+   */
+  embed: EmbedExtra[];
+  /** Bentuk yang harus dipakai pesan ini: `embed` kalau isinya embed saja. */
+  layout: 'container' | 'embed';
   /** Bagian yang tidak bisa diwakili blok — ditampilkan ke admin. */
   warnings: string[];
 }
@@ -518,6 +531,49 @@ export function discohookComponentsToBlocks(components: unknown[]): { blocks: Po
 /* ------------------------------------------------------------------ */
 
 /**
+ * Embed Discohook/Discord mentah → bentuk yang disimpan bot.
+ *
+ * Hanya memindahkan field; penyaringan (URL http, batas panjang, ISO 8601)
+ * tetap di `sanitizeEmbedList` supaya aturannya satu tempat.
+ *
+ * `title` dan `description` TIDAK ikut di sini: di bot keduanya datang dari
+ * nama pesan dan blok teks, bukan dari bagian admin. Pemanggil yang
+ * memindahkannya (lihat `parseDiscohookShare`).
+ */
+function embedKeExtra(raw: Raw): Record<string, unknown> {
+  const hasil: Record<string, unknown> = {};
+  if (asString(raw.url).trim()) hasil.url = asString(raw.url).trim();
+  if (asString(raw.timestamp).trim()) hasil.timestamp = asString(raw.timestamp).trim();
+
+  const author = asObject(raw.author);
+  if (author && asString(author.name).trim()) {
+    hasil.author = {
+      name: asString(author.name).trim(),
+      ...(asString(author.url).trim() ? { url: asString(author.url).trim() } : {}),
+      ...(asString(author.icon_url).trim() ? { icon_url: asString(author.icon_url).trim() } : {}),
+    };
+  }
+  const footer = asObject(raw.footer);
+  if (footer && asString(footer.text).trim()) {
+    hasil.footer = {
+      text: asString(footer.text).trim(),
+      ...(asString(footer.icon_url).trim() ? { icon_url: asString(footer.icon_url).trim() } : {}),
+    };
+  }
+  const fields = asArray(raw.fields)
+    .map(asObject)
+    .filter((satu): satu is Raw => satu !== null)
+    .map((field) => ({
+      name: asString(field.name).trim(),
+      value: asString(field.value).trim(),
+      inline: field.inline === true,
+    }))
+    .filter((field) => field.name && field.value);
+  if (fields.length) hasil.fields = fields;
+  return hasil;
+}
+
+/**
  * Embed tidak bisa dikirim bersama Components V2 (`content`/`embeds`
  * dilarang saat flag 1 << 15 dipakai). Karena itu embed diterjemahkan menjadi
  * kartu berisi teks, dan admin diberi tahu bahwa bentuknya berubah.
@@ -596,7 +652,8 @@ export function parseDiscohookShare(input: unknown): DiscohookImport {
     const item = asObject(entry);
     if (!item) continue;
     const data = asObject(item.data) ?? {};
-    const nama = asString(item.name).trim() || `Pesan Discohook ${index + 1}`;
+    let nameDariEmbed = '';
+    const namaAwal = asString(item.name).trim();
     const pesanWarnings: string[] = [];
 
     const blocks: PostBlock[] = [];
@@ -624,16 +681,65 @@ export function parseDiscohookShare(input: unknown): DiscohookImport {
       else blocks.unshift(teksPembuka);
     }
 
-    const embeds = asArray(data.embeds);
-    if (embeds.length > 0) {
-      if (embeds.length > 1) {
-        pesanWarnings.push(`${embeds.length} embed diterjemahkan menjadi kartu teks (satu kartu per embed).`);
-      } else {
-        pesanWarnings.push('Embed diterjemahkan menjadi kartu teks — Components V2 tidak bisa membawa embed.');
+    const embeds = asArray(data.embeds).map(asObject).filter((satu): satu is Raw => satu !== null);
+
+    /*
+     * Embed dipertahankan sebagai embed ASLI bila pesannya tidak membawa
+     * komponen: Discord menolak Components V2 bersama embeds, jadi memaksa
+     * keduanya berarti salah satunya harus dibuang. Kalau ada komponen, embed
+     * tetap diterjemahkan menjadi kartu teks seperti sebelumnya — dan admin
+     * diberi tahu bentuknya berubah.
+     */
+    const adaKomponen = components.length > 0 || content.length > 0;
+    let embed: EmbedExtra[] = [];
+    let layout: 'container' | 'embed' = 'container';
+
+    if (embeds.length > 0 && !adaKomponen) {
+      /*
+       * Embed pertama: judul jadi NAMA pesan, isi jadi blok teks, gambar jadi
+       * blok gambar — itulah jalur yang dipakai builder saat mengirim embed.
+       * Sisanya (penulis, footer, bidang, tautan judul, stempel waktu) masuk
+       * ke bagian admin per embed.
+       */
+      const hasil = sanitizeEmbedList(embeds.map(embedKeExtra));
+      embed = hasil.list;
+      layout = 'embed';
+      pesanWarnings.push(...hasil.dropped);
+
+      const pertama = embeds[0]!;
+      nameDariEmbed = asString(pertama.title).trim();
+      const isiUtama = asString(pertama.description).trim();
+      if (isiUtama) blocks.push({ kind: 'text', value: isiUtama });
+      const gambarUtama = asString(asObject(pertama.image)?.url).trim();
+      if (isHttpUrl(gambarUtama)) blocks.push({ kind: 'image', value: gambarUtama });
+
+      /*
+       * Embed kedua dan seterusnya di bot hanya berisi bagian admin (penulis,
+       * footer, bidang, tautan, waktu). Isi & gambar mereka tidak punya tempat
+       * — lebih baik dikatakan daripada hilang tanpa jejak.
+       */
+      for (let i = 1; i < embeds.length; i += 1) {
+        const satu = embeds[i]!;
+        if (asString(satu.description).trim() || asString(asObject(satu.image)?.url).trim()) {
+          pesanWarnings.push(
+            `embed ${i + 1}: isi & gambar tidak bisa dipertahankan (hanya embed pertama yang memuat teks) — dipindahkan ke catatan impor.`,
+          );
+          const isiTambahan = asString(satu.description).trim();
+          if (isiTambahan) blocks.push({ kind: 'text', value: isiTambahan });
+          const gambarTambahan = asString(asObject(satu.image)?.url).trim();
+          if (isHttpUrl(gambarTambahan)) blocks.push({ kind: 'image', value: gambarTambahan });
+        }
       }
-      for (const embed of embeds) {
-        const raw = asObject(embed);
-        if (!raw) continue;
+      if (embed.length < embeds.length) {
+        pesanWarnings.push(`${embeds.length - embed.length} embed kosong dilewati.`);
+      }
+    } else if (embeds.length > 0) {
+      pesanWarnings.push(
+        embeds.length > 1
+          ? `${embeds.length} embed diterjemahkan menjadi kartu teks (Components V2 tidak bisa membawa embed).`
+          : 'Embed diterjemahkan menjadi kartu teks — Components V2 tidak bisa membawa embed.',
+      );
+      for (const raw of embeds) {
         /*
          * Embed diletakkan SESUDAH komponen, tetapi harus di luar kartu
          * komponen supaya tidak menyatu dengan kartu terakhir Discohook.
@@ -646,13 +752,20 @@ export function parseDiscohookShare(input: unknown): DiscohookImport {
       }
     }
 
-    if (blocks.length === 0) {
+    /*
+     * Nama pesan: nama di Discohook kalau ada, lalu judul embed pertama, lalu
+     * nomor urut. Judul embed dipakai karena di bot judul embed = nama pesan;
+     * mengabaikannya akan membuat pesan impor kehilangan judulnya.
+     */
+    const nama = namaAwal || nameDariEmbed || `Pesan Discohook ${index + 1}`;
+
+    if (blocks.length === 0 && embed.length === 0) {
       pesanWarnings.push('Pesan ini tidak punya teks, komponen, atau embed — dilewati.');
       warnings.push(...pesanWarnings.map((isi) => `${nama}: ${isi}`));
       continue;
     }
 
-    messages.push({ name: nama, blocks, warnings: pesanWarnings });
+    messages.push({ name: nama, blocks, embed, layout, warnings: pesanWarnings });
   }
 
   if (messages.length === 0) {

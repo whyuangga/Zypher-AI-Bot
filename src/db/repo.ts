@@ -6,7 +6,7 @@ import { normalizeTimeZone } from '../lib/timezone.js';
 import { parseBlocks, sanitizeBlocks, type PostBlock } from '../features/custom-post.js';
 import { decryptSecret, encryptSecret } from '../features/webhook-secret.js';
 import { sanitizeSeries, type SeriesMessage } from '../features/post-series.js';
-import { sanitizeEmbedExtra, type EmbedExtra } from '../features/post-embed.js';
+import { sanitizeEmbedList, type EmbedExtra } from '../features/post-embed.js';
 import { cronIntervalMinutes, nextCronTime, parseCron } from '../features/schedule-cron.js';
 import { TIME_ZONES } from '../lib/timezone.js';
 import {
@@ -1483,13 +1483,16 @@ export interface CustomPost {
   layout: PostLayout;
   /**
    * Bagian embed klasik yang diisi admin (penulis, footer, bidang, stempel
-   * waktu, URL judul). Kosong = tidak ada.
+   * waktu, URL judul), sampai 10 embed per pesan seperti Discohook.
+   *
+   * Elemen pertama melengkapi embed yang dibangun dari blok; sisanya menjadi
+   * embed tambahan yang hanya berisi bagian admin. Kosong = tidak ada.
    *
    * Disimpan walau `layout = 'container'`: admin bisa berpindah bentuk tanpa
    * kehilangan penulis/footer yang sudah ditulis. Embed hanya DIPAKAI saat
    * `layout = 'embed'`.
    */
-  embed: EmbedExtra;
+  embed: EmbedExtra[];
   updatedAt: number;
 }
 
@@ -1503,19 +1506,22 @@ export function parseLayout(raw: string | null | undefined): PostLayout {
 }
 
 /**
- * Baca bagian embed dari kolom teks.
+ * Baca kolom `embed` menjadi daftar bagian embed.
  *
- * Nilai rusak dibaca sebagai "tidak ada bagian admin" — embed tetap bisa
+ * Kolom ini dulu hanya berisi SATU objek. Data lama tetap terbaca karena
+ * `sanitizeEmbedList` menerima objek maupun daftar — tidak perlu migrasi isi.
+ *
+ * Nilai rusak dibaca sebagai "tidak ada bagian admin": embed tetap bisa
  * dikirim dari blok, jadi satu kolom rusak tidak boleh membuat pesannya gagal
- * tampil. Penyaringan ulang lewat `sanitizeEmbedExtra` juga membuat nilai yang
- * disunting langsung di database tidak bisa menyelipkan yang tidak sah.
+ * tampil. Penyaringan ulang juga membuat nilai yang disunting langsung di
+ * database tidak bisa menyelipkan yang tidak sah.
  */
-function parseEmbedExtra(raw: string | null | undefined): EmbedExtra {
-  if (!raw) return {};
+function parseEmbedExtra(raw: string | null | undefined): EmbedExtra[] {
+  if (!raw) return [];
   try {
-    return sanitizeEmbedExtra(JSON.parse(raw)).extra;
+    return sanitizeEmbedList(JSON.parse(raw)).list;
   } catch {
-    return {};
+    return [];
   }
 }
 
@@ -1580,8 +1586,8 @@ function parseMentions(raw: string | null | undefined): { parse: Array<'users' |
  * daripada `{}` yang harus dibaca ulang sebagai "kosong" di setiap tempat.
  */
 function simpanEmbed(input: unknown): string | null {
-  const { extra } = sanitizeEmbedExtra(input);
-  return Object.keys(extra).length === 0 ? null : JSON.stringify(extra);
+  const { list } = sanitizeEmbedList(input);
+  return list.length === 0 ? null : JSON.stringify(list);
 }
 
 function toCustomPost(row: CustomPostRow): CustomPost {
@@ -2043,6 +2049,15 @@ export interface PostRevision {
     series: boolean;
     allowedMentions: { parse: string[] };
     threadName: string | null;
+    /**
+     * Bentuk pesan & bagian embed saat versi dibuat.
+     *
+     * Opsional karena versi yang tersimpan sebelum kolom `embed` ada tidak
+     * memilikinya — pembaca lama tidak boleh menganggapnya "container tanpa
+     * embed" lalu menimpa pengaturan sekarang saat versi itu dikembalikan.
+     */
+    layout?: PostLayout;
+    embed?: EmbedExtra[];
   };
   createdAt: number;
 }
@@ -2106,6 +2121,8 @@ async function simpanRevisi(guildId: string, current: CustomPost): Promise<void>
         series: current.series,
         allowedMentions: current.allowedMentions,
         threadName: current.threadName,
+        layout: current.layout,
+        embed: current.embed,
       }),
       Date.now(),
     ],
@@ -2166,6 +2183,13 @@ export async function restorePostRevision(
     series: revisi.snapshot.series,
     allowedMentions: revisi.snapshot.allowedMentions as { parse: Array<'users' | 'roles' | 'everyone'> },
     threadName: revisi.snapshot.threadName,
+    /*
+     * Versi lama (sebelum batch embed) tidak punya dua field ini. Jangan kirim
+     * `undefined` yang berarti "kosongkan": kembalikan versi seharusnya hanya
+     * mengubah yang memang tercatat di versi itu.
+     */
+    ...(revisi.snapshot.layout !== undefined ? { layout: revisi.snapshot.layout } : {}),
+    ...(revisi.snapshot.embed !== undefined ? { embed: revisi.snapshot.embed } : {}),
   });
   return post ? { post } : { post: null, error: 'Pesan sudah tidak ada.' };
 }

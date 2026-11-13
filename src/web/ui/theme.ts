@@ -1771,6 +1771,13 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   padding: 8px;
   background: var(--bg-2);
 }
+/*
+ * Baris yang sedang diedit (pemilih embed).
+ *
+ * Hanya penanda tipis: warna aksen penuh akan bersaing dengan warna kartu
+ * embed di pratinjau, padahal keduanya berbeda arti.
+ */
+.aksi-baris-aktif { border-color: var(--accent); background: rgba(109, 140, 255, .06); }
 
 .aksi-baris-head {
   display: flex;

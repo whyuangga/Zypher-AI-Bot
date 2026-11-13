@@ -1,3 +1,4 @@
+import { applyTemplate } from './post-template.js';
 /**
  * Pesan bergaya embed klasik (padanan "Webhook message" ala Discohook).
  *
@@ -188,6 +189,31 @@ export function embedExtraKosong(extra: EmbedExtra | null | undefined): boolean 
   );
 }
 
+/**
+ * Saring DAFTAR bagian embed (sampai 10 embed per pesan).
+ *
+ * Menerima satu objek juga — bentuk lama, dan bentuk yang lebih wajar dikirim
+ * tangan ke API. Hasilnya selalu daftar, supaya pemanggil tidak perlu dua
+ * cabang. Embed yang seluruh isinya kosong dibuang seluruhnya.
+ */
+export function sanitizeEmbedList(input: unknown): { list: EmbedExtra[]; dropped: string[] } {
+  const dropped: string[] = [];
+  const sumber = Array.isArray(input) ? input : input === null || input === undefined ? [] : [input];
+  const list: EmbedExtra[] = [];
+
+  for (const satu of sumber) {
+    const hasil = sanitizeEmbedExtra(satu);
+    for (const alasan of hasil.dropped) dropped.push(alasan);
+    if (embedExtraKosong(hasil.extra)) continue;
+    if (list.length >= 10) {
+      dropped.push('embed dibatasi 10 per pesan (batas Discord)');
+      break;
+    }
+    list.push(hasil.extra);
+  }
+  return { list, dropped };
+}
+
 const BATAS = {
   title: 256,
   description: 4096,
@@ -197,6 +223,13 @@ const BATAS = {
   footer: 2048,
   author: 256,
   total: 6000,
+  /**
+   * Batas Discord: 10 embed per pesan, totalnya 6000 karakter.
+   *
+   * Discohook memakai angka yang sama (tombol Add Embed berhenti di 10), jadi
+   * dokumen yang diimpor dari sana tidak terpotong di sini.
+   */
+  embeds: 10,
 } as const;
 
 /** Blok teks yang dipakai membangun embed (bentuk dari `PostBlock`). */
@@ -222,20 +255,114 @@ function potong(teks: string, batas: number): string {
  */
 export function buildClassicEmbed(
   blocks: EmbedBlock[],
-  opsi: {
-    accent?: string | null;
-    title?: string | null;
-    /**
-     * Bagian yang diisi admin: URL judul, penulis, footer, bidang, stempel
-     * waktu. Sudah disaring `sanitizeEmbedExtra` sebelum sampai ke sini —
-     * fungsi ini tidak memotong lagi, supaya tidak ada dua tempat yang bisa
-     * berbeda pendapat soal batas.
-     */
-    extra?: EmbedExtra | null;
-    /** Nilai template untuk teks admin ({member.name}, {var.*}, …). */
-    template?: Record<string, string> | null;
-  } = {},
+  opsi: BuildEmbedOptions = {},
 ): EmbedBuildResult | null {
+  return buildClassicEmbeds(blocks, opsi)[0] ?? null;
+}
+
+/**
+ * Sampai 10 embed dalam satu pesan — batas Discord, dan sama dengan tombol
+ * Add Embed di Discohook.
+ *
+ * Embed pertama tetap dibangun dari blok (judul, isi, gambar, thumbnail) lalu
+ * dilengkapi bagian admin, persis seperti sebelumnya. Embed kedua dan
+ * seterusnya hanya berasal dari bagian admin: blok pesan menggambarkan SATU
+ * pesan, dan menyalin isinya ke semua embed akan mengulang teks yang sama.
+ *
+ * Embed yang tidak punya isi sama sekali DIBUANG (bukan dikirim kosong —
+ * Discord menolak seluruh pesannya), dan alasannya dilaporkan.
+ */
+export function buildClassicEmbeds(
+  blocks: EmbedBlock[],
+  opsi: BuildEmbedOptions = {},
+): EmbedBuildResult[] {
+  const ekstra = Array.isArray(opsi.embedList) && opsi.embedList.length ? opsi.embedList : null;
+  const utama = ekstra ? ekstra[0] ?? null : (opsi.extra ?? null);
+
+  const hasil: EmbedBuildResult[] = [];
+  const pertama = blocksToEmbed(blocks, { ...opsi, extra: utama });
+  if (pertama) hasil.push(pertama);
+  /*
+   * Blok bisa saja tidak menghasilkan embed (mis. pesan hanya berisi tombol),
+   * padahal admin mengisi bagian embed. Tanpa cabang ini, embed PERTAMA milik
+   * admin ikut hilang — bukan cuma bloknya.
+   */
+  else if (ekstra) {
+    const satu = bagianAdminSaja(ekstra[0] ?? null, opsi.template ?? null);
+    if (satu) hasil.push(satu);
+  }
+
+  /*
+   * Embed tambahan hanya lahir kalau admin memang mengirim daftar. `extra`
+   * tunggal tetap berarti satu embed, supaya pemanggil lama tidak berubah
+   * perilakunya.
+   */
+  if (ekstra) {
+    for (let i = 1; i < ekstra.length; i += 1) {
+      const satu = bagianAdminSaja(ekstra[i] ?? null, opsi.template ?? null);
+      if (satu) hasil.push(satu);
+      else {
+        /*
+         * Embed yang hanya berisi penulis/footer/warna TIDAK cukup bagi
+         * Discord: harus ada judul, isi, gambar, atau bidang. Membuangnya
+         * diam-diam membuat admin mengira embednya terkirim, jadi alasannya
+         * dilaporkan di embed pertama.
+         */
+        const catatan = `embed ${i + 1} dilewati: tidak punya judul, isi, gambar, atau bidang`;
+        if (hasil.length) hasil[0]!.dropped.push(catatan);
+      }
+    }
+    if (ekstra.length > BATAS.embeds) {
+      hasil.length = Math.min(hasil.length, BATAS.embeds);
+      if (hasil.length) {
+        hasil[0]!.dropped.push(`embed dibatasi ${BATAS.embeds} per pesan (batas Discord)`);
+      }
+    }
+  }
+
+  return hasil;
+}
+
+/** Embed murni dari bagian admin (dipakai untuk embed ke-2 dan seterusnya). */
+function bagianAdminSaja(
+  extra: EmbedExtra | null,
+  template: Record<string, string> | null,
+): EmbedBuildResult | null {
+  if (!extra || embedExtraKosong(extra)) return null;
+  const dropped: string[] = [];
+  const embed: ClassicEmbed = {};
+  terapkanExtra(embed, extra, template);
+  /*
+   * Embed tanpa judul/isi/gambar sama sekali tidak bisa dikirim Discord. Bidang
+   * saja DITERIMA — itu kasus umum "tabel kecil" di embed kedua.
+   */
+  if (!embed.title && !embed.description && !embed.image && !(embed.fields?.length ?? 0)) {
+    return null;
+  }
+  jagaTotal(embed, dropped);
+  return { embed, dropped };
+}
+
+interface BuildEmbedOptions {
+  accent?: string | null;
+  title?: string | null;
+  /**
+   * Bagian yang diisi admin: URL judul, penulis, footer, bidang, stempel
+   * waktu. Sudah disaring `sanitizeEmbedExtra` sebelum sampai ke sini —
+   * fungsi ini tidak memotong lagi, supaya tidak ada dua tempat yang bisa
+   * berbeda pendapat soal batas.
+   */
+  extra?: EmbedExtra | null;
+  /** Nilai template untuk teks admin ({member.name}, {var.*}, …). */
+  template?: Record<string, string> | null;
+  /**
+   * Daftar bagian admin untuk beberapa embed sekaligus. Kalau diisi, elemen
+   * pertama menggantikan `extra` dan sisanya menjadi embed tambahan.
+   */
+  embedList?: EmbedExtra[] | null;
+}
+
+function blocksToEmbed(blocks: EmbedBlock[], opsi: BuildEmbedOptions): EmbedBuildResult | null {
   const dropped: string[] = [];
   const embed: ClassicEmbed = {};
 
@@ -297,64 +424,69 @@ export function buildClassicEmbed(
   if (isi) embed.description = potong(isi, BATAS.description);
 
   /* ---------- bagian yang diisi admin ---------- */
-  const extra = opsi.extra ?? null;
-  if (extra) {
-    /*
-     * Template berlaku juga di sini: footer "dikirim oleh {member.name}" pada
-     * pesan yang dipicu member masuk harus terisi, bukan tercetak mentah.
-     * Token yang tidak dikenal DIBIARKAN apa adanya, sama seperti di blok.
-     */
-    const isiTemplate = (nilai: string): string => {
-      const tabel = opsi.template;
-      if (!tabel) return nilai;
-      let hasil = nilai;
-      for (const [token, isiToken] of Object.entries(tabel)) {
-        hasil = hasil.split(`{${token}}`).join(isiToken);
-      }
-      return hasil;
-    };
-
-    if (extra.url) embed.url = extra.url;
-    if (extra.timestamp) embed.timestamp = extra.timestamp;
-    if (extra.author?.name) {
-      embed.author = {
-        name: isiTemplate(extra.author.name),
-        ...(extra.author.url ? { url: extra.author.url } : {}),
-        ...(extra.author.icon_url ? { icon_url: extra.author.icon_url } : {}),
-      };
-    }
-    if (extra.footer?.text) {
-      embed.footer = {
-        text: isiTemplate(extra.footer.text),
-        ...(extra.footer.icon_url ? { icon_url: extra.footer.icon_url } : {}),
-      };
-    }
-    if (extra.fields?.length) {
-      embed.fields = extra.fields.map((field) => ({
-        name: isiTemplate(field.name),
-        value: isiTemplate(field.value),
-        inline: field.inline,
-      }));
-    }
-  }
+  terapkanExtra(embed, opsi.extra ?? null, opsi.template ?? null);
 
   if (!embed.title && !embed.description && !embed.image && !(embed.fields?.length ?? 0)) {
     return null;
   }
 
+  jagaTotal(embed, dropped);
+  return { embed, dropped };
+}
+
+/**
+ * Salin bagian admin ke embed, dengan template.
+ *
+ * Dipisah karena dipakai dua jalur: embed pertama (yang juga membawa blok) dan
+ * embed tambahan (yang hanya berisi bagian admin).
+ */
+function terapkanExtra(
+  embed: ClassicEmbed,
+  extra: EmbedExtra | null,
+  template: Record<string, string> | null,
+): void {
+  if (!extra) return;
   /*
-   * Batas total 6000 karakter untuk seluruh embed. Kalau kelebihan, deskripsi
-   * yang dipotong lebih dulu (judul & gambar tetap utuh): deskripsi paling
-   * sering panjang, dan memotong tanpa laporan akan menyembunyikan bagian
-   * pesan yang hilang.
+   * Template berlaku juga di sini: footer "dikirim oleh {member.name}" pada
+   * pesan yang dipicu member masuk harus terisi, bukan tercetak mentah.
+   * Token yang tidak dikenal DIBIARKAN apa adanya, sama seperti di blok.
    */
-  /*
-   * Batas 6000 karakter berlaku untuk SELURUH embed, bukan hanya judul +
-   * deskripsi: penulis, footer, dan bidang ikut dihitung Discord. Kalau
-   * bagian admin yang membuatnya melewati batas, deskripsi lagi yang dipotong
-   * — bagian admin sengaja yang ditulis tangan admin sendiri, sedangkan
-   * deskripsi sering berupa blok panjang yang bisa dipindah ke pesan lain.
-   */
+  const isiTemplate = (nilai: string): string => applyTemplate(nilai, template ?? {});
+
+  if (extra.url) embed.url = extra.url;
+  if (extra.timestamp) embed.timestamp = extra.timestamp;
+  if (extra.author?.name) {
+    embed.author = {
+      name: isiTemplate(extra.author.name),
+      ...(extra.author.url ? { url: extra.author.url } : {}),
+      ...(extra.author.icon_url ? { icon_url: extra.author.icon_url } : {}),
+    };
+  }
+  if (extra.footer?.text) {
+    embed.footer = {
+      text: isiTemplate(extra.footer.text),
+      ...(extra.footer.icon_url ? { icon_url: extra.footer.icon_url } : {}),
+    };
+  }
+  if (extra.fields?.length) {
+    embed.fields = extra.fields.map((field) => ({
+      name: isiTemplate(field.name),
+      value: isiTemplate(field.value),
+      inline: field.inline,
+    }));
+  }
+}
+
+/**
+ * Jaga total 6000 karakter untuk SATU embed.
+ *
+ * Batas ini berlaku untuk seluruh embed (judul + isi + penulis + footer +
+ * bidang), dan Discord menjumlahkannya lagi untuk semua embed dalam satu pesan
+ * — itu diperiksa `validateEmbeds`. Kalau bagian admin yang membuatnya
+ * melewati batas, deskripsi yang dipotong: bagian admin ditulis tangan admin
+ * sendiri, sedangkan deskripsi sering berupa blok panjang yang bisa dipindah.
+ */
+function jagaTotal(embed: ClassicEmbed, dropped: string[]): void {
   const panjangAdmin =
     (embed.author?.name.length ?? 0) +
     (embed.footer?.text.length ?? 0) +
@@ -365,8 +497,6 @@ export function buildClassicEmbed(
     embed.description = potong(embed.description, Math.max(0, sisa));
     dropped.push(`isi dipotong agar muat batas ${BATAS.total} karakter embed`);
   }
-
-  return { embed, dropped };
 }
 
 /** `#rrggbb` → angka warna Discord. Null = tanpa warna (embed abu-abu). */
@@ -374,6 +504,38 @@ export function warnaDari(accent: string | null | undefined): number | null {
   const teks = (accent ?? '').trim().replace(/^#/, '');
   if (!/^[0-9a-fA-F]{6}$/.test(teks)) return null;
   return Number.parseInt(teks, 16);
+}
+
+/**
+ * Validasi beberapa embed sekaligus.
+ *
+ * Dua aturan tambahan yang hanya berlaku untuk pesan berisi lebih dari satu
+ * embed — dan keduanya ditolak Discord untuk SELURUH pesan, bukan hanya embed
+ * yang salah:
+ *   - maksimal 10 embed per pesan;
+ *   - jumlah karakter semua embed maksimal 6000.
+ */
+export function validateEmbeds(embeds: ClassicEmbed[]): string[] {
+  const masalah: string[] = [];
+  if (embeds.length === 0) masalah.push('pesan tidak punya embed yang bisa dikirim');
+  if (embeds.length > BATAS.embeds) masalah.push(`embed lebih dari ${BATAS.embeds} per pesan`);
+  embeds.forEach((embed, i) => {
+    for (const satu of validateEmbed(embed)) masalah.push(`embed ${i + 1}: ${satu}`);
+  });
+  const total = embeds.reduce((jumlah, embed) => jumlah + panjangEmbed(embed), 0);
+  if (total > BATAS.total) masalah.push(`semua embed lebih dari ${BATAS.total} karakter (${total})`);
+  return masalah;
+}
+
+/** Panjang satu embed menurut hitungan Discord (judul, isi, penulis, footer, bidang). */
+export function panjangEmbed(embed: ClassicEmbed): number {
+  return (
+    (embed.title?.length ?? 0) +
+    (embed.description?.length ?? 0) +
+    (embed.author?.name.length ?? 0) +
+    (embed.footer?.text.length ?? 0) +
+    (embed.fields ?? []).reduce((jumlah, field) => jumlah + field.name.length + field.value.length, 0)
+  );
 }
 
 /**

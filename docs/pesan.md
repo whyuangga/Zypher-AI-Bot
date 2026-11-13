@@ -625,7 +625,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Discohook | Di sini |
 |---|---|
 | Container / Text Display / Section / Separator / Media Gallery / File / Action Row | ✅ |
-| Embed klasik (judul, penulis, footer, field, thumbnail, gambar) | ✅ judul, warna, isi, satu gambar, thumbnail, **penulis, footer, bidang (maks 25), URL judul, stempel waktu** (lihat **Batch 9** & **Batch 13**) |
+| Embed klasik (judul, penulis, footer, field, thumbnail, gambar) | ✅ judul, warna, isi, satu gambar, thumbnail, **penulis, footer, bidang (maks 25), URL judul, stempel waktu**, dan **sampai 10 embed per pesan** (lihat **Batch 9**, **13**, **14**) |
 | Poll | ❌ di Discohook pun masih dinonaktifkan |
 | Tombol link & tombol interaktif ber-flow | ✅ |
 | Select menu: string (flow per opsi), user/role/mentionable/channel | ✅ |
@@ -647,6 +647,36 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, satu gambar besar, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 14: sampai 10 embed per pesan & impor embed yang setia
+
+Discohook punya tombol **Add Embed** yang berhenti di 10. Bot sebelumnya hanya
+bisa mengirim **satu** embed: embed kedua yang ditulis di sana hilang saat
+diimpor.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Jumlah embed per pesan | 1 | **10** (batas Discord) |
+| Embed kedua dan seterusnya | tidak ada | **penulis, footer, bidang, URL judul, stempel waktu** |
+| Batas 6000 karakter | per embed | per embed **dan** total semua embed (aturan Discord) |
+| Impor Discohook berisi embed | diterjemahkan jadi kartu teks | **embed asli**, bentuk pesan dipilih otomatis |
+| Riwayat versi | tidak menyimpan bentuk & embed | ikut tersimpan, jadi pengembalian versi benar-benar memulihkan |
+| Panel Bandingkan | tidak melihat embed | melihat bentuk pesan & ringkasan tiap embed |
+
+Cara kerjanya:
+
+1. **Embed pertama** dibangun dari blok seperti biasa (judul dari nama pesan,
+   warna dari aksen, teks → isi, satu gambar), lalu dilengkapi bagian admin
+   pertama.
+2. **Embed kedua dan seterusnya** hanya berisi bagian yang ditulis admin. Blok
+   pesan menggambarkan SATU pesan; menyalin isinya ke semua embed akan
+   mengulang teks yang sama.
+3. Embed tambahan **wajib punya judul, isi, gambar, atau bidang** — Discord
+   menolak embed yang hanya berisi penulis/footer. Embed seperti itu dilewati
+   dan alasannya muncul setelah Kirim, bukan hilang diam-diam.
+4. Editor punya **pemilih embed** (Embed 1, Embed 2, …) dan tombol tambah/hapus.
+   Isian yang sedang dibuka adalah embed yang disorot di daftar itu; pratinjau
+   menggambar **semua** embed, seperti hasil akhirnya di Discord.
 
 ### Batch 13: variabel ala Discohook & bagian embed yang belum ada
 
@@ -1361,7 +1391,9 @@ Aksi yang tidak sah dibuang dan alasannya muncul di `dropped`.
 NULL = hanya manual). Tidak ada tabel baru: pemicu adalah sifat pesannya.
 
 `custom_posts.embed` menyimpan bagian embed klasik (penulis, footer, bidang, URL
-judul, stempel waktu) sebagai JSON, NULL = tidak ada. Bentuknya sengaja datar —
+judul, stempel waktu) sebagai JSON **berisi daftar** sampai 10 elemen, NULL =
+tidak ada. Data lama berisi satu objek dan tetap terbaca (penyaring menerima
+keduanya), jadi tidak perlu migrasi isi. Bentuknya sengaja datar —
 bukan tabel bidang terpisah — karena bagian ini selalu dibaca & ditulis sebagai
 satu kesatuan bersama pesannya.
 

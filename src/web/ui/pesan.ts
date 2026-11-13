@@ -442,8 +442,13 @@ export function pesanPage(options: PesanPageOptions): string {
   </div>
   <div style="grid-column:1/-1">
     <label class="field">Bagian embed klasik (penulis, footer, bidang)</label>
-    <p class="hint" style="margin-top:0">Hanya dipakai saat <b>Bentuk pesan: Embed klasik</b>. Embed klasik punya bagian yang tidak ada di Components V2, jadi isiannya ada di sini — bukan sebagai blok. Tidak ada satu pun yang wajib.</p>
-    <div style="display:grid;gap:8px">
+    <p class="hint" style="margin-top:0">Hanya dipakai saat <b>Bentuk pesan: Embed klasik</b>. Satu pesan boleh berisi sampai <b>10 embed</b> — sama seperti tombol Add Embed di Discohook. Embed pertama dilengkapi isi blok; embed kedua dan seterusnya hanya berisi bagian yang kamu tulis di sini. Tidak ada satu pun yang wajib.</p>
+    <div class="block-add" style="margin-bottom:10px">
+      <button class="btn btn-ghost btn-sm" type="button" onclick="tambahEmbed()">${icon('plus', 15)} Tambah embed</button>
+      <span class="hint" id="embedPilihStatus" style="margin:0"></span>
+    </div>
+    <div id="embedPilihList" class="block-list" style="margin-bottom:12px"></div>
+    <div id="embedEditor" style="display:grid;gap:8px">
       <input type="text" id="embedUrl" placeholder="URL saat judul diklik (opsional, http/https)" />
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <input type="text" id="embedAuthorName" placeholder="Nama penulis (mis. {server.name})" style="flex:1;min-width:160px" />
@@ -455,7 +460,7 @@ export function pesanPage(options: PesanPageOptions): string {
         <input type="text" id="embedFooterIcon" placeholder="URL ikon footer" style="flex:1;min-width:160px" />
       </div>
       <input type="text" id="embedTimestamp" placeholder="Stempel waktu ISO 8601 (mis. 2026-11-12T09:00:00Z)" />
-      <div class="subhead" style="margin-top:4px">Bidang embeds (maksimal 25)</div>
+      <div class="subhead" style="margin-top:4px">Bidang embeds (maksimal 25 per embed)</div>
       <div id="embedFieldList" class="block-list"></div>
       <div class="block-add">
         <button class="btn btn-ghost btn-sm" type="button" onclick="tambahBidangEmbed()">${icon('plus', 15)} Tambah bidang</button>
@@ -1699,7 +1704,14 @@ async function importDiscohook() {
   // boleh dilakukan tombol "Tarik & impor".
   blocks = (pesan.blocks || []).map(normalBlock);
   editingId = null;
-  resetEmbedExtra();
+  /*
+   * Impor Discohook yang isinya embed dikirim sebagai embed asli (bukan kartu
+   * teks), lengkap dengan penulis/footer/bidangnya. Bentuk pesannya ikut
+   * dipilih, jadi admin tidak perlu mengubah dropdown sendiri.
+   */
+  loadEmbedExtra(pesan.embed);
+  var bentukImpor = document.getElementById('postLayout');
+  if (bentukImpor) bentukImpor.value = pesan.layout === 'embed' ? 'embed' : 'container';
   if (pesan.name) {
     var nama = document.getElementById('postName');
     if (nama && !nama.value) nama.value = String(pesan.name).slice(0, 120);
@@ -2985,7 +2997,11 @@ function snapshotEditor() {
     sender: (document.getElementById('postSender') || {}).value || 'bot',
     flags: flagPesan(),
     allowedMentions: allowedMentionsPesan(),
-    threadName: ((document.getElementById('postThreadName') || {}).value || '').trim() || null
+    threadName: ((document.getElementById('postThreadName') || {}).value || '').trim() || null,
+    // Tanpa dua baris ini, mengubah penulis/footer embed tidak terlihat di
+    // panel Bandingkan — perubahan tampilannya jadi tidak pernah tercatat.
+    layout: (document.getElementById('postLayout') || {}).value || 'container',
+    embed: payloadEmbed() || []
   };
 }
 
@@ -3144,20 +3160,80 @@ function accentNow() {
 /* ---------------- Bagian embed klasik (penulis, footer, bidang) ---------------- */
 
 /**
- * Bagian embed yang sedang disusun.
+ * Semua bagian embed milik pesan ini, sampai 10 (batas Discord).
  *
  * Disimpan sebagai data (bukan dibaca dari DOM tiap kali) supaya membuka pesan
- * lain tidak menumpuk bidang milik pesan sebelumnya. Yang dikirim ke server
- * hanya bagian yang terisi; sisanya tidak dikirim sama sekali.
+ * lain tidak menumpuk bidang milik pesan sebelumnya. Elemen pertama melengkapi
+ * embed dari blok; sisanya menjadi embed tambahan.
  */
-var EMBED_EXTRA = { url: '', author: {}, footer: {}, fields: [], timestamp: '' };
-/** Batas bidang embed — angka Discord, sama dengan sanitizer di server. */
+var EMBED_LIST = [embarKosong()];
+/** Embed yang sedang diedit di isian bawah. */
+var EMBED_AKTIF = 0;
+/** Batas embed per pesan & bidang per embed — angka Discord, sama dengan server. */
+var EMBED_MAKS = 10;
 var EMBED_FIELDS_MAKS = 25;
 
-/** Kosongkan isian embed (dipakai saat membuka pesan baru). */
+/** Satu bagian embed kosong. */
+function embarKosong() {
+  return { url: '', author: {}, footer: {}, fields: [], timestamp: '' };
+}
+
+/** Bagian embed yang sedang diedit (selalu ada, walau daftarnya kosong). */
+function embedAktif() {
+  if (!EMBED_LIST.length) EMBED_LIST.push(embarKosong());
+  if (EMBED_AKTIF >= EMBED_LIST.length) EMBED_AKTIF = EMBED_LIST.length - 1;
+  if (EMBED_AKTIF < 0) EMBED_AKTIF = 0;
+  return EMBED_LIST[EMBED_AKTIF];
+}
+
+/** Kosongkan semua bagian embed (dipakai saat membuka pesan baru). */
 function resetEmbedExtra() {
-  EMBED_EXTRA = { url: '', author: {}, footer: {}, fields: [], timestamp: '' };
+  EMBED_LIST = [embarKosong()];
+  EMBED_AKTIF = 0;
   renderEmbedExtra();
+}
+
+/** Ada isi di satu bagian embed? (cerminan embedExtraKosong di server) */
+function embedTerisi(extra) {
+  if (!extra) return false;
+  return Boolean(
+    extra.url ||
+      (extra.author && extra.author.name) ||
+      (extra.footer && extra.footer.text) ||
+      (extra.fields && extra.fields.length) ||
+      extra.timestamp,
+  );
+}
+
+/** Tambah satu embed kosong, lalu pindah ke sana. */
+function tambahEmbed() {
+  if (EMBED_LIST.length >= EMBED_MAKS) {
+    return toast('Maksimal ' + EMBED_MAKS + ' embed per pesan', true);
+  }
+  EMBED_LIST.push(embarKosong());
+  EMBED_AKTIF = EMBED_LIST.length - 1;
+  renderEmbedExtra();
+  renderPreview();
+}
+
+/** Pilih embed yang diedit. */
+function pilihEmbed(nomor) {
+  EMBED_AKTIF = nomor;
+  renderEmbedExtra();
+}
+
+/**
+ * Hapus satu embed.
+ *
+ * Batasnya satu: pesan tanpa embed sama sekali tidak bisa dikirim, dan
+ * mengosongkan isian lebih membingungkan daripada menyisakan satu yang kosong.
+ */
+function hapusEmbed(nomor) {
+  if (EMBED_LIST.length <= 1) return toast('Minimal satu bagian embed', true);
+  EMBED_LIST.splice(nomor, 1);
+  if (EMBED_AKTIF >= EMBED_LIST.length) EMBED_AKTIF = EMBED_LIST.length - 1;
+  renderEmbedExtra();
+  renderPreview();
 }
 
 /**
@@ -3168,33 +3244,42 @@ function resetEmbedExtra() {
  * akan mengubah tampilan pesannya tanpa admin meminta.
  */
 function loadEmbedExtra(data) {
-  var sumber = data && typeof data === 'object' ? data : {};
-  EMBED_EXTRA = {
-    url: String(sumber.url || ''),
-    author: {
-      name: String((sumber.author || {}).name || ''),
-      url: String((sumber.author || {}).url || ''),
-      icon_url: String((sumber.author || {}).icon_url || ''),
-    },
-    footer: {
-      text: String((sumber.footer || {}).text || ''),
-      icon_url: String((sumber.footer || {}).icon_url || ''),
-    },
-    timestamp: String(sumber.timestamp || ''),
-    fields: Array.isArray(sumber.fields)
-      ? sumber.fields.slice(0, EMBED_FIELDS_MAKS).map(function (f) {
-          return {
-            name: String((f || {}).name || ''),
-            value: String((f || {}).value || ''),
-            inline: Boolean((f || {}).inline),
-          };
-        })
-      : [],
-  };
+  /*
+   * Bentuk lama = satu objek, bentuk baru = daftar. Keduanya diterima supaya
+   * dokumen JSON yang diekspor sebelum batch ini tetap bisa diimpor.
+   */
+  var daftar = Array.isArray(data) ? data : data && typeof data === 'object' ? [data] : [];
+  var dinormal = daftar.slice(0, EMBED_MAKS).map(function (satu) {
+    var sumber = satu && typeof satu === 'object' ? satu : {};
+    return {
+      url: String(sumber.url || ''),
+      author: {
+        name: String((sumber.author || {}).name || ''),
+        url: String((sumber.author || {}).url || ''),
+        icon_url: String((sumber.author || {}).icon_url || ''),
+      },
+      footer: {
+        text: String((sumber.footer || {}).text || ''),
+        icon_url: String((sumber.footer || {}).icon_url || ''),
+      },
+      timestamp: String(sumber.timestamp || ''),
+      fields: Array.isArray(sumber.fields)
+        ? sumber.fields.slice(0, EMBED_FIELDS_MAKS).map(function (f) {
+            return {
+              name: String((f || {}).name || ''),
+              value: String((f || {}).value || ''),
+              inline: Boolean((f || {}).inline),
+            };
+          })
+        : [],
+    };
+  });
+  EMBED_LIST = dinormal.length ? dinormal : [embarKosong()];
+  EMBED_AKTIF = 0;
   renderEmbedExtra();
 }
 
-/** Isian teks sederhana yang menulis langsung ke EMBED_EXTRA. */
+/** Isian teks sederhana yang menulis langsung ke embed yang sedang diedit. */
 function isianEmbed(id, jalur, placeholder) {
   var el = document.getElementById(id);
   if (!el) return;
@@ -3206,10 +3291,10 @@ function isianEmbed(id, jalur, placeholder) {
   };
 }
 
-/** Pasang nilai ke EMBED_EXTRA pada jalur bertitik (mis. author.name). */
+/** Pasang nilai ke embed aktif pada jalur bertitik (mis. author.name). */
 function targetEmbed(jalur, nilai) {
   var bagian = jalur.split('.');
-  var simpul = EMBED_EXTRA;
+  var simpul = embedAktif();
   for (var i = 0; i < bagian.length - 1; i += 1) {
     if (!simpul[bagian[i]]) simpul[bagian[i]] = {};
     simpul = simpul[bagian[i]];
@@ -3219,7 +3304,7 @@ function targetEmbed(jalur, nilai) {
 
 function bacaEmbed(jalur) {
   var bagian = jalur.split('.');
-  var simpul = EMBED_EXTRA;
+  var simpul = embedAktif();
   for (var i = 0; i < bagian.length; i += 1) {
     if (!simpul) return '';
     simpul = simpul[bagian[i]];
@@ -3237,7 +3322,7 @@ function bacaEmbed(jalur) {
 function renderEmbedExtra() {
   isianEmbed('embedUrl', {
     get: function () { return bacaEmbed('url'); },
-    set: function (v) { EMBED_EXTRA.url = v.trim(); },
+    set: function (v) { embedAktif().url = v.trim(); },
   }, 'URL saat judul diklik (opsional, http/https)');
   isianEmbed('embedAuthorName', {
     get: function () { return bacaEmbed('author.name'); },
@@ -3261,14 +3346,55 @@ function renderEmbedExtra() {
   }, 'URL ikon footer');
   isianEmbed('embedTimestamp', {
     get: function () { return bacaEmbed('timestamp'); },
-    set: function (v) { EMBED_EXTRA.timestamp = v.trim(); },
+    set: function (v) { embedAktif().timestamp = v.trim(); },
   }, 'Stempel waktu ISO 8601 (mis. 2026-11-12T09:00:00Z)');
+
+  /*
+   * Pemilih embed: satu baris per bagian embed. Tanpa ini, admin tidak punya
+   * cara berpindah antara embed pertama dan embed tambahan — isian di bawah
+   * hanya menampilkan satu embed, dan sisanya jadi tak terlihat.
+   */
+  var pilihHost = document.getElementById('embedPilihList');
+  if (pilihHost) {
+    pilihHost.innerHTML = '';
+    EMBED_LIST.forEach(function (extra, nomor) {
+      var baris = document.createElement('div');
+      baris.className = 'aksi-baris' + (nomor === EMBED_AKTIF ? ' aksi-baris-aktif' : '');
+
+      var head = document.createElement('div');
+      head.className = 'aksi-baris-head';
+      var tombol = document.createElement('button');
+      tombol.className = 'btn btn-ghost btn-sm';
+      tombol.type = 'button';
+      var ringkas = nomor === 0 ? 'Embed 1 (isi blok)' : 'Embed ' + (nomor + 1);
+      tombol.textContent = ringkas + (embedTerisi(extra) ? '' : ' — kosong');
+      tombol.onclick = function () { pilihEmbed(nomor); };
+      head.appendChild(tombol);
+
+      var hapus = document.createElement('button');
+      hapus.className = 'btn-danger btn-sm btn-icon';
+      hapus.type = 'button';
+      hapus.title = 'Hapus embed';
+      hapus.textContent = 'x';
+      hapus.disabled = EMBED_LIST.length <= 1;
+      hapus.onclick = function () { hapusEmbed(nomor); };
+      head.appendChild(hapus);
+      baris.appendChild(head);
+      pilihHost.appendChild(baris);
+    });
+
+    var statusPilih = document.getElementById('embedPilihStatus');
+    if (statusPilih) {
+      statusPilih.textContent =
+        EMBED_LIST.length + '/' + EMBED_MAKS + ' embed · sedang mengedit embed ' + (EMBED_AKTIF + 1);
+    }
+  }
 
   var host = document.getElementById('embedFieldList');
   if (!host) return;
   host.innerHTML = '';
 
-  if (EMBED_EXTRA.fields.length === 0) {
+  if (embedAktif().fields.length === 0) {
     var kosong = document.createElement('p');
     kosong.className = 'hint';
     kosong.style.margin = '0';
@@ -3276,7 +3402,7 @@ function renderEmbedExtra() {
     host.appendChild(kosong);
   }
 
-  EMBED_EXTRA.fields.forEach(function (bidang, nomor) {
+  embedAktif().fields.forEach(function (bidang, nomor) {
     var baris = document.createElement('div');
     baris.className = 'aksi-baris';
 
@@ -3293,7 +3419,7 @@ function renderEmbedExtra() {
     hapus.title = 'Hapus bidang';
     hapus.textContent = 'x';
     hapus.onclick = function () {
-      EMBED_EXTRA.fields.splice(nomor, 1);
+      embedAktif().fields.splice(nomor, 1);
       renderEmbedExtra();
       renderPreview();
     };
@@ -3304,14 +3430,14 @@ function renderEmbedExtra() {
     nama.type = 'text';
     nama.value = bidang.name;
     nama.placeholder = 'Nama bidang (maks 256 karakter)';
-    nama.oninput = function () { EMBED_EXTRA.fields[nomor].name = nama.value.slice(0, 256); renderPreview(); };
+    nama.oninput = function () { embedAktif().fields[nomor].name = nama.value.slice(0, 256); renderPreview(); };
     baris.appendChild(nama);
 
     var isi = document.createElement('textarea');
     isi.rows = 2;
     isi.value = bidang.value;
     isi.placeholder = 'Isi bidang (maks 1024 karakter)';
-    isi.oninput = function () { EMBED_EXTRA.fields[nomor].value = isi.value.slice(0, 1024); renderPreview(); };
+    isi.oninput = function () { embedAktif().fields[nomor].value = isi.value.slice(0, 1024); renderPreview(); };
     baris.appendChild(isi);
 
     var sebaris = document.createElement('label');
@@ -3319,7 +3445,7 @@ function renderEmbedExtra() {
     var cek = document.createElement('input');
     cek.type = 'checkbox';
     cek.checked = bidang.inline === true;
-    cek.onchange = function () { EMBED_EXTRA.fields[nomor].inline = cek.checked; renderPreview(); };
+    cek.onchange = function () { embedAktif().fields[nomor].inline = cek.checked; renderPreview(); };
     sebaris.appendChild(cek);
     sebaris.appendChild(document.createTextNode(' tampil sebaris dengan bidang lain'));
     baris.appendChild(sebaris);
@@ -3329,47 +3455,53 @@ function renderEmbedExtra() {
 
   var status = document.getElementById('embedFieldStatus');
   if (status) {
-    status.textContent = EMBED_EXTRA.fields.length + '/' + EMBED_FIELDS_MAKS + ' bidang';
+    status.textContent = embedAktif().fields.length + '/' + EMBED_FIELDS_MAKS + ' bidang';
   }
 }
 
 function tambahBidangEmbed() {
-  if (EMBED_EXTRA.fields.length >= EMBED_FIELDS_MAKS) {
+  if (embedAktif().fields.length >= EMBED_FIELDS_MAKS) {
     return toast('Maksimal ' + EMBED_FIELDS_MAKS + ' bidang per embed', true);
   }
-  EMBED_EXTRA.fields.push({ name: '', value: '', inline: false });
+  embedAktif().fields.push({ name: '', value: '', inline: false });
   renderEmbedExtra();
 }
 
 /**
  * Muatan embed untuk server.
  *
- * Bagian yang kosong TIDAK dikirim, dan null dipakai kalau tidak ada satu pun
- * yang terisi — server menyimpannya sebagai kolom kosong, bukan objek kosong
- * yang harus dibaca ulang sebagai "kosong" di setiap tempat.
+ * Selalu berupa DAFTAR (server menyimpannya sebagai daftar bagian embed).
+ * Bagian yang seluruhnya kosong dibuang, dan null dikirim kalau tidak ada satu
+ * pun yang terisi — server menyimpannya sebagai kolom kosong, bukan daftar
+ * berisi objek kosong yang harus dibaca ulang sebagai "kosong" di tiap tempat.
  */
 function payloadEmbed() {
-  var hasil = {};
-  if (EMBED_EXTRA.url) hasil.url = EMBED_EXTRA.url;
-  if (EMBED_EXTRA.timestamp) hasil.timestamp = EMBED_EXTRA.timestamp;
-  if (EMBED_EXTRA.author && EMBED_EXTRA.author.name) {
-    hasil.author = { name: EMBED_EXTRA.author.name };
-    if (EMBED_EXTRA.author.url) hasil.author.url = EMBED_EXTRA.author.url;
-    if (EMBED_EXTRA.author.icon_url) hasil.author.icon_url = EMBED_EXTRA.author.icon_url;
-  }
-  if (EMBED_EXTRA.footer && EMBED_EXTRA.footer.text) {
-    hasil.footer = { text: EMBED_EXTRA.footer.text };
-    if (EMBED_EXTRA.footer.icon_url) hasil.footer.icon_url = EMBED_EXTRA.footer.icon_url;
-  }
-  var bidang = (EMBED_EXTRA.fields || []).filter(function (f) {
-    return String(f.name || '').trim() && String(f.value || '').trim();
-  });
-  if (bidang.length) {
-    hasil.fields = bidang.map(function (f) {
-      return { name: f.name.trim(), value: f.value.trim(), inline: f.inline === true };
+  var hasil = [];
+  EMBED_LIST.forEach(function (extra) {
+    if (!embedTerisi(extra)) return;
+    var satu = {};
+    if (extra.url) satu.url = extra.url;
+    if (extra.timestamp) satu.timestamp = extra.timestamp;
+    if (extra.author && extra.author.name) {
+      satu.author = { name: extra.author.name };
+      if (extra.author.url) satu.author.url = extra.author.url;
+      if (extra.author.icon_url) satu.author.icon_url = extra.author.icon_url;
+    }
+    if (extra.footer && extra.footer.text) {
+      satu.footer = { text: extra.footer.text };
+      if (extra.footer.icon_url) satu.footer.icon_url = extra.footer.icon_url;
+    }
+    var bidang = (extra.fields || []).filter(function (f) {
+      return String(f.name || '').trim() && String(f.value || '').trim();
     });
-  }
-  return Object.keys(hasil).length ? hasil : null;
+    if (bidang.length) {
+      satu.fields = bidang.map(function (f) {
+        return { name: f.name.trim(), value: f.value.trim(), inline: f.inline === true };
+      });
+    }
+    if (Object.keys(satu).length) hasil.push(satu);
+  });
+  return hasil.length ? hasil : null;
 }
 
 function resetAccent() {
@@ -3490,12 +3622,35 @@ function embedDariBlok() {
   return { embed: embed, dilewati: dilewati };
 }
 
-/** Pratinjau embed klasik — bentuknya mengikuti tampilan Discord. */
+/**
+ * Pratinjau embed klasik — bentuknya mengikuti tampilan Discord.
+ *
+ * Semua embed digambar, bukan hanya yang sedang diedit: admin harus melihat
+ * hasil akhir pesannya (Discord menampilkan semuanya bertumpuk), dan salah
+ * satu embed yang kosong akan menggagalkan pengiriman seluruh pesan.
+ */
 function gambarPratinjauEmbed(host, hostId) {
   var hasil = embedDariBlok();
-  var embed = hasil.embed;
-  var adaBidang = Boolean(payloadEmbed() && (payloadEmbed().fields || []).length);
-  if (!embed.title && !embed.description && !embed.image && !adaBidang) {
+  var dasar = hasil.embed;
+  var daftar = payloadEmbed() || [];
+
+  /*
+   * Embed pertama = blok + bagian admin pertama; sisanya hanya bagian admin.
+   * Ini cerminan buildClassicEmbeds di server, bukan aturan kedua yang ditulis
+   * ulang dengan cara berbeda.
+   */
+  var adaDasar = Boolean(dasar.title || dasar.description || dasar.image);
+  var digambar = 0;
+  if (adaDasar || daftar.length) {
+    gambarSatuEmbed(host, dasar, daftar[0] || null, adaDasar);
+    digambar += 1;
+  }
+  for (var i = 1; i < daftar.length; i += 1) {
+    gambarSatuEmbed(host, { color: null, title: '', description: '', image: null }, daftar[i], false);
+    if (embedTerisi(daftar[i])) digambar += 1;
+  }
+
+  if (digambar === 0) {
     var kosong = document.createElement('div');
     kosong.className = 'preview-container';
     kosong.style.borderLeftColor = accentNow();
@@ -3507,72 +3662,13 @@ function gambarPratinjauEmbed(host, hostId) {
     return;
   }
 
-  var kotak = document.createElement('div');
-  kotak.className = 'preview-embed';
-  kotak.style.borderLeftColor = embed.color === null ? accentNow() : '#' + aksenHex(embed.color);
-
-  /*
-   * Penulis, footer, dan bidang digambar dari EMBED_EXTRA yang sama dengan
-   * yang dikirim ke server — bukan dari tebakan. Tanpa ini admin melihat embed
-   * rapi di pratinjau padahal penulis/footer-nya belum tersimpan.
-   */
-  var extra = payloadEmbed() || {};
-  if (extra.author && extra.author.name) {
-    var penulis = document.createElement('div');
-    penulis.className = 'preview-embed-author';
-    penulis.textContent = (extra.author.icon_url ? '🖼 ' : '') + String(extra.author.name);
-    kotak.appendChild(penulis);
+  if (daftar.length > 10) {
+    var terlalu = document.createElement('p');
+    terlalu.className = 'hint';
+    terlalu.style.margin = '8px 0 0';
+    terlalu.textContent = 'Embed dibatasi 10 per pesan — Discord menolak pesan yang lebih banyak.';
+    host.appendChild(terlalu);
   }
-  if (embed.title) {
-    var judul = document.createElement('div');
-    judul.className = 'preview-embed-title';
-    judul.textContent = embed.title;
-    kotak.appendChild(judul);
-  }
-  if (embed.description) {
-    var isi = document.createElement('div');
-    isi.className = 'preview-embed-text';
-    isi.textContent = embed.description;
-    kotak.appendChild(isi);
-  }
-  if (extra.fields && extra.fields.length) {
-    /*
-     * Bidang digambar sebagai baris datar: pratinjau ini mini, dan kolom
-     * inline sungguhan akan terbaca sebagai teks yang berdesakan. Yang penting
-     * admin melihat ISI dan jumlahnya, bukan tata letak persisnya.
-     */
-    var daftarBidang = document.createElement('div');
-    daftarBidang.className = 'preview-embed-fields';
-    extra.fields.forEach(function (bidang) {
-      var satu = document.createElement('div');
-      satu.className = 'preview-embed-field';
-      var nama = document.createElement('b');
-      nama.textContent = bidang.name;
-      satu.appendChild(nama);
-      satu.appendChild(document.createTextNode(' ' + bidang.value + (bidang.inline ? ' (sebaris)' : '')));
-      daftarBidang.appendChild(satu);
-    });
-    kotak.appendChild(daftarBidang);
-  }
-  if (embed.image) {
-    var gambar = document.createElement('div');
-    gambar.className = 'preview-embed-image';
-    // Alamat gambar dari admin: dipasang lewat style, bukan innerHTML.
-    gambar.style.backgroundImage = 'url("' + String(embed.image).replace(/"/g, '%22') + '")';
-    kotak.appendChild(gambar);
-  }
-  if (extra.footer && extra.footer.text) {
-    var footer = document.createElement('div');
-    footer.className = 'preview-embed-footer';
-    footer.textContent = String(extra.footer.text) + (extra.timestamp ? ' · ' + String(extra.timestamp) : '');
-    kotak.appendChild(footer);
-  } else if (extra.timestamp) {
-    var waktu = document.createElement('div');
-    waktu.className = 'preview-embed-footer';
-    waktu.textContent = String(extra.timestamp);
-    kotak.appendChild(waktu);
-  }
-  host.appendChild(kotak);
 
   // Komponen di luar embed tetap ditampilkan: tombol role masih akan muncul.
   var luar = [];
@@ -3593,6 +3689,77 @@ function gambarPratinjauEmbed(host, hostId) {
     peringatan.textContent = 'Catatan: ' + hasil.dilewati[0];
     host.appendChild(peringatan);
   }
+}
+
+/**
+ * Gambar satu kartu embed.
+ *
+ * dasar berisi judul/isi/gambar hasil terjemahan blok; extra berisi bagian
+ * yang ditulis admin. Penulis, bidang, dan footer digambar dari payload yang
+ * SAMA dengan yang dikirim ke server — bukan dari tebakan.
+ */
+function gambarSatuEmbed(host, dasar, extra, pakaiDasar) {
+  var kotak = document.createElement('div');
+  kotak.className = 'preview-embed';
+  kotak.style.borderLeftColor = dasar.color === null || dasar.color === undefined ? accentNow() : '#' + aksenHex(dasar.color);
+
+  if (extra && extra.author && extra.author.name) {
+    var penulis = document.createElement('div');
+    penulis.className = 'preview-embed-author';
+    penulis.textContent = (extra.author.icon_url ? '🖼 ' : '') + String(extra.author.name);
+    kotak.appendChild(penulis);
+  }
+  var judul = pakaiDasar ? dasar.title : '';
+  if (judul) {
+    var elJudul = document.createElement('div');
+    elJudul.className = 'preview-embed-title';
+    elJudul.textContent = judul;
+    kotak.appendChild(elJudul);
+  }
+  if (pakaiDasar && dasar.description) {
+    var isi = document.createElement('div');
+    isi.className = 'preview-embed-text';
+    isi.textContent = dasar.description;
+    kotak.appendChild(isi);
+  }
+  if (extra && extra.fields && extra.fields.length) {
+    /*
+     * Bidang digambar sebagai baris datar: pratinjau ini mini, dan kolom
+     * inline sungguhan akan terbaca sebagai teks yang berdesakan. Yang penting
+     * admin melihat ISI dan jumlahnya, bukan tata letak persisnya.
+     */
+    var daftarBidang = document.createElement('div');
+    daftarBidang.className = 'preview-embed-fields';
+    extra.fields.forEach(function (bidang) {
+      var satu = document.createElement('div');
+      satu.className = 'preview-embed-field';
+      var nama = document.createElement('b');
+      nama.textContent = bidang.name;
+      satu.appendChild(nama);
+      satu.appendChild(document.createTextNode(' ' + bidang.value + (bidang.inline ? ' (sebaris)' : '')));
+      daftarBidang.appendChild(satu);
+    });
+    kotak.appendChild(daftarBidang);
+  }
+  if (pakaiDasar && dasar.image) {
+    var gambar = document.createElement('div');
+    gambar.className = 'preview-embed-image';
+    // Alamat gambar dari admin: dipasang lewat style, bukan innerHTML.
+    gambar.style.backgroundImage = 'url("' + String(dasar.image).replace(/"/g, '%22') + '")';
+    kotak.appendChild(gambar);
+  }
+  if (extra && extra.footer && extra.footer.text) {
+    var footer = document.createElement('div');
+    footer.className = 'preview-embed-footer';
+    footer.textContent = String(extra.footer.text) + (extra.timestamp ? ' · ' + String(extra.timestamp) : '');
+    kotak.appendChild(footer);
+  } else if (extra && extra.timestamp) {
+    var waktu = document.createElement('div');
+    waktu.className = 'preview-embed-footer';
+    waktu.textContent = String(extra.timestamp);
+    kotak.appendChild(waktu);
+  }
+  host.appendChild(kotak);
 }
 
 /** Angka warna jadi rrggbb untuk CSS. */

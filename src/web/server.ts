@@ -2002,6 +2002,13 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         return {
           name: pesan.name,
           blocks: bersih.blocks,
+          /*
+           * Bentuk & embed ikut dikirim: impor Discohook yang hanya berisi
+           * embed harus mendarat sebagai embed asli, bukan dikonversi jadi
+           * kartu teks oleh editor.
+           */
+          layout: pesan.layout,
+          embed: pesan.embed,
           warnings: [...pesan.warnings, ...bersih.dropped.map((alasan) => `Blok dibuang: ${alasan}`)],
           usage: measureBlocks(bersih.blocks),
         };

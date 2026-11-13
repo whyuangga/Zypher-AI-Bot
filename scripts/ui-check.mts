@@ -1871,49 +1871,49 @@ await check('pesan: bidang embed bisa ditambah/dihapus & bagian kosong tidak dik
       var awal = payloadEmbed();
       tambahBidangEmbed();
       tambahBidangEmbed();
-      EMBED_EXTRA.fields[0].name = 'Harga';
-      EMBED_EXTRA.fields[0].value = 'Rp10.000';
-      EMBED_EXTRA.fields[0].inline = true;
+      embedAktif().fields[0].name = 'Harga';
+      embedAktif().fields[0].value = 'Rp10.000';
+      embedAktif().fields[0].inline = true;
       /* Bidang kedua sengaja dibiarkan kosong: tidak boleh ikut terkirim. */
-      EMBED_EXTRA.url = 'https://contoh.test/x';
-      EMBED_EXTRA.author = { name: 'Tim' };
-      EMBED_EXTRA.footer = { text: 'kaki' };
-      EMBED_EXTRA.timestamp = '2026-11-12T09:00:00Z';
+      embedAktif().url = 'https://contoh.test/x';
+      embedAktif().author = { name: 'Tim' };
+      embedAktif().footer = { text: 'kaki' };
+      embedAktif().timestamp = '2026-11-12T09:00:00Z';
       var terisi = payloadEmbed();
       /* Dibaca SEBELUM dimuat ulang: muat ulang membuang bidang kosong. */
       var jumlahBaris = document.getElementById('embedFieldList').children.length;
       loadEmbedExtra(terisi);
       var dibacaUlang = payloadEmbed();
-      var maks = EMBED_FIELDS_MAKS;
       return {
         awal: awal,
         terisi: terisi,
         dibacaUlang: dibacaUlang,
         jumlahBaris: jumlahBaris,
-        maks: maks,
+        maks: EMBED_FIELDS_MAKS,
       };
     })()
   `)) as {
     awal: unknown;
-    terisi: {
+    terisi: Array<{
       url?: string;
       author?: { name?: string };
       footer?: { text?: string };
       fields?: Array<{ name: string; inline: boolean }>;
       timestamp?: string;
-    };
-    dibacaUlang: { fields?: Array<{ name: string }> };
+    }>;
+    dibacaUlang: Array<{ fields?: Array<{ name: string }> }>;
     jumlahBaris: number;
     maks: number;
   };
 
-  assert.equal(hasil.awal, null, 'bagian kosong tidak dikirim sebagai objek setengah jadi');
-  assert.equal(hasil.terisi.fields!.length, 1, 'hanya bidang berisi yang dikirim');
-  assert.equal(hasil.terisi.fields![0].inline, true, 'penanda sebaris ikut');
-  assert.equal(hasil.terisi.author!.name, 'Tim');
-  assert.equal(hasil.terisi.footer!.text, 'kaki');
+  assert.equal(hasil.awal, null, 'bagian kosong tidak dikirim sebagai daftar berisi objek kosong');
+  assert.equal(hasil.terisi.length, 1, 'satu embed terisi terkirim');
+  assert.equal(hasil.terisi[0].fields!.length, 1, 'hanya bidang berisi yang dikirim');
+  assert.equal(hasil.terisi[0].fields![0].inline, true, 'penanda sebaris ikut');
+  assert.equal(hasil.terisi[0].author!.name, 'Tim');
+  assert.equal(hasil.terisi[0].footer!.text, 'kaki');
   assert.equal(hasil.jumlahBaris, 2, 'editor menggambar semua bidang, termasuk yang belum diisi');
-  assert.equal(hasil.dibacaUlang.fields!.length, 1, 'isi bertahan setelah dimuat ulang ke editor');
+  assert.equal(hasil.dibacaUlang.length, 1, 'isi bertahan setelah dimuat ulang ke editor');
   assert.equal(hasil.maks, 25, 'batas bidang sama dengan Discord');
 
   // Ikut terkirim saat Simpan.
@@ -1928,10 +1928,63 @@ await check('pesan: bidang embed bisa ditambah/dihapus & bagian kosong tidak dik
   `);
   const simpan = page.fetches.find((call) => call.path === '/api/posts' || /^\/api\/posts\/\d+$/.test(call.path));
   assert.ok(simpan, 'Simpan memanggil /api/posts');
-  const muatan = simpan!.body as { embed?: { fields?: unknown[] } | null; layout?: string };
+  const muatan = simpan!.body as { embed?: Array<{ fields?: unknown[] }> | null; layout?: string };
   assert.equal(muatan.layout, 'embed');
-  assert.equal((muatan.embed?.fields ?? []).length, 1, 'bidang ikut di muatan Simpan');
+  assert.equal((muatan.embed ?? []).length, 1, 'embed ikut di muatan Simpan');
+  assert.equal(((muatan.embed ?? [])[0]?.fields ?? []).length, 1, 'bidang ikut di muatan Simpan');
   assert.equal(page.errors.length, 0, `editor embed error: ${page.errors.join('|')}`);
+});
+
+await check('pesan: sampai 10 embed bisa disusun & diedit satu per satu', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-embed-banyak');
+
+  const hasil = (await page.evaluate(`
+    (function () {
+      resetEmbedExtra();
+      tambahEmbed();
+      tambahEmbed();
+      /*
+       * Isi embed kedua, lalu KEMBALI ke embed pertama dan isi juga: tanpa
+       * pemilih, isian kedua akan menimpa yang pertama tanpa terlihat.
+       */
+      pilihEmbed(1);
+      embedAktif().author = { name: 'Penulis dua' };
+      embedAktif().fields = [{ name: 'B', value: '2', inline: false }];
+      pilihEmbed(0);
+      embedAktif().footer = { text: 'kaki satu' };
+      var daftar = payloadEmbed();
+      var jumlahBaris = document.getElementById('embedPilihList').children.length;
+
+      /* Batas 10 ditegakkan di editor, bukan hanya di server. */
+      for (var i = 0; i < 20; i += 1) tambahEmbed();
+      var jumlahAkhir = EMBED_LIST.length;
+      hapusEmbed(EMBED_LIST.length - 1);
+      var setelahHapus = EMBED_LIST.length;
+      return {
+        daftar: daftar,
+        jumlahBaris: jumlahBaris,
+        jumlahAkhir: jumlahAkhir,
+        setelahHapus: setelahHapus,
+        maks: EMBED_MAKS,
+      };
+    })()
+  `)) as {
+    daftar: Array<{ author?: { name?: string }; footer?: { text?: string }; fields?: unknown[] }>;
+    jumlahBaris: number;
+    jumlahAkhir: number;
+    setelahHapus: number;
+    maks: number;
+  };
+
+  assert.equal(hasil.daftar.length, 2, 'dua embed terisi terkirim');
+  assert.equal(hasil.daftar[0].footer?.text, 'kaki satu', 'embed pertama menyimpan isinya');
+  assert.equal(hasil.daftar[1].author?.name, 'Penulis dua', 'embed kedua menyimpan isinya sendiri');
+  assert.equal(hasil.jumlahBaris, 3, 'pemilih menampilkan semua embed, termasuk yang kosong');
+  assert.equal(hasil.maks, 10, 'batas embed sama dengan Discord');
+  assert.equal(hasil.jumlahAkhir, 10, 'tambah embed berhenti di batas');
+  assert.equal(hasil.setelahHapus, 9, 'embed bisa dihapus');
+  assert.equal(page.errors.length, 0, `editor multi-embed error: ${page.errors.join('|')}`);
 });
 
 await check('pesan: izin ping & nama thread ikut dikirim, bawaan tanpa ping', async () => {
