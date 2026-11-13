@@ -634,8 +634,8 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | `thread_name` (pesan menjadi awal thread) | ✅ isian "Nama thread" di kartu pengaturan, berlaku untuk **Components V2 maupun embed klasik** (sebelumnya jalur embed mengabaikannya tanpa laporan) |
 | Message flags: suppress embeds, suppress notifications | ✅ |
 | Message flags: voice message, `IS_COMPONENTS_V2` manual | ❌ (v2 diurus pengirim) |
-| Multi-pesan dalam satu backup (beberapa pesan, `reference`, `thread_id`) | ✅ tab **Multi-pesan** (`?tab=grup`): sampai 20 pesan per dokumen, `reference` antar pesan, nama thread per pesan, **tiap pesan bisa dibuka lagi di tab Susun, diduplikat, diurutkan, atau dihapus**, disimpan di `post_documents` |
-| JSON editor dokumen | ✅ kartu **JSON dokumen** di tab Multi-pesan: ekspor/impor satu dokumen (semua pesan, rujukan balasan, nama thread, mode rangkaian) |
+| Multi-pesan dalam satu backup (beberapa pesan, `reference`, `thread_id`, `flags` per pesan) | ✅ tab **Multi-pesan** (`?tab=grup`): sampai 20 pesan per dokumen, `reference` antar pesan, nama thread & **flag per pesan**, **tiap pesan bisa dibuka lagi di tab Susun, diduplikat, diurutkan, atau dihapus**, disimpan di `post_documents` (lihat **Batch 32**) |
+| JSON editor dokumen | ✅ kartu **JSON dokumen** di tab Multi-pesan: ekspor/impor satu dokumen (semua pesan, rujukan balasan, nama thread, **flag per pesan**, mode rangkaian) — bolak-balik tidak lagi menghilangkan flag (lihat **Batch 32**) |
 | JSON Data Editor **per pesan** | ✅ kartu **JSON Data Editor (satu pesan)** di tab Impor: tempel objek pesan Discord, payload REST, atau data Discohook — pengaturan tingkat pesan (`username`, `avatar`, `thread_name`, `flags`) ikut dipulihkan, sama seperti **Load** |
 | `targets[]` (satu pesan, beberapa channel) | ✅ **Kirim juga ke channel lain** di kartu pengaturan: sampai 5 channel tambahan, tiap channel punya ID pesan sendiri |
 | Riwayat/undo revisi (padanan backup) | ✅ 20 versi terakhir per pesan, dibuat otomatis setiap pesan diubah; kartu "Riwayat & bagikan" (tab **Riwayat**). Versi menyimpan blok, bentuk pesan, bagian embed, **dan identitas pengirim webhook** |
@@ -650,6 +650,31 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, sampai **4 gambar besar** per embed, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 32: flag per pesan di dokumen multi-pesan
+
+Discohook menyimpan `flags` di **setiap** pesan sebuah backup, dan ekspor
+dokumen di sini pun sudah menulisnya. Yang hilang justru bagian lain: editor
+tidak punya isian flag per pesan, impor membuang nilainya, dan pemeriksa
+dokumen di server menerima angka apa adanya.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Mengatur flag satu pesan dalam rangkaian | hanya pesan tunggal (tab Susun) | pilihan **flag** di tiap baris pesan dokumen |
+| Ekspor dokumen | `flags` ditulis | tetap ditulis |
+| Impor dokumen | `flags` dibuang diam-diam | dipulihkan, disaring ke bit yang sah |
+| Server | angka diteruskan apa adanya | disaring ke `4 | 4096` |
+
+Catatan:
+
+- Pilihan flag: `flag bawaan`, `tanpa kartu tautan` (4), `tanpa notifikasi`
+  (4096), dan gabungan keduanya — sama dengan dua centang di tab Susun.
+- Penyaringan **dua bit** penting: dokumen yang pernah diekspor alat lain bisa
+  membawa `IS_COMPONENTS_V2` (32768) atau flag lain. Meneruskannya akan membuat
+  pesan ditolak Discord di tengah rangkaian — pesan sebelumnya sudah terkirim,
+  sisanya tidak.
+- Rujukan balasan ke pesan yang **dihapus** sudah dilepas otomatis oleh tombol
+  hapus (sejak Batch 22), jadi tidak ada perubahan di sana.
 
 ### Batch 31: riwayat versi menyimpan identitas pengirim webhook
 

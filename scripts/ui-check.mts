@@ -2889,6 +2889,53 @@ await check('pesan: flag pesan dikirim sebagai bitmask yang benar', async () => 
   assert.equal(page.errors.length, 0, `flag pesan error: ${page.errors.join('|')}`);
 });
 
+await check('pesan: flag per pesan dokumen bisa diatur & ikut ekspor-impor', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-flag-grup');
+
+  /*
+   * Isian flag ada di tiap baris pesan dokumen. Tanpa ini, satu pengumuman
+   * dalam rangkaian tidak bisa dibuat senyap padahal pesan tunggal bisa.
+   */
+  const hasil = (await page.evaluate(`
+    (async function () {
+      grupAktif.messages = [
+        { id: 'p1', name: 'Satu', blocks: [{ kind: 'text', value: 'Halo' }] },
+        { id: 'p2', name: 'Dua', blocks: [{ kind: 'text', value: 'Dunia' }] }
+      ];
+      renderGrup();
+      var baris = document.getElementById('grupDaftar').children;
+      /*
+       * DOM tiruan tidak mendukung querySelectorAll, jadi isian flag dicari
+       * lewat penanda yang dipasang sendiri oleh halaman.
+       */
+      var el = baris[0] && baris[0].flagGrup;
+      if (!el) return { adaIsian: false };
+      el.value = '4096';
+      el.onchange();
+      var tersimpan = grupAktif.messages[0].flags;
+
+      // Ekspor lalu impor harus membawa flag yang sama.
+      eksporDokumen();
+      var teks = document.getElementById('grupJson').value;
+      document.getElementById('grupJson').value = teks;
+      imporDokumen();
+      return {
+        adaIsian: true,
+        tersimpan: tersimpan,
+        nilaiEkspor: JSON.parse(teks).messages[0].flags,
+        setelahImpor: grupAktif.messages[0].flags
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.ok(hasil.adaIsian, 'tiap pesan dokumen punya isian flag');
+  assert.equal(hasil.tersimpan, 4096, 'pilihan flag tersimpan di pesan');
+  assert.equal(hasil.nilaiEkspor, 4096, 'ekspor dokumen membawa flag per pesan');
+  assert.equal(hasil.setelahImpor, 4096, 'impor dokumen memulihkan flag per pesan');
+  assert.equal(page.errors.length, 0, `flag dokumen error: ${page.errors.join('|')}`);
+});
+
 await check('pesan: channel tambahan dikelola & dikirim ke endpoint targets', async () => {
   const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
   const page = mountPage(html, 'uji-target');

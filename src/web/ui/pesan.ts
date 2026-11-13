@@ -6476,6 +6476,36 @@ function renderGrup() {
     };
     baris.appendChild(threadInput);
 
+    /*
+     * Flag per pesan dokumen. Discohook menyimpan flag di tiap message, dan
+     * tanpa isian ini admin tidak punya cara membuat satu
+     * pengumuman dalam rangkaian jadi senyap — padahal pesan tunggal bisa.
+     */
+    var pilihFlag = document.createElement('select');
+    pilihFlag.className = 'role-mode';
+    pilihFlag.title = 'Flag pesan ini';
+    [
+      { nilai: '0', teks: 'flag bawaan' },
+      { nilai: '4', teks: 'tanpa kartu tautan' },
+      { nilai: '4096', teks: 'tanpa notifikasi' },
+      { nilai: String(4 | 4096), teks: 'tanpa kartu & notifikasi' }
+    ].forEach(function (opsi) {
+      var el = document.createElement('option');
+      el.value = opsi.nilai;
+      el.textContent = opsi.teks;
+      pilihFlag.appendChild(el);
+    });
+    pilihFlag.value = String(pesan.flags || 0);
+    if (pilihFlag.value !== String(pesan.flags || 0)) pilihFlag.value = '0';
+    pilihFlag.onchange = function () {
+      var angka = Number(pilihFlag.value) || 0;
+      if (angka > 0) pesan.flags = angka;
+      else delete pesan.flags;
+    };
+    baris.appendChild(pilihFlag);
+    /* Penanda untuk test UI: DOM tiruan tidak bisa query tag. */
+    baris.flagGrup = pilihFlag;
+
     var naik = document.createElement('button');
     naik.className = 'btn btn-ghost btn-sm btn-icon';
     naik.type = 'button';
@@ -6745,6 +6775,8 @@ function eksporDokumen() {
       var satu = { id: pesan.id, name: pesan.name, blocks: payloadBlokPesan(pesan) };
       if (pesan.reference) satu.reference = pesan.reference;
       if (pesan.threadName) satu.threadName = pesan.threadName;
+      /* Flag ikut diekspor: tanpa ini, cadangan dokumen membuangnya diam-diam. */
+      if (pesan.flags) satu.flags = pesan.flags;
       return satu;
     }),
   };
@@ -6826,6 +6858,12 @@ function imporDokumen() {
       blocks: payloadBlokPesan({ blocks: Array.isArray(satu.blocks) ? satu.blocks : [] }),
     };
     if (satu.threadName) baru.threadName = String(satu.threadName).slice(0, 100);
+    /*
+     * Flag disaring ke dua bit yang boleh diatur admin, sama seperti di server.
+     * Menyalin flag V2 dari berkas akan membuat pesan itu ditolak Discord.
+     */
+    var flagImpor = Number(satu.flags);
+    if (Number.isFinite(flagImpor) && (flagImpor & (4 | 4096)) > 0) baru.flags = flagImpor & (4 | 4096);
     pesanBaru.push(baru);
   });
 

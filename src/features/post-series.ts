@@ -67,6 +67,9 @@ export const SERIES_LIMITS = {
 
 const ID_BERSIH = /^[A-Za-z0-9_-]{1,40}$/;
 
+/** Flag pesan yang boleh diatur per pesan dokumen (sama dengan pesan tunggal). */
+const FLAG_DOKUMEN = 4 | 4096;
+
 /** Apakah nilai ini bisa dipakai sebagai `id` pesan? */
 export function isSeriesId(value: unknown): boolean {
   return typeof value === 'string' && ID_BERSIH.test(value.trim());
@@ -135,7 +138,13 @@ export function sanitizeSeries(input: unknown): {
     const nama = (typeof item.name === 'string' ? item.name.trim() : '').slice(0, SERIES_LIMITS.nameLength);
     const threadName =
       typeof item.threadName === 'string' ? item.threadName.trim().slice(0, 100) : '';
-    const flags = Number(item.flags ?? 0);
+    /*
+     * Flag per pesan disaring ke dua bit yang boleh diatur admin, sama seperti
+     * pesan tunggal. Flag lain (mis. `IS_COMPONENTS_V2`) ditambahkan pengirim;
+     * membawanya dari dokumen akan membuat pesan berikutnya ditolak Discord.
+     */
+    const flagsMentah = Number(item.flags ?? 0);
+    const flags = Number.isFinite(flagsMentah) ? flagsMentah & FLAG_DOKUMEN : 0;
 
     pesan.push({
       id,
@@ -145,7 +154,7 @@ export function sanitizeSeries(input: unknown): {
         ? { reference: item.reference.trim() }
         : {}),
       ...(threadName ? { threadName } : {}),
-      ...(Number.isFinite(flags) && flags > 0 ? { flags: Math.trunc(flags) } : {}),
+      ...(flags > 0 ? { flags } : {}),
     });
   }
 

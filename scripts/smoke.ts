@@ -9325,6 +9325,20 @@ await testAsync('multi-pesan: rujukan, urutan kirim, & dokumen tersimpan', async
     'rujukan mati dilaporkan',
   );
 
+  /*
+   * Flag per pesan disaring ke dua bit yang boleh diatur admin. Bit lain
+   * (mis. flag komponen V2) ditambahkan pengirim; membawanya dari dokumen
+   * akan membuat pesan berikutnya ditolak Discord.
+   */
+  const berflag = series.sanitizeSeries([
+    { id: 'a', blocks: [{ kind: 'text', value: 'a' }], flags: 4 },
+    { id: 'b', blocks: [{ kind: 'text', value: 'b' }], flags: 4 | 4096 | 32768 },
+    { id: 'c', blocks: [{ kind: 'text', value: 'c' }], flags: 'bukan angka' },
+  ]);
+  assert.equal(berflag.messages[0]!.flags, 4, 'flag per pesan dokumen dipertahankan');
+  assert.equal(berflag.messages[1]!.flags, 4 | 4096, 'flag V2 dibuang, dua bit admin tetap');
+  assert.equal(berflag.messages[2]!.flags, undefined, 'flag tidak sah diabaikan');
+
   // ID wajib unik & aman: ID ganda membuat rujukan menunjuk pesan yang salah.
   const ganda = series.sanitizeSeries([
     { id: 'a', blocks: [{ kind: 'text', value: '1' }] },
