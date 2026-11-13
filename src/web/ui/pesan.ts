@@ -3990,6 +3990,67 @@ function renderEmbedExtra() {
     label.textContent = (nomor + 1) + '. Bidang';
     head.appendChild(label);
 
+    /*
+     * Urutan & duplikat bidang: Discohook punya keduanya di tiap baris bidang.
+     * Tanpa ini, satu bidang yang salah tempat hanya bisa diperbaiki dengan
+     * menulis ulang semua bidang sesudahnya — dan mengubah urutan memang
+     * mengubah tampilan embed di Discord.
+     */
+    var naikBidang = document.createElement('button');
+    naikBidang.className = 'btn btn-ghost btn-sm btn-icon';
+    naikBidang.type = 'button';
+    naikBidang.textContent = '↑';
+    naikBidang.title = 'Naikkan bidang';
+    naikBidang.disabled = nomor === 0;
+    naikBidang.onclick = function () {
+      var daftar = embedAktif().fields;
+      if (nomor === 0) return;
+      var tukar = daftar[nomor - 1];
+      daftar[nomor - 1] = daftar[nomor];
+      daftar[nomor] = tukar;
+      renderEmbedExtra();
+      renderPreview();
+    };
+    head.appendChild(naikBidang);
+
+    var turunBidang = document.createElement('button');
+    turunBidang.className = 'btn btn-ghost btn-sm btn-icon';
+    turunBidang.type = 'button';
+    turunBidang.textContent = '↓';
+    turunBidang.title = 'Turunkan bidang';
+    turunBidang.disabled = nomor === embedAktif().fields.length - 1;
+    turunBidang.onclick = function () {
+      var daftar = embedAktif().fields;
+      if (nomor >= daftar.length - 1) return;
+      var tukar = daftar[nomor + 1];
+      daftar[nomor + 1] = daftar[nomor];
+      daftar[nomor] = tukar;
+      renderEmbedExtra();
+      renderPreview();
+    };
+    head.appendChild(turunBidang);
+
+    var duplikatBidang = document.createElement('button');
+    duplikatBidang.className = 'btn btn-ghost btn-sm btn-icon';
+    duplikatBidang.type = 'button';
+    duplikatBidang.textContent = '⧉';
+    duplikatBidang.title = 'Duplikat bidang (di bawahnya)';
+    duplikatBidang.onclick = function () {
+      var daftar = embedAktif().fields;
+      if (daftar.length >= EMBED_FIELDS_MAKS) {
+        return toast('Maksimal ' + EMBED_FIELDS_MAKS + ' bidang per embed', true);
+      }
+      /* Salinan dalam: dua bidang tidak boleh berbagi objek yang sama. */
+      daftar.splice(nomor + 1, 0, {
+        name: daftar[nomor].name,
+        value: daftar[nomor].value,
+        inline: daftar[nomor].inline === true
+      });
+      renderEmbedExtra();
+      renderPreview();
+    };
+    head.appendChild(duplikatBidang);
+
     var hapus = document.createElement('button');
     hapus.className = 'btn-danger btn-sm btn-icon';
     hapus.type = 'button';
@@ -4026,6 +4087,11 @@ function renderEmbedExtra() {
     sebaris.appendChild(cek);
     sebaris.appendChild(document.createTextNode(' tampil sebaris dengan bidang lain'));
     baris.appendChild(sebaris);
+
+    /* Penanda untuk test UI: DOM tiruan tidak bisa query tag. */
+    baris.bidangNaik = naikBidang;
+    baris.bidangTurun = turunBidang;
+    baris.bidangDuplikat = duplikatBidang;
 
     host.appendChild(baris);
   });

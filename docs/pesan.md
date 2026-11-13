@@ -653,6 +653,26 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
 
+### Batch 38: urutkan & duplikat bidang embed
+
+Discohook punya **Move up**, **Move down**, dan **Duplicate** di tiap baris
+bidang embed. Di sini bidang hanya bisa ditambah dan dihapus, jadi satu bidang
+yang salah tempat harus diperbaiki dengan menulis ulang semua bidang
+sesudahnya — dan urutan bidang memang mengubah tampilan embed di Discord.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Naikkan / turunkan bidang | tidak ada | tombol ↑ / ↓ per bidang, mati di ujung daftar |
+| Duplikat bidang | tidak ada | tombol ⧉ (salinan dalam, bukan objek bersama) |
+| Batas 25 bidang | dijaga saat menambah | juga dijaga saat menduplikat |
+
+Catatan:
+
+- Duplikat memakai **salinan dalam**: dua bidang yang berbagi objek akan
+  berubah bersama saat salah satunya disunting.
+- Tombol naik/turun **dimatikan** di ujung daftar, bukan disembunyikan: posisi
+  tombol yang berpindah-pindah membuat salah klik.
+
 ### Batch 37: blok berkas ikut terkirim di pesan embed
 
 Blok **Berkas** mengirim lampiran di pesan Components V2, tetapi pada **Bentuk

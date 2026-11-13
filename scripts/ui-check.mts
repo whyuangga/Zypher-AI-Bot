@@ -3403,6 +3403,64 @@ await check('pesan: impor Discohook memulihkan pengaturan tingkat pesan', async 
   assert.equal(page.errors.length, 0, `impor Discohook error: ${page.errors.join('|')}`);
 });
 
+await check('pesan: bidang embed bisa diurutkan & diduplikat', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-bidang-urut');
+
+  /*
+   * Discohook punya Move up / Move down / Duplicate di tiap bidang. Tanpa itu,
+   * satu bidang yang salah tempat hanya bisa diperbaiki dengan menulis ulang
+   * semua bidang sesudahnya — dan urutan memang mengubah tampilan embed.
+   */
+  const hasil = (await page.evaluate(`
+    (function () {
+      EMBED_LIST.length = 0;
+      EMBED_AKTIF = 0;
+      EMBED_LIST.push({ fields: [
+        { name: 'Harga', value: '10rb', inline: false },
+        { name: 'Jadwal', value: 'Senin', inline: true },
+        { name: 'Syarat', value: 'Daftar', inline: false }
+      ] });
+      renderEmbedExtra();
+
+      var host = document.getElementById('embedFieldList');
+      var baris = host.children;
+      var tombolNaik = baris[1] && baris[1].bidangNaik;
+      var tombolTurun = baris[0] && baris[0].bidangTurun;
+      var tombolDuplikat = baris[0] && baris[0].bidangDuplikat;
+      if (!tombolNaik || !tombolTurun || !tombolDuplikat) return { adaTombol: false };
+
+      var naikNonaktifDiAtas = baris[0].bidangNaik.disabled;
+      var turunNonaktifDiBawah = baris[2].bidangTurun.disabled;
+
+      tombolNaik.onclick();
+      var setelahNaik = embedAktif().fields.map(function (b) { return b.name; }).join(',');
+
+      renderEmbedExtra();
+      var duplikatPertama = document.getElementById('embedFieldList').children[0].bidangDuplikat;
+      duplikatPertama.onclick();
+      var setelahDuplikat = embedAktif().fields.map(function (b) { return b.name; }).join(',');
+
+      return {
+        adaTombol: true,
+        naikNonaktifDiAtas: naikNonaktifDiAtas,
+        turunNonaktifDiBawah: turunNonaktifDiBawah,
+        setelahNaik: setelahNaik,
+        setelahDuplikat: setelahDuplikat,
+        jumlah: embedAktif().fields.length
+      };
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.ok(hasil.adaTombol, 'tiap bidang punya tombol naik/turun/duplikat');
+  assert.equal(hasil.naikNonaktifDiAtas, true, 'naik mati di bidang pertama');
+  assert.equal(hasil.turunNonaktifDiBawah, true, 'turun mati di bidang terakhir');
+  assert.equal(hasil.setelahNaik, 'Jadwal,Harga,Syarat', 'bidang kedua naik satu posisi');
+  assert.equal(hasil.setelahDuplikat, 'Jadwal,Jadwal,Harga,Syarat', 'duplikat disisipkan di bawahnya');
+  assert.equal(hasil.jumlah, 4, 'duplikat menambah satu bidang');
+  assert.equal(page.errors.length, 0, `bidang embed error: ${page.errors.join('|')}`);
+});
+
 await check('pesan: semua pesan Discohook bisa masuk dokumen sekaligus', async () => {
   const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
   const page = mountPage(html, 'uji-disco-semua');
