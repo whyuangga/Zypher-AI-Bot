@@ -11048,11 +11048,48 @@ await testAsync('discohook: tautan ?data= / ?message= dibaca tanpa mengunduh apa
   const biasa = Buffer.from(JSON.stringify(isi), 'utf8').toString('base64');
   assert.ok(parseDiscohookDataLink(`https://discohook.app/?data=${encodeURIComponent(biasa)}`));
 
-  // Bentuk lama: ?message= berisi SATU MessageData, dibungkus jadi satu pesan.
-  const satu = parseDiscohookDataLink(`https://discohook.app/?message=${b64({ content: 'Satu pesan' })}`);
+  // Bentuk lama: ?message= berisi SATU pesan (camelCase model editor).
+  const satu = parseDiscohookDataLink(
+    `https://discohook.app/?message=${b64({
+      content: 'Satu pesan',
+      avatar: 'https://cdn.test/a.png',
+      threadName: 'Thread lama',
+      flags_suppress_notifications: true,
+      embeds: [
+        {
+          title: 'Judul',
+          description: 'Isi',
+          color: null,
+          author: 'Penulis',
+          authorUrl: 'https://contoh.test',
+          footer: 'kaki',
+          footerIcon: 'https://cdn.test/f.png',
+          gallery: ['https://cdn.test/1.png', 'https://cdn.test/2.png'],
+          fields: [{ name: 'A', value: 'B', inline: true }],
+        },
+      ],
+    })}`,
+  );
   assert.ok(satu, 'tautan ?message= dikenali');
   assert.equal((satu!.data as { messages: unknown[] }).messages.length, 1);
   assert.ok(satu!.warnings[0]!.includes('bentuk lama'));
+
+  /*
+   * Bentuk editor Discohook (camelCase) harus diterjemahkan, bukan diteruskan
+   * apa adanya: `avatar`/`threadName` bukan nama field MessageData, flag-nya
+   * dua boolean, dan gambar galeri ada di `gallery` bukan `image`.
+   */
+  const pesanLama = (satu!.data as { messages: Array<{ data: Record<string, unknown> }> }).messages[0]!.data;
+  assert.equal(pesanLama.avatar_url, 'https://cdn.test/a.png', 'avatar diterjemahkan');
+  assert.equal(pesanLama.thread_name, 'Thread lama', 'nama thread diterjemahkan');
+  assert.equal(pesanLama.flags, 4096, 'flag boolean jadi bitmask');
+  const embedLama = (pesanLama.embeds as Array<Record<string, unknown>>)[0]!;
+  assert.equal((embedLama.author as { name: string }).name, 'Penulis', 'nama penulis diterjemahkan');
+  assert.equal((embedLama.author as { url: string }).url, 'https://contoh.test', 'URL penulis diterjemahkan');
+  assert.equal((embedLama.footer as { icon_url: string }).icon_url, 'https://cdn.test/f.png', 'ikon footer diterjemahkan');
+  assert.equal((embedLama.image as { url: string }).url, 'https://cdn.test/1.png', 'galeri pertama jadi image');
+  assert.deepEqual(embedLama.images, ['https://cdn.test/1.png', 'https://cdn.test/2.png'], 'galeri ikut');
+  assert.equal(embedLama.color, undefined, 'warna null tidak dikirim');
 
   // Bukan tautan Discohook / isi rusak / tanpa parameter: null, bukan menebak.
   assert.equal(parseDiscohookDataLink('https://evil.test/?data=aaa'), null, 'host lain ditolak');

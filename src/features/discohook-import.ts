@@ -1068,6 +1068,117 @@ export function parseDiscohookShareId(input: string): string | null {
  * `message`, atau isinya bukan JSON yang bisa dibaca — pemanggil yang
  * menjelaskan alasannya ke admin.
  */
+/**
+ * Terjemahkan satu pesan bentuk EDITOR Discohook (camelCase) menjadi
+ * `MessageData` (snake_case).
+ *
+ * Kenapa perlu: tautan lama `?message=` berisi snapshot model editor, bukan
+ * payload REST. Bentuknya beda di tiga hal yang tidak sepele —
+ *   - `avatar` (bukan `avatar_url`), `threadName` (bukan `thread_name`);
+ *   - flag disimpan sebagai DUA boolean (`flags_suppress_embeds`,
+ *     `flags_suppress_notifications`), bukan bitmask;
+ *   - embed memakai `authorUrl`/`authorIcon`/`footerIcon` dan daftar `gallery`,
+ *     bukan `author.url`/`author.icon_url`/`footer.icon_url`/`image`.
+ *
+ * Tanpa terjemahan ini, pesan lama masuk ke editor tanpa nama pengirim, tanpa
+ * avatar, tanpa thread, tanpa flag, dan gambar galerinya hilang.
+ */
+export function discohookCamelToData(raw: Raw): Raw {
+  const hasil: Raw = {};
+  if (typeof raw.content === 'string') hasil.content = raw.content;
+  if (typeof raw.username === 'string') hasil.username = raw.username;
+  const avatar = asString(raw.avatar_url).trim() || asString(raw.avatar).trim();
+  if (avatar) hasil.avatar_url = avatar;
+  const thread = asString(raw.thread_name).trim() || asString(raw.threadName).trim();
+  if (thread) hasil.thread_name = thread;
+
+  /*
+   * Flag: bitmask kalau sudah ada, kalau tidak dihitung dari dua boolean model
+   * editor. Keduanya bisa muncul bersamaan di berkas campuran.
+   */
+  let flags = asNumber(raw.flags) ?? 0;
+  if (raw.flags_suppress_embeds === true) flags |= 4;
+  if (raw.flags_suppress_notifications === true) flags |= 4096;
+  if (flags) hasil.flags = flags;
+
+  if (Array.isArray(raw.components)) hasil.components = raw.components;
+
+  if (Array.isArray(raw.embeds)) {
+    hasil.embeds = raw.embeds.map((satu): Raw => {
+      const embed = asObject(satu);
+      if (!embed) return {};
+      const keluar: Raw = {};
+      for (const kunci of ['title', 'description', 'url'] as const) {
+        const nilai = asString(embed[kunci]).trim();
+        if (nilai) keluar[kunci] = nilai;
+      }
+      const warna = asNumber(embed.color);
+      if (warna !== null && warna >= 0 && warna <= 0xffffff) keluar.color = Math.trunc(warna);
+      if (typeof embed.timestamp === 'string' && embed.timestamp.trim()) keluar.timestamp = embed.timestamp.trim();
+
+      const namaPenulis = asString(asObject(embed.author)?.name).trim() || asString(embed.author).trim();
+      if (namaPenulis) {
+        keluar.author = {
+          name: namaPenulis,
+          ...(asString(embed.authorUrl).trim() ? { url: asString(embed.authorUrl).trim() } : {}),
+          ...(asString(embed.authorIcon).trim() ? { icon_url: asString(embed.authorIcon).trim() } : {}),
+        };
+      }
+      const teksFooter = asString(asObject(embed.footer)?.text).trim() || asString(embed.footer).trim();
+      if (teksFooter || asString(embed.footerIcon).trim()) {
+        keluar.footer = {
+          ...(teksFooter ? { text: teksFooter } : {}),
+          ...(asString(embed.footerIcon).trim() ? { icon_url: asString(embed.footerIcon).trim() } : {}),
+        };
+      }
+
+      /*
+       * Galeri: `gallery[0]` adalah `image` embed ini, sisanya dikirim Discohook
+       * sebagai embed pelengkap. Di sini `images` dipakai apa adanya —
+       * penyaring embed yang mengurus pemecahannya, persis seperti impor
+       * `Image URLs` biasa.
+       */
+      const galeri = asArray(embed.gallery)
+        .map((satu) => asString(satu).trim())
+        .filter((satu) => isHttpUrl(satu));
+      if (galeri.length) {
+        keluar.image = { url: galeri[0] };
+        if (galeri.length > 1) keluar.images = galeri;
+      } else {
+        const gambar = mediaUrl(embed.image);
+        if (isHttpUrl(gambar)) keluar.image = { url: gambar };
+      }
+      const thumbnail = mediaUrl(embed.thumbnail);
+      if (isHttpUrl(thumbnail)) keluar.thumbnail = { url: thumbnail };
+
+      const bidang = asArray(embed.fields)
+        .map(asObject)
+        .filter((satu): satu is Raw => satu !== null)
+        .map((bidang) => ({
+          name: asString(bidang.name).trim(),
+          value: asString(bidang.value).trim(),
+          inline: bidang.inline === true,
+        }))
+        .filter((bidang) => bidang.name && bidang.value);
+      if (bidang.length) keluar.fields = bidang;
+
+      return keluar;
+    });
+  }
+
+  return hasil;
+}
+
+/** Apakah objek ini snapshot model EDITOR Discohook (camelCase)? */
+function terlihatCamelCase(raw: Raw): boolean {
+  if ('avatar' in raw || 'threadName' in raw || 'flags_suppress_embeds' in raw) return true;
+  if ('flags_suppress_notifications' in raw) return true;
+  return asArray(raw.embeds).some((satu) => {
+    const embed = asObject(satu);
+    return Boolean(embed && ('authorUrl' in embed || 'footerIcon' in embed || 'gallery' in embed || 'authorIcon' in embed));
+  });
+}
+
 export function parseDiscohookDataLink(input: string): { data: unknown; warnings: string[] } | null {
   const teks = input.trim();
   if (!teks) return null;
@@ -1107,10 +1218,11 @@ export function parseDiscohookDataLink(input: string): { data: unknown; warnings
   const root = asObject(data);
   if (!root) return null;
 
-  /* `?message=` berisi SATU MessageData, bukan daftar. */
+  /* `?message=` berisi SATU pesan, bukan daftar. */
   if (!('messages' in root) && ('content' in root || 'embeds' in root || 'components' in root)) {
+    const pesan = terlihatCamelCase(root) ? discohookCamelToData(root) : root;
     return {
-      data: { messages: [{ data: root }] },
+      data: { messages: [{ data: pesan }] },
       warnings: ['Tautan berisi satu pesan (bentuk lama "?message=") — diimpor sebagai satu pesan.'],
     };
   }

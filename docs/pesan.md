@@ -250,7 +250,7 @@ Dua cara, kotak yang sama:
 | Cara | Yang ditempel | Kapan dipakai |
 |---|---|---|
 | **Tautan share** | `https://discohook.app/?share=abcdefgh` atau ID-nya saja | Discohook bisa diakses dari server bot |
-| **Tautan berisi data** | `https://discohook.app/?data=…` (tombol **Share** di Discohook) atau `?message=…` versi lama | selalu bisa — isinya ada di URL, tidak perlu unduh apa pun |
+| **Tautan berisi data** | `https://discohook.app/?data=…` (tombol **Share** di Discohook) atau `?message=…` versi lama | selalu bisa — isinya ada di URL, tidak perlu unduh apa pun. `?message=` berisi bentuk editor (camelCase) dan diterjemahkan dulu — lihat **Batch 39b** |
 | **Berkas ekspor backup** | isi berkas `.json` dari modal **Backups** Discohook (`{ "version": 7, "backups": [ … ] }`) | dipakai **backup pertama**; nama backup-nya disebut supaya jelas mana yang diimpor (lihat **Batch 39**) |
 | **JSON** | salin dari Discohook (tombol berbagi → *Copy JSON*) | Server bot tidak punya akses internet, atau tautan sudah kedaluwarsa |
 
@@ -653,6 +653,29 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, sampai **4 gambar besar** per embed, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 39b: tautan `?message=` versi lama diterjemahkan dari bentuk editor
+
+`?message=` tidak berisi `MessageData` (snake_case), melainkan **snapshot model
+editor** Discohook (camelCase) — bentuk yang dipakai `getEditorManagerFromQuery`
+di repo itu. Meneruskannya apa adanya berarti nama pengirim, avatar, thread,
+flag, dan galeri gambar hilang tanpa jejak, karena namanya memang tidak cocok.
+
+| Bagian | Bentuk editor | Diterjemahkan ke |
+|---|---|---|
+| Identitas | `avatar`, `threadName` | `avatar_url`, `thread_name` |
+| Flag | `flags_suppress_embeds` / `flags_suppress_notifications` (boolean) | bitmask `4` / `4096` |
+| Penulis | `author` (teks) + `authorUrl` + `authorIcon` | `author: { name, url, icon_url }` |
+| Footer | `footer` (teks) + `footerIcon` | `footer: { text, icon_url }` |
+| Gambar | `gallery: [url, …]` | `image` (pertama) + `images` (semua) |
+
+Catatan:
+
+- Bentuk `MessageData` yang sudah benar **tidak** diubah: penerjemah hanya
+  dipakai kalau objeknya memang terlihat seperti bentuk editor (`avatar`,
+  `threadName`, `flags_suppress_*`, atau embed dengan `authorUrl`/`gallery`).
+- Warna `null` tidak dikirim sebagai `null`, karena penyaring embed membacanya
+  sebagai "tidak diatur" dan warna aksen pesan yang dipakai.
 
 ### Batch 39: berkas ekspor backup Discohook bisa diimpor
 
