@@ -415,7 +415,7 @@ export function pesanPage(options: PesanPageOptions): string {
       <input type="text" id="postWebhookName" placeholder="Nama pengirim (bawaan: nama server)" maxlength="80" style="flex:1;min-width:200px" />
       <input type="text" id="postWebhookAvatar" placeholder="URL avatar (bawaan: ikon server)" style="flex:1;min-width:200px" />
     </div>
-    <p class="hint">Padanan isian <b>Username</b> &amp; <b>Avatar URL</b> di Discohook. Hanya berlaku kalau Pengirim = <b>Atas nama server (webhook)</b>; lewat bot, nama &amp; avatar ditentukan Discord. Kosongkan untuk memakai identitas server lagi.</p>
+    <p class="hint">Padanan isian <b>Username</b> &amp; <b>Avatar URL</b> di Discohook. Hanya berlaku kalau Pengirim = <b>Atas nama server (webhook)</b>; lewat bot, nama &amp; avatar ditentukan Discord. Berlaku juga saat pesan dikirim oleh <b>jadwal</b>, <b>pemicu member</b>, dan <b>aksi komponen</b> — bukan hanya tombol Kirim. Kosongkan untuk memakai identitas server lagi.</p>
   </div>
   <div style="grid-column:1/-1">
     <label class="field">Flag pesan</label>
