@@ -638,7 +638,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | JSON editor dokumen | ✅ kartu **JSON dokumen** di tab Multi-pesan: ekspor/impor satu dokumen (semua pesan, rujukan balasan, nama thread, mode rangkaian) |
 | JSON Data Editor **per pesan** | ✅ kartu **JSON Data Editor (satu pesan)** di tab Impor: tempel objek pesan Discord, payload REST, atau data Discohook — pengaturan tingkat pesan (`username`, `avatar`, `thread_name`, `flags`) ikut dipulihkan, sama seperti **Load** |
 | `targets[]` (satu pesan, beberapa channel) | ✅ **Kirim juga ke channel lain** di kartu pengaturan: sampai 5 channel tambahan, tiap channel punya ID pesan sendiri |
-| Riwayat/undo revisi (padanan backup) | ✅ 20 versi terakhir per pesan, dibuat otomatis setiap pesan diubah; kartu "Riwayat & bagikan" (tab **Riwayat**) |
+| Riwayat/undo revisi (padanan backup) | ✅ 20 versi terakhir per pesan, dibuat otomatis setiap pesan diubah; kartu "Riwayat & bagikan" (tab **Riwayat**). Versi menyimpan blok, bentuk pesan, bagian embed, **dan identitas pengirim webhook** |
 | Share link (tautan berbagi) | ✅ tautan `/bagi/<token>` bisa dibuka tanpa login, berisi blok **dan** embed pesan (bentuk pesan & seluruh gambar galeri ikut), bisa dicabut |
 | Impor backup | ✅ JSON/URL Discohook di tab **Impor**; ekspor JSON juga ada, memakai nama field Discohook (`username`, `avatar_url`, `thread_name`, `flags`, `allowed_mentions`) supaya berkasnya bisa dibaca bolak-balik oleh alat lain |
 | **Load** pesan Discord yang sudah terkirim | ✅ kartu **Muat pesan Discord** di tab **Impor**: tempel Message Link, pesan dibuka di editor (bot butuh *Read Message History*) **beserta pengaturan tingkat pesannya** — pengirim webhook, nama & avatar, nama thread, flag (lihat **Batch 27**); galeri gambar yang di Discord tampil sebagai beberapa embed dibaca kembali sebagai **satu galeri** (lihat **Batch 24**) |
@@ -650,6 +650,29 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, sampai **4 gambar besar** per embed, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 31: riwayat versi menyimpan identitas pengirim webhook
+
+Snapshot riwayat berhenti di blok, bentuk pesan, dan bagian embed. Nama &
+avatar pengirim webhook tidak ikut, jadi **mengembalikan versi lama menghapus
+identitas itu** — padahal versi tersebut dibuat saat identitas itu terpasang.
+Panel **Bandingkan** pun tidak menampilkannya, sehingga perubahan itu tidak
+terlihat sebagai perubahan.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Snapshot versi | tanpa identitas webhook | `webhookName` + `webhookAvatar` |
+| Mengembalikan versi | identitas hilang | identitas versi itu dipulihkan |
+| Versi lama tanpa field ini | — | identitas sekarang **dipertahankan** |
+| Panel Bandingkan | perubahan identitas tak terlihat | satu baris per field |
+
+Catatan:
+
+- Versi yang tidak menyimpan field ini dibaca sebagai "tidak diubah", bukan
+  "kosongkan". Mengirim `null` di sana akan menghapus nama pengirim yang tidak
+  pernah berubah di versi itu.
+- Dua field dibandingkan terpisah: mengganti nama tanpa mengganti avatar tetap
+  terlihat sebagai satu perubahan.
 
 ### Batch 30: JSON Data Editor memulihkan pengaturan tingkat pesan
 

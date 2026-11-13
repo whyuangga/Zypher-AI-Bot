@@ -3319,7 +3319,11 @@ function snapshotEditor() {
     // Tanpa dua baris ini, mengubah penulis/footer embed tidak terlihat di
     // panel Bandingkan — perubahan tampilannya jadi tidak pernah tercatat.
     layout: (document.getElementById('postLayout') || {}).value || 'container',
-    embed: payloadEmbed() || []
+    embed: payloadEmbed() || [],
+    // Identitas pengirim webhook ikut dibandingkan: menghapus nama pengirim
+    // adalah perubahan yang harus terlihat, bukan yang lolos tanpa jejak.
+    webhookName: ((document.getElementById('postWebhookName') || {}).value || '').trim() || null,
+    webhookAvatar: ((document.getElementById('postWebhookAvatar') || {}).value || '').trim() || null
   };
 }
 

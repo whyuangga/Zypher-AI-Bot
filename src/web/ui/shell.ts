@@ -145,6 +145,13 @@ function diffRingkas(lama, baru) {
    */
   beda('bentuk pesan', lama && lama.layout, baru && baru.layout);
   beda('embed', ringkasEmbedDiff(lama && lama.embed), ringkasEmbedDiff(baru && baru.embed));
+  /*
+   * Identitas webhook: perubahan nama/avatar pengirim HARUS terlihat di panel
+   * bandingkan. Tanpa baris ini, menghapus nama pengirim tampak seperti tidak
+   * ada perubahan apa pun.
+   */
+  beda('nama pengirim webhook', lama && lama.webhookName, baru && baru.webhookName);
+  beda('avatar pengirim webhook', lama && lama.webhookAvatar, baru && baru.webhookAvatar);
 
   var total = ditambah + dihapus + diubah + pengaturan;
   if (total === 0) baris.push('Tidak ada perbedaan — versi ini sama dengan yang sekarang.');

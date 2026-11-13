@@ -8703,6 +8703,59 @@ await testAsync('muat pesan: pesan dashboard mengikuti pesan Discord asal setela
   await repo.deleteCustomPost(GUILD, post.id);
 });
 
+await testAsync('riwayat: identitas webhook ikut versi & bertahan saat versi dikembalikan', async () => {
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  /*
+   * Snapshot riwayat dulu tidak menyimpan nama/avatar pengirim webhook.
+   * Akibatnya mengembalikan versi lama menghapus identitas yang bahkan tidak
+   * pernah diubah di versi itu — dan panel Bandingkan tidak menampilkannya.
+   */
+  const post = await repo.createCustomPost(GUILD, {
+    name: 'Identitas berversi',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Halo' }],
+    sender: 'webhook',
+    webhookName: 'Tim Pengumuman',
+    webhookAvatar: 'https://img.test/tim.png',
+  });
+
+  // Ubah isi: versi LAMA tersimpan, berisi identitas webhook saat itu.
+  await repo.updateCustomPost(GUILD, post.id, { blocks: [{ kind: 'text', value: 'Halo baru' }] });
+  const versi = await repo.listPostRevisions(GUILD, post.id);
+  assert.ok(versi.length >= 1, 'versi lama tersimpan');
+  assert.equal(versi[0]!.snapshot.webhookName, 'Tim Pengumuman', 'nama pengirim masuk snapshot');
+  assert.equal(versi[0]!.snapshot.webhookAvatar, 'https://img.test/tim.png', 'avatar masuk snapshot');
+
+  // Ganti identitas, lalu kembalikan versi lama: identitas versi itu balik.
+  await repo.updateCustomPost(GUILD, post.id, { webhookName: 'Tim Lain', webhookAvatar: null });
+  const kembali = await repo.restorePostRevision(GUILD, post.id, versi[0]!.id);
+  assert.equal(kembali.post?.webhookName, 'Tim Pengumuman', 'nama pengirim versi lama dipulihkan');
+  assert.equal(kembali.post?.webhookAvatar, 'https://img.test/tim.png', 'avatar versi lama dipulihkan');
+
+  /*
+   * Snapshot LAMA (sebelum batch ini) tidak punya dua field itu. Mengembalikan
+   * versi seperti itu TIDAK boleh mengosongkan identitas yang sekarang.
+   */
+  await repo.updateCustomPost(GUILD, post.id, {
+    name: 'Versi tanpa identitas',
+    webhookName: 'Tim Sekarang',
+    webhookAvatar: 'https://img.test/sekarang.png',
+  });
+  const versiLama = await repo.listPostRevisions(GUILD, post.id);
+  assert.ok(versiLama.length > 0);
+  const { run } = await import('../src/db/index.js');
+  await run('UPDATE post_revisions SET payload = ? WHERE id = ?', [
+    JSON.stringify({ blocks: [{ kind: 'text', value: 'isi kuno' }], accent: null, sender: 'webhook', flags: 0, series: false, allowedMentions: { parse: [] }, threadName: null }),
+    versiLama[0]!.id,
+  ]);
+  const kuno = await repo.restorePostRevision(GUILD, post.id, versiLama[0]!.id);
+  assert.equal(kuno.post?.webhookName, 'Tim Sekarang', 'versi tanpa identitas tidak mengosongkannya');
+
+  await repo.deleteCustomPost(GUILD, post.id);
+});
+
 await testAsync('json per pesan: pengaturan tingkat pesan ikut dipulihkan', async () => {
   const { messageToDraft } = await import('../src/features/message-load.js');
 

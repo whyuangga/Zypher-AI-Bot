@@ -2126,6 +2126,15 @@ export interface PostRevision {
      */
     layout?: PostLayout;
     embed?: EmbedExtra[];
+    /**
+     * Identitas webhook saat versi dibuat.
+     *
+     * Opsional karena versi lama tidak menyimpannya. Tanpa dua field ini,
+     * membandingkan atau mengembalikan versi menghapus nama & avatar pengirim
+     * yang sudah disetel admin — tanpa satu pun baris diff yang menjelaskannya.
+     */
+    webhookName?: string | null;
+    webhookAvatar?: string | null;
   };
   createdAt: number;
 }
@@ -2191,6 +2200,8 @@ async function simpanRevisi(guildId: string, current: CustomPost): Promise<void>
         threadName: current.threadName,
         layout: current.layout,
         embed: current.embed,
+        webhookName: current.webhookName,
+        webhookAvatar: current.webhookAvatar,
       }),
       Date.now(),
     ],
@@ -2258,6 +2269,13 @@ export async function restorePostRevision(
      */
     ...(revisi.snapshot.layout !== undefined ? { layout: revisi.snapshot.layout } : {}),
     ...(revisi.snapshot.embed !== undefined ? { embed: revisi.snapshot.embed } : {}),
+    /*
+     * Identitas webhook: versi yang tidak menyimpannya berarti "tidak diubah",
+     * BUKAN "kosongkan". Mengirim null di sini akan menghapus nama pengirim
+     * yang tidak pernah berubah di versi itu.
+     */
+    ...(revisi.snapshot.webhookName !== undefined ? { webhookName: revisi.snapshot.webhookName } : {}),
+    ...(revisi.snapshot.webhookAvatar !== undefined ? { webhookAvatar: revisi.snapshot.webhookAvatar } : {}),
   });
   return post ? { post } : { post: null, error: 'Pesan sudah tidak ada.' };
 }
