@@ -224,6 +224,11 @@ CREATE TABLE IF NOT EXISTS custom_posts (
   mentions   TEXT,
   -- Nama thread yang dibuka pesan ini (thread_name). NULL = tanpa thread.
   thread_name TEXT,
+  -- Nama & avatar pengirim webhook khusus pesan ini (padanan isian Username /
+  -- Avatar URL Discohook). NULL = pakai identitas server. Hanya berpengaruh
+  -- saat sender = 'webhook'.
+  webhook_name   TEXT,
+  webhook_avatar TEXT,
   -- Pemicu kirim otomatis: 'member_add' / 'member_remove' (padanan trigger
   -- event Discohook). NULL = hanya dikirim manual dari dashboard.
   trigger    TEXT,

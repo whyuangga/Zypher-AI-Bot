@@ -2134,6 +2134,34 @@ await check('pesan: JSON Data Editor memuat satu pesan & menolak JSON tanpa isi'
   assert.equal(page.errors.length, 0, `editor JSON per pesan error: ${page.errors.join('|')}`);
 });
 
+await check('pesan: nama & avatar pengirim webhook ikut dikirim saat Simpan', async () => {
+  const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
+  const page = mountPage(html, 'uji-webhook-identitas');
+
+  assert.ok(html.includes('id="postWebhookName"'), 'isian nama pengirim ada');
+  assert.ok(html.includes('id="postWebhookAvatar"'), 'isian avatar ada');
+
+  await page.evaluate(`
+    (async function () {
+      blocks = [{ kind: 'text', value: 'Pengumuman' }];
+      document.getElementById('postName').value = 'Webhook nama';
+      document.getElementById('postSender').value = 'webhook';
+      document.getElementById('postWebhookName').value = 'Tim Pengumuman';
+      document.getElementById('postWebhookAvatar').value = 'https://img.test/a.png';
+      if (typeof renderBlocks === 'function') renderBlocks();
+      await savePost();
+    })()
+  `);
+
+  const simpan = page.fetches.find((call) => call.path === '/api/posts' || /^\/api\/posts\/\d+$/.test(call.path));
+  assert.ok(simpan, 'Simpan memanggil /api/posts');
+  const muatan = simpan!.body as { webhookName?: string; webhookAvatar?: string; sender?: string };
+  assert.equal(muatan.sender, 'webhook');
+  assert.equal(muatan.webhookName, 'Tim Pengumuman', 'nama pengirim ikut dikirim');
+  assert.equal(muatan.webhookAvatar, 'https://img.test/a.png', 'avatar ikut dikirim');
+  assert.equal(page.errors.length, 0, `editor webhook error: ${page.errors.join('|')}`);
+});
+
 await check('pesan: izin ping & nama thread ikut dikirim, bawaan tanpa ping', async () => {
   const html = mounted.find((page) => page.name === '/pesan')?.html ?? '';
   const page = mountPage(html, 'uji-mention');

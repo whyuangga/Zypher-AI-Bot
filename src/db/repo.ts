@@ -1493,6 +1493,15 @@ export interface CustomPost {
    * `layout = 'embed'`.
    */
   embed: EmbedExtra[];
+  /**
+   * Identitas pengirim webhook khusus pesan ini (padanan isian Username &
+   * Avatar URL di Discohook). Kosong = pakai nama & ikon server.
+   *
+   * Hanya berpengaruh saat `sender = 'webhook'`; pada pengiriman lewat bot,
+   * nama & avatar pesan ditentukan Discord sendiri.
+   */
+  webhookName: string | null;
+  webhookAvatar: string | null;
   updatedAt: number;
 }
 
@@ -1551,6 +1560,8 @@ interface CustomPostRow {
   trigger?: string | null;
   layout?: string | null;
   embed?: string | null;
+  webhook_name?: string | null;
+  webhook_avatar?: string | null;
   updated_at: number | string;
 }
 
@@ -1590,6 +1601,30 @@ function simpanEmbed(input: unknown): string | null {
   return list.length === 0 ? null : JSON.stringify(list);
 }
 
+/**
+ * Nama pengirim webhook: batas Discord 80 karakter.
+ *
+ * Kosong / hanya spasi dibaca sebagai NULL supaya "kosongkan isian" benar-benar
+ * mengembalikan pesan ke identitas server, bukan mengirim nama kosong yang
+ * ditolak Discord.
+ */
+export function parseWebhookName(raw: string | null | undefined): string | null {
+  const teks = (raw ?? '').trim();
+  return teks ? teks.slice(0, 80) : null;
+}
+
+/** Avatar pengirim webhook: hanya http/https, batas Discord 2048 karakter. */
+export function parseWebhookAvatar(raw: string | null | undefined): string | null {
+  const teks = (raw ?? '').trim().slice(0, 2048);
+  if (!teks) return null;
+  try {
+    const url = new URL(teks);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? teks : null;
+  } catch {
+    return null;
+  }
+}
+
 function toCustomPost(row: CustomPostRow): CustomPost {
   return {
     id: Number(row.id),
@@ -1606,6 +1641,8 @@ function toCustomPost(row: CustomPostRow): CustomPost {
     trigger: parseTrigger(row.trigger),
     layout: parseLayout(row.layout),
     embed: parseEmbedExtra(row.embed),
+    webhookName: parseWebhookName(row.webhook_name),
+    webhookAvatar: parseWebhookAvatar(row.webhook_avatar),
     updatedAt: Number(row.updated_at),
   };
 }
@@ -1652,12 +1689,15 @@ export async function createCustomPost(
     layout?: PostLayout | null;
     /** Bagian embed klasik yang diisi admin (hanya dipakai bila layout=embed). */
     embed?: unknown;
+    /** Nama & avatar pengirim webhook khusus pesan ini (null = identitas server). */
+    webhookName?: string | null;
+    webhookAvatar?: string | null;
   },
 ): Promise<CustomPost> {
   const blocks = sanitizeBlocks(input.blocks).blocks;
   const id = await insert(
-    `INSERT INTO custom_posts (guild_id, name, channel_id, blocks, message_id, accent, sender, flags, series, mentions, thread_name, trigger, layout, embed, updated_at)
-     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO custom_posts (guild_id, name, channel_id, blocks, message_id, accent, sender, flags, series, mentions, thread_name, trigger, layout, embed, webhook_name, webhook_avatar, updated_at)
+     VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       guildId,
       input.name.slice(0, 120),
@@ -1672,6 +1712,8 @@ export async function createCustomPost(
       parseTrigger(input.trigger ?? null),
       parseLayout(input.layout ?? null),
       simpanEmbed(input.embed),
+      parseWebhookName(input.webhookName),
+      parseWebhookAvatar(input.webhookAvatar),
       Date.now(),
     ],
   );
@@ -1695,6 +1737,8 @@ export async function updateCustomPost(
     trigger?: PostTrigger | null;
     layout?: PostLayout | null;
     embed?: unknown;
+    webhookName?: string | null;
+    webhookAvatar?: string | null;
   },
 ): Promise<CustomPost | null> {
   const current = await getCustomPost(guildId, id);
@@ -1711,7 +1755,7 @@ export async function updateCustomPost(
 
   const blocks = input.blocks === undefined ? current.blocks : sanitizeBlocks(input.blocks).blocks;
   await run(
-    'UPDATE custom_posts SET name = ?, channel_id = ?, blocks = ?, accent = ?, sender = ?, flags = ?, series = ?, mentions = ?, thread_name = ?, trigger = ?, layout = ?, embed = ?, updated_at = ? WHERE guild_id = ? AND id = ?',
+    'UPDATE custom_posts SET name = ?, channel_id = ?, blocks = ?, accent = ?, sender = ?, flags = ?, series = ?, mentions = ?, thread_name = ?, trigger = ?, layout = ?, embed = ?, webhook_name = ?, webhook_avatar = ?, updated_at = ? WHERE guild_id = ? AND id = ?',
     [
       (input.name ?? current.name).slice(0, 120),
       input.channelId === undefined ? current.channelId : input.channelId,
@@ -1735,6 +1779,8 @@ export async function updateCustomPost(
       input.trigger === undefined ? current.trigger : parseTrigger(input.trigger ?? null),
       input.layout === undefined ? current.layout : parseLayout(input.layout ?? null),
       input.embed === undefined ? simpanEmbed(current.embed) : simpanEmbed(input.embed),
+      input.webhookName === undefined ? current.webhookName : parseWebhookName(input.webhookName),
+      input.webhookAvatar === undefined ? current.webhookAvatar : parseWebhookAvatar(input.webhookAvatar),
       Date.now(),
       guildId,
       id,

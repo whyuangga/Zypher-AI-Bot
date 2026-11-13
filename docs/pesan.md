@@ -646,9 +646,32 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Trigger event (member masuk/keluar) | ✅ pilihan **Kirim otomatis saat**: `member_add` / `member_remove`; pesan yang sama diperbarui tiap kejadian, bukan dikirim ulang |
 | Generator kode (payload → kode bot) | ✅ tab **Impor** → panel "JSON payload & generator kode": keluaran `discord.js` v14 & `discord.py` v2, diterjemahkan dari payload yang benar-benar dikirim |
 | Melihat payload JSON mentah | ✅ panel yang sama menampilkan `components` persis seperti yang diterima Discord, siap ditempel ke REST API |
+| Nama & avatar pengirim webhook | ✅ isian **Nama & avatar pengirim** di kartu pengaturan (bawaan: identitas server) |
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, satu gambar besar, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 19: nama & avatar pengirim webhook per pesan
+
+Di Discohook, pesan webhook punya isian **Username** dan **Avatar URL**: satu
+pesan bisa tampil sebagai "Tim Pengumuman" walau webhook-nya milik server.
+Sebelumnya bot selalu memakai nama & ikon server.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Nama pengirim | selalu nama server | isian per pesan (bawaan: nama server) |
+| Avatar pengirim | selalu ikon server | URL per pesan (bawaan: ikon server) |
+| Batas | — | nama 80 karakter, URL hanya `http/https` |
+| Pesan lewat bot | tidak terpengaruh | tetap ditentukan Discord (isian tidak dipakai) |
+
+Catatan:
+
+- Kosong = **identitas server**, jadi pesan lama tidak berubah tampilannya.
+- Nama & avatar hanya dipakai saat `sender = 'webhook'`. Lewat bot, nama
+  pengirim ditentukan Discord dan isian ini tidak berpengaruh.
+- URL avatar yang bukan `http/https` dibuang saat disimpan (bukan saat dikirim),
+  supaya kesalahannya terlihat lebih awal.
+- Field tidak dikirim saat menyimpan = **dipertahankan**; `null` = dikosongkan.
 
 ### Batch 18: halaman berbagi menampilkan embed & bentuk pesan
 
@@ -1492,6 +1515,10 @@ Aksi yang tidak sah dibuang dan alasannya muncul di `dropped`.
 
 `custom_posts.trigger` menyimpan pemicu event (`member_add`/`member_remove`,
 NULL = hanya manual). Tidak ada tabel baru: pemicu adalah sifat pesannya.
+
+`custom_posts.webhook_name` dan `webhook_avatar` menyimpan identitas pengirim
+webhook per pesan (NULL = identitas server). Keduanya hanya dibaca saat pesan
+dikirim lewat webhook; lewat bot, nama & avatar ditentukan Discord.
 
 `custom_posts.embed` menyimpan bagian embed klasik (penulis, footer, bidang, URL
 judul, stempel waktu) sebagai JSON **berisi daftar** sampai 10 elemen, NULL =

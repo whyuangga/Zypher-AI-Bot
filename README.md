@@ -373,7 +373,9 @@ lengkap dengan ⧉ duplikat & × hapus), dan halaman dipecah **empat tab**
 (Susun / Pratinjau / Ambil role / Impor) dengan tombol Simpan di bilah bawah yang
 selalu terlihat — tidak perlu menggulir jauh. Ada **pratinjau hidup**, **warna aksen** bebas,
 **unggah gambar**, dan pilihan pengirim: lewat bot, atau **atas nama server**
-(webhook — tokennya dienkripsi, butuh izin *Manage Webhooks*). Tombol **ambil
+(webhook — tokennya dienkripsi, butuh izin *Manage Webhooks*) lengkap dengan
+**nama & avatar pengirim sendiri per pesan** seperti isian Username/Avatar URL
+di Discohook. Tombol **ambil
 role** memberi role hanya dengan klik, lengkap dengan **emoji** dan **warna**
 tombol (biru/abu/hijau/merah) — dan tiap tombol, tiap pilihan dropdown, serta
 tiap **Select menu** (bahkan tiap **pilihan** di dalamnya) bisa diberi **aksi
@@ -521,10 +523,10 @@ Perbandingan lengkap + rekomendasi yang benar-benar gratis: **[docs/hosting.md](
 ```bash
 npm run doctor         # ping tiap provider (chat + streaming) dan laporkan hasilnya
 npm run models         # daftar model yang benar-benar tersedia di provider kamu
-npm run smoke # 430 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
+npm run smoke # 431 test logika inti (termasuk RAG, moderasi, agent, sambutan, banner)
 npm run smoke:pg       # 21 test jalur Postgres (pg-mem, tanpa server database)
 npm run test:fallback  # 15 pemeriksaan rantai fallback provider (server tiruan)
-npm run test:ui        # 130 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
+npm run test:ui        # 131 pemeriksaan UI dashboard di DOM tiruan (tanpa browser)
 npm run test:browser   # uji klik sungguhan di Chromium (butuh dashboard hidup)
 npm run verify         # semuanya sekaligus: typecheck ketat + smoke + fallback + UI
 npm run dashboard      # nyalakan dashboard web saja (node dist/web/standalone.js)

@@ -409,6 +409,14 @@ export function pesanPage(options: PesanPageOptions): string {
     <p class="hint">Lewat webhook, pesan tampil dengan nama &amp; logo server — tapi tombol ambil role tidak bisa dipakai.</p>
   </div>
   <div style="grid-column:1/-1">
+    <label class="field">Nama &amp; avatar pengirim (khusus mode webhook)</label>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <input type="text" id="postWebhookName" placeholder="Nama pengirim (bawaan: nama server)" maxlength="80" style="flex:1;min-width:200px" />
+      <input type="text" id="postWebhookAvatar" placeholder="URL avatar (bawaan: ikon server)" style="flex:1;min-width:200px" />
+    </div>
+    <p class="hint">Padanan isian <b>Username</b> &amp; <b>Avatar URL</b> di Discohook. Hanya berlaku kalau Pengirim = <b>Atas nama server (webhook)</b>; lewat bot, nama &amp; avatar ditentukan Discord. Kosongkan untuk memakai identitas server lagi.</p>
+  </div>
+  <div style="grid-column:1/-1">
     <label class="field">Flag pesan</label>
     <label class="menu-flags" style="margin-right:14px">
       <input type="checkbox" id="postFlagEmbeds" /> tanpa kartu embed untuk tautan
@@ -2797,6 +2805,8 @@ async function savePost(andSend) {
          * sudah dibuat, dan server hanya memakainya saat layout = embed.
          */
         embed: payloadEmbed(),
+        webhookName: ((document.getElementById('postWebhookName') || {}).value || '').trim(),
+        webhookAvatar: ((document.getElementById('postWebhookAvatar') || {}).value || '').trim(),
       }),
     });
     if (result.dropped && result.dropped.length) {
@@ -2939,6 +2949,10 @@ function loadExisting() {
    */
   var bentuk = document.getElementById('postLayout');
   if (bentuk) bentuk.value = found.layout === 'embed' ? 'embed' : 'container';
+  var whNama = document.getElementById('postWebhookName');
+  if (whNama) whNama.value = found.webhookName || '';
+  var whAvatar = document.getElementById('postWebhookAvatar');
+  if (whAvatar) whAvatar.value = found.webhookAvatar || '';
   var pemicu = document.getElementById('postTrigger');
   if (pemicu) pemicu.value = found.trigger === 'member_add' || found.trigger === 'member_remove' ? found.trigger : '';
   // normalBlock memuat SEMUA field yang dikenal, termasuk spoiler dan nama

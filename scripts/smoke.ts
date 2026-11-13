@@ -8366,6 +8366,49 @@ await testAsync('berbagi: halaman publik menampilkan embed & bagian admin', asyn
   await repo.deleteCustomPost(GUILD, pesan.id);
 });
 
+await testAsync('webhook: nama & avatar pengirim per pesan disaring & disimpan', async () => {
+  const repo = await import('../src/db/repo.js');
+  const GUILD = '123456789012345678';
+
+  /* --- penyaring --- */
+  assert.equal(repo.parseWebhookName('  Pengumuman  '), 'Pengumuman', 'spasi dirapikan');
+  assert.equal(repo.parseWebhookName('   '), null, 'spasi saja = kosong (identitas server)');
+  assert.equal(repo.parseWebhookName(null), null, 'null = kosong');
+  assert.equal(repo.parseWebhookName('x'.repeat(120))!.length, 80, 'dipotong ke batas Discord 80');
+  assert.equal(repo.parseWebhookAvatar('https://img.test/a.png'), 'https://img.test/a.png');
+  assert.equal(repo.parseWebhookAvatar('javascript:alert(1)'), null, 'URL berbahaya dibuang');
+  assert.equal(repo.parseWebhookAvatar('bukan-url'), null);
+  assert.equal(repo.parseWebhookAvatar(''), null);
+
+  /* --- penyimpanan --- */
+  const pesan = await repo.createCustomPost(GUILD, {
+    name: 'Webhook nama',
+    channelId: '999',
+    blocks: [{ kind: 'text', value: 'Halo' }],
+    sender: 'webhook',
+    webhookName: 'Tim Pengumuman',
+    webhookAvatar: 'https://img.test/avatar.png',
+  });
+  assert.equal(pesan.webhookName, 'Tim Pengumuman', 'nama tersimpan');
+  assert.equal(pesan.webhookAvatar, 'https://img.test/avatar.png', 'avatar tersimpan');
+
+  /*
+   * Tidak mengirim = dipertahankan (sama seperti field lain); null = dikosongkan.
+   * Tanpa aturan ini, menyimpan ulang dari klien lama akan menghapus nama
+   * pengirim yang sudah diatur admin.
+   */
+  await repo.updateCustomPost(GUILD, pesan.id, { name: 'Ganti nama pesan' });
+  const tetap = await repo.getCustomPost(GUILD, pesan.id);
+  assert.equal(tetap!.webhookName, 'Tim Pengumuman', 'menyimpan field lain tidak menghapus pengirim');
+
+  await repo.updateCustomPost(GUILD, pesan.id, { webhookName: null, webhookAvatar: null });
+  const kosong = await repo.getCustomPost(GUILD, pesan.id);
+  assert.equal(kosong!.webhookName, null, 'bisa dikosongkan');
+  assert.equal(kosong!.webhookAvatar, null);
+
+  await repo.deleteCustomPost(GUILD, pesan.id);
+});
+
 await testAsync('template: variabel Discohook dirakit & dipakai di aksi dan teks pesan', async () => {
   const { buildTemplateValues, applyTemplate, tokenTersisa } = await import('../src/features/post-template.js');
   const { fillActionText } = await import('../src/features/post-actions.js');

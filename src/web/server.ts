@@ -2442,6 +2442,8 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       trigger: sanitizeTrigger(payload.trigger),
       layout: sanitizeLayout(payload.layout),
       embed: payload.embed,
+      webhookName: typeof payload.webhookName === 'string' ? payload.webhookName : null,
+      webhookAvatar: typeof payload.webhookAvatar === 'string' ? payload.webhookAvatar : null,
     });
     const { blocks: blokSah, dropped } = sanitizeBlocks(payload.blocks);
     // `usage` = hitungan versi SERVER. Dashboard boleh menghitung sendiri
@@ -2640,7 +2642,12 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
                 messageId: post.messageId,
                 blocks: post.blocks,
                 accent: post.accent ?? undefined,
-                identity: await webhookIdentityFor(bot, guildId),
+                /*
+                 * Nama & avatar per pesan (padanan isian Username/Avatar URL
+                 * Discohook). Yang tidak diisi memakai identitas server, jadi
+                 * pesan lama tidak berubah tampilannya.
+                 */
+                identity: identitasWebhook(post, await webhookIdentityFor(bot, guildId)),
                 postId: id,
                 flags: post.flags,
                 template: null,
@@ -2690,7 +2697,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
                   accent: post.accent ?? undefined,
                   // Identitas webhook diambil per channel: nama & avatar server
                   // sama, tetapi webhook-nya berbeda per channel.
-                  identity: await webhookIdentityFor(bot, guildId),
+                  identity: identitasWebhook(post, await webhookIdentityFor(bot, guildId)),
                   postId: id,
                   flags: post.flags,
                   template: null,
@@ -2819,6 +2826,18 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
         trigger: payload.trigger === undefined ? undefined : sanitizeTrigger(payload.trigger),
         layout: payload.layout === undefined ? undefined : sanitizeLayout(payload.layout),
         embed: payload.embed,
+        webhookName:
+          payload.webhookName === undefined
+            ? undefined
+            : typeof payload.webhookName === 'string'
+              ? payload.webhookName
+              : null,
+        webhookAvatar:
+          payload.webhookAvatar === undefined
+            ? undefined
+            : typeof payload.webhookAvatar === 'string'
+              ? payload.webhookAvatar
+              : null,
         channelId:
           payload.channelId === undefined
             ? undefined
@@ -3251,6 +3270,24 @@ async function readJson(
 }
 
 /** Sama seperti `readJson`, tapi batas ukurannya bisa diatur (mis. gambar). */
+/**
+ * Gabungkan identitas server dengan isian per pesan.
+ *
+ * Discohook menyebutnya Username & Avatar URL; di bot disimpan di
+ * `custom_posts.webhook_name` / `webhook_avatar`. Kosong = pakai identitas
+ * server, sehingga pesan lama yang tidak punya isian ini tampil sama seperti
+ * sebelumnya.
+ */
+function identitasWebhook(
+  post: { webhookName: string | null; webhookAvatar: string | null },
+  bawaan: { username: string; avatarURL?: string | null },
+): { username: string; avatarURL?: string | null } {
+  return {
+    username: post.webhookName ?? bawaan.username,
+    avatarURL: post.webhookAvatar ?? bawaan.avatarURL ?? null,
+  };
+}
+
 /**
  * Ambil objek pesan dari beberapa bentuk JSON yang lazim ditempel.
  *
