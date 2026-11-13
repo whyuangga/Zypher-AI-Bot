@@ -1843,6 +1843,25 @@ dialog.confirm::backdrop { background: rgba(8, 6, 9, .8); backdrop-filter: blur(
   background: var(--bg-2);
 }
 
+/*
+ * Bilah "sedang menyunting pesan dokumen": melekat di atas editor supaya
+ * jelas bahwa blok yang terlihat milik dokumen, bukan pesan dashboard.
+ */
+.editor-edit-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--accent, var(--line));
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--bg-2);
+}
+
+.editor-edit-bar[hidden] {
+  display: none;
+}
+
 .aksi-cabang-teks {
   flex: 1;
   font-size: 12px;

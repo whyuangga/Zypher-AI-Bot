@@ -305,6 +305,7 @@ export function pesanPage(options: PesanPageOptions): string {
     title: 'Susun pesan',
     hint: 'teks, gambar, tombol link, dan pemisah',
     body: `<div class="card-pad" style="padding-top:6px;display:grid;gap:14px">
+  <div id="grupEditBar" class="editor-edit-bar" hidden></div>
   <div class="grid cols-2" style="gap:12px">
     <div>
       <label class="field" for="postName">Nama pesan</label>
@@ -863,6 +864,14 @@ var POST_SCHEDULES = ${jsonForScript(options.schedules ?? {})};
 var DOKUMEN = ${jsonForScript(options.documents ?? [])};
 /** Dokumen yang sedang disusun (salinan; batal = tidak mengubah aslinya). */
 var grupAktif = { id: null, name: '', series: false, messages: [] };
+/**
+ * Pesan dokumen yang sedang disunting di tab Susun, atau -1.
+ *
+ * Tanpa ini, satu-satunya cara memperbaiki pesan ke-3 dalam dokumen adalah
+ * menyusun ulang dari nol: daftar dokumen hanya bisa menambah pesan dari isi
+ * editor, tidak bisa membuka pesan yang sudah ada.
+ */
+var GRUP_EDIT = -1;
 /** Tombol role yang sedang disusun (belum disimpan). */
 var roleButtons = [];
 /** Aksi tombol/menu yang sedang disusun, per target. */
@@ -6213,6 +6222,13 @@ async function apiMetode(path, payload, method) {
  * yang paling tidak terlihat kalau hanya ditampilkan sebagai teks isi.
  */
 function renderGrup() {
+  /*
+   * Dokumen bisa diganti (simpan, impor, buka dokumen lain) sementara bilah
+   * sunting masih menunjuk urutan lama. Urutan yang sudah tidak ada dilepas,
+   * kalau tidak tombol Simpan ke dokumen akan menulis ke pesan yang salah.
+   */
+  if (GRUP_EDIT >= grupAktif.messages.length) GRUP_EDIT = -1;
+  renderGrupEdit();
   var host = document.getElementById('grupDaftar');
   if (!host) return;
   host.innerHTML = '';
@@ -6287,6 +6303,22 @@ function renderGrup() {
       renderGrup();
     };
     baris.appendChild(naik);
+
+    var sunting = document.createElement('button');
+    sunting.className = 'btn btn-ghost btn-sm btn-icon';
+    sunting.type = 'button';
+    sunting.textContent = '✎';
+    sunting.title = 'Buka pesan ini di tab Susun';
+    sunting.onclick = function () { bukaPesanGrup(urutan); };
+    baris.appendChild(sunting);
+
+    var duplikat = document.createElement('button');
+    duplikat.className = 'btn btn-ghost btn-sm btn-icon';
+    duplikat.type = 'button';
+    duplikat.textContent = '⧉';
+    duplikat.title = 'Duplikat pesan ini (di bawahnya)';
+    duplikat.onclick = function () { duplikatPesanGrup(urutan); };
+    baris.appendChild(duplikat);
 
     var hapus = document.createElement('button');
     hapus.className = 'btn-danger btn-sm btn-icon';
@@ -6366,6 +6398,119 @@ function renderGrupTersimpan() {
 }
 
 /** Tambah satu pesan ke dokumen — isinya SALINAN dari editor yang sedang dibuka. */
+/**
+ * Buka satu pesan dokumen di tab Susun untuk disunting.
+ *
+ * Editor sementara "meminjam" blok pesan itu; perubahan disimpan kembali ke
+ * dokumen lewat tombol Simpan perubahan (bukan disimpan otomatis): blok yang
+ * sedang disunting juga dipakai tombol Kirim, jadi menulis balik otomatis akan
+ * membuat isi dokumen berubah hanya karena admin membuka pesan lain.
+ */
+function bukaPesanGrup(urutan) {
+  var pesan = grupAktif.messages[urutan];
+  if (!pesan) return;
+  GRUP_EDIT = urutan;
+  blocks = (pesan.blocks || []).map(normalBlock);
+  editingId = null;
+  var nama = document.getElementById('postName');
+  if (nama) nama.value = pesan.name || '';
+  if (pesan.threadName) {
+    var thread = document.getElementById('postThreadName');
+    if (thread) thread.value = pesan.threadName;
+  } else {
+    var threadKosong = document.getElementById('postThreadName');
+    if (threadKosong) threadKosong.value = '';
+  }
+  renderBlocks();
+  renderPreview();
+  renderGrupEdit();
+  showPesanTab('susun');
+  toast('Menyunting pesan ' + (urutan + 1) + ' dari dokumen');
+}
+
+/** Tulis isi editor kembali ke pesan dokumen yang sedang disunting. */
+function simpanKeGrup() {
+  if (GRUP_EDIT < 0) return toast('Tidak ada pesan dokumen yang sedang disunting', true);
+  var pesan = grupAktif.messages[GRUP_EDIT];
+  if (!pesan) return toast('Pesan itu sudah tidak ada di dokumen', true);
+  pesan.blocks = JSON.parse(JSON.stringify(blocks));
+  var nama = document.getElementById('postName');
+  if (nama && nama.value.trim()) pesan.name = nama.value.trim().slice(0, 80);
+  var thread = document.getElementById('postThreadName');
+  var isiThread = thread ? String(thread.value || '').trim().slice(0, 100) : '';
+  if (isiThread) pesan.threadName = isiThread;
+  else delete pesan.threadName;
+  GRUP_EDIT = -1;
+  renderGrupEdit();
+  renderGrup();
+  toast('✅ Perubahan masuk ke dokumen — tekan Simpan untuk menulisnya ke database');
+}
+
+/** Lepas pesan dokumen dari editor tanpa menulis apa pun. */
+function batalGrupEdit() {
+  GRUP_EDIT = -1;
+  renderGrupEdit();
+  toast('Penyuntingan dokumen dibatalkan');
+}
+
+/** Duplikat satu pesan dokumen (disalin dalam, bukan berbagi objek). */
+function duplikatPesanGrup(urutan) {
+  if (grupAktif.messages.length >= 20) return toast('Maksimal 20 pesan per dokumen', true);
+  var asal = grupAktif.messages[urutan];
+  if (!asal) return;
+  var salinan = JSON.parse(JSON.stringify(asal));
+  /*
+   * ID baru: rujukan balasan memakai ID, jadi menyalin ID aslinya akan membuat
+   * dua pesan berbagi identitas — dan server menolak rujukan yang ambigu.
+   */
+  var nomor = 1;
+  while (grupAktif.messages.some(function (p) { return p.id === 'p' + nomor; })) nomor += 1;
+  salinan.id = 'p' + nomor;
+  salinan.name = (asal.name || 'Pesan') + ' (salinan)';
+  delete salinan.reference;
+  grupAktif.messages.splice(urutan + 1, 0, salinan);
+  renderGrup();
+}
+
+/**
+ * Tampilkan bilah "sedang menyunting pesan dokumen" di tab Susun.
+ *
+ * Bilah ini penting: setelah memuat pesan dokumen, editor berisi blok yang
+ * BUKAN milik pesan dashboard. Tanpa penanda, admin akan mengira sedang
+ * menyunting pesan biasa lalu menyimpan ke tempat yang salah.
+ */
+function renderGrupEdit() {
+  var bilah = document.getElementById('grupEditBar');
+  if (!bilah) return;
+  if (GRUP_EDIT < 0) {
+    bilah.hidden = true;
+    bilah.innerHTML = '';
+    return;
+  }
+  var pesan = grupAktif.messages[GRUP_EDIT];
+  bilah.hidden = false;
+  bilah.innerHTML = '';
+  var teks = document.createElement('span');
+  teks.className = 'hint';
+  teks.style.margin = '0';
+  teks.textContent =
+    'Menyunting pesan ' + (GRUP_EDIT + 1) + ' dari dokumen "' + grupAktif.name + '"' +
+    (pesan && pesan.name ? ' — ' + pesan.name : '');
+  bilah.appendChild(teks);
+  var simpan = document.createElement('button');
+  simpan.className = 'btn-primary btn-sm';
+  simpan.type = 'button';
+  simpan.textContent = 'Simpan ke dokumen';
+  simpan.onclick = function () { simpanKeGrup(); };
+  bilah.appendChild(simpan);
+  var batal = document.createElement('button');
+  batal.className = 'btn btn-ghost btn-sm';
+  batal.type = 'button';
+  batal.textContent = 'Batal';
+  batal.onclick = function () { batalGrupEdit(); };
+  bilah.appendChild(batal);
+}
+
 function tambahPesanGrup() {
   if (grupAktif.messages.length >= 20) return toast('Maksimal 20 pesan per dokumen', true);
   if (!blocks.length) return toast('Susun isi pesan dulu di tab Susun', true);
@@ -6624,6 +6769,7 @@ async function kirimGrup() {
 function bukaGrup(id) {
   var dok = DOKUMEN.filter(function (d) { return d.id === id; })[0];
   if (!dok) return toast('Dokumen tidak ada', true);
+  GRUP_EDIT = -1;
   grupAktif = {
     id: dok.id,
     name: dok.name,
@@ -6640,7 +6786,10 @@ async function hapusGrup(id) {
   var hasil = await apiMetode('/api/post-groups/' + id, undefined, 'DELETE');
   if (!hasil.ok) return toast(hasil.error || 'Gagal menghapus', true);
   DOKUMEN = DOKUMEN.filter(function (d) { return d.id !== id; });
-  if (grupAktif.id === id) grupAktif = { id: null, name: '', series: false, messages: [] };
+  if (grupAktif.id === id) {
+    grupAktif = { id: null, name: '', series: false, messages: [] };
+    GRUP_EDIT = -1;
+  }
   renderGrup();
   toast('Dokumen dihapus');
 }

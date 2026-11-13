@@ -2879,7 +2879,88 @@ await check('pesan: JSON dokumen multi-pesan bolak-balik dengan rujukan yang dij
     })()
   `)) as { sebelum: number; sesudah: number; status: string };
   assert.equal(salahFormat.sesudah, salahFormat.sebelum, 'dokumen terbuka tidak dirusak berkas yang salah');
-  assert.equal(page.errors.length, 0, `json dokumen error: ${page.errors.join('|')}`);
+
+  /*
+   * Pesan di dalam dokumen harus bisa dibuka lagi. Sebelum ini satu-satunya
+   * cara memperbaiki pesan ke-3 adalah menyusun ulang dari nol: daftar hanya
+   * bisa menambah dari isi editor, tidak bisa membuka pesan yang sudah ada.
+   * Yang diuji: blok pesan benar-benar masuk editor, perubahan hanya menulis
+   * saat diminta, dan duplikat memakai ID baru.
+   */
+  const sunting = (await page.evaluate(`
+    (function () {
+      grupAktif = {
+        id: null,
+        name: 'Dokumen sunting',
+        series: false,
+        messages: [
+          { id: 'p1', name: 'Satu', blocks: [{ kind: 'text', value: 'ISI ASLI' }] },
+          { id: 'p2', name: 'Dua', blocks: [{ kind: 'text', value: 'ISI DUA' }], reference: 'p1', threadName: 'Diskusi' }
+        ]
+      };
+      editingId = 'pesan-dashboard';
+      bukaPesanGrup(1);
+      var bilah = document.getElementById('grupEditBar');
+      var isiEditor = blocks.map(function (b) { return b.value || ''; }).join('|');
+      var terbuka = {
+        isiEditor: isiEditor,
+        adaBilah: Boolean(bilah) && !bilah.hidden,
+        teksBilah: bilah ? bilah.textContent : '',
+        modeSusun: GRUP_EDIT,
+        editingId: editingId,
+        isiDokumen: grupAktif.messages[1].blocks.map(function (b) { return b.value || ''; }).join('|'),
+        namaDokumen: grupAktif.messages[1].name
+      };
+
+      // Ubah di editor: dokumen BELUM berubah sampai tombol simpan ditekan.
+      blocks.push({ kind: 'text', value: 'TAMBAHAN' });
+      terbuka.sebelumSimpan = grupAktif.messages[1].blocks.length;
+      simpanKeGrup();
+      terbuka.sesudahSimpan = grupAktif.messages[1].blocks.length;
+      terbuka.modeSetelahSimpan = GRUP_EDIT;
+      terbuka.bilahTersembunyi = Boolean(bilah) && bilah.hidden;
+
+      // Duplikat menyalin isi tetapi WAJIB memakai ID baru & tanpa rujukan.
+      grupAktif.messages[1].reference = 'p1';
+      duplikatPesanGrup(0);
+      var id = grupAktif.messages.map(function (p) { return p.id; }).join(',');
+      var salinan = grupAktif.messages[1];
+      terbuka.id = id;
+      terbuka.jumlah = grupAktif.messages.length;
+      terbuka.namaSalinan = salinan.name;
+      terbuka.rujukanSalinan = salinan.reference || '';
+      terbuka.isiSalinan = salinan.blocks.length;
+      grupAktif.messages[0].blocks.push({ kind: 'text', value: 'HANYA ASLI' });
+      terbuka.asliTerpisah = salinan.blocks.length;
+
+      // Batal tidak menulis apa pun ke dokumen.
+      bukaPesanGrup(0);
+      blocks.push({ kind: 'text', value: 'TIDAK JADI' });
+      batalGrupEdit();
+      terbuka.setelahBatal = grupAktif.messages[0].blocks.length;
+      terbuka.modeSetelahBatal = GRUP_EDIT;
+      return terbuka;
+    })()
+  `)) as Record<string, unknown>;
+
+  assert.equal(sunting.isiEditor, 'ISI DUA', 'blok pesan dokumen masuk ke editor');
+  assert.equal(sunting.adaBilah, true, 'bilah penanda sunting dokumen tampil');
+  assert.ok(String(sunting.teksBilah).includes('pesan 2'), 'bilah menyebut pesan yang sedang disunting');
+  assert.equal(sunting.modeSusun, 1, 'mode sunting dokumen aktif');
+  assert.equal(sunting.editingId, null, 'bukan lagi menyunting pesan dashboard');
+  assert.equal(sunting.sebelumSimpan, 1, 'perubahan editor belum menyentuh dokumen');
+  assert.equal(sunting.sesudahSimpan, 2, 'simpan menulis perubahan ke dokumen');
+  assert.equal(sunting.modeSetelahSimpan, -1, 'mode sunting ditutup setelah simpan');
+  assert.equal(sunting.bilahTersembunyi, true, 'bilah hilang setelah simpan');
+  assert.equal(sunting.id, 'p1,p3,p2', 'duplikat memakai ID baru & menyelip di bawah aslinya');
+  assert.equal(sunting.jumlah, 3, 'duplikat ditambahkan tepat di bawah aslinya');
+  assert.ok(String(sunting.namaSalinan).includes('salinan'), 'nama salinan ditandai');
+  assert.equal(sunting.rujukanSalinan, '', 'rujukan balasan tidak ikut disalin');
+  assert.equal(sunting.isiSalinan, 1, 'isi pesan ikut disalin');
+  assert.equal(sunting.asliTerpisah, 1, 'salinan tidak berbagi objek dengan aslinya');
+  assert.equal(sunting.setelahBatal, 2, 'batal tidak menulis perubahan ke dokumen');
+  assert.equal(sunting.modeSetelahBatal, -1, 'batal menutup mode sunting');
+  assert.equal(page.errors.length, 0, `sunting dokumen error: ${page.errors.join('|')}`);
 });
 
 await check('pesan: bentuk embed menyimpan layout & pratinjaunya memakai aturan embed', async () => {

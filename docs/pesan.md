@@ -634,7 +634,7 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | `thread_name` (pesan menjadi awal thread) | ✅ isian "Nama thread" di kartu pengaturan |
 | Message flags: suppress embeds, suppress notifications | ✅ |
 | Message flags: voice message, `IS_COMPONENTS_V2` manual | ❌ (v2 diurus pengirim) |
-| Multi-pesan dalam satu backup (beberapa pesan, `reference`, `thread_id`) | ✅ tab **Multi-pesan** (`?tab=grup`): sampai 20 pesan per dokumen, `reference` antar pesan, nama thread per pesan, disimpan di `post_documents` |
+| Multi-pesan dalam satu backup (beberapa pesan, `reference`, `thread_id`) | ✅ tab **Multi-pesan** (`?tab=grup`): sampai 20 pesan per dokumen, `reference` antar pesan, nama thread per pesan, **tiap pesan bisa dibuka lagi di tab Susun, diduplikat, diurutkan, atau dihapus**, disimpan di `post_documents` |
 | JSON editor dokumen | ✅ kartu **JSON dokumen** di tab Multi-pesan: ekspor/impor satu dokumen (semua pesan, rujukan balasan, nama thread, mode rangkaian) |
 | JSON Data Editor **per pesan** | ✅ kartu **JSON Data Editor (satu pesan)** di tab Impor: tempel objek pesan Discord, payload REST, atau data Discohook |
 | `targets[]` (satu pesan, beberapa channel) | ✅ **Kirim juga ke channel lain** di kartu pengaturan: sampai 5 channel tambahan, tiap channel punya ID pesan sendiri |
@@ -650,6 +650,34 @@ Diukur langsung dari kode sumber Discohook (`packages/site/app/types/flows.ts` d
 | Embed klasik (bukan Components V2) | ✅ pilihan **Bentuk pesan: Embed klasik**; judul dari nama pesan, warna dari aksen, teks jadi isi embed, satu gambar besar, tombol/menu tetap di luar embed, plus penulis/footer/bidang/URL judul/stempel waktu |
 | Variabel teks (`{member.name}`, `{server.name}`, `{var.*}`, …) | ✅ daftar lengkap di kartu pengaturan; berlaku di teks blok, teks aksi, penulis/footer/bidang embed. Token asing dibiarkan apa adanya (lihat **Batch 13**) |
 | Diff antar versi | ✅ tombol **Bandingkan** di tab **Riwayat**: tambah/hapus/ubah per blok, pengaturan, plus teks lama & baru berdampingan |
+
+### Batch 22: membuka kembali satu pesan di dalam dokumen
+
+Sebelum ini, pesan yang sudah masuk dokumen multi-pesan hanya bisa **dilihat**
+(diubah rujukan/thread-nya) atau **dihapus**. Untuk membetulkan satu salah tulis
+di pesan ke-3, admin harus menyusun ulang semuanya. Di Discohook, tiap pesan
+dalam daftar bisa dibuka kembali.
+
+| Aspek | Sebelum | Sekarang |
+|---|---|---|
+| Menyunting pesan dokumen | hanya bisa menambah dari editor | tombol **✎** membuka ulang pesan itu di tab Susun |
+| Menulis balik | — | tombol **Simpan ke dokumen** (bukan otomatis) |
+| Duplikat pesan | — | tombol **⧉** menyalin pesan tepat di bawah aslinya |
+| Penanda mode | — | bilah "Menyunting pesan N dari dokumen …" di atas editor |
+
+Catatan:
+
+- Perubahan **tidak** ditulis otomatis. Editor yang sama dipakai tombol Kirim, dan
+  menulis balik otomatis berarti membuka pesan lain sudah cukup untuk mengubah
+  dokumen tanpa pernah menekan Simpan.
+- Rujukan balasan **tidak** ikut disalin saat menduplikat: dua pesan ber-ID sama
+  akan ditolak server, dan salinan yang membalas pesan aslinya hampir selalu
+  bukan yang dimaksud.
+- Tiap pesan disalin dalam (salinan mendalam), jadi menyunting dokumen tidak
+  mengubah isi editor dan sebaliknya.
+- Bila dokumen diganti (dibuka dokumen lain, diimpor, atau dihapus) sementara
+  mode sunting masih menyala, mode itu dilepas — kalau tidak, tombol simpan akan
+  menulis ke urutan pesan yang sudah bukan miliknya.
 
 ### Batch 21: thumbnail & gambar besar per embed
 
